@@ -1,0 +1,44 @@
+package service
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/douglasdf99/litezap/internal/apierr"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+func TestMapErrWorkerStatus(t *testing.T) {
+	for _, c := range []codes.Code{codes.Unavailable, codes.DeadlineExceeded, codes.Canceled} {
+		var e *apierr.Error
+		if !errors.As(mapErr(status.Error(c, "boom")), &e) || e.Code != "instance_not_connected" {
+			t.Fatalf("%v -> %v, want instance_not_connected", c, e)
+		}
+	}
+
+	err := fmt.Errorf("pair: %w", status.Error(codes.Unknown, "waiting for pairing round: not pairing (5511987654321, lzi_secret123)"))
+	var e *apierr.Error
+	if !errors.As(mapErr(err), &e) {
+		t.Fatalf("not an api error: %v", mapErr(err))
+	}
+	if e.Status != http.StatusBadGateway || e.Code != "worker_error" || !e.Retryable {
+		t.Fatalf("got %+v", e)
+	}
+	if !strings.Contains(e.Message, "not pairing") {
+		t.Fatalf("message lost the worker's reason: %q", e.Message)
+	}
+	if strings.Contains(e.Message, "5511987654321") || strings.Contains(e.Message, "lzi_secret123") {
+		t.Fatalf("message leaks phone or token: %q", e.Message)
+	}
+}
+
+func TestMapErrPlainErrorPassesThrough(t *testing.T) {
+	plain := errors.New("disk full")
+	if got := mapErr(plain); got != plain {
+		t.Fatalf("got %v", got)
+	}
+}

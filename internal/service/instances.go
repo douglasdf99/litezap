@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/douglasdf99/litezap/internal/manager"
 	"github.com/douglasdf99/litezap/internal/secure"
 	"github.com/douglasdf99/litezap/internal/store"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type Instances struct {
@@ -56,7 +59,30 @@ func mapErr(err error) error {
 	case errors.Is(err, manager.ErrShuttingDown):
 		return apierr.New(http.StatusServiceUnavailable, "shutting_down", "server is shutting down", true)
 	}
+	// Errors from worker RPCs carry a gRPC status (possibly wrapped).
+	if st, ok := status.FromError(err); ok && st.Code() != codes.OK {
+		switch st.Code() {
+		case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
+			return apierr.NotConnected()
+		}
+		msg := "worker request failed"
+		if m := redact(st.Message()); m != "" {
+			msg += ": " + m
+		}
+		return apierr.New(http.StatusBadGateway, "worker_error", msg, true)
+	}
 	return err
+}
+
+var (
+	digitRun  = regexp.MustCompile(`\d{6,}`)
+	tokenLike = regexp.MustCompile(`\blz[a-z]_[A-Za-z0-9_-]+`)
+)
+
+// redact strips anything that may be a phone number or a token from a worker message.
+func redact(msg string) string {
+	msg = digitRun.ReplaceAllString(msg, "[redacted]")
+	return tokenLike.ReplaceAllString(msg, "[redacted]")
 }
 
 func (s *Instances) Create(ctx context.Context, name string) (InstanceView, string, error) {
