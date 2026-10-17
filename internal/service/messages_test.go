@@ -336,3 +336,32 @@ func TestDeleteStopsTheDispatcher(t *testing.T) {
 	}
 	e.eventually("dispatcher stopped", func() bool { return e.svc.Queues.Dispatchers() == 0 })
 }
+
+// Concurrent settings updates of different fields all stick (no lost update).
+func TestConcurrentSettingsUpdates(t *testing.T) {
+	e := newMsgEnv(t)
+	ctx := context.Background()
+	for round := 1; round <= 20; round++ {
+		minI, jit, maxPM, tz := 1000+round, 100+round, 10+round%50, []string{"UTC", "America/Sao_Paulo"}[round%2]
+		typing := round%2 == 0
+		patches := []settings.Patch{{MinIntervalMS: &minI}, {JitterMS: &jit}, {MaxPerMinute: &maxPM}, {Timezone: &tz}, {TypingSimulation: &typing}}
+		var wg sync.WaitGroup
+		for _, p := range patches {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if _, err := e.svc.UpdateSettings(ctx, "i1", p); err != nil {
+					t.Error(err)
+				}
+			}()
+		}
+		wg.Wait()
+		got, err := e.svc.Settings(ctx, "i1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.MinIntervalMS != minI || got.JitterMS != jit || got.MaxPerMinute != maxPM || got.Timezone != tz || got.TypingSimulation != typing {
+			t.Fatalf("round %d: lost update: %+v", round, got)
+		}
+	}
+}

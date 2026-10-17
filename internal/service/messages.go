@@ -51,6 +51,25 @@ type Messaging struct {
 
 	flightMu sync.Mutex
 	flights  map[string]*mediaFlight // first downloads in progress (inbox.go)
+
+	settingsMu    sync.Mutex
+	settingsLocks map[string]*sync.Mutex // per instance: read-merge-write of the overrides
+}
+
+// settingsLock serializes UpdateSettings per instance so concurrent patches never lose
+// each other's fields.
+func (s *Messaging) settingsLock(instanceID string) *sync.Mutex {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	if s.settingsLocks == nil {
+		s.settingsLocks = map[string]*sync.Mutex{}
+	}
+	mu := s.settingsLocks[instanceID]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		s.settingsLocks[instanceID] = mu
+	}
+	return mu
 }
 
 // mediaFlight is one media download in progress; concurrent callers wait for it.
@@ -503,6 +522,9 @@ func (s *Messaging) Settings(ctx context.Context, instanceID string) (settings.S
 // UpdateSettings merges patch into the instance's overrides. Changing the effective proxy
 // restarts a running worker (the proxy is fixed for the whole session, spec 4.6).
 func (s *Messaging) UpdateSettings(ctx context.Context, instanceID string, patch settings.Patch) (settings.Settings, error) {
+	mu := s.settingsLock(instanceID)
+	mu.Lock()
+	defer mu.Unlock()
 	in, err := s.Store.GetInstance(ctx, instanceID)
 	if err != nil {
 		return settings.Settings{}, mapErr(err)
