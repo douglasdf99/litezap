@@ -1,0 +1,5 @@
+/litezap
+/data/
+/litezap.yaml
+*.test
+*.out
