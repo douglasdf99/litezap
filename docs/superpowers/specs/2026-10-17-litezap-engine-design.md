@@ -21,6 +21,7 @@ O produto é decomposto em peças, cada uma com seu próprio spec → plano → 
 | 3 | Nuvem: control plane fechado, um projeto LiteZap isolado por cliente, billing, pool gerenciado de IPs de saída | Não |
 | 4 | Atendente IA completo: memória, base de conhecimento, painel | Não |
 | 5 | Ferramentas por cima | Não |
+| 6 | Site e documentação: página do produto, docs com guias e referência completa da API (estilo Supabase/Z-API, identidade própria) | Não |
 
 ## 2. Decisões tomadas
 

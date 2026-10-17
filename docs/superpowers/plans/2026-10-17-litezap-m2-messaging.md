@@ -1477,6 +1477,7 @@ CREATE TABLE outbound_queue (
   UNIQUE (instance_id, client_message_id)
 );
 CREATE INDEX outbound_active ON outbound_queue (instance_id, chat_jid, seq) WHERE status IN ('queued', 'in_flight');
+CREATE INDEX outbound_queued ON outbound_queue (instance_id, seq) WHERE status = 'queued';
 CREATE INDEX outbound_wa ON outbound_queue (instance_id, wa_message_id);
 CREATE INDEX outbound_ramp ON outbound_queue (instance_id, sent_at) WHERE new_recipient = 1;
 
