@@ -216,11 +216,12 @@ func notMedia(sniffed string) bool {
 	return false
 }
 
-// ResolveMime picks the attachment's MIME type: the one the client declared if it fits the
-// message type, else the server's Content-Type if it fits, else what the bytes look like.
-// The bytes are always checked first: an image must sniff as an image (never SVG), and
-// audio/video must not sniff as text, documents, archives or executables, whatever type
-// was declared. A remote Content-Type that contradicts the message type is ignored.
+// ResolveMime picks the attachment's MIME type. The bytes are always checked first: an
+// image must sniff as an image (never SVG) and takes the sniffed type, and audio/video must
+// not sniff as text, documents, archives or executables, whatever type was declared. Other
+// types use the one the client declared if it fits the message type, else the server's
+// Content-Type if it fits (one that contradicts the message type is ignored), else what
+// the bytes look like.
 func ResolveMime(kind, declared, remote string, data []byte) (string, error) {
 	sniffed := baseType(http.DetectContentType(data))
 	if kind == "audio" && sniffed == "application/ogg" {
@@ -232,6 +233,7 @@ func ResolveMime(kind, declared, remote string, data []byte) (string, error) {
 		if !fits(kind, sniffed) {
 			return "", bad
 		}
+		return sniffed, nil
 	case "video", "audio":
 		if notMedia(sniffed) {
 			return "", bad
@@ -314,13 +316,38 @@ func LoadOrCreateKey(path string) ([]byte, error) {
 	if werr != nil {
 		return nil, werr
 	}
-	if err := os.Link(tmp.Name(), path); errors.Is(err, os.ErrExist) {
+	err = linkFile(tmp.Name(), path)
+	if err == nil {
+		return key, nil
+	}
+	if errors.Is(err, os.ErrExist) {
 		return readKey(path) // another process created it first
-	} else if err != nil {
+	}
+	// No hard links here (FAT/exFAT, some SMB/FUSE mounts): create the file exclusively
+	// instead. Only one creator wins; it is just not atomic for a concurrent reader.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return readKey(path)
+	}
+	if err != nil {
 		return nil, err
+	}
+	_, werr = f.WriteString(hex.EncodeToString(key) + "\n")
+	if err := f.Sync(); werr == nil {
+		werr = err
+	}
+	if err := f.Close(); werr == nil {
+		werr = err
+	}
+	if werr != nil {
+		return nil, werr
 	}
 	return key, nil
 }
+
+// linkFile publishes the key file; tests replace it to simulate a filesystem without
+// hard links.
+var linkFile = os.Link
 
 func readKey(path string) ([]byte, error) {
 	b, err := os.ReadFile(path)

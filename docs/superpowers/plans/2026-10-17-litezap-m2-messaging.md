@@ -7666,8 +7666,8 @@ func (d *dispatcher) sent(item store.Outbound, p Payload, at time.Time) error {
 	return nil
 }
 
-// fail finishes an item for good. If the write fails the item is still queued and keeps
-// its staged media.
+// fail finishes an item for good. If the write fails the item keeps its status (queued,
+// or in_flight when it fails after a send attempt) and its staged media.
 func (d *dispatcher) fail(item store.Outbound, attempts int, msg string) error {
 	if err := d.q.store.MarkFailed(context.Background(), item.ID, attempts, msg); err != nil {
 		d.log().Error("queue: mark failed", "err", err)
@@ -8516,7 +8516,7 @@ Expected: `go mod tidy` não altera `go.mod`/`go.sum` (se alterar, inclua-os no 
 - Create: `internal/media/media.go`
 - Test: `internal/media/media_test.go`
 
-Spec 4.1/4.5: `media.url` só `http(s)`, timeout 30s, limite do tipo (imagem 16MB, vídeo/áudio 64MB, documento 100MB), sem proxy de ambiente. O `Fetcher` resolve o nome ele mesmo e confere **todos** os endereços antes de conectar, em toda conexão (inclusive redirecionamentos): só passa unicast global (`IsGlobalUnicast`), menos privados, `0.0.0.0/8`, `100.64.0.0/10`, `198.18.0.0/15`, `240.0.0.0/4`, `64:ff9b::/96` (NAT64) e `2002::/16` (6to4). Isso fecha DNS rebinding e redirecionamento para endereço interno; o resolvedor é injetável para testar. `media_allow_private_urls: true` desliga a checagem (uso local). `ResolveMime` sempre confere os bytes: imagem precisa ser imagem pelos bytes (SVG nunca vale), e áudio/vídeo é recusado quando os bytes são texto/HTML, PDF, zip ou `application/x-*`, qualquer que seja o tipo declarado ou remoto; um `Content-Type` remoto que contradiz o tipo da mensagem é ignorado. URLs assinadas usam HMAC-SHA256 (cada parte prefixada pelo tamanho) com um segredo próprio em `data/media_key` (0600, criado num arquivo temporário e publicado com hard link: atômico, e partidas simultâneas ficam com a mesma chave) e valem 1h.
+Spec 4.1/4.5: `media.url` só `http(s)`, timeout 30s, limite do tipo (imagem 16MB, vídeo/áudio 64MB, documento 100MB), sem proxy de ambiente. O `Fetcher` resolve o nome ele mesmo e confere **todos** os endereços antes de conectar, em toda conexão (inclusive redirecionamentos): só passa unicast global (`IsGlobalUnicast`), menos privados, `0.0.0.0/8`, `100.64.0.0/10`, `198.18.0.0/15`, `240.0.0.0/4`, `64:ff9b::/96` (NAT64) e `2002::/16` (6to4). Isso fecha DNS rebinding e redirecionamento para endereço interno; o resolvedor é injetável para testar. `media_allow_private_urls: true` desliga a checagem (uso local). `ResolveMime` sempre confere os bytes: imagem precisa ser imagem pelos bytes (SVG nunca vale) e leva o tipo detectado, e áudio/vídeo é recusado quando os bytes são texto/HTML, PDF, zip ou `application/x-*`, qualquer que seja o tipo declarado ou remoto; um `Content-Type` remoto que contradiz o tipo da mensagem é ignorado. URLs assinadas usam HMAC-SHA256 (cada parte prefixada pelo tamanho) com um segredo próprio em `data/media_key` (0600, criado num arquivo temporário e publicado com hard link: atômico, e partidas simultâneas ficam com a mesma chave; sem hard link no sistema de arquivos — FAT/exFAT, alguns SMB/FUSE — cai para `O_EXCL`) e valem 1h.
 
 - [ ] **Step 1: Escrever os testes**
 
@@ -8630,10 +8630,10 @@ func TestResolveMime(t *testing.T) {
 		want                   string
 		bad                    bool
 	}{
-		{"image", "", "image/webp", png, "image/webp", false},
-		{"image", "", "text/html", png, "image/png", false},            // contradicting remote type ignored
-		{"image", "image/jpeg", "image/png", png, "image/jpeg", false}, // declared wins when it fits
-		{"image", "", "image/svg+xml", []byte("<svg/>"), "", true},     // never accept SVG as an image
+		{"image", "", "image/webp", png, "image/png", false},          // images take the sniffed type
+		{"image", "", "text/html", png, "image/png", false},           // contradicting remote type ignored
+		{"image", "image/jpeg", "image/png", png, "image/png", false}, // even over a declared one
+		{"image", "", "image/svg+xml", []byte("<svg/>"), "", true},    // never accept SVG as an image
 		{"audio", "", "", ogg, "audio/ogg", false},
 		{"audio", "audio/ogg; codecs=opus", "", ogg, "audio/ogg", false},
 		{"video", "", "", []byte("plain text"), "", true},
@@ -8737,6 +8737,30 @@ func TestKeyConcurrentCreation(t *testing.T) {
 	}
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 1 {
+		t.Fatalf("files left: %v", entries)
+	}
+}
+
+// Without hard links (FAT, some SMB/FUSE mounts) the key is created with O_EXCL instead.
+func TestKeyWithoutHardLinks(t *testing.T) {
+	orig := linkFile
+	linkFile = func(oldname, newname string) error {
+		return &os.LinkError{Op: "link", Old: oldname, New: newname, Err: errors.ErrUnsupported}
+	}
+	t.Cleanup(func() { linkFile = orig })
+	dir := t.TempDir()
+	path := filepath.Join(dir, "media_key")
+	key, err := LoadOrCreateKey(path)
+	if err != nil || len(key) != 32 {
+		t.Fatalf("key = %x, %v", key, err)
+	}
+	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("stat = %v, %v", fi, err)
+	}
+	if again, err := LoadOrCreateKey(path); err != nil || string(again) != string(key) {
+		t.Fatalf("key not reused: %x, %v", again, err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
 		t.Fatalf("files left: %v", entries)
 	}
 }
@@ -8982,11 +9006,12 @@ func notMedia(sniffed string) bool {
 	return false
 }
 
-// ResolveMime picks the attachment's MIME type: the one the client declared if it fits the
-// message type, else the server's Content-Type if it fits, else what the bytes look like.
-// The bytes are always checked first: an image must sniff as an image (never SVG), and
-// audio/video must not sniff as text, documents, archives or executables, whatever type
-// was declared. A remote Content-Type that contradicts the message type is ignored.
+// ResolveMime picks the attachment's MIME type. The bytes are always checked first: an
+// image must sniff as an image (never SVG) and takes the sniffed type, and audio/video must
+// not sniff as text, documents, archives or executables, whatever type was declared. Other
+// types use the one the client declared if it fits the message type, else the server's
+// Content-Type if it fits (one that contradicts the message type is ignored), else what
+// the bytes look like.
 func ResolveMime(kind, declared, remote string, data []byte) (string, error) {
 	sniffed := baseType(http.DetectContentType(data))
 	if kind == "audio" && sniffed == "application/ogg" {
@@ -8998,6 +9023,7 @@ func ResolveMime(kind, declared, remote string, data []byte) (string, error) {
 		if !fits(kind, sniffed) {
 			return "", bad
 		}
+		return sniffed, nil
 	case "video", "audio":
 		if notMedia(sniffed) {
 			return "", bad
@@ -9080,13 +9106,38 @@ func LoadOrCreateKey(path string) ([]byte, error) {
 	if werr != nil {
 		return nil, werr
 	}
-	if err := os.Link(tmp.Name(), path); errors.Is(err, os.ErrExist) {
+	err = linkFile(tmp.Name(), path)
+	if err == nil {
+		return key, nil
+	}
+	if errors.Is(err, os.ErrExist) {
 		return readKey(path) // another process created it first
-	} else if err != nil {
+	}
+	// No hard links here (FAT/exFAT, some SMB/FUSE mounts): create the file exclusively
+	// instead. Only one creator wins; it is just not atomic for a concurrent reader.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return readKey(path)
+	}
+	if err != nil {
 		return nil, err
+	}
+	_, werr = f.WriteString(hex.EncodeToString(key) + "\n")
+	if err := f.Sync(); werr == nil {
+		werr = err
+	}
+	if err := f.Close(); werr == nil {
+		werr = err
+	}
+	if werr != nil {
+		return nil, werr
 	}
 	return key, nil
 }
+
+// linkFile publishes the key file; tests replace it to simulate a filesystem without
+// hard links.
+var linkFile = os.Link
 
 func readKey(path string) ([]byte, error) {
 	b, err := os.ReadFile(path)

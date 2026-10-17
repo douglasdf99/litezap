@@ -105,10 +105,10 @@ func TestResolveMime(t *testing.T) {
 		want                   string
 		bad                    bool
 	}{
-		{"image", "", "image/webp", png, "image/webp", false},
-		{"image", "", "text/html", png, "image/png", false},            // contradicting remote type ignored
-		{"image", "image/jpeg", "image/png", png, "image/jpeg", false}, // declared wins when it fits
-		{"image", "", "image/svg+xml", []byte("<svg/>"), "", true},     // never accept SVG as an image
+		{"image", "", "image/webp", png, "image/png", false},          // images take the sniffed type
+		{"image", "", "text/html", png, "image/png", false},           // contradicting remote type ignored
+		{"image", "image/jpeg", "image/png", png, "image/png", false}, // even over a declared one
+		{"image", "", "image/svg+xml", []byte("<svg/>"), "", true},    // never accept SVG as an image
 		{"audio", "", "", ogg, "audio/ogg", false},
 		{"audio", "audio/ogg; codecs=opus", "", ogg, "audio/ogg", false},
 		{"video", "", "", []byte("plain text"), "", true},
@@ -212,6 +212,30 @@ func TestKeyConcurrentCreation(t *testing.T) {
 	}
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 1 {
+		t.Fatalf("files left: %v", entries)
+	}
+}
+
+// Without hard links (FAT, some SMB/FUSE mounts) the key is created with O_EXCL instead.
+func TestKeyWithoutHardLinks(t *testing.T) {
+	orig := linkFile
+	linkFile = func(oldname, newname string) error {
+		return &os.LinkError{Op: "link", Old: oldname, New: newname, Err: errors.ErrUnsupported}
+	}
+	t.Cleanup(func() { linkFile = orig })
+	dir := t.TempDir()
+	path := filepath.Join(dir, "media_key")
+	key, err := LoadOrCreateKey(path)
+	if err != nil || len(key) != 32 {
+		t.Fatalf("key = %x, %v", key, err)
+	}
+	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("stat = %v, %v", fi, err)
+	}
+	if again, err := LoadOrCreateKey(path); err != nil || string(again) != string(key) {
+		t.Fatalf("key not reused: %x, %v", again, err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
 		t.Fatalf("files left: %v", entries)
 	}
 }

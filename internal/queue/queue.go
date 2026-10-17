@@ -649,8 +649,8 @@ func (d *dispatcher) sent(item store.Outbound, p Payload, at time.Time) error {
 	return nil
 }
 
-// fail finishes an item for good. If the write fails the item is still queued and keeps
-// its staged media.
+// fail finishes an item for good. If the write fails the item keeps its status (queued,
+// or in_flight when it fails after a send attempt) and its staged media.
 func (d *dispatcher) fail(item store.Outbound, attempts int, msg string) error {
 	if err := d.q.store.MarkFailed(context.Background(), item.ID, attempts, msg); err != nil {
 		d.log().Error("queue: mark failed", "err", err)
