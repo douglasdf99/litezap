@@ -57,10 +57,10 @@ Sem dependências externas no modo local.
 
 ### 3.1 Pacotes do supervisor
 
-- **`service`**: casos de uso (criar instância, enviar mensagem, listar chats...). REST, MCP HTTP e (via REST) MCP stdio são adaptadores finos; nenhuma lógica duplicada.
+- **`service`**: casos de uso (criar instância, enviar mensagem, listar chats...). REST e MCP são adaptadores finos; nenhuma lógica duplicada. As ferramentas MCP são definidas uma única vez sobre uma interface `Backend` com duas implementações: `service` local (MCP HTTP) e cliente REST (`litezap mcp`).
 - **`api`**: REST (seção 6). Autenticação e tokens (seção 6.1).
 - **`mcp`**: servidor MCP streamable HTTP em `/mcp` + implementação stdio usada por `litezap mcp`. Ferramentas na seção 7.
-- **`manager`**: ciclo de vida das instâncias, máquina de estados (5.1), heartbeat, restart, circuit breaker.
+- **`manager`**: ciclo de vida das instâncias, máquina de estados (9.1), heartbeat, restart, circuit breaker.
 - **`spawner`**: interface `Start(ctx, instanceID) (WorkerHandle, error)`, `Stop(ctx, instanceID) error`, `Status(instanceID) WorkerStatus`. `WorkerHandle` expõe o cliente gRPC e o PID/ID.
 - **`queue`**: fila de envio persistente por instância (4.1).
 - **`events`**: barramento interno com o envelope da seção 5; consumidores: `webhook`, `agenthook`, SSE.
@@ -72,7 +72,7 @@ Sem dependências externas no modo local.
 ### 3.2 Worker
 
 - Envolve **um** cliente whatsmeow. Store de sessão do whatsmeow em `data/instances/X/session.db`.
-- gRPC sobre unix socket em `data/run/X.sock` (AF_UNIX funciona no Windows 10+; não usamos named pipes).
+- gRPC sobre unix socket (AF_UNIX funciona no Windows 10+; não usamos named pipes). Caminho curto para respeitar o limite de ~104 bytes do macOS: `<tmpdir>/lz-<hash8>/<instance_hash8>.sock`, onde `hash8` deriva do `data_dir`.
 - RPCs: `Ping`, `GetQR`, `PairPhone(phone)`, `Send(payload) → wa_message_id`, `MarkRead`, `SendPresence`, `DownloadMedia(ref)`, `GetContacts`, `GetContact(jid)`, `CheckNumbers([]phone)`, `Logout`, e o stream `Events`.
 - **Não existe `ListChats` no worker**: o whatsmeow não lista chats. Chats e histórico vêm do log de mensagens do supervisor (8), alimentado pelos eventos de mensagem e de *history sync*.
 - Normaliza eventos whatsmeow para o envelope LiteZap (seção 5).
@@ -83,13 +83,15 @@ Sem dependências externas no modo local.
 ### 4.1 Envio
 
 1. `POST /v1/instances/{id}/messages` com `{to, type, ..., client_message_id?}` → validação → grava em `outbound_queue` → `202 {id, status:"queued"}`. `client_message_id` repetido devolve o item existente (idempotência).
-2. Despachante por instância (uma goroutine) retira itens em ordem, respeitando o ritmo configurado: `min_interval` (padrão 3s) + `jitter` (padrão 0–2s), `max_per_minute` (padrão 20), `typing_simulation` (padrão ligado, ~50ms por caractere, máx. 5s).
+2. Status do item: `queued → in_flight → sent | failed`. Despachante por instância (uma goroutine) retira itens em **ordem estrita** (um item em backoff segura os seguintes daquele destinatário; outros destinatários seguem). O despachante **fica pausado enquanto a instância não está `connected`**, sem consumir tentativas. Ritmo: respeitando o ritmo configurado: `min_interval` (padrão 3s) + `jitter` (padrão 0–2s), `max_per_minute` (padrão 20), `typing_simulation` (padrão ligado, ~50ms por caractere, máx. 5s).
 3. Chama `Send` no worker. Sucesso → `sent` + `wa_message_id` gravado (também usado na detecção de humano, 4.3).
-4. Falha retentável (`instance_not_connected`, timeout, erro de rede do worker) → volta para a fila com backoff, até **5 tentativas**; depois `failed`. Falha não retentável (`invalid_number`, mídia inválida, `logged_out`, `banned`) → `failed` imediato.
+4. Falha retentável (timeout ou erro de rede do worker com a instância `connected`) → volta para a fila com backoff, até **5 tentativas**; depois `failed`. Falha não retentável (`invalid_number`, mídia inválida, `logged_out`, `banned`) → `failed` imediato.
 5. Status `delivered`/`read` chegam como eventos (receipts) → atualizam o store → evento `message.status`.
 6. **Modo síncrono** `?wait=true&timeout=30s`: a requisição aguarda o item sair de `queued`. Se ficar `sent` dentro do prazo → `200` com `wa_message_id`; se `failed` → erro; se o prazo estourar, a mensagem **continua na fila** e a resposta é `202 {id, status:"queued"}`.
 
-Tipos de mensagem suportados (lista fechada nesta peça): `text`, `image`, `video`, `audio` (inclui voz/ptt), `document`, `sticker`, `location`, `contact`, `reaction`. Mídia entra por `media.url` (o supervisor baixa) ou `media.base64`; multipart fica fora.
+Tipos de mensagem suportados (lista fechada nesta peça): `text`, `image`, `video`, `audio` (inclui voz/ptt), `document`, `sticker`, `location`, `contact`, `reaction`. Mídia entra por `media.url` (o supervisor baixa) ou `media.base64`; multipart fica fora. O download por URL tem proteção contra SSRF: timeout 30s, limite de tamanho do tipo, e bloqueio de IPs privados/loopback/link-local (desligável por config para uso local).
+
+O `id` devolvido no envio é o id do item da fila, e é ele que se consulta em `GET /messages/{msg_id}` (que também mostra o `wa_message_id` quando houver).
 
 ### 4.2 Recebimento
 
@@ -101,7 +103,7 @@ Tipos de mensagem suportados (lista fechada nesta peça): `text`, `image`, `vide
 ### 4.3 Hook de agente
 
 Configuração por instância (`PUT /v1/instances/{id}/agent-hook`): `url`, `secret`, `timeout` (padrão 30s), `context_messages` (padrão 20), `enabled`, `groups_enabled` (padrão false), `human_pause` (padrão 30min), `ignore` (lista de JIDs).
-Override por chat (`PUT /v1/instances/{id}/chats/{jid}/agent`): `{enabled: bool}`.
+Override por chat (`PUT /v1/instances/{id}/chats/{jid}/agent`): `{enabled: true | false | null}` (`null` herda o padrão da instância). As ações `handoff` e o desligamento manual usam esse mesmo campo.
 
 Disparo: só para `message.received` de chats não ignorados, não pausados e não desligados. Mensagens são processadas uma por vez por chat (sem respostas concorrentes no mesmo chat).
 
@@ -147,7 +149,7 @@ Exemplo de referência em `examples/agent-claude/`: servidor mínimo em Go que i
 
 ### 4.5 Mídia
 
-- Recebida: **download sob demanda**. O evento traz `media.id`; `GET /v1/instances/{id}/media/{media_id}` baixa via worker na primeira vez e guarda em `data/media/`. URLs assinadas têm TTL de 1h. Arquivos expiram após 7 dias (configurável).
+- Recebida: **download sob demanda**. O evento traz `media.id`; `GET /v1/instances/{id}/media/{media_id}` baixa via worker na primeira vez e guarda em `data/media/`. `GET .../media/{media_id}?signed=1` devolve `{url}` assinada (TTL 1h) que funciona sem token, para repassar a terceiros (ex.: IA). Arquivos expiram após 7 dias (configurável).
 - Enviada: limites de tamanho por tipo (padrão: imagem 16MB, vídeo/áudio 64MB, documento 100MB).
 
 ## 5. Eventos
@@ -219,7 +221,7 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 | `PUT /instances/{id}/agent-hook` · `PUT .../chats/{jid}/agent` | inst | hook de agente (4.3) |
 | `GET /instances/{id}/events` · `GET /events` | inst · admin | SSE |
 | `/webhooks...` | admin ou inst (só os da própria instância) | 5.3 |
-| `GET /healthz` · `/readyz` · `/metrics` | sem auth (bind local) | observabilidade |
+| `GET /healthz` · `/readyz` · `/metrics` | sem auth em bind loopback; admin caso contrário | observabilidade |
 
 ### 6.1 Autenticação e tokens
 
@@ -232,14 +234,14 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 
 Todas mapeiam casos de uso do `service`:
 
-`list_instances`, `get_instance_status`, `send_message` (texto, com `wait` por padrão), `send_media` (por URL), `list_chats`, `get_messages` (por chat, paginado), `search_messages`, `get_contact`, `check_numbers`, `mark_read`.
+`list_instances` (com token de instância devolve só a própria), `get_instance_status`, `send_message` (texto, com `wait` por padrão), `send_media` (por URL), `list_chats`, `get_messages` (por chat, paginado), `search_messages`, `get_contact`, `check_numbers`, `mark_read`.
 
 ## 8. Store (SQLite)
 
 Arquivo `data/litezap.db`, modo WAL, migrações versionadas embutidas no binário. Entidades:
 
 - `instances` (id, name, state, phone, jid, token_hash, settings_json, created_at, updated_at)
-- `chats` (instance_id, jid, name, is_group, last_message_at, unread_count, agent_enabled, agent_paused_until)
+- `chats` (instance_id, jid, name, is_group, last_message_at, unread_count, agent_enabled NULL|bool, agent_paused_until)
 - `messages` (instance_id, id, wa_message_id, chat_jid, from_me, source, type, text, media_json, status, timestamp) + tabela FTS5 sobre `text`
 - `outbound_queue` (id, instance_id, client_message_id, payload_json, status, attempts, next_attempt_at, last_error, created_at)
 - `webhooks` (id, instance_id?, url, secret, events_json, version, enabled)
@@ -265,7 +267,9 @@ Retenção do log de mensagens: ilimitada por padrão, com `message_retention_da
 | qualquer ativo | `logged_out` | logout pelo celular ou pela API |
 | qualquer ativo | `banned` | erro de conta banida/bloqueada |
 | qualquer ativo | `failed` | circuit breaker aberto |
-| qualquer | `stopped` | `stop` |
+| `connecting` | `reconnecting` | falha ao conectar com sessão válida |
+| qualquer ativo | `starting` | crash do worker (restart automático com backoff) |
+| qualquer, exceto `banned` | `stopped` | `stop` |
 | `logged_out` · `failed` · `stopped` | `starting` | `start` ou `restart` (em `logged_out` leva a `qr_pending`) |
 | `banned` | — | só `DELETE` |
 
@@ -304,7 +308,7 @@ Códigos estáveis: `unauthorized`, `forbidden`, `instance_not_found`, `instance
 
 ## 12. Stack
 
-Go na versão exigida pela versão mais recente do whatsmeow (fixada no `go.mod`), whatsmeow, `chi`, gRPC (supervisor↔worker), `modernc.org/sqlite` (sem CGO, com FTS5), SDK Go oficial de MCP, `slog`, Prometheus client.
+Go na versão exigida pela versão mais recente do whatsmeow (fixada no `go.mod`), whatsmeow, `chi`, gRPC (supervisor↔worker), `modernc.org/sqlite` (sem CGO, com FTS5; o `sqlstore` do whatsmeow exige `_pragma=foreign_keys(1)` no DSN), SDK Go oficial de MCP, `slog`, Prometheus client.
 
 ## 13. Marcos de implementação
 
