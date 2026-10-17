@@ -102,3 +102,74 @@ func TestResolveBatchLargerThanBucket(t *testing.T) {
 		t.Fatalf("quota consumed by the rejected batch: %v", err)
 	}
 }
+
+type downWorkers struct{}
+
+func (downWorkers) Client(string) (workerv1.WorkerClient, error) {
+	return nil, errors.New("not running")
+}
+
+// A lookup that cannot reach the worker spends no quota.
+func TestResolveWithoutWorkerSpendsNoQuota(t *testing.T) {
+	r, wa, _ := setup(t)
+	ctx := context.Background()
+	up := r.Workers
+	r.Workers = downWorkers{}
+	for i := 0; i < 5; i++ {
+		if _, err := r.Resolve(ctx, "i1", []string{"5511900000001"}, ForSend); err == nil || errors.Is(err, ErrRateLimited) {
+			t.Fatalf("worker down: %v", err)
+		}
+	}
+	r.Workers = up
+	if _, err := r.Resolve(ctx, "i1", []string{"5511900000001", "5511900000002", "5511900000003"}, ForSend); err != nil || wa.Checks() != 3 {
+		t.Fatalf("quota spent while the worker was down: %v (checks %d)", err, wa.Checks())
+	}
+}
+
+func TestLookupReportsNetworkAndCachedIsLocal(t *testing.T) {
+	r, wa, fc := setup(t)
+	ctx := context.Background()
+	wa.SetRegistered("551188887777", "5511988887777@s.whatsapp.net")
+	if _, ok, err := r.Cached(ctx, "i1", "551188887777"); ok || err != nil {
+		t.Fatalf("cached before any lookup: %v, %v", ok, err)
+	}
+	if _, network, err := r.Lookup(ctx, "i1", []string{"551188887777"}, ForSend); err != nil || !network {
+		t.Fatalf("first lookup: network=%v, %v", network, err)
+	}
+	if res, network, err := r.Lookup(ctx, "i1", []string{"551188887777"}, ForSend); err != nil || network || res[0].JID != "5511988887777@s.whatsapp.net" {
+		t.Fatalf("second lookup: %+v network=%v, %v", res, network, err)
+	}
+	res, ok, err := r.Cached(ctx, "i1", "551188887777")
+	if err != nil || !ok || !res.Found || res.JID != "5511988887777@s.whatsapp.net" || wa.Checks() != 1 {
+		t.Fatalf("cached = %+v %v %v (checks %d)", res, ok, err, wa.Checks())
+	}
+	fc.Advance(31 * 24 * time.Hour) // stale entries are not answers
+	if _, ok, _ := r.Cached(ctx, "i1", "551188887777"); ok {
+		t.Fatal("stale entry returned")
+	}
+}
+
+// check-numbers also has a daily cap of uncached lookups.
+func TestCheckDailyLimit(t *testing.T) {
+	r, wa, fc := setup(t)
+	ctx := context.Background()
+	r.CheckPerMinute, r.CheckPerDay = 10, 2
+	if _, err := r.Resolve(ctx, "i1", []string{"5511900000001", "5511900000002"}, ForCheck); err != nil {
+		t.Fatal(err)
+	}
+	fc.Advance(time.Hour)
+	_, err := r.Resolve(ctx, "i1", []string{"5511900000003"}, ForCheck)
+	if !errors.Is(err, ErrDailyLimit) || !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("3rd check of the day = %v", err)
+	}
+	if _, err := r.Resolve(ctx, "i1", []string{"5511900000001"}, ForCheck); err != nil {
+		t.Fatalf("cached numbers are not limited: %v", err)
+	}
+	if _, err := r.Resolve(ctx, "i1", []string{"5511900000004"}, ForSend); err != nil {
+		t.Fatalf("the send bucket has no check cap: %v", err)
+	}
+	fc.Advance(24 * time.Hour)
+	if _, err := r.Resolve(ctx, "i1", []string{"5511900000003"}, ForCheck); err != nil || wa.Checks() != 4 {
+		t.Fatalf("next day: %v (checks %d)", err, wa.Checks())
+	}
+}
