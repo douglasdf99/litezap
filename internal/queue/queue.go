@@ -17,6 +17,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/clock"
 	"github.com/douglasdf99/litezap/internal/instance"
 	"github.com/douglasdf99/litezap/internal/lookup"
+	"github.com/douglasdf99/litezap/internal/manager"
 	"github.com/douglasdf99/litezap/internal/settings"
 	"github.com/douglasdf99/litezap/internal/store"
 	"google.golang.org/grpc/codes"
@@ -373,6 +374,11 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 	if err := json.Unmarshal([]byte(item.Payload), &p); err != nil {
 		return pauseOn(d.fail(item, item.Attempts, "validation_failed: unreadable payload")), true
 	}
+	// A reply typed with the other 9th-digit form joins its conversation before the window
+	// decides whether it is cold.
+	if next, done := d.cachedTarget(ctx, item); done {
+		return next, true
+	}
 	if opens, wait, err := d.window(ctx, set, item, now); err != nil {
 		d.log().Error("queue: send window", "err", err)
 		return errPause, true
@@ -401,7 +407,7 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 	// The number lookup comes after the ramp: past today's limit new numbers are not even
 	// looked up (a stream of lookups looks like contact scraping). An item moved to the
 	// canonical JID is picked again, so the ramp is checked for that JID too.
-	if next, done := d.resolve(ctx, item, now); done {
+	if next, done := d.resolve(ctx, in, set, item, now); done {
 		return next, true
 	}
 	// Doubled only towards another chat: a retry of the same item is not a repeated text.
@@ -498,25 +504,59 @@ const maxLookupFailures = 5
 // rate-limited lookup only postpones this item; other recipients keep going. done=true
 // means the item was handled (failed, deferred or moved) and the step should sleep next
 // (errPause after a failed store write) and pick again.
-func (d *dispatcher) resolve(ctx context.Context, item store.Outbound, now time.Time) (next time.Duration, done bool) {
-	r := d.q.opt.Resolver
-	user, ok := strings.CutSuffix(item.ChatJID, "@s.whatsapp.net")
-	if r == nil || !ok {
-		return 0, false
-	}
-	st := d.q.store
-	if _, err := st.GetChat(ctx, d.id, item.ChatJID); err == nil {
-		return 0, false // known chat: we already talked to this JID
-	} else if !errors.Is(err, store.ErrNotFound) {
+//
+// A lookup that has to ask WhatsApp is paced like a send (and recorded in the pacer), and
+// the instance makes at most the ramp's daily cap of them per day (the ramp only counts
+// sends; a run of numbers without WhatsApp would otherwise be looked up without limit).
+func (d *dispatcher) resolve(ctx context.Context, in store.Instance, set settings.Settings, item store.Outbound, now time.Time) (next time.Duration, done bool) {
+	user, ok, err := d.unknownPhone(ctx, item)
+	if err != nil {
 		d.log().Error("queue: load chat", "err", err)
 		return errPause, true
 	}
-	res, err := r.Resolve(ctx, d.id, []string{user}, lookup.ForSend)
+	if !ok {
+		return 0, false
+	}
+	r, st := d.q.opt.Resolver, d.q.store
+	if res, ok, err := r.Cached(ctx, d.id, user); err != nil {
+		d.log().Error("queue: number cache", "err", err)
+		return errPause, true
+	} else if ok {
+		return d.applyLookup(ctx, item, res)
+	}
+	if limit := set.Ramp.DailyCap(in.FirstConnectedAt, now); limit >= 0 {
+		n, err := st.LookupsSince(ctx, d.id, set.DayStart(now))
+		if err != nil {
+			d.log().Error("queue: count lookups", "err", err)
+			return errPause, true
+		}
+		if n >= limit {
+			err := st.Defer(ctx, item.ID, d.nextDayWindow(set, now), "lookup_daily_limit: daily limit of number lookups reached")
+			if err != nil {
+				d.log().Error("queue: defer", "err", err)
+			}
+			return pauseOn(err), true
+		}
+	}
+	if w := d.pacer.wait(now, set, false); w > 0 {
+		return w, true
+	}
+	res, network, err := r.Lookup(ctx, d.id, []string{user}, lookup.ForSend)
+	if network {
+		d.pacer.record(d.q.opt.Clock.Now(), set)
+	}
 	switch {
 	case ctx.Err() != nil:
 		return 0, true // shutting down: an interrupted lookup is not a lookup failure
 	case errors.Is(err, lookup.ErrRateLimited):
 		err := st.Defer(ctx, item.ID, now.Add(time.Minute), "lookup_rate_limited: retrying in a minute")
+		if err != nil {
+			d.log().Error("queue: defer", "err", err)
+		}
+		return pauseOn(err), true
+	case errors.Is(err, manager.ErrNotRunning) || status.Code(err) == codes.Unavailable:
+		// Not the number's fault: wait for the worker without counting a lookup failure.
+		err := st.Defer(ctx, item.ID, now.Add(errPause), "instance_not_connected: the number lookup could not reach the worker")
 		if err != nil {
 			d.log().Error("queue: defer", "err", err)
 		}
@@ -532,11 +572,58 @@ func (d *dispatcher) resolve(ctx context.Context, item store.Outbound, now time.
 			d.log().Error("queue: defer", "err", err)
 		}
 		return pauseOn(err), true
-	case !res[0].Found:
+	}
+	return d.applyLookup(ctx, item, res[0])
+}
+
+// unknownPhone returns the phone number of item's recipient when it may need a lookup: a
+// resolver is set, the recipient is a phone JID and there is no chat with it yet.
+func (d *dispatcher) unknownPhone(ctx context.Context, item store.Outbound) (string, bool, error) {
+	user, ok := strings.CutSuffix(item.ChatJID, "@s.whatsapp.net")
+	if d.q.opt.Resolver == nil || !ok {
+		return "", false, nil
+	}
+	if _, err := d.q.store.GetChat(ctx, d.id, item.ChatJID); err == nil {
+		return "", false, nil // known chat: we already talked to this JID
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return "", false, err
+	}
+	return user, true, nil
+}
+
+// cachedTarget applies a fresh cached lookup of a recipient without a chat, before the
+// send window and the ramp look at it: the other 9th-digit form of a number moves the item
+// to the conversation that already exists, and a number known not to be on WhatsApp fails
+// at once. Cache only: no network, no quota.
+func (d *dispatcher) cachedTarget(ctx context.Context, item store.Outbound) (next time.Duration, done bool) {
+	user, ok, err := d.unknownPhone(ctx, item)
+	if err != nil {
+		d.log().Error("queue: load chat", "err", err)
+		return errPause, true
+	}
+	if !ok {
+		return 0, false
+	}
+	res, ok, err := d.q.opt.Resolver.Cached(ctx, d.id, user)
+	if err != nil {
+		d.log().Error("queue: number cache", "err", err)
+		return errPause, true
+	}
+	if !ok {
+		return 0, false
+	}
+	return d.applyLookup(ctx, item, res)
+}
+
+// applyLookup acts on a lookup result: not on WhatsApp → failed; another phone JID → the
+// chat's queued items move there (done, pick again); otherwise the send goes ahead.
+func (d *dispatcher) applyLookup(ctx context.Context, item store.Outbound, res lookup.Result) (next time.Duration, done bool) {
+	switch {
+	case !res.Found:
 		return pauseOn(d.fail(item, item.Attempts, "invalid_number: recipient is not on WhatsApp")), true
-	case res[0].JID != item.ChatJID && strings.HasSuffix(res[0].JID, "@s.whatsapp.net"):
+	case res.JID != item.ChatJID && strings.HasSuffix(res.JID, "@s.whatsapp.net"):
 		// Only to another phone JID: a LID answer keeps the phone JID (chats are by phone).
-		if err := st.RetargetChat(ctx, d.id, item.ChatJID, res[0].JID); err != nil {
+		if err := d.q.store.RetargetChat(ctx, d.id, item.ChatJID, res.JID); err != nil {
 			d.log().Error("queue: retarget", "err", err)
 			return errPause, true
 		}
@@ -567,13 +654,17 @@ func (d *dispatcher) ramp(ctx context.Context, in store.Instance, set settings.S
 	if err != nil || counted || count < set.Ramp.DailyCap(in.FirstConnectedAt, now) {
 		return time.Time{}, err
 	}
-	// Not at midnight: at the next day's window start plus jitter (a burst of deferred
-	// messages at night looks like spam).
-	tomorrow := day.AddDate(0, 0, 1)
+	return d.nextDayWindow(set, now), nil
+}
+
+// nextDayWindow is where daily limits defer to: not midnight but the next day's window
+// start plus jitter (a burst of deferred messages at night looks like spam).
+func (d *dispatcher) nextDayWindow(set settings.Settings, now time.Time) time.Time {
+	tomorrow := set.DayStart(now).AddDate(0, 0, 1)
 	if start, _, _ := set.WindowAt(tomorrow); !start.IsZero() {
 		tomorrow = start
 	}
-	return tomorrow.Add(time.Duration(d.q.opt.Rand() * float64(d.q.opt.WindowJitter))), nil
+	return tomorrow.Add(time.Duration(d.q.opt.Rand() * float64(d.q.opt.WindowJitter)))
 }
 
 func buildRequest(item store.Outbound, p Payload) (*workerv1.SendRequest, error) {

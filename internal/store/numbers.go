@@ -33,3 +33,13 @@ func (s *Store) PutCachedNumber(ctx context.Context, instanceID string, c Cached
 		instanceID, c.Phone, c.Found, c.JID, fmtTS(c.CheckedAt))
 	return err
 }
+
+// LookupsSince counts numbers looked up (cache entries written) since t: the send queue's
+// daily lookup cap. A Brazilian number answered with the other 9th-digit form writes two
+// entries, so the count errs on the safe side.
+func (s *Store) LookupsSince(ctx context.Context, instanceID string, t time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM number_cache WHERE instance_id = ? AND checked_at >= ?`,
+		instanceID, fmtTS(t)).Scan(&n)
+	return n, err
+}

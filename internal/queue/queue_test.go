@@ -87,6 +87,10 @@ func newEnvAt(t *testing.T, start time.Time, defaults settings.Settings, state i
 	return &env{t: t, st: st, clock: fc, q: q, fake: sp.Last("i1")}
 }
 
+// noLookup drops the resolver: for tests of send pacing, where lookups (paced too) would
+// add their own intervals.
+func noLookup(o *Options) { o.Resolver = nil }
+
 func (e *env) enqueue(chat string, p Payload) string {
 	e.t.Helper()
 	return e.enqueueExpiring(chat, p, time.Time{})
@@ -234,7 +238,7 @@ func TestDisconnectDuringSendKeepsAttempts(t *testing.T) {
 func TestPacingAndTyping(t *testing.T) {
 	s := fastSettings()
 	s.MinIntervalMS, s.TypingSimulation = 3000, true
-	e := newEnv(t, s, instance.Connected)
+	e := newEnvAt(t, t0, s, instance.Connected, noLookup)
 	e.enqueue(chatA, Payload{Type: "text", Text: "oi"})
 	e.enqueue(chatB, Payload{Type: "text", Text: "olá"})
 	// Typing first: "composing", then 2 chars x 50ms.
@@ -526,6 +530,96 @@ func TestGraceStartsWithTheConnectedNotice(t *testing.T) {
 	e.eventually("sent after grace", func() bool { return e.status(id).Status == store.OutSent })
 }
 
+// Lookups are paced like sends: a run of numbers without WhatsApp never bursts.
+func TestLookupsArePaced(t *testing.T) {
+	s := fastSettings()
+	s.MinIntervalMS = 3000
+	e := newEnv(t, s, instance.Connected)
+	for i := 1; i <= 5; i++ {
+		phone := "551190000000" + string(rune('0'+i))
+		e.fake.WA.SetUnregistered(phone)
+		e.enqueue(phone+"@s.whatsapp.net", Payload{Type: "text", Text: "oi"})
+	}
+	for i := 1; i <= 5; i++ {
+		e.eventually("lookup", func() bool { return e.fake.WA.Checks() == i && (i == 5 || e.clock.Waiters() > 0) })
+		if i == 5 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+		if n := e.fake.WA.Checks(); n != i {
+			t.Fatalf("%d lookups before min_interval passed, want %d", n, i)
+		}
+		e.clock.Advance(3 * time.Second)
+	}
+}
+
+// Lookups have a daily cap (the ramp's): past it, new numbers wait for the next window.
+func TestLookupDailyCap(t *testing.T) {
+	s := fastSettings()
+	s.Ramp = settings.Ramp{Enabled: true, StartPerDay: 2, EndPerDay: 2, Days: 1}
+	s.SendWindow = settings.Window{Start: "08:00", End: "20:00"}
+	e := newEnv(t, s, instance.Connected)
+	var ids []string
+	for i := 1; i <= 4; i++ {
+		phone := "551190000000" + string(rune('0'+i))
+		e.fake.WA.SetUnregistered(phone) // never sent: the ramp alone would not stop them
+		ids = append(ids, e.enqueue(phone+"@s.whatsapp.net", Payload{Type: "text", Text: "oi"}))
+	}
+	e.eventually("two failed, two deferred", func() bool {
+		return e.status(ids[0]).Status == store.OutFailed && e.status(ids[1]).Status == store.OutFailed &&
+			strings.HasPrefix(e.status(ids[2]).LastError, "lookup_daily_limit:") &&
+			strings.HasPrefix(e.status(ids[3]).LastError, "lookup_daily_limit:")
+	})
+	want := time.Date(2026, 10, 18, 8, 2, 30, 0, time.UTC)
+	if o := e.status(ids[2]); o.Status != store.OutQueued || !o.NextAttemptAt.Equal(want) || e.fake.WA.Checks() != 2 {
+		t.Fatalf("deferred = %+v, lookups %d", o, e.fake.WA.Checks())
+	}
+}
+
+// A reply typed with the other 9th-digit form reaches the active conversation through the
+// cache, without waiting for the send window or asking WhatsApp.
+func TestCachedNinthDigitReplyIsNotCold(t *testing.T) {
+	s := fastSettings()
+	s.SendWindow = settings.Window{Start: "08:00", End: "20:00"}
+	start := time.Date(2026, 10, 17, 20, 5, 0, 0, time.UTC)
+	e := newEnvAt(t, start, s, instance.Connected, nil)
+	ctx := context.Background()
+	canonical := "5511988887777@s.whatsapp.net"
+	if _, err := e.st.InsertMessage(ctx, "i1", store.Message{ID: "in1", WAMessageID: "IN1", ChatJID: canonical,
+		Source: "contact", Type: "text", Status: "received", Timestamp: start.Add(-10 * time.Minute)},
+		store.ChatUpdate{Inbound: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.PutCachedNumber(ctx, "i1", store.CachedNumber{Phone: "551188887777", Found: true, JID: canonical, CheckedAt: start}); err != nil {
+		t.Fatal(err)
+	}
+	id := e.enqueue("551188887777@s.whatsapp.net", Payload{Type: "text", Text: "respondendo"})
+	e.eventually("reply sent at 20:05", func() bool { return e.status(id).Status == store.OutSent })
+	if to := e.fake.WA.Sent()[0].To; to != canonical || e.fake.WA.Checks() != 0 {
+		t.Fatalf("sent to %q, lookups %d", to, e.fake.WA.Checks())
+	}
+}
+
+// A lookup that cannot reach the worker is not the number's fault.
+func TestLookupWithoutWorkerIsNotAFailure(t *testing.T) {
+	for name, tweak := range map[string]func(*Options){
+		"not running": func(o *Options) { o.Resolver.Workers = workers{} },
+		"unavailable": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnvAt(t, t0, fastSettings(), instance.Connected, tweak)
+			if tweak == nil {
+				e.fake.WA.SetCheckErr(status.Error(codes.Unavailable, "instance_not_connected: websocket not connected"))
+			}
+			id := e.enqueue(chatA, Payload{Type: "text", Text: "oi"})
+			e.eventually("deferred", func() bool { return strings.HasPrefix(e.status(id).LastError, "instance_not_connected:") })
+			if o := e.status(id); o.Status != store.OutQueued || o.LookupFailures != 0 || o.Attempts != 0 || !o.NextAttemptAt.Equal(t0.Add(errPause)) {
+				t.Fatalf("item = %+v", o)
+			}
+		})
+	}
+}
+
 func TestWorkerNotConnectedKeepsAttempts(t *testing.T) {
 	e := newEnv(t, fastSettings(), instance.Connected)
 	calls := 0
@@ -616,7 +710,7 @@ func TestDoubledIntervalForIdenticalTextToNewRecipients(t *testing.T) {
 			s := fastSettings()
 			s.MinIntervalMS = 3000
 			s.Ramp = settings.Ramp{Enabled: ramp, StartPerDay: 10, EndPerDay: 10, Days: 1}
-			e := newEnv(t, s, instance.Connected)
+			e := newEnvAt(t, t0, s, instance.Connected, noLookup)
 			e.enqueue(chatA, Payload{Type: "text", Text: "promo"})
 			e.enqueue(chatB, Payload{Type: "text", Text: "promo"})
 			e.eventually("first send", func() bool { return len(e.fake.WA.Sent()) == 1 && e.clock.Waiters() > 0 })
@@ -635,7 +729,7 @@ func TestDoubledIntervalForIdenticalTextToNewRecipients(t *testing.T) {
 func TestMaxPerMinuteAcrossSends(t *testing.T) {
 	s := fastSettings()
 	s.MaxPerMinute = 2
-	e := newEnv(t, s, instance.Connected)
+	e := newEnvAt(t, t0, s, instance.Connected, noLookup)
 	e.enqueue(chatA, Payload{Type: "text", Text: "um"})
 	e.enqueue(chatB, Payload{Type: "text", Text: "dois"})
 	c := e.enqueue(chatC, Payload{Type: "text", Text: "três"})
@@ -654,7 +748,7 @@ func TestMaxPerMinuteAcrossSends(t *testing.T) {
 func TestPacingAppliesBetweenRetries(t *testing.T) {
 	s := fastSettings()
 	s.MinIntervalMS = 10000
-	e := newEnv(t, s, instance.Connected)
+	e := newEnvAt(t, t0, s, instance.Connected, noLookup)
 	calls := 0
 	e.fake.WA.SetSendFunc(func(req *workerv1.SendRequest) (*workerv1.SendResponse, error) {
 		if calls++; calls == 1 {

@@ -268,3 +268,18 @@ func TestNumberCache(t *testing.T) {
 		t.Fatalf("cached = %+v, %v", got, err)
 	}
 }
+
+func TestLookupsSince(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	seedInstance(t, s, "i1")
+	for i, at := range []time.Time{t0.Add(-25 * time.Hour), t0, t0.Add(time.Minute)} {
+		c := CachedNumber{Phone: "55119000000" + string(rune('0'+i)), CheckedAt: at}
+		if err := s.PutCachedNumber(ctx, "i1", c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := s.LookupsSince(ctx, "i1", t0); err != nil || n != 2 {
+		t.Fatalf("lookups since t0 = %d, %v", n, err)
+	}
+}
