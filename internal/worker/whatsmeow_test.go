@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
@@ -24,6 +25,7 @@ type rec struct {
 }
 
 func (r *rec) ConnState(string, string, string) {}
+func (r *rec) Data(*workerv1.Event)             {}
 func (r *rec) QR(code string, to time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -99,6 +101,7 @@ func (r *stateRec) ConnState(state, reason, _ string) {
 	defer r.mu.Unlock()
 	r.states = append(r.states, connEvt{state, reason})
 }
+func (r *stateRec) Data(*workerv1.Event) {}
 func (r *stateRec) QR(code string, _ time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

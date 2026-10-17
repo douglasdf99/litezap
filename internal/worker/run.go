@@ -78,6 +78,7 @@ func Run(ctx context.Context, opt Options, log *slog.Logger) error {
 	wa := NewWhatsmeow(cli, log)
 	wa.proxied = opt.ProxyURL != ""
 	srv := NewServer(wa)
+	srv.SetLogger(log)
 
 	_ = os.Remove(opt.Socket)
 	lis, err := net.Listen("unix", opt.Socket)
