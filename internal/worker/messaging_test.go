@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	nethttp "net/http"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waHistorySync"
+	"go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -178,5 +181,143 @@ func TestDataPathOnlyInstanceAreas(t *testing.T) {
 		if _, err := w.dataPath(b.path, b.area); status.Code(err) != codes.InvalidArgument {
 			t.Errorf("dataPath(%q, %s) = %v, want InvalidArgument", b.path, b.area, err)
 		}
+	}
+}
+
+func newMsgAdapter(t *testing.T) *Whatsmeow {
+	t.Helper()
+	own := types.NewJID("5511999999999", types.DefaultUserServer)
+	w := NewWhatsmeow(whatsmeow.NewClient(&store.Device{ID: &own}, nil), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	w.sink = &dataRec{}
+	return w
+}
+
+// The mappings shipped inside the history blob are used directly: whatsmeow stores them
+// from a goroutine that may not have finished when the event is handled.
+func TestHistoryResolvesLIDFromBlob(t *testing.T) {
+	w := newMsgAdapter(t)
+	r := w.sink.(*dataRec)
+	web := func(chat, participant, id string) *waWeb.WebMessageInfo {
+		key := &waCommon.MessageKey{RemoteJID: proto.String(chat), ID: proto.String(id)}
+		if participant != "" {
+			key.Participant = proto.String(participant)
+		}
+		return &waWeb.WebMessageInfo{Key: key, MessageTimestamp: proto.Uint64(1_800_000_000),
+			Message: &waE2E.Message{Conversation: proto.String("hi " + id)}}
+	}
+	hs := &waHistorySync.HistorySync{
+		PhoneNumberToLidMappings: []*waHistorySync.PhoneNumberToLIDMapping{
+			{PnJID: proto.String("5511888887777@s.whatsapp.net"), LidJID: proto.String("111@lid")},
+			{PnJID: proto.String("5511777776666"), LidJID: proto.String("222")}, // bare user parts
+		},
+		Conversations: []*waHistorySync.Conversation{
+			{ID: proto.String("111@lid"), Messages: []*waHistorySync.HistorySyncMsg{{Message: web("111@lid", "", "M1")}}},
+			// Conversation-level mapping only.
+			{ID: proto.String("333@lid"), PnJID: proto.String("5511666665555@s.whatsapp.net"),
+				Messages: []*waHistorySync.HistorySyncMsg{{Message: web("333@lid", "", "M2")}}},
+			// Group whose participant is a LID.
+			{ID: proto.String("120363@g.us"), Name: proto.String("G"),
+				Messages: []*waHistorySync.HistorySyncMsg{{Message: web("120363@g.us", "222@lid", "M3")}}},
+		},
+	}
+	w.onHistory(&events.HistorySync{Data: hs})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.evs) != 3 {
+		t.Fatalf("events = %d", len(r.evs))
+	}
+	got := func(i int) *workerv1.HistoryChunk { return r.evs[i].GetHistory() }
+	if c := got(0); c.Chat != "5511888887777@s.whatsapp.net" || c.Messages[0].Sender != c.Chat {
+		t.Fatalf("lid dm = %+v", c)
+	}
+	if c := got(1); c.Chat != "5511666665555@s.whatsapp.net" {
+		t.Fatalf("conversation mapping = %+v", c)
+	}
+	if c := got(2); c.Chat != "120363@g.us" || c.Messages[0].Sender != "5511777776666@s.whatsapp.net" {
+		t.Fatalf("group participant = %+v", c.Messages[0])
+	}
+}
+
+func TestGroupParticipantAddressing(t *testing.T) {
+	w := newMsgAdapter(t)
+	group := types.NewJID("120363", types.GroupServer)
+	pn := types.NewJID("5511888887777", types.DefaultUserServer)
+	lid := types.NewJID("555", types.HiddenUserServer)
+	calls := 0
+	mode := types.AddressingModeLID
+	w.groupInfo = func(context.Context, types.JID) (*types.GroupInfo, error) {
+		calls++
+		return &types.GroupInfo{AddressingMode: mode}, nil
+	}
+	w.lidFor = func(_ context.Context, p types.JID) (types.JID, error) { return lid, nil }
+	ctx := context.Background()
+	if got := w.groupParticipant(ctx, group, pn); got != lid {
+		t.Fatalf("lid group: %v", got)
+	}
+	w.groupParticipant(ctx, group, pn)
+	if calls != 1 {
+		t.Fatalf("group info not cached: %d calls", calls)
+	}
+	// Phone-addressed group keeps the phone participant.
+	pnGroup := types.NewJID("999", types.GroupServer)
+	mode = types.AddressingModePN
+	if got := w.groupParticipant(ctx, pnGroup, pn); got != pn {
+		t.Fatalf("pn group: %v", got)
+	}
+	// Lookup failures fall back to the participant as given (and are not cached).
+	errGroup := types.NewJID("777", types.GroupServer)
+	w.groupInfo = func(context.Context, types.JID) (*types.GroupInfo, error) { return nil, errors.New("boom") }
+	if got := w.groupParticipant(ctx, errGroup, pn); got != pn {
+		t.Fatalf("error fallback: %v", got)
+	}
+	// A LID participant, an empty one or a direct chat are left alone.
+	if got := w.groupParticipant(ctx, group, lid); got != lid {
+		t.Fatalf("lid participant: %v", got)
+	}
+	if got := w.groupParticipant(ctx, pn, pn); got != pn {
+		t.Fatalf("direct chat: %v", got)
+	}
+}
+
+func TestGroupReactionNeedsSender(t *testing.T) {
+	w := newMsgAdapter(t)
+	_, err := w.Send(context.Background(), &workerv1.SendRequest{
+		To: "120363@g.us", MessageId: "X", Type: "reaction", Text: "👍", ReactionMessageId: "T1"})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDownloadErrCodes(t *testing.T) {
+	http := func(code int) error {
+		return fmt.Errorf("wrap: %w", whatsmeow.DownloadHTTPError{Response: &nethttp.Response{StatusCode: code}})
+	}
+	cases := []struct {
+		err  error
+		code codes.Code
+	}{
+		{http(403), codes.NotFound}, {http(404), codes.NotFound}, {http(410), codes.NotFound},
+		{http(500), codes.Unavailable}, {http(429), codes.Unavailable}, {http(503), codes.Unavailable},
+		{whatsmeow.ErrNoURLPresent, codes.NotFound},
+		{errors.New("boom"), codes.Unknown},
+	}
+	for _, c := range cases {
+		if got := status.Code(downloadErr(c.err)); got != c.code {
+			t.Errorf("%v -> %v, want %v", c.err, got, c.code)
+		}
+	}
+}
+
+func TestReceiptTypes(t *testing.T) {
+	for in, want := range map[types.ReceiptType]string{
+		types.ReceiptTypeDelivered: "delivered", types.ReceiptTypeInactive: "delivered",
+		types.ReceiptTypeRead: "read", types.ReceiptTypePlayed: "played",
+	} {
+		if got, ok := receiptType(in); !ok || got != want {
+			t.Errorf("%q -> %q, %v", in, got, ok)
+		}
+	}
+	if _, ok := receiptType(types.ReceiptTypeRetry); ok {
+		t.Error("retry must not be a delivery report")
 	}
 }

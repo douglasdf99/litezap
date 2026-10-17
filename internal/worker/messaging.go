@@ -134,7 +134,11 @@ func (w *Whatsmeow) Send(ctx context.Context, req *workerv1.SendRequest) (*worke
 			if sender, err = types.ParseJID(req.ReactionSender); err != nil {
 				return nil, grpcErr(codes.InvalidArgument, "validation_failed", "invalid reaction sender")
 			}
+		} else if to.Server == types.GroupServer {
+			// The key of a group reaction names the author of the target message.
+			return nil, grpcErr(codes.InvalidArgument, "validation_failed", "reaction_sender is required in groups")
 		}
+		sender = w.groupParticipant(ctx, to, sender)
 		msg = w.cli.BuildReaction(to, sender, types.MessageID(req.ReactionMessageId), req.Text)
 	default:
 		mt, ok := mediaType(req.Type)
@@ -197,10 +201,63 @@ func (w *Whatsmeow) MarkRead(ctx context.Context, req *workerv1.MarkReadRequest)
 	for i, id := range req.MessageIds {
 		ids[i] = types.MessageID(id)
 	}
+	sender = w.groupParticipant(ctx, chat, sender)
 	if err := w.cli.MarkRead(ctx, ids, time.Now(), chat, sender); err != nil {
 		return sendErr(err)
 	}
 	return nil
+}
+
+// groupParticipant converts a phone-number participant to its LID when chat is a group
+// that addresses members by LID: the key of a reaction and the read receipt must name the
+// participant the way the group does. Anything it cannot determine (lookup failure, no
+// mapping) leaves the participant as given.
+func (w *Whatsmeow) groupParticipant(ctx context.Context, chat, p types.JID) types.JID {
+	if chat.Server != types.GroupServer || p.Server != types.DefaultUserServer {
+		return p
+	}
+	if !w.groupUsesLID(ctx, chat) {
+		return p
+	}
+	lidFor := w.lidFor
+	if lidFor == nil {
+		if w.cli.Store.LIDs == nil {
+			return p
+		}
+		lidFor = w.cli.Store.LIDs.GetLIDForPN
+	}
+	if lid, err := lidFor(ctx, p.ToNonAD()); err == nil && !lid.IsEmpty() {
+		return lid.ToNonAD()
+	}
+	return p
+}
+
+// groupUsesLID reports whether the group addresses its members by LID. The answer is
+// cached for the life of the worker (a group's addressing mode does not change); failed
+// lookups are not cached.
+func (w *Whatsmeow) groupUsesLID(ctx context.Context, group types.JID) bool {
+	w.groupMu.Lock()
+	lid, ok := w.groupLID[group]
+	w.groupMu.Unlock()
+	if ok {
+		return lid
+	}
+	info := w.groupInfo
+	if info == nil {
+		info = w.cli.GetGroupInfo
+	}
+	gi, err := info(ctx, group)
+	if err != nil || gi == nil {
+		return false
+	}
+	lid = gi.AddressingMode == types.AddressingModeLID
+	w.groupMu.Lock()
+	if w.groupLID == nil {
+		w.groupLID = map[types.JID]bool{}
+	}
+	w.groupLID[group] = lid
+	w.groupMu.Unlock()
+	return lid
 }
 
 // mediaRef serializes the attachment sub-message: it carries everything needed to download it later.
@@ -256,13 +313,26 @@ func (w *Whatsmeow) DownloadMedia(ctx context.Context, kind string, ref []byte, 
 	f.Close()
 	if err != nil {
 		os.Remove(path)
-		var httpErr whatsmeow.DownloadHTTPError
-		if errors.As(err, &httpErr) || errors.Is(err, whatsmeow.ErrNoURLPresent) {
-			return 0, grpcErr(codes.NotFound, "media_unavailable", err.Error())
-		}
-		return 0, grpcErr(codes.Unknown, "media_download_failed", err.Error())
+		return 0, downloadErr(err)
 	}
 	return size, nil
+}
+
+// downloadErr maps a download failure: only 403/404/410 (and a missing URL) mean the
+// media is gone for good; other HTTP statuses (5xx, 429) are worth retrying later.
+func downloadErr(err error) error {
+	var httpErr whatsmeow.DownloadHTTPError
+	switch {
+	case errors.As(err, &httpErr):
+		switch httpErr.StatusCode {
+		case 403, 404, 410:
+			return grpcErr(codes.NotFound, "media_unavailable", err.Error())
+		}
+		return grpcErr(codes.Unavailable, "media_download_failed", err.Error())
+	case errors.Is(err, whatsmeow.ErrNoURLPresent):
+		return grpcErr(codes.NotFound, "media_unavailable", err.Error())
+	}
+	return grpcErr(codes.Unknown, "media_download_failed", err.Error())
 }
 
 func contactOf(jid types.JID, c types.ContactInfo) *workerv1.Contact {
@@ -365,16 +435,48 @@ func content(m *waE2E.Message) (typ, text string, media *workerv1.Media, reactio
 	return "unknown", "", nil, "", true
 }
 
-// phoneJID returns the phone-number JID for a LID when it is known (alt or the LID store),
-// so a contact keeps one chat whatever addressing WhatsApp uses.
-func (w *Whatsmeow) phoneJID(ctx context.Context, jid, alt types.JID) types.JID {
+// lidLookupTimeout bounds each LID store lookup. History sync can block for a long time on
+// backpressure, so no overall deadline covers a whole blob.
+const lidLookupTimeout = 2 * time.Second
+
+// lidMap maps LID users to phone-number JIDs learned from a history sync blob.
+type lidMap map[string]types.JID
+
+// add records lid -> pn; both may be full JIDs or bare user parts.
+func (m lidMap) add(lid, pn string) {
+	if lid == "" || pn == "" {
+		return
+	}
+	l, err1 := parseJIDOr(lid, types.HiddenUserServer)
+	p, err2 := parseJIDOr(pn, types.DefaultUserServer)
+	if err1 != nil || err2 != nil || l.Server != types.HiddenUserServer || p.Server != types.DefaultUserServer {
+		return
+	}
+	m[l.User] = p.ToNonAD()
+}
+
+func parseJIDOr(s, server string) (types.JID, error) {
+	if !strings.Contains(s, "@") {
+		return types.NewJID(s, server), nil
+	}
+	return types.ParseJID(s)
+}
+
+// phoneJID returns the phone-number JID for a LID when it is known (the blob's mappings,
+// alt, or the LID store), so a contact keeps one chat whatever addressing WhatsApp uses.
+func (w *Whatsmeow) phoneJID(jid, alt types.JID, known lidMap) types.JID {
 	if jid.Server != types.HiddenUserServer {
 		return jid.ToNonAD()
+	}
+	if pn, ok := known[jid.User]; ok {
+		return pn
 	}
 	if alt.Server == types.DefaultUserServer {
 		return alt.ToNonAD()
 	}
 	if w.cli.Store.LIDs != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), lidLookupTimeout)
+		defer cancel()
 		if pn, err := w.cli.Store.LIDs.GetPNForLID(ctx, jid); err == nil && !pn.IsEmpty() {
 			return pn.ToNonAD()
 		}
@@ -383,7 +485,7 @@ func (w *Whatsmeow) phoneJID(ctx context.Context, jid, alt types.JID) types.JID 
 }
 
 // toMessage normalizes a whatsmeow message; nil means it is not logged.
-func (w *Whatsmeow) toMessage(ctx context.Context, info types.MessageInfo, m *waE2E.Message) *workerv1.Message {
+func (w *Whatsmeow) toMessage(info types.MessageInfo, m *waE2E.Message, known lidMap) *workerv1.Message {
 	if info.Chat.Server == types.BroadcastServer || info.Chat.Server == types.NewsletterServer {
 		return nil // status updates, broadcast lists and channels are out of scope
 	}
@@ -397,10 +499,10 @@ func (w *Whatsmeow) toMessage(ctx context.Context, info types.MessageInfo, m *wa
 		if info.IsFromMe {
 			alt = info.RecipientAlt
 		}
-		chat = w.phoneJID(ctx, info.Chat, alt)
+		chat = w.phoneJID(info.Chat, alt, known)
 	}
 	return &workerv1.Message{
-		Id: string(info.ID), Chat: chat.String(), Sender: w.phoneJID(ctx, info.Sender, info.SenderAlt).String(),
+		Id: string(info.ID), Chat: chat.String(), Sender: w.phoneJID(info.Sender, info.SenderAlt, known).String(),
 		FromMe: info.IsFromMe, IsGroup: info.IsGroup, TimestampMs: info.Timestamp.UnixMilli(),
 		PushName: info.PushName, Type: typ, Text: text, Media: media, ReactionTo: reactionTo,
 	}
@@ -408,7 +510,7 @@ func (w *Whatsmeow) toMessage(ctx context.Context, info types.MessageInfo, m *wa
 
 func receiptType(t types.ReceiptType) (string, bool) {
 	switch t {
-	case types.ReceiptTypeDelivered:
+	case types.ReceiptTypeDelivered, types.ReceiptTypeInactive:
 		return "delivered", true
 	case types.ReceiptTypeRead:
 		return "read", true
@@ -420,16 +522,9 @@ func receiptType(t types.ReceiptType) (string, bool) {
 
 // onData handles the message-related whatsmeow events; it reports whether evt was one.
 func (w *Whatsmeow) onData(evt any) bool {
-	switch evt.(type) {
-	case *events.Message, *events.Receipt, *events.HistorySync:
-	default:
-		return false
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	switch e := evt.(type) {
 	case *events.Message:
-		if m := w.toMessage(ctx, e.Info, e.Message); m != nil {
+		if m := w.toMessage(e.Info, e.Message, nil); m != nil {
 			w.sink.Data(&workerv1.Event{Kind: &workerv1.Event_Message{Message: m}})
 		}
 	case *events.Receipt:
@@ -445,12 +540,28 @@ func (w *Whatsmeow) onData(evt any) bool {
 			MessageIds: ids, Chat: e.Chat.ToNonAD().String(), Type: typ, TimestampMs: e.Timestamp.UnixMilli(),
 		}}})
 	case *events.HistorySync:
-		w.onHistory(ctx, e)
+		w.onHistory(e)
+	default:
+		return false
 	}
 	return true
 }
 
-func (w *Whatsmeow) onHistory(ctx context.Context, e *events.HistorySync) {
+// onHistory turns a history blob into HistoryChunk events. Sink.Data may block for a long
+// time (backpressure), so nothing here has an overall deadline. LIDs are resolved from the
+// blob's own mappings first: whatsmeow stores them from a goroutine that can still be
+// running, so the LID store alone is not reliable yet.
+func (w *Whatsmeow) onHistory(e *events.HistorySync) {
+	known := lidMap{}
+	for _, m := range e.Data.GetPhoneNumberToLidMappings() {
+		known.add(m.GetLidJID(), m.GetPnJID())
+	}
+	for _, conv := range e.Data.GetConversations() {
+		known.add(conv.GetLidJID(), conv.GetPnJID())
+		if id := conv.GetID(); strings.HasSuffix(id, "@"+types.HiddenUserServer) {
+			known.add(id, conv.GetPnJID())
+		}
+	}
 	for _, conv := range e.Data.GetConversations() {
 		chatJID, err := types.ParseJID(conv.GetID())
 		if err != nil {
@@ -476,7 +587,7 @@ func (w *Whatsmeow) onHistory(ctx context.Context, e *events.HistorySync) {
 			if err != nil {
 				continue
 			}
-			if m := w.toMessage(ctx, evt.Info, evt.Message); m != nil {
+			if m := w.toMessage(evt.Info, evt.Message, known); m != nil {
 				msgs = append(msgs, m)
 			}
 			if len(msgs) >= historyChunkSize {

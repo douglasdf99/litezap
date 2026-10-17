@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
 
@@ -36,6 +37,14 @@ type Whatsmeow struct {
 	// DownloadMedia writes (media/<instance>/).
 	dataDir    string
 	instanceID string
+
+	// Group addressing (reactions and read receipts must name participants the way the
+	// group does). groupInfo and lidFor default to the client and its LID store; tests
+	// replace them.
+	groupMu   sync.Mutex
+	groupLID  map[types.JID]bool // group -> addresses members by LID (successful lookups only)
+	groupInfo func(context.Context, types.JID) (*types.GroupInfo, error)
+	lidFor    func(context.Context, types.JID) (types.JID, error)
 
 	// Signals to pairLoop; all are buffered (1) and sent to without blocking.
 	restart    chan struct{} // from PairPhone: end the current round now
