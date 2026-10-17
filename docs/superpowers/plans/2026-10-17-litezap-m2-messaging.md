@@ -22,8 +22,8 @@
 - **Códigos de erro do worker:** `InvalidArgument`/`PermissionDenied` = permanente, `FailedPrecondition` = sessão deslogada, `Unavailable` = sem conexão agora, `DeadlineExceeded` = timeout, resto = retentável. A mensagem do status começa com um código estável (`invalid_number: ...`); um `instance_not_connected:` vindo do worker volta para a fila sem gastar tentativa, qualquer que seja o estado gravado.
 - **Idempotência ponta a ponta:** o `wa_message_id` é escolhido no enfileiramento e reusado em toda tentativa (`whatsmeow.SendRequestExtra.ID`); `client_message_id` repetido devolve o item existente sem baixar mídia de novo, e repetido com outro corpo responde `409 conflict` (hash do pedido). Ao entrar em voo, o envio já é gravado no log como `pending` (um recibo que chegue antes do `MarkSent` não se perde). No boot, `in_flight` volta a `queued`, exceto se um recibo já provou o envio.
 - **Fila:** `outbound_queue` com `seq` autoincremento e índice parcial dos itens ativos; o próximo item é o mais antigo que é cabeça do seu chat e está vencido (um item em backoff segura só o próprio destinatário). Um despachante por instância (pacote `queue`) é um `manager.Observer`: acorda em `connected` (depois de uma carência de 15–30s), novo item ou novos settings; fora de `connected` fica parado sem gastar tentativas. Itens têm TTL (`expires_after`, padrão 24h). Relógio injetável (`clock.Fake`) deixa os testes de ritmo, janela, retry e rampa determinísticos.
-- **Janela de envio e rampa:** `send_window` (padrão 08:00–20:00) e `timezone` (padrão: fuso do servidor) por instância; fora da janela só saem respostas a conversas ativas (algo recebido nas últimas 24h, `chats.last_inbound_at`), e o início de cada janela tem alguns minutos de variação. Rampa: "destinatário novo" = chat (direto ou grupo) sem nenhuma mensagem recebida (`chats.has_inbound`, inclusive vinda do history sync); cada chat conta uma vez por dia (dia no fuso da instância); acima do limite o item é adiado para o início da janela do dia seguinte + variação, sem gastar tentativa — nunca para a meia-noite.
-- **Verificação de número:** antes do primeiro envio a um número sem chat, o despachante consulta `IsOnWhatsApp` (com cache em `number_cache` e cota por minuto): número inexistente falha como `invalid_number` sem enviar; número que o WhatsApp conhece com outro JID de telefone (9º dígito) tem os itens da fila redirecionados (nunca para um `@lid`). Falha ou limite na consulta adia só aquele item, com backoff (1, 2, 5, 15 min; `failed` na 5ª falha). `check-numbers` usa o mesmo cache com cota própria, para nunca esgotar a dos envios.
+- **Janela de envio e rampa:** `send_window` (padrão 08:00–20:00) e `timezone` (padrão: fuso do servidor) por instância; fora da janela só saem respostas a conversas ativas (algo recebido nas últimas 24h, `chats.last_inbound_at`), e o início de cada janela tem alguns minutos de variação. Rampa: "destinatário novo" = chat (direto ou grupo) sem nenhuma mensagem recebida (`chats.has_inbound`, inclusive vinda do history sync); cada chat conta uma vez por dia (dia no fuso da instância); acima do limite o item é adiado para o início da janela do dia seguinte + variação, sem gastar tentativa — nunca para a meia-noite — e sem consultar o número. O intervalo dobrado para texto idêntico a outro destinatário novo em sequência vale com ou sem rampa.
+- **Verificação de número:** antes do primeiro envio a um número sem chat, o despachante consulta `IsOnWhatsApp` (com cache em `number_cache` e cota por minuto): número inexistente falha como `invalid_number` sem enviar; número que o WhatsApp conhece com outro JID de telefone (9º dígito) tem os itens da fila redirecionados (nunca para um `@lid`). Falha ou limite na consulta adia só aquele item, com backoff (1, 2, 5, 15 min; `failed` na 5ª falha); uma consulta cortada pelo shutdown não conta. A rampa vem antes da consulta: acima do limite diário, números novos nem são consultados (uma sequência de consultas parece raspagem de contatos). `check-numbers` usa o mesmo cache com cota própria, para nunca esgotar a dos envios.
 - **Settings:** `instances.settings_json` guarda só os overrides (`settings.Patch`); o efetivo = `instance_defaults` da config + `default_proxy_url` + overrides. Pisos `min_interval_ms ≥ 1000` e `max_per_minute ≤ 60`, salvo `unsafe_pacing` (só admin). `proxy_url` também é só admin. Trocar o proxy efetivo reinicia o worker.
 - **Chats por telefone:** o worker converte chats LID (`@lid`) para o JID de telefone quando conhece o mapeamento, para que o mesmo contato não vire dois chats (e a rampa reconheça respostas).
 - **Proxy:** passado ao worker na variável `LITEZAP_WORKER_PROXY_URL` (não em flag: flags aparecem no `ps` para qualquer usuário); o spawner remove `HTTP(S)_PROXY`/`ALL_PROXY`/`NO_PROXY` do ambiente do worker e o worker sempre chama `SetProxyAddress` (vazio = transporte sem proxy de ambiente).
@@ -6714,13 +6714,13 @@ Expected: `go mod tidy` não altera `go.mod`/`go.sum` (se alterar, inclua-os no 
 Um passo do despachante (`step`), em ordem:
 
 1. Instância sumiu → encerra; fora de `connected` → dorme até ser acordado (sem gastar tentativas).
-2. Carência depois de conectar (`ConnectGrace` + até mais `ConnectGrace` aleatório; `serve` usa 15s).
+2. Carência depois do aviso de `connected` (`ConnectGrace` + até mais `ConnectGrace` aleatório; `serve` usa 15s). Com carência ligada, um aviso de outro estado segura os envios até o próximo aviso de `connected` (o estado gravado pode ler `connected` antes do aviso chegar).
 3. Próximo item vencido; sem item → dorme até o próximo vencimento.
 4. TTL estourado → `failed` com `expired`.
 5. Janela de envio, só para destinatários sem mensagem recebida nas últimas 24h (`chats.last_inbound_at`): fora dela (ou antes de início + variação de até 5 min) → o item é adiado até a abertura; respostas a conversas ativas seguem.
-6. Primeiro envio a um número sem chat → `lookup` (cota da fila): inexistente → `failed` `invalid_number` sem enviar; outro JID de telefone → redireciona os itens do chat e recomeça (um JID `@lid` nunca vira chat: segue o JID de telefone); erro → adia só este item (1, 2, 5, 15 min) e, na 5ª falha seguida, `failed` `worker_error`; limite de consultas → adia este item 1 min sem contar falha.
-7. Rampa → adia para o início da janela do dia seguinte + variação (nunca meia-noite), sem gastar tentativa.
-8. Ritmo (`pacer.wait`, intervalo dobrado para texto idêntico a outro destinatário novo em sequência).
+6. Rampa (destinatário novo = chat, grupos inclusive, sem nada recebido) → adia para o início da janela do dia seguinte + variação (nunca meia-noite), sem gastar tentativa e **sem consultar o número**.
+7. Primeiro envio a um número sem chat → `lookup` (cota da fila): inexistente → `failed` `invalid_number` sem enviar; outro JID de telefone → redireciona os itens do chat e recomeça (o passo seguinte confere a rampa para o JID canônico; um JID `@lid` nunca vira chat: segue o JID de telefone); erro → adia só este item (1, 2, 5, 15 min) e, na 5ª falha seguida, `failed` `worker_error`; limite de consultas → adia este item 1 min sem contar falha; consulta interrompida pelo shutdown → não conta falha.
+8. Ritmo (`pacer.wait`, intervalo dobrado para texto idêntico a outro destinatário novo em sequência, com ou sem rampa; o retry do mesmo item não dobra).
 9. `MarkInFlight` (com a linha `pending` no log), digitação (`composing` ~50ms/caractere até 5s; `recording` 2s para voz). Se o shutdown chegou durante a digitação → volta para a fila sem gastar tentativa.
 10. `Send` com timeout próprio (o shutdown espera até 10s por um envio já iniciado) e o resultado:
 
@@ -6735,7 +6735,9 @@ Um passo do despachante (`step`), em ordem:
 
 `Wait` acorda quando o item termina (`sent`/`failed`) ou o contexto acaba, devolvendo o estado atual (para o `?wait=true` responder 202 ainda `queued`). O arquivo de mídia em `outbox` é apagado quando o item termina.
 
-Esta task entrega o núcleo (passos 1, 3 e 7 a 10); a próxima acrescenta carência, TTL, janela e verificação de número (passos 2, 4, 5 e 6).
+Uma escrita no store que falha (adiar, `failed`, `sent`, voltar para a fila) pausa o despachante por `errPause`, sem laço apertado na conexão única do SQLite; `sent`/`failed` só apagam a mídia em `outbox` quando a escrita deu certo.
+
+Esta task entrega o núcleo (passos 1, 3, 6 e 8 a 10); a próxima acrescenta carência, TTL, janela e verificação de número (passos 2, 4, 5 e 7).
 
 - [ ] **Step 1: Escrever os testes**
 
@@ -7098,6 +7100,73 @@ func TestDeletedInstanceStopsDispatcher(t *testing.T) {
 		return len(e.q.disp) == 0
 	})
 }
+
+// An identical text to new recipients in a row doubles the interval, ramp or not.
+func TestDoubledIntervalForIdenticalTextToNewRecipients(t *testing.T) {
+	for _, ramp := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ramp off", true: "ramp on"}[ramp], func(t *testing.T) {
+			s := fastSettings()
+			s.MinIntervalMS = 3000
+			s.Ramp = settings.Ramp{Enabled: ramp, StartPerDay: 10, EndPerDay: 10, Days: 1}
+			e := newEnv(t, s, instance.Connected)
+			e.enqueue(chatA, Payload{Type: "text", Text: "promo"})
+			e.enqueue(chatB, Payload{Type: "text", Text: "promo"})
+			e.eventually("first send", func() bool { return len(e.fake.WA.Sent()) == 1 && e.clock.Waiters() > 0 })
+			e.clock.Advance(3 * time.Second)
+			time.Sleep(20 * time.Millisecond)
+			if n := len(e.fake.WA.Sent()); n != 1 {
+				t.Fatalf("sent %d after 3s, want the doubled 6s interval", n)
+			}
+			e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+			e.clock.Advance(3 * time.Second)
+			e.eventually("second send", func() bool { return len(e.fake.WA.Sent()) == 2 })
+		})
+	}
+}
+
+func TestMaxPerMinuteAcrossSends(t *testing.T) {
+	s := fastSettings()
+	s.MaxPerMinute = 2
+	e := newEnv(t, s, instance.Connected)
+	e.enqueue(chatA, Payload{Type: "text", Text: "um"})
+	e.enqueue(chatB, Payload{Type: "text", Text: "dois"})
+	c := e.enqueue(chatC, Payload{Type: "text", Text: "três"})
+	e.eventually("two sends", func() bool { return len(e.fake.WA.Sent()) == 2 && e.clock.Waiters() > 0 })
+	e.clock.Advance(59 * time.Second)
+	time.Sleep(20 * time.Millisecond)
+	if n := len(e.fake.WA.Sent()); n != 2 {
+		t.Fatalf("sent %d inside the minute, max_per_minute is 2", n)
+	}
+	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(time.Second)
+	e.eventually("third send after a minute", func() bool { return e.status(c).Status == store.OutSent })
+}
+
+// A retry waits for its backoff and for min_interval since the previous attempt.
+func TestPacingAppliesBetweenRetries(t *testing.T) {
+	s := fastSettings()
+	s.MinIntervalMS = 10000
+	e := newEnv(t, s, instance.Connected)
+	calls := 0
+	e.fake.WA.SetSendFunc(func(req *workerv1.SendRequest) (*workerv1.SendResponse, error) {
+		if calls++; calls == 1 {
+			return nil, status.Error(codes.Unknown, "worker_error: transient")
+		}
+		return &workerv1.SendResponse{MessageId: req.MessageId}, nil
+	})
+	id := e.enqueue(chatA, Payload{Type: "text", Text: "oi"})
+	e.eventually("first attempt", func() bool { return len(e.fake.WA.Sent()) == 1 && e.clock.Waiters() > 0 })
+	e.clock.Advance(retryDelay(1)) // 5s: the backoff is over, min_interval (10s) is not
+	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(4 * time.Second)
+	time.Sleep(20 * time.Millisecond)
+	if n := len(e.fake.WA.Sent()); n != 1 {
+		t.Fatalf("retried after 9s, min_interval is 10s (%d attempts)", n)
+	}
+	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(time.Second)
+	e.eventually("sent at 10s", func() bool { return e.status(id).Status == store.OutSent })
+}
 ```
 
 Run: `go test ./internal/queue/`
@@ -7311,8 +7380,9 @@ type dispatcher struct {
 	id    string
 	wake  chan struct{}
 	pacer pacer
-	// lastNewText is the text of the previous send when it went to a new recipient.
-	lastNewText string
+	// lastNewText/lastNewChat: the text and chat of the previous send when it went to a new
+	// recipient.
+	lastNewText, lastNewChat string
 }
 
 func (d *dispatcher) log() *slog.Logger { return d.q.opt.Log.With("instance_id", d.id) }
@@ -7395,22 +7465,24 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 	}
 	var p Payload
 	if err := json.Unmarshal([]byte(item.Payload), &p); err != nil {
-		d.fail(item, item.Attempts, "validation_failed: unreadable payload")
-		return 0, true
+		return pauseOn(d.fail(item, item.Attempts, "validation_failed: unreadable payload")), true
 	}
-
-	isNew, deferUntil, err := d.ramp(ctx, in, set, item, now)
+	isNew, err := d.newRecipient(ctx, item)
 	if err != nil {
-		d.log().Error("queue: ramp", "err", err)
+		d.log().Error("queue: load chat", "err", err)
 		return errPause, true
 	}
-	if !deferUntil.IsZero() {
-		if err := st.Defer(ctx, item.ID, deferUntil, "ramp_limit: daily limit of new recipients reached"); err != nil {
+	if until, err := d.ramp(ctx, in, set, item, isNew, now); err != nil {
+		d.log().Error("queue: ramp", "err", err)
+		return errPause, true
+	} else if !until.IsZero() {
+		if err := st.Defer(ctx, item.ID, until, "ramp_limit: daily limit of new recipients reached"); err != nil {
 			d.log().Error("queue: defer", "err", err)
+			return errPause, true
 		}
 		return 0, true
 	}
-	double := isNew && p.Type == "text" && p.Text != "" && p.Text == d.lastNewText
+	double := isNew && p.Type == "text" && p.Text != "" && p.Text == d.lastNewText && item.ChatJID != d.lastNewChat
 	if w := d.pacer.wait(now, set, double); w > 0 {
 		return w, true
 	}
@@ -7420,8 +7492,7 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 	}
 	req, err := buildRequest(item, p)
 	if err != nil {
-		d.fail(item, item.Attempts, "validation_failed: "+err.Error())
-		return 0, true
+		return pauseOn(d.fail(item, item.Attempts, "validation_failed: "+err.Error())), true
 	}
 	if err := st.MarkInFlight(ctx, item.ID, isNew, pendingMessage(item, p, now)); err != nil {
 		d.log().Error("queue: mark in flight", "err", err)
@@ -7441,35 +7512,43 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 	cancel()
 	d.pacer.record(opt.Clock.Now(), set)
 	if isNew && p.Type == "text" {
-		d.lastNewText = p.Text
+		d.lastNewText, d.lastNewChat = p.Text, item.ChatJID
 	} else {
-		d.lastNewText = ""
+		d.lastNewText, d.lastNewChat = "", ""
 	}
-	d.finish(item, p, resp, sendErr)
-	return 0, true
+	return pauseOn(d.finish(item, p, resp, sendErr)), true
 }
 
-// ramp decides whether item goes to a new recipient (counting against today's limit) or
-// must wait for the next day's send window (deferUntil set). Chats (groups included) that
-// already sent us something never count.
-func (d *dispatcher) ramp(ctx context.Context, in store.Instance, set settings.Settings, item store.Outbound, now time.Time) (isNew bool, deferUntil time.Time, err error) {
-	if !set.Ramp.Enabled {
-		return false, time.Time{}, nil
+// pauseOn is the pause after a store write: errPause when it failed (no tight loop on the
+// store's single connection), else none.
+func pauseOn(err error) time.Duration {
+	if err != nil {
+		return errPause
 	}
+	return 0
+}
+
+// newRecipient reports whether item goes to a chat (groups included) that never sent us
+// anything. Such sends count against the ramp, and an identical text to new recipients in
+// a row doubles the interval, whether or not the ramp is enabled.
+func (d *dispatcher) newRecipient(ctx context.Context, item store.Outbound) (bool, error) {
 	chat, err := d.q.store.GetChat(ctx, d.id, item.ChatJID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return false, time.Time{}, err
+		return false, err
 	}
-	if chat.HasInbound {
-		return false, time.Time{}, nil
+	return !chat.HasInbound, nil
+}
+
+// ramp returns when item must be deferred to because today's limit of new recipients is
+// reached (zero: it may go now). Each new chat counts once a day.
+func (d *dispatcher) ramp(ctx context.Context, in store.Instance, set settings.Settings, item store.Outbound, isNew bool, now time.Time) (time.Time, error) {
+	if !set.Ramp.Enabled || !isNew {
+		return time.Time{}, nil
 	}
 	day := set.DayStart(now)
 	count, counted, err := d.q.store.NewRecipientsSince(ctx, d.id, item.ChatJID, day)
-	if err != nil || counted {
-		return false, time.Time{}, err
-	}
-	if count < set.Ramp.DailyCap(in.FirstConnectedAt, now) {
-		return true, time.Time{}, nil
+	if err != nil || counted || count < set.Ramp.DailyCap(in.FirstConnectedAt, now) {
+		return time.Time{}, err
 	}
 	// Not at midnight: at the next day's window start plus jitter (a burst of deferred
 	// messages at night looks like spam).
@@ -7477,7 +7556,7 @@ func (d *dispatcher) ramp(ctx context.Context, in store.Instance, set settings.S
 	if start, _, _ := set.WindowAt(tomorrow); !start.IsZero() {
 		tomorrow = start
 	}
-	return false, tomorrow.Add(time.Duration(d.q.opt.Rand() * float64(d.q.opt.WindowJitter))), nil
+	return tomorrow.Add(time.Duration(d.q.opt.Rand() * float64(d.q.opt.WindowJitter))), nil
 }
 
 func buildRequest(item store.Outbound, p Payload) (*workerv1.SendRequest, error) {
@@ -7523,8 +7602,8 @@ func (d *dispatcher) typing(ctx context.Context, cli workerv1.WorkerClient, chat
 	}
 }
 
-// finish records the outcome of a send attempt.
-func (d *dispatcher) finish(item store.Outbound, p Payload, resp *workerv1.SendResponse, sendErr error) {
+// finish records the outcome of a send attempt; an error means the store write failed.
+func (d *dispatcher) finish(item store.Outbound, p Payload, resp *workerv1.SendResponse, sendErr error) error {
 	ctx := context.Background()
 	st, opt := d.q.store, d.q.opt
 	if sendErr == nil {
@@ -7532,19 +7611,11 @@ func (d *dispatcher) finish(item store.Outbound, p Payload, resp *workerv1.SendR
 		if resp.GetTimestampMs() > 0 {
 			at = time.UnixMilli(resp.GetTimestampMs())
 		}
-		if err := st.MarkSent(ctx, item.ID, at); err != nil {
-			d.log().Error("queue: mark sent", "err", err)
-		}
-		d.done(item, p)
-		return
+		return d.sent(item, p, at)
 	}
 	// A receipt already proved delivery (the worker's answer was lost or late): it was sent.
 	if m, err := st.GetMessage(ctx, d.id, item.ID); err == nil && (m.Status == "delivered" || m.Status == "read") {
-		if err := st.MarkSent(ctx, item.ID, opt.Clock.Now()); err != nil {
-			d.log().Error("queue: mark sent", "err", err)
-		}
-		d.done(item, p)
-		return
+		return d.sent(item, p, opt.Clock.Now())
 	}
 	s := status.Convert(sendErr)
 	msg := s.Message()
@@ -7555,43 +7626,57 @@ func (d *dispatcher) finish(item store.Outbound, p Payload, resp *workerv1.SendR
 	if strings.HasPrefix(msg, "instance_not_connected:") {
 		// The worker itself says it is not connected: wait without spending an attempt,
 		// whatever the stored state says (it may lag behind).
-		if err := st.Requeue(ctx, item.ID, opt.Clock.Now().Add(errPause), item.Attempts, msg); err != nil {
-			d.log().Error("queue: requeue", "err", err)
-		}
-		return
+		return d.requeue(item, opt.Clock.Now().Add(errPause), item.Attempts, msg)
 	}
 	switch s.Code() {
 	case codes.InvalidArgument, codes.PermissionDenied, codes.FailedPrecondition:
-		d.fail(item, attempts, msg)
-		return
+		return d.fail(item, attempts, msg)
 	case codes.Unavailable, codes.Canceled:
 		// Not connected: unless the instance still claims to be connected, wait for the
 		// reconnection without consuming an attempt.
 		if in, err := st.GetInstance(ctx, d.id); err == nil && in.State != instance.Connected {
-			if err := st.Requeue(ctx, item.ID, opt.Clock.Now(), item.Attempts, msg); err != nil {
-				d.log().Error("queue: requeue", "err", err)
-			}
-			return
+			return d.requeue(item, opt.Clock.Now(), item.Attempts, msg)
 		}
 	case codes.DeadlineExceeded:
 		msg = "worker_timeout: " + strings.TrimPrefix(msg, "worker_timeout: ")
 	}
 	if attempts >= opt.MaxAttempts {
-		d.fail(item, attempts, msg)
-		return
+		return d.fail(item, attempts, msg)
 	}
-	if err := st.Requeue(ctx, item.ID, opt.Clock.Now().Add(retryDelay(attempts)), attempts, msg); err != nil {
-		d.log().Error("queue: requeue", "err", err)
-	}
+	return d.requeue(item, opt.Clock.Now().Add(retryDelay(attempts)), attempts, msg)
 }
 
-func (d *dispatcher) fail(item store.Outbound, attempts int, msg string) {
+func (d *dispatcher) requeue(item store.Outbound, next time.Time, attempts int, msg string) error {
+	err := d.q.store.Requeue(context.Background(), item.ID, next, attempts, msg)
+	if err != nil {
+		d.log().Error("queue: requeue", "err", err)
+	}
+	return err
+}
+
+// sent finishes a delivered item. If the write fails the item stays in flight (boot
+// recovery requeues it; the reused wa_message_id keeps the resend idempotent), so the
+// staged media is kept.
+func (d *dispatcher) sent(item store.Outbound, p Payload, at time.Time) error {
+	if err := d.q.store.MarkSent(context.Background(), item.ID, at); err != nil {
+		d.log().Error("queue: mark sent", "err", err)
+		return err
+	}
+	d.done(item, p)
+	return nil
+}
+
+// fail finishes an item for good. If the write fails the item is still queued and keeps
+// its staged media.
+func (d *dispatcher) fail(item store.Outbound, attempts int, msg string) error {
 	if err := d.q.store.MarkFailed(context.Background(), item.ID, attempts, msg); err != nil {
 		d.log().Error("queue: mark failed", "err", err)
+		return err
 	}
 	var p Payload
 	_ = json.Unmarshal([]byte(item.Payload), &p)
 	d.done(item, p)
+	return nil
 }
 
 // done cleans up a final item and wakes its waiters.
@@ -7645,7 +7730,7 @@ Expected: `go mod tidy` não altera `go.mod`/`go.sum` (se alterar, inclua-os no 
 - Modify: `internal/queue/queue.go`
 - Test: `internal/queue/queue_test.go`
 
-Passos 2, 4, 5 e 6 da task anterior. A janela é decidida por item: só quem não mandou nada nas últimas 24h espera; a variação é sorteada uma vez por janela. A verificação usa o `lookup.Resolver` opcional (`Options.Resolver`; `serve` liga) só para JIDs de telefone sem chat; falhas e limite adiam apenas o item afetado (os outros destinatários seguem), e depois de redirecionar para o JID com 9º dígito o número canônico já está no cache.
+Passos 2, 4, 5 e 7 da task anterior. A janela é decidida por item: só quem não mandou nada nas últimas 24h espera; a variação é sorteada uma vez por janela. A verificação usa o `lookup.Resolver` opcional (`Options.Resolver`; `serve` liga) só para JIDs de telefone sem chat e só depois da rampa (acima do limite diário não há consulta); falhas e limite adiam apenas o item afetado (os outros destinatários seguem), uma consulta cortada pelo shutdown não conta falha, e depois de redirecionar para o JID com 9º dígito o número canônico já está no cache. A carência começa no aviso de `connected`; outro estado a reinicia.
 
 - [ ] **Step 1: Escrever os testes**
 
@@ -7685,6 +7770,21 @@ por:
 	"github.com/douglasdf99/litezap/internal/lookup"
 	"github.com/douglasdf99/litezap/internal/manager"
 	"github.com/douglasdf99/litezap/internal/settings"
+```
+
+Em `internal/queue/queue_test.go`, trocar:
+
+```go
+	"github.com/douglasdf99/litezap/internal/workertest"
+	"google.golang.org/grpc/codes"
+```
+
+por:
+
+```go
+	"github.com/douglasdf99/litezap/internal/workertest"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 ```
 
 Em `internal/queue/queue_test.go`, trocar:
@@ -7916,6 +8016,97 @@ func TestLookupGivesUpAfterFiveFailures(t *testing.T) {
 	}
 }
 
+// Past today's ramp limit, new numbers are deferred without a lookup: a stream of lookups
+// looks like contact scraping.
+func TestRampLimitSkipsLookups(t *testing.T) {
+	s := fastSettings()
+	s.Ramp = settings.Ramp{Enabled: true, StartPerDay: 1, EndPerDay: 1, Days: 1}
+	s.SendWindow = settings.Window{Start: "08:00", End: "20:00"}
+	e := newEnv(t, s, instance.Connected)
+	a := e.enqueue(chatA, Payload{Type: "text", Text: "um"})
+	b := e.enqueue(chatB, Payload{Type: "text", Text: "dois"})
+	c := e.enqueue(chatC, Payload{Type: "text", Text: "três"})
+	e.eventually("a sent, b and c deferred", func() bool {
+		return e.status(a).Status == store.OutSent && strings.HasPrefix(e.status(b).LastError, "ramp_limit:") &&
+			strings.HasPrefix(e.status(c).LastError, "ramp_limit:")
+	})
+	if n := e.fake.WA.Checks(); n != 1 {
+		t.Fatalf("lookups = %d, want 1 (only the recipient that went out)", n)
+	}
+}
+
+func TestLookupRateLimitDefersWithoutCountingFailure(t *testing.T) {
+	e := newEnvAt(t, t0, fastSettings(), instance.Connected, func(o *Options) { o.Resolver.PerMinute = 1 })
+	a := e.enqueue(chatA, Payload{Type: "text", Text: "um"})
+	b := e.enqueue(chatB, Payload{Type: "text", Text: "dois"})
+	e.eventually("a sent, b deferred", func() bool {
+		return e.status(a).Status == store.OutSent && strings.HasPrefix(e.status(b).LastError, "lookup_rate_limited:")
+	})
+	if o := e.status(b); o.Status != store.OutQueued || o.LookupFailures != 0 || o.Attempts != 0 ||
+		!o.NextAttemptAt.Equal(t0.Add(time.Minute)) || e.fake.WA.Checks() != 1 {
+		t.Fatalf("b = %+v, lookups %d", o, e.fake.WA.Checks())
+	}
+	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(time.Minute)
+	e.eventually("b sent after a minute", func() bool { return e.status(b).Status == store.OutSent })
+}
+
+// blockingCheck holds CheckNumbers until the caller's context ends.
+type blockingCheck struct {
+	workerv1.WorkerClient
+	started chan struct{}
+}
+
+func (b blockingCheck) CheckNumbers(ctx context.Context, _ *workerv1.CheckNumbersRequest, _ ...grpc.CallOption) (*workerv1.CheckNumbersResponse, error) {
+	close(b.started)
+	<-ctx.Done()
+	return nil, status.FromContextError(ctx.Err()).Err()
+}
+
+// A lookup cut short by shutdown is not a lookup failure (not even the fifth one).
+func TestLookupInterruptedByShutdownIsNotAFailure(t *testing.T) {
+	started := make(chan struct{})
+	e := newEnvAt(t, t0, fastSettings(), instance.Reconnecting, func(o *Options) {
+		base, _ := o.Resolver.Workers.Client("i1")
+		o.Resolver.Workers = workers{"i1": blockingCheck{WorkerClient: base, started: started}}
+	})
+	id := e.enqueue(chatA, Payload{Type: "text", Text: "oi"})
+	if err := e.st.DeferLookup(context.Background(), id, t0, maxLookupFailures-1, "worker_error: recipient lookup failed"); err != nil {
+		t.Fatal(err)
+	}
+	e.connect()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("lookup never started")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	e.q.Shutdown(ctx)
+	if o := e.status(id); o.Status != store.OutQueued || o.LookupFailures != maxLookupFailures-1 {
+		t.Fatalf("after shutdown: %+v", o)
+	}
+}
+
+// The stored state may read connected before the connected notice arrives: nothing goes
+// out until the notice starts the grace period.
+func TestGraceStartsWithTheConnectedNotice(t *testing.T) {
+	e := newEnvAt(t, t0, fastSettings(), instance.Reconnecting, func(o *Options) { o.ConnectGrace = 20 * time.Second })
+	e.q.StateChanged("i1", instance.Reconnecting)
+	if err := e.st.UpdateInstanceState(context.Background(), "i1", instance.Connected, ""); err != nil {
+		t.Fatal(err)
+	}
+	id := e.enqueue(chatA, Payload{Type: "text", Text: "oi"}) // wakes the dispatcher before the notice
+	time.Sleep(50 * time.Millisecond)
+	if n := len(e.fake.WA.Sent()); n != 0 {
+		t.Fatalf("sent %d before the connected notice", n)
+	}
+	e.q.StateChanged("i1", instance.Connected)
+	e.eventually("grace timer", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(30 * time.Second)
+	e.eventually("sent after grace", func() bool { return e.status(id).Status == store.OutSent })
+}
+
 func TestWorkerNotConnectedKeepsAttempts(t *testing.T) {
 	e := newEnv(t, fastSettings(), instance.Connected)
 ```
@@ -8030,11 +8221,22 @@ por:
 
 ```go
 
+// notReady marks an instance whose connected notice has not arrived yet.
+var notReady = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+
 func (q *Queues) StateChanged(id string, st instance.State) {
+	g := q.opt.ConnectGrace
 	if st != instance.Connected {
+		if g > 0 {
+			// The stored state may read connected before this notice arrives: hold sends
+			// until the connected notice starts the grace period.
+			q.mu.Lock()
+			q.readyAt[id] = notReady
+			q.mu.Unlock()
+		}
 		return
 	}
-	if g := q.opt.ConnectGrace; g > 0 {
+	if g > 0 {
 		ready := q.opt.Clock.Now().Add(g + time.Duration(q.opt.Rand()*float64(g)))
 		q.mu.Lock()
 		q.readyAt[id] = ready
@@ -8054,8 +8256,9 @@ func (q *Queues) ready(id string) time.Time {
 Em `internal/queue/queue.go`, trocar:
 
 ```go
-	// lastNewText is the text of the previous send when it went to a new recipient.
-	lastNewText string
+	// lastNewText/lastNewChat: the text and chat of the previous send when it went to a new
+	// recipient.
+	lastNewText, lastNewChat string
 }
 
 ```
@@ -8063,8 +8266,9 @@ Em `internal/queue/queue.go`, trocar:
 por:
 
 ```go
-	// lastNewText is the text of the previous send when it went to a new recipient.
-	lastNewText string
+	// lastNewText/lastNewChat: the text and chat of the previous send when it went to a new
+	// recipient.
+	lastNewText, lastNewChat string
 	// winStart/winJitter: the jitter drawn for the send window starting at winStart.
 	winStart  time.Time
 	winJitter time.Duration
@@ -8095,7 +8299,9 @@ por:
 ```go
 	}
 	now := opt.Clock.Now()
-	if ready := d.q.ready(d.id); now.Before(ready) {
+	if ready := d.q.ready(d.id); ready.Equal(notReady) {
+		return -1, true // the connected notice will wake us
+	} else if now.Before(ready) {
 		return ready.Sub(now), true // grace period after connecting
 	}
 	set, err := settings.Effective(opt.Defaults, "", in.SettingsJSON)
@@ -8109,8 +8315,7 @@ Em `internal/queue/queue.go`, trocar:
 	}
 	var p Payload
 	if err := json.Unmarshal([]byte(item.Payload), &p); err != nil {
-		d.fail(item, item.Attempts, "validation_failed: unreadable payload")
-		return 0, true
+		return pauseOn(d.fail(item, item.Attempts, "validation_failed: unreadable payload")), true
 	}
 ```
 
@@ -8120,13 +8325,11 @@ por:
 		return errPause, true
 	}
 	if !item.ExpiresAt.IsZero() && now.After(item.ExpiresAt) {
-		d.fail(item, item.Attempts, "expired: not sent before expires_after")
-		return 0, true
+		return pauseOn(d.fail(item, item.Attempts, "expired: not sent before expires_after")), true
 	}
 	var p Payload
 	if err := json.Unmarshal([]byte(item.Payload), &p); err != nil {
-		d.fail(item, item.Attempts, "validation_failed: unreadable payload")
-		return 0, true
+		return pauseOn(d.fail(item, item.Attempts, "validation_failed: unreadable payload")), true
 	}
 	if opens, wait, err := d.window(ctx, set, item, now); err != nil {
 		d.log().Error("queue: send window", "err", err)
@@ -8134,10 +8337,8 @@ por:
 	} else if wait {
 		if err := st.Defer(ctx, item.ID, opens, "send_window: waiting for the send window"); err != nil {
 			d.log().Error("queue: defer", "err", err)
+			return errPause, true
 		}
-		return 0, true
-	}
-	if d.resolve(ctx, item, now) {
 		return 0, true
 	}
 ```
@@ -8145,8 +8346,40 @@ por:
 Em `internal/queue/queue.go`, trocar:
 
 ```go
-	d.finish(item, p, resp, sendErr)
-	return 0, true
+		if err := st.Defer(ctx, item.ID, until, "ramp_limit: daily limit of new recipients reached"); err != nil {
+			d.log().Error("queue: defer", "err", err)
+			return errPause, true
+		}
+		return 0, true
+	}
+```
+
+por:
+
+```go
+		if err := st.Defer(ctx, item.ID, until, "ramp_limit: daily limit of new recipients reached"); err != nil {
+			d.log().Error("queue: defer", "err", err)
+			return errPause, true
+		}
+		return 0, true
+	}
+	// The number lookup comes after the ramp: past today's limit new numbers are not even
+	// looked up (a stream of lookups looks like contact scraping). An item moved to the
+	// canonical JID is picked again, so the ramp is checked for that JID too.
+	if next, done := d.resolve(ctx, item, now); done {
+		return next, true
+	}
+	// Doubled only towards another chat: a retry of the same item is not a repeated text.
+```
+
+Em `internal/queue/queue.go`, trocar:
+
+```go
+func pauseOn(err error) time.Duration {
+	if err != nil {
+		return errPause
+	}
+	return 0
 }
 
 ```
@@ -8154,8 +8387,11 @@ Em `internal/queue/queue.go`, trocar:
 por:
 
 ```go
-	d.finish(item, p, resp, sendErr)
-	return 0, true
+func pauseOn(err error) time.Duration {
+	if err != nil {
+		return errPause
+	}
+	return 0
 }
 
 // activeWindow is how recent a received message must be for a chat to count as an active
@@ -8203,50 +8439,53 @@ const maxLookupFailures = 5
 // number without WhatsApp fails without sending, and a number WhatsApp knows under another
 // phone JID (Brazilian 9th digit) has its queued items moved there. A failed or
 // rate-limited lookup only postpones this item; other recipients keep going. done=true
-// means the item was handled (failed, deferred or moved) and the step should pick again.
-func (d *dispatcher) resolve(ctx context.Context, item store.Outbound, now time.Time) (done bool) {
+// means the item was handled (failed, deferred or moved) and the step should sleep next
+// (errPause after a failed store write) and pick again.
+func (d *dispatcher) resolve(ctx context.Context, item store.Outbound, now time.Time) (next time.Duration, done bool) {
 	r := d.q.opt.Resolver
 	user, ok := strings.CutSuffix(item.ChatJID, "@s.whatsapp.net")
 	if r == nil || !ok {
-		return false
+		return 0, false
 	}
 	st := d.q.store
 	if _, err := st.GetChat(ctx, d.id, item.ChatJID); err == nil {
-		return false // known chat: we already talked to this JID
+		return 0, false // known chat: we already talked to this JID
 	} else if !errors.Is(err, store.ErrNotFound) {
 		d.log().Error("queue: load chat", "err", err)
-		return false
+		return errPause, true
 	}
 	res, err := r.Resolve(ctx, d.id, []string{user}, lookup.ForSend)
 	switch {
+	case ctx.Err() != nil:
+		return 0, true // shutting down: an interrupted lookup is not a lookup failure
 	case errors.Is(err, lookup.ErrRateLimited):
-		if err := st.Defer(ctx, item.ID, now.Add(time.Minute), "lookup_rate_limited: retrying in a minute"); err != nil {
+		err := st.Defer(ctx, item.ID, now.Add(time.Minute), "lookup_rate_limited: retrying in a minute")
+		if err != nil {
 			d.log().Error("queue: defer", "err", err)
 		}
-		return true
+		return pauseOn(err), true
 	case err != nil:
 		n := item.LookupFailures + 1
 		msg := "worker_error: recipient lookup failed: " + status.Convert(err).Message()
 		if n >= maxLookupFailures {
-			d.fail(item, item.Attempts, msg)
-			return true
+			return pauseOn(d.fail(item, item.Attempts, msg)), true
 		}
-		if err := st.DeferLookup(ctx, item.ID, now.Add(lookupBackoff(n)), n, msg); err != nil {
+		err := st.DeferLookup(ctx, item.ID, now.Add(lookupBackoff(n)), n, msg)
+		if err != nil {
 			d.log().Error("queue: defer", "err", err)
 		}
-		return true
+		return pauseOn(err), true
 	case !res[0].Found:
-		d.fail(item, item.Attempts, "invalid_number: recipient is not on WhatsApp")
-		return true
+		return pauseOn(d.fail(item, item.Attempts, "invalid_number: recipient is not on WhatsApp")), true
 	case res[0].JID != item.ChatJID && strings.HasSuffix(res[0].JID, "@s.whatsapp.net"):
 		// Only to another phone JID: a LID answer keeps the phone JID (chats are by phone).
 		if err := st.RetargetChat(ctx, d.id, item.ChatJID, res[0].JID); err != nil {
 			d.log().Error("queue: retarget", "err", err)
-			return false
+			return errPause, true
 		}
-		return true
+		return 0, true
 	}
-	return false
+	return 0, false
 }
 
 ```
@@ -8254,7 +8493,7 @@ func (d *dispatcher) resolve(ctx context.Context, item store.Outbound, now time.
 - [ ] **Step 3: Rodar e ver passar**
 
 Run: `go test -race -count=20 ./internal/queue/`
-Expected: `ok` (cerca de 20s).
+Expected: `ok` (cerca de 25s).
 
 - [ ] **Step 4: Commit**
 
@@ -8277,7 +8516,7 @@ Expected: `go mod tidy` não altera `go.mod`/`go.sum` (se alterar, inclua-os no 
 - Create: `internal/media/media.go`
 - Test: `internal/media/media_test.go`
 
-Spec 4.1/4.5: `media.url` só `http(s)`, timeout 30s, limite do tipo (imagem 16MB, vídeo/áudio 64MB, documento 100MB), sem proxy de ambiente. O `Fetcher` resolve o nome ele mesmo e confere **todos** os endereços antes de conectar, em toda conexão (inclusive redirecionamentos): só passa unicast global (`IsGlobalUnicast`), menos privados, `0.0.0.0/8`, `100.64.0.0/10`, `198.18.0.0/15`, `240.0.0.0/4`, `64:ff9b::/96` (NAT64) e `2002::/16` (6to4). Isso fecha DNS rebinding e redirecionamento para endereço interno; o resolvedor é injetável para testar. `media_allow_private_urls: true` desliga a checagem (uso local). `ResolveMime` ignora um `Content-Type` remoto que contradiz o tipo da mensagem e recusa conteúdo que não é imagem/vídeo/áudio de verdade (SVG nunca vale como imagem). URLs assinadas usam HMAC-SHA256 com um segredo próprio em `data/media_key` (0600) e valem 1h.
+Spec 4.1/4.5: `media.url` só `http(s)`, timeout 30s, limite do tipo (imagem 16MB, vídeo/áudio 64MB, documento 100MB), sem proxy de ambiente. O `Fetcher` resolve o nome ele mesmo e confere **todos** os endereços antes de conectar, em toda conexão (inclusive redirecionamentos): só passa unicast global (`IsGlobalUnicast`), menos privados, `0.0.0.0/8`, `100.64.0.0/10`, `198.18.0.0/15`, `240.0.0.0/4`, `64:ff9b::/96` (NAT64) e `2002::/16` (6to4). Isso fecha DNS rebinding e redirecionamento para endereço interno; o resolvedor é injetável para testar. `media_allow_private_urls: true` desliga a checagem (uso local). `ResolveMime` sempre confere os bytes: imagem precisa ser imagem pelos bytes (SVG nunca vale), e áudio/vídeo é recusado quando os bytes são texto/HTML, PDF, zip ou `application/x-*`, qualquer que seja o tipo declarado ou remoto; um `Content-Type` remoto que contradiz o tipo da mensagem é ignorado. URLs assinadas usam HMAC-SHA256 (cada parte prefixada pelo tamanho) com um segredo próprio em `data/media_key` (0600, criado num arquivo temporário e publicado com hard link: atômico, e partidas simultâneas ficam com a mesma chave) e valem 1h.
 
 - [ ] **Step 1: Escrever os testes**
 
@@ -8297,6 +8536,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -8383,6 +8623,7 @@ func TestFetchWhenPrivateAllowed(t *testing.T) {
 func TestResolveMime(t *testing.T) {
 	png := []byte("\x89PNG\r\n\x1a\nrest")
 	ogg := []byte("OggS\x00\x02rest-of-ogg")
+	html := []byte("<!DOCTYPE html><html><script>alert(1)</script></html>")
 	cases := []struct {
 		kind, declared, remote string
 		data                   []byte
@@ -8398,6 +8639,16 @@ func TestResolveMime(t *testing.T) {
 		{"video", "", "", []byte("plain text"), "", true},
 		{"document", "", "application/pdf", []byte("%PDF"), "application/pdf", false},
 		{"document", "", "", []byte{0, 1, 2}, "application/octet-stream", false},
+		// The bytes are always checked: a declared or remote type does not make HTML media.
+		{"image", "image/png", "", html, "", true},
+		{"image", "", "image/png", html, "", true},
+		{"video", "video/mp4", "", html, "", true},
+		{"audio", "", "audio/mpeg", html, "", true},
+		{"video", "video/mp4", "", []byte("%PDF-1.4 rest"), "", true},
+		{"audio", "audio/ogg", "", []byte("PK\x03\x04rest-of-zip"), "", true},
+		{"audio", "audio/mpeg", "", []byte("\x1f\x8b\x08rest-of-gzip"), "", true},
+		// Audio/video the sniffer does not know (e.g. AMR) keeps the declared type.
+		{"audio", "audio/amr", "", []byte("#!AMR\n\x00\x01"), "audio/amr", false},
 	}
 	for i, c := range cases {
 		got, err := ResolveMime(c.kind, c.declared, c.remote, c.data)
@@ -8462,6 +8713,47 @@ func TestKeyAndSigner(t *testing.T) {
 		t.Fatal("limits")
 	}
 }
+
+// Concurrent first starts agree on one key, and no temporary file is left behind.
+func TestKeyConcurrentCreation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "media_key")
+	const n = 16
+	keys := make([][]byte, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			keys[i], errs[i] = LoadOrCreateKey(path)
+		}()
+	}
+	wg.Wait()
+	for i := range n {
+		if errs[i] != nil || string(keys[i]) != string(keys[0]) {
+			t.Fatalf("call %d: key %x, %v (first %x)", i, keys[i], errs[i], keys[0])
+		}
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("files left: %v", entries)
+	}
+}
+
+// The MAC input cannot be shifted between instance and media ids.
+func TestSignatureIsUnambiguous(t *testing.T) {
+	s := NewSigner([]byte("0123456789abcdef0123456789abcdef"), "http://127.0.0.1:8787")
+	raw, _ := s.URL("a/b", "c")
+	u, _ := url.Parse(raw)
+	q := u.Query()
+	if !s.Verify("a/b", "c", q.Get("exp"), q.Get("sig")) {
+		t.Fatal("valid signature rejected")
+	}
+	if s.Verify("a", "b/c", q.Get("exp"), q.Get("sig")) {
+		t.Fatal("signature of a/b + c accepted for a + b/c")
+	}
+}
 ```
 
 Run: `go test ./internal/media/`
@@ -8491,6 +8783,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -8676,19 +8969,44 @@ func fits(kind, mime string) bool {
 	return mime != ""
 }
 
+// notMedia reports sniffed types that are certainly not audio or video.
+func notMedia(sniffed string) bool {
+	switch {
+	case strings.HasPrefix(sniffed, "text/"), strings.HasPrefix(sniffed, "application/x-"):
+		return true // text, HTML, XML/SVG, scripts, archives, executables
+	}
+	switch sniffed {
+	case "application/pdf", "application/zip", "image/svg+xml":
+		return true
+	}
+	return false
+}
+
 // ResolveMime picks the attachment's MIME type: the one the client declared if it fits the
 // message type, else the server's Content-Type if it fits, else what the bytes look like.
-// A remote Content-Type that contradicts the type is ignored; content that is not an
-// image/video/audio at all is refused for those types.
+// The bytes are always checked first: an image must sniff as an image (never SVG), and
+// audio/video must not sniff as text, documents, archives or executables, whatever type
+// was declared. A remote Content-Type that contradicts the message type is ignored.
 func ResolveMime(kind, declared, remote string, data []byte) (string, error) {
+	sniffed := baseType(http.DetectContentType(data))
+	if kind == "audio" && sniffed == "application/ogg" {
+		sniffed = "audio/ogg"
+	}
+	bad := fmt.Errorf("media content is not a valid %s", kind)
+	switch kind {
+	case "image":
+		if !fits(kind, sniffed) {
+			return "", bad
+		}
+	case "video", "audio":
+		if notMedia(sniffed) {
+			return "", bad
+		}
+	}
 	for _, m := range []string{declared, remote} {
 		if b := baseType(m); b != "" && b != "application/octet-stream" && fits(kind, b) {
 			return b, nil
 		}
-	}
-	sniffed := baseType(http.DetectContentType(data))
-	if kind == "audio" && sniffed == "application/ogg" {
-		return "audio/ogg", nil
 	}
 	if fits(kind, sniffed) {
 		return sniffed, nil
@@ -8696,7 +9014,7 @@ func ResolveMime(kind, declared, remote string, data []byte) (string, error) {
 	if kind == "document" {
 		return "application/octet-stream", nil
 	}
-	return "", fmt.Errorf("media content is not a valid %s", kind)
+	return "", bad
 }
 
 // DecodeBase64 decodes media.base64 (plain or as a data: URL, whose type is returned),
@@ -8737,28 +9055,55 @@ func NewSigner(key []byte, baseURL string) *Signer {
 // LoadOrCreateKey reads the signing secret at path (hex), creating a random one (0600)
 // the first time. Deleting the file invalidates every signed URL.
 func LoadOrCreateKey(path string) ([]byte, error) {
-	if b, err := os.ReadFile(path); err == nil {
-		key, err := hex.DecodeString(strings.TrimSpace(string(b)))
-		if err != nil || len(key) < 32 {
-			return nil, fmt.Errorf("media key %s is corrupt", path)
-		}
-		return key, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
+	if key, err := readKey(path); !errors.Is(err, os.ErrNotExist) {
+		return key, err
 	}
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(path, []byte(hex.EncodeToString(key)+"\n"), 0o600); err != nil {
+	// Write a temporary file (CreateTemp makes it 0600) and publish it with a hard link:
+	// the link is atomic, so nobody reads a half-written key, and it fails if the key
+	// already exists, so concurrent first starts all end up with the same key.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".media_key-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmp.Name())
+	_, werr := tmp.WriteString(hex.EncodeToString(key) + "\n")
+	if err := tmp.Sync(); werr == nil {
+		werr = err
+	}
+	if err := tmp.Close(); werr == nil {
+		werr = err
+	}
+	if werr != nil {
+		return nil, werr
+	}
+	if err := os.Link(tmp.Name(), path); errors.Is(err, os.ErrExist) {
+		return readKey(path) // another process created it first
+	} else if err != nil {
 		return nil, err
 	}
 	return key, nil
 }
 
+func readKey(path string) ([]byte, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	key, err := hex.DecodeString(strings.TrimSpace(string(b)))
+	if err != nil || len(key) < 32 {
+		return nil, fmt.Errorf("media key %s is corrupt", path)
+	}
+	return key, nil
+}
+
+// mac length-prefixes each part, so ids containing separators cannot shift between parts.
 func (s *Signer) mac(instanceID, mediaID string, exp int64) string {
 	h := hmac.New(sha256.New, s.Key)
-	fmt.Fprintf(h, "%s/%s/%d", instanceID, mediaID, exp)
+	fmt.Fprintf(h, "%d:%s|%d:%s|%d", len(instanceID), instanceID, len(mediaID), mediaID, exp)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
