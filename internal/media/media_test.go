@@ -90,8 +90,10 @@ func TestFetchWhenPrivateAllowed(t *testing.T) {
 	if _, _, err := f.Fetch(context.Background(), srv.URL+"/missing", 100); !errors.Is(err, ErrFetch) {
 		t.Fatalf("missing = %v", err)
 	}
-	if _, _, err := f.Fetch(context.Background(), "ftp://example.com/x", 100); !errors.Is(err, ErrFetch) {
-		t.Fatalf("non-http url = %v", err)
+	for _, bad := range []string{"ftp://example.com/x", "http:///nohost", "::nope"} {
+		if _, _, err := f.Fetch(context.Background(), bad, 100); !errors.Is(err, ErrInvalidURL) || errors.Is(err, ErrFetch) {
+			t.Fatalf("invalid url %q = %v", bad, err)
+		}
 	}
 }
 

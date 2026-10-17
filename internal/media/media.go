@@ -26,9 +26,11 @@ import (
 
 var (
 	ErrTooLarge = errors.New("media exceeds the size limit")
-	// ErrFetch means media.url could not be downloaded (network, HTTP status, bad URL).
+	// ErrFetch means media.url could not be downloaded (network, HTTP status).
 	ErrFetch   = errors.New("media could not be fetched")
 	ErrBlocked = errors.New("media URL points to a private or local address")
+	// ErrInvalidURL means media.url is not an absolute http(s) URL (a client error).
+	ErrInvalidURL = errors.New("media.url must be an http(s) URL")
 )
 
 // MaxSize is the send limit per message type (spec 4.5).
@@ -150,7 +152,7 @@ func (f *Fetcher) initClient() {
 func (f *Fetcher) Fetch(ctx context.Context, rawURL string, max int64) ([]byte, string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, "", fmt.Errorf("%w: media.url must be an http(s) URL", ErrFetch)
+		return nil, "", ErrInvalidURL
 	}
 	timeout := f.Timeout
 	if timeout == 0 {

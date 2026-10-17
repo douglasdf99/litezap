@@ -184,6 +184,7 @@ func TestSendValidationAndFailures(t *testing.T) {
 		{To: "5511988887777", Type: "reaction", Reaction: &ReactionInput{MessageID: "nope", Emoji: "👍"}},
 		{To: "5511988887777", Type: "text", Text: "x", ExpiresAfter: "10s"},
 		{To: "5511988887777", Type: "image", Media: &MediaInput{Base64: base64.StdEncoding.EncodeToString([]byte("not an image"))}},
+		{To: "5511988887777", Type: "image", Media: &MediaInput{URL: "ftp://example.com/x.png"}},
 		{To: "5511988887777", Type: "image", Caption: strings.Repeat("x", maxTextBytes+1), Media: &MediaInput{Base64: pngB64}},
 		{To: "5511988887777", Type: "document", Media: &MediaInput{Base64: pngB64, FileName: strings.Repeat("a", 256)}},
 		{To: "5511988887777", Type: "reaction", Reaction: &ReactionInput{MessageID: sent.ID, Emoji: strings.Repeat("x", 65)}},

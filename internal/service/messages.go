@@ -424,6 +424,8 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 		return p, apierr.New(http.StatusRequestEntityTooLarge, "media_too_large", in.Type+" exceeds the size limit", false)
 	case errors.Is(err, media.ErrBlocked):
 		return p, apierr.Validation("media.url points to a private or local address")
+	case errors.Is(err, media.ErrInvalidURL):
+		return p, apierr.Validation(err.Error())
 	case errors.Is(err, media.ErrFetch):
 		return p, apierr.New(http.StatusUnprocessableEntity, "media_fetch_failed", "media.url could not be downloaded", true)
 	case err != nil:
