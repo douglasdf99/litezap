@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.mau.fi/whatsmeow"
@@ -13,22 +15,60 @@ import (
 )
 
 // Whatsmeow adapts a whatsmeow client to WAClient.
+//
+// Pairing deliberately does not use whatsmeow's GetQRChannel: its emitter cannot be torn
+// down safely. Instead handle() reacts to events.QR by rotating the codes itself, and
+// pairLoop owns connecting/disconnecting. Nothing here ever blocks the event handler.
 type Whatsmeow struct {
 	cli  *whatsmeow.Client
 	log  *slog.Logger
 	sink Sink
 
-	restart chan struct{} // asks qrLoop to end the current QR round immediately
+	// Signals to pairLoop; all are buffered (1) and sent to without blocking.
+	restart    chan struct{} // from PairPhone: end the current round now
+	roundEnded chan struct{} // codes exhausted, or unpaired socket dropped
+	paired     chan struct{} // events.PairSuccess
+	terminalCh chan struct{} // a logged_out/banned/failed state was reported
+	rotate     chan *events.RotateADVSecret
+
+	terminal  atomic.Bool // set before reporting logged_out/banned/failed
+	accepting atomic.Bool // pairLoop is connected and wants roundEnded signals
 
 	mu         sync.Mutex
+	loopCtx    context.Context
 	cancel     context.CancelFunc
-	pairing    bool          // a QR round loop is active
-	roundStart time.Time     // start of the current QR round
-	ready      chan struct{} // closed when the current round delivered its first QR code
+	loopDone   chan struct{} // closed when pairLoop exits (nil if never started)
+	pairing    bool          // pairLoop is active
+	roundStart time.Time     // when the current round's first code was shown
+	ready      chan struct{} // closed when the current round delivered its first code
+	delivered  bool          // a code was delivered since pairLoop's last connect
+	rotCancel  context.CancelFunc
+	rotDone    chan struct{}
 }
 
 func NewWhatsmeow(cli *whatsmeow.Client, log *slog.Logger) *Whatsmeow {
-	return &Whatsmeow{cli: cli, log: log, restart: make(chan struct{}, 1)}
+	return &Whatsmeow{
+		cli: cli, log: log,
+		restart:    make(chan struct{}, 1),
+		roundEnded: make(chan struct{}, 1),
+		paired:     make(chan struct{}, 1),
+		terminalCh: make(chan struct{}, 1),
+		rotate:     make(chan *events.RotateADVSecret, 4),
+	}
+}
+
+func notify(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
+func drain(ch chan struct{}) {
+	select {
+	case <-ch:
+	default:
+	}
 }
 
 func (w *Whatsmeow) Run(ctx context.Context, sink Sink) error {
@@ -36,7 +76,7 @@ func (w *Whatsmeow) Run(ctx context.Context, sink Sink) error {
 	w.cli.AddEventHandler(w.handle)
 	loopCtx, cancel := context.WithCancel(ctx)
 	w.mu.Lock()
-	w.cancel = cancel
+	w.loopCtx, w.cancel = loopCtx, cancel
 	w.mu.Unlock()
 	if w.cli.Store.ID != nil {
 		sink.ConnState("connecting", "", w.jid())
@@ -45,8 +85,9 @@ func (w *Whatsmeow) Run(ctx context.Context, sink Sink) error {
 	}
 	w.mu.Lock()
 	w.pairing = true
+	w.loopDone = make(chan struct{})
 	w.mu.Unlock()
-	go w.qrLoop(loopCtx)
+	go w.pairLoop(loopCtx)
 	return nil
 }
 
@@ -69,6 +110,13 @@ func sleep(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+func nextBackoff(d time.Duration) time.Duration {
+	if d *= 2; d > time.Minute {
+		return time.Minute
+	}
+	return d
+}
+
 // connectLoop retries the initial connection (e.g. no network at boot) instead of
 // exiting. With whatsmeow's InitialAutoReconnect enabled, Connect returns nil and
 // retries internally, so this loop simply ends. Without it, we retry here instead of
@@ -89,135 +137,206 @@ func (w *Whatsmeow) connectLoop(ctx context.Context) {
 		if !sleep(ctx, delay) {
 			return
 		}
-		if delay < time.Minute {
-			delay *= 2
-		}
+		delay = nextBackoff(delay)
 	}
 }
 
-func (w *Whatsmeow) beginRound() chan struct{} {
-	ready := make(chan struct{})
-	w.mu.Lock()
-	w.roundStart = time.Now()
-	w.ready = ready
-	w.mu.Unlock()
-	return ready
-}
-
-// qrLoop keeps offering QR codes until pairing succeeds or ctx ends. Rounds that end
-// without success (all codes expired) restart after a backoff that resets whenever a
-// code is delivered.
-func (w *Whatsmeow) qrLoop(ctx context.Context) {
+// pairLoop connects an unpaired client and keeps it offering QR codes (rotated by
+// handle -> startRotation) until pairing succeeds, a terminal state is reported or ctx ends.
+func (w *Whatsmeow) pairLoop(ctx context.Context) {
 	defer func() {
 		w.mu.Lock()
 		w.pairing = false
+		done := w.loopDone
 		w.mu.Unlock()
+		w.stopRotation()
+		if done != nil {
+			close(done)
+		}
 	}()
 	backoff := time.Second
-	for ctx.Err() == nil {
-		ch, err := w.cli.GetQRChannel(ctx)
-		if err != nil {
-			w.log.Error("get qr channel", "err", err)
-			return
-		}
-		ready := w.beginRound()
+	for ctx.Err() == nil && !w.terminal.Load() {
+		drain(w.roundEnded)
+		drain(w.restart)
+		w.mu.Lock()
+		w.delivered = false
+		w.mu.Unlock()
 		if err := w.cli.ConnectContext(ctx); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			w.log.Error("connect for pairing", "err", err)
+			w.log.Error("connect for pairing", "err", err, "in", backoff)
 			if !sleep(ctx, backoff) {
 				return
 			}
 			backoff = nextBackoff(backoff)
 			continue
 		}
-		announced, readyClosed, restarted := false, false, false
-		var last whatsmeow.QRChannelItem
-	round:
-		for {
-			select {
-			case <-ctx.Done():
-				w.cli.Disconnect()
-				return
-			case <-w.restart:
-				restarted = true
-				break round
-			case item, ok := <-ch:
-				if !ok {
-					break round
-				}
-				last = item
-				switch item.Event {
-				case whatsmeow.QRChannelEventCode:
-					if ctx.Err() != nil {
-						continue
-					}
-					// Only report qr_pending once the socket is ready: PairPhone must wait for the first QR.
-					if !announced {
-						w.sink.ConnState("qr_pending", "", "")
-						announced = true
-					}
-					w.sink.QR(item.Code, item.Timeout)
-					backoff = time.Second
-					if !readyClosed {
-						close(ready)
-						readyClosed = true
-					}
-				case whatsmeow.QRChannelSuccess.Event,
-					whatsmeow.QRChannelClientOutdated.Event,
-					whatsmeow.QRChannelErrUnexpectedEvent.Event:
-					// handle() reports failed/banned for the error cases.
-					return
-				case whatsmeow.QRChannelEventError:
-					w.log.Warn("pairing error", "err", item.Error)
-				}
-			}
-		}
-		// Round ended without success (codes exhausted or restart requested).
-		w.log.Debug("qr round ended", "last", last.Event, "restarted", restarted)
-		w.cli.Disconnect()
-		if restarted {
-			continue
-		}
-		if !sleep(ctx, backoff) {
+		w.accepting.Store(true)
+		select {
+		case <-ctx.Done():
+			w.endRound()
 			return
+		case <-w.paired:
+			w.stopRotation()
+			return
+		case <-w.terminalCh:
+			w.stopRotation()
+			return
+		case <-w.restart:
+			w.endRound()
+		case <-w.roundEnded:
+			w.endRound()
+			w.mu.Lock()
+			if w.delivered {
+				backoff = time.Second
+			}
+			w.mu.Unlock()
+			if !sleep(ctx, backoff) {
+				return
+			}
+			backoff = nextBackoff(backoff)
 		}
-		backoff = nextBackoff(backoff)
 	}
 }
 
-func nextBackoff(d time.Duration) time.Duration {
-	if d *= 2; d > time.Minute {
-		return time.Minute
+// endRound stops the rotation and drops the socket (never called from the event handler).
+func (w *Whatsmeow) endRound() {
+	w.accepting.Store(false)
+	w.stopRotation()
+	w.cli.Disconnect()
+}
+
+// stopRotation cancels the running code rotation, if any, and waits for it to exit.
+func (w *Whatsmeow) stopRotation() {
+	w.mu.Lock()
+	cancel, done := w.rotCancel, w.rotDone
+	w.rotCancel, w.rotDone = nil, nil
+	w.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		<-done
 	}
-	return d
+}
+
+// startRotation begins a round for an events.QR; called from handle(). It only waits
+// for the previous rotation goroutine, which never blocks on the handler.
+func (w *Whatsmeow) startRotation(codes []string) {
+	w.stopRotation()
+	w.mu.Lock()
+	if !w.pairing || w.loopCtx.Err() != nil || w.terminal.Load() {
+		w.mu.Unlock()
+		return
+	}
+	rctx, cancel := context.WithCancel(w.loopCtx)
+	ready, done := make(chan struct{}), make(chan struct{})
+	w.rotCancel, w.rotDone = cancel, done
+	w.ready = ready
+	w.roundStart = time.Now()
+	w.mu.Unlock()
+	go func() {
+		defer close(done)
+		if rctx.Err() != nil || w.terminal.Load() {
+			return
+		}
+		w.sink.ConnState("qr_pending", "", "")
+		first := func() {
+			w.mu.Lock()
+			w.delivered = true
+			w.mu.Unlock()
+			close(ready)
+		}
+		if rotateQRs(rctx, codes, defaultQRTiming, w.sink, w.rotate, first) {
+			notify(w.roundEnded)
+		}
+	}()
+}
+
+type qrTiming struct{ First, Next time.Duration }
+
+// defaultQRTiming mirrors whatsmeow's QR channel: first code 60s, the following ones 20s.
+var defaultQRTiming = qrTiming{First: 60 * time.Second, Next: 20 * time.Second}
+
+// rotateQRs shows each code for its timeout. first is called right after the first code is
+// delivered. A RotateADVSecret rewrites the current and remaining codes. It returns true
+// when every code expired, false when ctx ended first.
+func rotateQRs(ctx context.Context, codes []string, t qrTiming, sink Sink,
+	rot <-chan *events.RotateADVSecret, first func()) bool {
+	timeout := t.First
+	firstShown := false
+	for len(codes) > 0 {
+		sink.QR(codes[0], timeout)
+		if !firstShown {
+			firstShown = true
+			first()
+		}
+		timer := time.NewTimer(timeout)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		case <-timer.C:
+			codes = codes[1:]
+		case r := <-rot:
+			timer.Stop()
+			for i := range codes {
+				codes[i] = strings.Replace(codes[i], r.OldSecret, r.NewSecret, 1)
+			}
+		}
+		timeout = t.Next
+	}
+	return true
+}
+
+func (w *Whatsmeow) reportTerminal(state, reason, jid string) {
+	w.terminal.Store(true)
+	notify(w.terminalCh)
+	w.sink.ConnState(state, reason, jid)
 }
 
 func (w *Whatsmeow) handle(evt any) {
 	loggedIn := w.cli.Store.ID != nil
 	switch e := evt.(type) {
+	case *events.QR:
+		w.startRotation(e.Codes)
+	case *events.RotateADVSecret:
+		select {
+		case w.rotate <- e:
+		default:
+		}
 	case *events.PairSuccess:
+		w.mu.Lock()
+		if w.rotCancel != nil {
+			w.rotCancel() // stop showing codes; pairLoop waits for the goroutine
+		}
+		w.mu.Unlock()
+		notify(w.paired)
 		w.sink.ConnState("connecting", "", e.ID.String())
 	case *events.Connected, *events.KeepAliveRestored:
 		w.sink.ConnState("connected", "", w.jid())
 	case *events.Disconnected:
 		if loggedIn {
 			w.sink.ConnState("reconnecting", "disconnected", w.jid())
+		} else if w.accepting.Load() {
+			notify(w.roundEnded)
+		}
+	case *events.ConnectFailure:
+		if !loggedIn && w.accepting.Load() {
+			notify(w.roundEnded)
 		}
 	case *events.KeepAliveTimeout:
 		if loggedIn {
 			w.sink.ConnState("reconnecting", "keepalive_timeout", w.jid())
 		}
 	case *events.LoggedOut:
-		w.sink.ConnState("logged_out", e.Reason.String(), "")
+		w.reportTerminal("logged_out", e.Reason.String(), "")
 	case *events.StreamReplaced:
 		// Another client took over this session; stop instead of fighting for it.
-		w.sink.ConnState("logged_out", "stream_replaced", w.jid())
+		w.reportTerminal("logged_out", "stream_replaced", w.jid())
 	case *events.TemporaryBan:
-		w.sink.ConnState("banned", e.String(), w.jid())
+		w.reportTerminal("banned", e.String(), w.jid())
 	case *events.ClientOutdated:
-		w.sink.ConnState("failed", "client_outdated", w.jid())
+		w.reportTerminal("failed", "client_outdated", w.jid())
 	}
 }
 
@@ -229,25 +348,22 @@ func (w *Whatsmeow) jid() string {
 }
 
 // PairPhone requests a pairing code. Codes die with the QR round (~160s), so when the
-// current round is old a fresh one is started first and we wait for its first QR.
+// current round is old a fresh one is started first and we wait for its first code.
 func (w *Whatsmeow) PairPhone(ctx context.Context, phone string) (string, error) {
 	w.mu.Lock()
-	active, start, old := w.pairing, w.roundStart, w.ready
+	active, start, ready := w.pairing, w.roundStart, w.ready
 	w.mu.Unlock()
 	if !active {
 		return "", errors.New("not pairing")
 	}
-	if time.Since(start) > 30*time.Second {
-		select {
-		case w.restart <- struct{}{}:
-		default:
-		}
-	} else {
-		old = nil
+	var stale chan struct{}
+	if ready != nil && !start.IsZero() && time.Since(start) > 30*time.Second {
+		notify(w.restart)
+		stale = ready
 	}
 	wctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	if err := w.waitReady(wctx, old); err != nil {
+	if err := w.waitReady(wctx, stale); err != nil {
 		return "", fmt.Errorf("waiting for pairing round: %w", err)
 	}
 	return w.cli.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
@@ -281,11 +397,26 @@ func (w *Whatsmeow) waitReady(ctx context.Context, stale chan struct{}) error {
 
 // Logout unlinks the device. whatsmeow emits no event for a self-initiated logout,
 // so we report logged_out ourselves. While still pairing there is nothing to unlink
-// (cli.Logout would fail with ErrNotLoggedIn): just stop the loops and disconnect.
+// (cli.Logout would fail with ErrNotLoggedIn): stop the pairing loop, wait for it to be
+// gone (so no late qr_pending), then report.
 func (w *Whatsmeow) Logout(ctx context.Context) error {
 	if w.cli.Store.ID == nil {
+		w.terminal.Store(true)
 		w.stopLoops()
+		w.mu.Lock()
+		done := w.loopDone
+		w.mu.Unlock()
+		if done != nil {
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				w.log.Warn("pairing loop did not stop in time")
+			}
+		}
 		w.cli.Disconnect()
+		if w.cli.Store.ID != nil {
+			w.log.Warn("device paired while logging out")
+		}
 		w.sink.ConnState("logged_out", "api", "")
 		return nil
 	}
