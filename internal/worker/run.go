@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -22,6 +23,10 @@ type Options struct {
 	InstanceID string
 	Socket     string
 	DataDir    string
+	// Parent, when non-nil, is a parent-liveness pipe (the supervisor's end is held open
+	// for as long as the supervisor lives). Reaching EOF means the supervisor is gone,
+	// and the worker shuts down. The worker command passes os.Stdin.
+	Parent io.Reader
 }
 
 // Run is the body of `litezap worker`. It blocks until ctx is cancelled or serving fails.
@@ -31,6 +36,12 @@ func Run(ctx context.Context, opt Options, log *slog.Logger) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if opt.Parent != nil {
+		go func() {
+			_, _ = io.Copy(io.Discard, opt.Parent)
+			cancel()
+		}()
+	}
 	dir := filepath.Join(opt.DataDir, "instances", opt.InstanceID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err

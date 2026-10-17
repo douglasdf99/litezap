@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
@@ -46,7 +48,7 @@ func (p *Process) command(id, sock string) *exec.Cmd {
 
 func (p *Process) Start(ctx context.Context, id string) (WorkerHandle, error) {
 	sock := SocketPath(p.DataDir, id)
-	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
+	if err := ensureSocketDir(sock); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Join(p.DataDir, "run"), 0o700); err != nil {
@@ -60,14 +62,23 @@ func (p *Process) Start(ctx context.Context, id string) (WorkerHandle, error) {
 	}
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 	detach(cmd) // own process group: Ctrl+C on the supervisor must not hit workers directly
+	// Parent-liveness pipe: the worker reads its stdin and exits on EOF, which happens
+	// when this handle closes the writer or the supervisor dies.
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("worker stdin: %w", err)
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start worker: %w", err)
 	}
-	h := &procHandle{cmd: cmd, done: make(chan struct{}), pidFile: p.pidFile(id)}
-	_ = os.WriteFile(h.pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600)
+	h := &procHandle{cmd: cmd, done: make(chan struct{}), pidFile: p.pidFile(id), stdin: stdin}
+	if err := os.WriteFile(h.pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil && p.Log != nil {
+		p.Log.Warn("cannot write worker pid file", "instance", id, "path", h.pidFile, "err", err)
+	}
 	go func() {
 		_ = cmd.Wait()
 		_ = os.Remove(h.pidFile)
+		h.closeConn() // a crashed worker must not leak its ClientConn
 		close(h.done)
 	}()
 
@@ -84,7 +95,9 @@ func (p *Process) Start(ctx context.Context, id string) (WorkerHandle, error) {
 		_ = h.Kill()
 		return nil, fmt.Errorf("dial worker: %w", err)
 	}
-	h.conn = conn
+	if !h.setConn(conn) { // worker already exited
+		return nil, errors.New("worker exited during start")
+	}
 	h.client = workerv1.NewWorkerClient(conn)
 	// The socket file exists from bind(), slightly before listen(); wait until the worker answers.
 	pctx, cancel := context.WithTimeout(ctx, timeout)
@@ -125,29 +138,47 @@ func waitForSocket(ctx context.Context, sock string, exited <-chan struct{}, tim
 }
 
 type procHandle struct {
-	cmd       *exec.Cmd
-	done      chan struct{}
-	pidFile   string
-	conn      *grpc.ClientConn
-	client    workerv1.WorkerClient
-	closeOnce sync.Once
+	cmd     *exec.Cmd
+	done    chan struct{}
+	pidFile string
+	client  workerv1.WorkerClient
+	stdin   io.Closer
+
+	mu     sync.Mutex
+	conn   *grpc.ClientConn
+	closed bool
 }
 
 func (h *procHandle) Client() workerv1.WorkerClient { return h.client }
 func (h *procHandle) Done() <-chan struct{}         { return h.done }
 
 func (h *procHandle) closeConn() {
-	h.closeOnce.Do(func() {
-		if h.conn != nil {
-			h.conn.Close()
-		}
-	})
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closed = true
+	if h.conn != nil {
+		h.conn.Close()
+	}
+}
+
+// setConn stores the client connection; if the handle is already closed (the worker
+// exited) the connection is closed immediately and false is returned.
+func (h *procHandle) setConn(c *grpc.ClientConn) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		c.Close()
+		return false
+	}
+	h.conn = c
+	return true
 }
 
 func (h *procHandle) Kill() error {
 	h.closeConn()
 	err := h.cmd.Process.Kill()
 	<-h.done
+	_ = h.stdin.Close()
 	if errors.Is(err, os.ErrProcessDone) {
 		return nil
 	}
@@ -155,13 +186,15 @@ func (h *procHandle) Kill() error {
 }
 
 func (h *procHandle) Close(ctx context.Context) error {
-	h.closeConn()
 	if runtime.GOOS == "windows" {
 		return h.Kill() // no SIGINT for child processes on Windows
 	}
 	_ = h.cmd.Process.Signal(os.Interrupt)
+	// Keep the connection open while the worker winds down so in-flight RPCs finish.
 	select {
 	case <-h.done:
+		h.closeConn()
+		_ = h.stdin.Close()
 		return nil
 	case <-ctx.Done():
 		return h.Kill()
@@ -173,23 +206,29 @@ func (h *procHandle) Close(ctx context.Context) error {
 func CleanupOrphans(dataDir string, log *slog.Logger) {
 	files, _ := filepath.Glob(filepath.Join(dataDir, "run", "*.pid"))
 	for _, f := range files {
+		id := strings.TrimSuffix(filepath.Base(f), ".pid")
 		b, err := os.ReadFile(f)
 		_ = os.Remove(f)
 		if err != nil {
 			continue
 		}
 		pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
-		if err != nil || !isWorkerProcess(pid) {
+		if err != nil || !isWorkerProcess(pid, id, dataDir) {
 			continue
 		}
 		if proc, err := os.FindProcess(pid); err == nil {
 			log.Warn("killing orphan worker", "pid", pid, "pid_file", f)
 			_ = proc.Kill()
+			for i := 0; i < 40 && processAlive(proc); i++ {
+				time.Sleep(50 * time.Millisecond)
+			}
 		}
 	}
 }
 
-func isWorkerProcess(pid int) bool {
+func processAlive(p *os.Process) bool { return p.Signal(syscall.Signal(0)) == nil }
+
+func isWorkerProcess(pid int, id, dataDir string) bool {
 	if runtime.GOOS == "windows" {
 		return false
 	}
@@ -198,5 +237,7 @@ func isWorkerProcess(pid int) bool {
 		return false
 	}
 	cmd := string(out)
-	return strings.Contains(cmd, " worker ") && strings.Contains(cmd, "--instance")
+	return strings.Contains(cmd, " worker ") &&
+		strings.Contains(cmd, "--instance "+id) &&
+		strings.Contains(cmd, "--data-dir "+dataDir)
 }

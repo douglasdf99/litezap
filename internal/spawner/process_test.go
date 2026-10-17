@@ -2,6 +2,7 @@ package spawner
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -40,7 +41,15 @@ func TestMain(m *testing.M) {
 		go g.Serve(lis)
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt)
-		<-sig
+		eof := make(chan struct{})
+		go func() { // parent-liveness pipe: EOF means the supervisor is gone
+			_, _ = io.Copy(io.Discard, os.Stdin)
+			close(eof)
+		}()
+		select {
+		case <-sig:
+		case <-eof:
+		}
 		g.Stop()
 		os.Exit(0)
 	case "exit":
@@ -69,6 +78,7 @@ func TestProcessStartPingClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = h.Kill() })
 	pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	resp, err := h.Client().Ping(pctx, &workerv1.PingRequest{})
@@ -94,6 +104,7 @@ func TestProcessKill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = h.Kill() })
 	if err := h.Kill(); err != nil {
 		t.Fatal(err)
 	}
@@ -105,5 +116,21 @@ func TestProcessStartFailsWhenWorkerExits(t *testing.T) {
 	_, err := p.Start(context.Background(), "inst_c")
 	if err == nil || !strings.Contains(err.Error(), "exited") {
 		t.Fatalf("expected exit error, got %v", err)
+	}
+}
+
+func TestProcessWorkerExitsWhenParentPipeCloses(t *testing.T) {
+	p := testSpawner(t, "serve")
+	h, err := p.Start(context.Background(), "inst_d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = h.Kill() })
+	// Simulate the supervisor dying: its end of the liveness pipe goes away.
+	_ = h.(*procHandle).stdin.Close()
+	select {
+	case <-h.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not exit after parent pipe closed")
 	}
 }

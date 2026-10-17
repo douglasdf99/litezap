@@ -117,13 +117,13 @@ func (f *Fake) Done() <-chan struct{}         { return f.done }
 func (f *Fake) Kill() error                   { f.Crash(); return nil }
 
 // Close mimics a graceful stop: in-flight RPCs (e.g. Logout) finish before the fake dies.
-func (f *Fake) Close(context.Context) error {
+func (f *Fake) Close(ctx context.Context) error {
 	f.Closed.Store(true)
 	done := make(chan struct{})
 	go func() { f.grpc.GracefulStop(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-ctx.Done():
 	}
 	f.Crash()
 	return nil
