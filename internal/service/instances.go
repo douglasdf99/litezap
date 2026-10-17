@@ -62,8 +62,10 @@ func mapErr(err error) error {
 	// Errors from worker RPCs carry a gRPC status (possibly wrapped).
 	if st, ok := status.FromError(err); ok && st.Code() != codes.OK {
 		switch st.Code() {
-		case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
+		case codes.Unavailable, codes.Canceled:
 			return apierr.NotConnected()
+		case codes.DeadlineExceeded:
+			return apierr.New(http.StatusGatewayTimeout, "worker_timeout", "instance worker did not answer in time", true)
 		}
 		msg := "worker request failed"
 		if m := redact(st.Message()); m != "" {

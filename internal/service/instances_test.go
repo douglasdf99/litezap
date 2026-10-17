@@ -13,11 +13,16 @@ import (
 )
 
 func TestMapErrWorkerStatus(t *testing.T) {
-	for _, c := range []codes.Code{codes.Unavailable, codes.DeadlineExceeded, codes.Canceled} {
+	for _, c := range []codes.Code{codes.Unavailable, codes.Canceled} {
 		var e *apierr.Error
 		if !errors.As(mapErr(status.Error(c, "boom")), &e) || e.Code != "instance_not_connected" {
 			t.Fatalf("%v -> %v, want instance_not_connected", c, e)
 		}
+	}
+	var to *apierr.Error
+	if !errors.As(mapErr(status.Error(codes.DeadlineExceeded, "slow")), &to) ||
+		to.Code != "worker_timeout" || to.Status != http.StatusGatewayTimeout || !to.Retryable {
+		t.Fatalf("DeadlineExceeded -> %+v, want 504 worker_timeout retryable", to)
 	}
 
 	err := fmt.Errorf("pair: %w", status.Error(codes.Unknown, "waiting for pairing round: not pairing (5511987654321, lzi_secret123)"))

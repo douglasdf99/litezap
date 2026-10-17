@@ -59,6 +59,7 @@ Erros: `{"error":{"code","message","retryable"}}`. Códigos:
 | `instance_banned` | 409 | número banido; apague a instância |
 | `instance_not_pairing` | 409 | instância não está aguardando QR/pareamento |
 | `worker_error` | 502 | o worker da instância recusou ou falhou a operação (`retryable`) |
+| `worker_timeout` | 504 | o worker da instância não respondeu a tempo (`retryable`) |
 | `shutting_down` | 503 | servidor encerrando |
 | `internal` | 500 | erro interno |
 

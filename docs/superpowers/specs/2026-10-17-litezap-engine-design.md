@@ -301,7 +301,7 @@ Toda transição é persistida e emitida como `instance.status`.
 
 ### 9.3 Erros na API
 
-Códigos estáveis: `unauthorized`, `forbidden`, `instance_not_found`, `instance_not_connected`, `instance_banned`, `instance_not_pairing`, `worker_error`, `shutting_down`, `rate_limited`, `invalid_number`, `media_too_large`, `media_unavailable`, `validation_failed`, `internal`. `retryable` indica se o cliente pode tentar de novo. Erros gRPC do worker: `Unavailable`/`DeadlineExceeded`/`Canceled` viram `instance_not_connected`; qualquer outro vira `worker_error` (HTTP 502, `retryable`, mensagem do worker sem números de telefone nem tokens).
+Códigos estáveis: `unauthorized`, `forbidden`, `instance_not_found`, `instance_not_connected`, `instance_banned`, `instance_not_pairing`, `worker_error`, `worker_timeout`, `shutting_down`, `rate_limited`, `invalid_number`, `media_too_large`, `media_unavailable`, `validation_failed`, `internal`. `retryable` indica se o cliente pode tentar de novo. Erros gRPC do worker: `Unavailable`/`Canceled` viram `instance_not_connected`; `DeadlineExceeded` vira `worker_timeout` (HTTP 504, `retryable`); qualquer outro vira `worker_error` (HTTP 502, `retryable`, mensagem do worker sem números de telefone nem tokens).
 
 ### 9.4 Observabilidade
 
