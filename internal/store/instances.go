@@ -62,7 +62,7 @@ func (s *Store) ListInstances(ctx context.Context) ([]Instance, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Instance
+	out := []Instance{}
 	for rows.Next() {
 		in, err := scanInstance(rows)
 		if err != nil {

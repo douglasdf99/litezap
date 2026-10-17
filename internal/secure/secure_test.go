@@ -27,7 +27,7 @@ func TestInstanceTokenAndHash(t *testing.T) {
 }
 
 func TestEqual(t *testing.T) {
-	if !Equal("abc", "abc") || Equal("abc", "abd") || Equal("", "x") {
+	if !Equal("abc", "abc") || Equal("abc", "abd") || Equal("", "x") || Equal("", "") {
 		t.Fatal("Equal misbehaves")
 	}
 }

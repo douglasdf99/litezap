@@ -51,7 +51,7 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("LITEZAP_DATA_DIR"); v != "" {
 		cfg.DataDir = v
 	}
-	if v := os.Getenv("LITEZAP_ADMIN_TOKEN"); v != "" {
+	if v := strings.TrimSpace(os.Getenv("LITEZAP_ADMIN_TOKEN")); v != "" {
 		cfg.AdminToken = v
 	}
 	if v := os.Getenv("LITEZAP_WORKER_MEMORY_MAX_MB"); v != "" {
@@ -77,7 +77,11 @@ func EnsureAdminToken(cfg *Config) error {
 	p := filepath.Join(cfg.DataDir, "admin_token")
 	b, err := os.ReadFile(p)
 	if err == nil {
-		cfg.AdminToken = strings.TrimSpace(string(b))
+		tok := strings.TrimSpace(string(b))
+		if tok == "" {
+			return fmt.Errorf("admin token file %s is empty", p)
+		}
+		cfg.AdminToken = tok
 		return nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {

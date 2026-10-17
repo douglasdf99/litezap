@@ -82,3 +82,26 @@ func TestEnsureAdminTokenKeepsConfigured(t *testing.T) {
 		t.Fatal("configured token overwritten")
 	}
 }
+
+func TestEnsureAdminTokenRejectsEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "admin_token"), []byte("  \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{DataDir: dir}
+	err := EnsureAdminToken(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "is empty") {
+		t.Fatalf("expected empty-file error, got %v", err)
+	}
+}
+
+func TestLoadTreatsWhitespaceAdminTokenEnvAsUnset(t *testing.T) {
+	t.Setenv("LITEZAP_ADMIN_TOKEN", "   ")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AdminToken != "" {
+		t.Fatalf("token = %q", cfg.AdminToken)
+	}
+}

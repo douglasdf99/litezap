@@ -31,5 +31,8 @@ func HashToken(token string) string {
 
 // Equal compares two secrets in constant time.
 func Equal(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

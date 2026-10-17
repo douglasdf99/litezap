@@ -36,6 +36,9 @@ func TestOpenIsIdempotent(t *testing.T) {
 func TestInstanceCRUD(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
+	if empty, err := s.ListInstances(ctx); err != nil || empty == nil || len(empty) != 0 {
+		t.Fatalf("fresh list = %#v, %v", empty, err)
+	}
 	in := Instance{ID: "inst_1", Name: "Loja", State: instance.Created, TokenHash: "h1"}
 	if err := s.CreateInstance(ctx, in); err != nil {
 		t.Fatal(err)
