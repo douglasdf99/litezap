@@ -27,7 +27,7 @@ Configuração (`litezap.yaml`; variáveis `LITEZAP_*` têm precedência):
 | `admin_token` | `LITEZAP_ADMIN_TOKEN` | gerado em `data/admin_token` |
 | `worker_memory_max_mb` | `LITEZAP_WORKER_MEMORY_MAX_MB` | `512` |
 
-Workers rodam em grupo de processos próprio. Se o supervisor morrer à força (SIGKILL), eles são encerrados no próximo `serve` (limpeza de órfãos via `data/run/*.pid`).
+Workers rodam em grupo de processos próprio e encerram sozinhos assim que o supervisor morre, mesmo à força (SIGKILL): cada worker vigia um pipe no stdin mantido aberto pelo supervisor e sai ao receber EOF. A limpeza de órfãos no próximo `serve` (via `data/run/*.pid`) é só um fallback.
 
 ## API (marco 1)
 
@@ -44,6 +44,8 @@ Autenticação: `Authorization: Bearer <token>`.
 | `POST /v1/instances/{id}/token/rotate` | admin |
 | `DELETE /v1/instances/{id}` | admin |
 | `GET /healthz`, `GET /readyz` | público (admin se o `listen_addr` não for loopback) |
+
+As ações respondem com a instância. `start` e `restart` respondem assim que o worker é disparado, então a resposta pode ainda mostrar o estado anterior: consulte `GET /v1/instances/{id}` até ver o novo estado.
 
 Erros: `{"error":{"code","message","retryable"}}`. Códigos:
 
@@ -68,7 +70,9 @@ Requer um número de teste no celular.
 2. Em outro terminal, crie a instância com o token admin e guarde `ID` e `TOK` (o token da instância só aparece uma vez):
    ```bash
    ADMIN=$(cat data/admin_token)
-   curl -s -X POST localhost:8787/v1/instances -H "Authorization: Bearer $ADMIN" -d '{"name":"teste"}'
+   RESP=$(curl -s -X POST localhost:8787/v1/instances -H "Authorization: Bearer $ADMIN" -d '{"name":"teste"}')
+   ID=$(echo "$RESP" | jq -r .instance.id)
+   TOK=$(echo "$RESP" | jq -r .token)
    ```
 3. Baixe o QR e escaneie em WhatsApp > Aparelhos conectados:
    ```bash
@@ -78,6 +82,15 @@ Requer um número de teste no celular.
 5. Crash do worker: `kill -9 $(cat data/run/$ID.pid)`; em alguns segundos o worker volta sozinho a `connected`, sem novo QR.
 6. Pare o `serve` (Ctrl+C) e suba de novo: a instância reconecta sem QR.
 7. Logout: `curl -s -X POST localhost:8787/v1/instances/$ID/logout -H "Authorization: Bearer $TOK"` leva o estado a `logged_out` e o aparelho some da lista no celular.
+
+Os estados mudam de forma assíncrona: depois de cada ação, repita o `GET` do passo 4 até ver o estado esperado.
+
+## Limitações conhecidas (marco 1)
+
+- Pareamento com celular real ainda não foi verificado de ponta a ponta: os passos 3 a 7 acima precisam ser executados com um número de teste.
+- Sem eventos, SSE ou webhooks ainda: acompanhe o estado consultando `GET /v1/instances/{id}`.
+- Sem watchdog de conexão zumbi ainda (spec 9.2): uma conexão que morre em silêncio só é detectada pelo keepalive do whatsmeow.
+- Suporte a Windows não testado (compila, mas não foi executado).
 
 ## Desenvolvimento
 
