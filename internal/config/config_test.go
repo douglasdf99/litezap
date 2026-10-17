@@ -105,3 +105,32 @@ func TestLoadTreatsWhitespaceAdminTokenEnvAsUnset(t *testing.T) {
 		t.Fatalf("token = %q", cfg.AdminToken)
 	}
 }
+
+func TestLoadMessagingSettings(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "litezap.yaml")
+	body := "instance_defaults:\n  min_interval_ms: 1000\n  ramp:\n    enabled: false\ndefault_proxy_url: socks5://file:1080\n"
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LITEZAP_DEFAULT_PROXY_URL", "http://env:3128")
+	t.Setenv("LITEZAP_MEDIA_ALLOW_PRIVATE_URLS", "true")
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := cfg.InstanceDefaults
+	// Fields missing from the file keep their defaults.
+	if d.MinIntervalMS != 1000 || d.JitterMS != 2000 || d.Ramp.Enabled || d.Ramp.EndPerDay != 150 {
+		t.Fatalf("instance defaults = %+v", d)
+	}
+	if cfg.DefaultProxyURL != "http://env:3128" || !cfg.MediaAllowPrivateURLs {
+		t.Fatalf("cfg = %+v", cfg)
+	}
+}
+
+func TestLoadRejectsBadProxy(t *testing.T) {
+	t.Setenv("LITEZAP_DEFAULT_PROXY_URL", "ftp://nope")
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected error")
+	}
+}

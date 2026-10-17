@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/douglasdf99/litezap/internal/settings"
 	"gopkg.in/yaml.v3"
 )
 
@@ -20,10 +21,19 @@ type Config struct {
 	DataDir        string `yaml:"data_dir"`
 	AdminToken     string `yaml:"admin_token"`
 	WorkerMemoryMB int64  `yaml:"worker_memory_max_mb"`
+	// DefaultProxyURL is used by every instance without its own settings.proxy_url.
+	DefaultProxyURL string `yaml:"default_proxy_url"`
+	// MediaAllowPrivateURLs disables the SSRF block on media.url downloads (local use).
+	MediaAllowPrivateURLs bool `yaml:"media_allow_private_urls"`
+	// InstanceDefaults are the pacing and ramp defaults (spec 4.1); instances override them.
+	InstanceDefaults settings.Settings `yaml:"instance_defaults"`
 }
 
 func Default() Config {
-	return Config{ListenAddr: "127.0.0.1:8787", DataDir: "data", WorkerMemoryMB: 512}
+	return Config{
+		ListenAddr: "127.0.0.1:8787", DataDir: "data", WorkerMemoryMB: 512,
+		InstanceDefaults: settings.Defaults(),
+	}
 }
 
 // Load reads path (a missing file means defaults) and applies env overrides.
@@ -60,6 +70,22 @@ func Load(path string) (Config, error) {
 			return cfg, fmt.Errorf("LITEZAP_WORKER_MEMORY_MAX_MB: %w", err)
 		}
 		cfg.WorkerMemoryMB = n
+	}
+	if v := os.Getenv("LITEZAP_DEFAULT_PROXY_URL"); v != "" {
+		cfg.DefaultProxyURL = v
+	}
+	if v := os.Getenv("LITEZAP_MEDIA_ALLOW_PRIVATE_URLS"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return cfg, fmt.Errorf("LITEZAP_MEDIA_ALLOW_PRIVATE_URLS: %w", err)
+		}
+		cfg.MediaAllowPrivateURLs = b
+	}
+	if err := settings.ValidateProxyURL(cfg.DefaultProxyURL); err != nil {
+		return cfg, fmt.Errorf("default_proxy_url: %w", err)
+	}
+	if err := cfg.InstanceDefaults.Validate(); err != nil {
+		return cfg, fmt.Errorf("instance_defaults: %w", err)
 	}
 	abs, err := filepath.Abs(cfg.DataDir)
 	if err != nil {
