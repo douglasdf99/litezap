@@ -26,6 +26,8 @@ type Whatsmeow struct {
 	sink Sink
 	// connect is cli.ConnectContext; replaced in tests.
 	connect func(context.Context) error
+	// failureBase is the first reconnect delay after an unknown ConnectFailure.
+	failureBase time.Duration
 
 	// Signals to pairLoop; all are buffered (1) and sent to without blocking.
 	restart    chan struct{} // from PairPhone: end the current round now
@@ -49,11 +51,22 @@ type Whatsmeow struct {
 	delivered  bool          // a code was delivered since pairLoop's last connect
 	rotCancel  context.CancelFunc
 	rotDone    chan struct{}
+	// Consecutive unknown ConnectFailures while logged in, and the delay before the next
+	// reconnect; both reset only on events.Connected.
+	failures     int
+	failureDelay time.Duration
 }
+
+// maxConnectFailures consecutive unknown ConnectFailures make the worker give up:
+// reconnecting forever against a server that keeps refusing looks like abuse.
+const (
+	maxConnectFailures = 5
+	maxFailureDelay    = time.Minute
+)
 
 func NewWhatsmeow(cli *whatsmeow.Client, log *slog.Logger) *Whatsmeow {
 	return &Whatsmeow{
-		cli: cli, log: log, connect: cli.ConnectContext,
+		cli: cli, log: log, connect: cli.ConnectContext, failureBase: time.Second,
 		restart:    make(chan struct{}, 1),
 		roundEnded: make(chan struct{}, 1),
 		paired:     make(chan struct{}, 1),
@@ -86,7 +99,7 @@ func (w *Whatsmeow) Run(ctx context.Context, sink Sink) error {
 	w.mu.Unlock()
 	if w.cli.Store.ID != nil {
 		sink.ConnState("connecting", "", w.jid())
-		w.startConnectLoop(loopCtx, false)
+		w.startConnectLoop(loopCtx, false, 0)
 		return nil
 	}
 	w.mu.Lock()
@@ -124,8 +137,9 @@ func nextBackoff(d time.Duration) time.Duration {
 }
 
 // startConnectLoop runs connectLoop in the background unless one is already running.
-// With dropFirst, the current (failed) socket is dropped first.
-func (w *Whatsmeow) startConnectLoop(ctx context.Context, dropFirst bool) {
+// With dropFirst, the current (failed) socket is dropped first; the loop then waits
+// delay (or until ctx ends) before connecting.
+func (w *Whatsmeow) startConnectLoop(ctx context.Context, dropFirst bool, delay time.Duration) {
 	if !w.connecting.CompareAndSwap(false, true) {
 		return
 	}
@@ -133,6 +147,9 @@ func (w *Whatsmeow) startConnectLoop(ctx context.Context, dropFirst bool) {
 		defer w.connecting.Store(false)
 		if dropFirst {
 			w.cli.Disconnect()
+		}
+		if delay > 0 && !sleep(ctx, delay) {
+			return
 		}
 		w.connectLoop(ctx)
 	}()
@@ -365,6 +382,11 @@ func (w *Whatsmeow) handle(evt any) {
 		notify(w.paired)
 		w.sink.ConnState("connecting", "", e.ID.String())
 	case *events.Connected, *events.KeepAliveRestored:
+		if _, ok := e.(*events.Connected); ok {
+			w.mu.Lock()
+			w.failures, w.failureDelay = 0, 0
+			w.mu.Unlock()
+		}
 		w.sink.ConnState("connected", "", w.jid())
 	case *events.Disconnected:
 		if loggedIn {
@@ -386,12 +408,28 @@ func (w *Whatsmeow) handle(evt any) {
 		if e.Reason.IsLoggedOut() || e.Reason == events.ConnectFailureTempBanned || w.terminal.Load() {
 			return
 		}
-		w.sink.ConnState("reconnecting", "connect_failure_"+e.Reason.NumberString(), w.jid())
+		// ConnectContext returns nil right after the handshake, so connectLoop's own
+		// backoff never applies here: back off per failure, and give up after a few.
+		reason := "connect_failure_" + e.Reason.NumberString()
 		w.mu.Lock()
+		w.failures++
+		n := w.failures
+		if w.failureDelay == 0 {
+			w.failureDelay = w.failureBase
+		}
+		delay := w.failureDelay
+		w.failureDelay = min(2*w.failureDelay, maxFailureDelay)
 		ctx := w.loopCtx
 		w.mu.Unlock()
+		if n >= maxConnectFailures {
+			w.log.Error("repeated connect failures; giving up", "reason", reason, "count", n)
+			w.reportTerminal("failed", reason, w.jid())
+			w.stopLoops()
+			return
+		}
+		w.sink.ConnState("reconnecting", reason, w.jid())
 		if ctx != nil && ctx.Err() == nil {
-			w.startConnectLoop(ctx, true)
+			w.startConnectLoop(ctx, true, delay)
 		}
 	case *events.KeepAliveTimeout:
 		if loggedIn {

@@ -119,6 +119,7 @@ func newTestAdapter(t *testing.T, loggedIn bool, fake func(context.Context) erro
 	}
 	w := NewWhatsmeow(whatsmeow.NewClient(dev, nil), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	w.connect = fake
+	w.failureBase = 10 * time.Millisecond
 	r := &stateRec{}
 	w.sink = r
 	ctx, cancel := context.WithCancel(context.Background())
@@ -186,5 +187,114 @@ func TestEndRoundClearsQR(t *testing.T) {
 	_, qrs := r.snapshot()
 	if len(qrs) != 1 || qrs[0] != "" {
 		t.Fatalf("qrs = %q, want one empty (clear) code", qrs)
+	}
+}
+
+// connectRecorder is a connect that succeeds immediately (as ConnectContext does right
+// after the handshake) and records when it was called.
+type connectRecorder struct {
+	mu    sync.Mutex
+	calls []time.Time
+}
+
+func (c *connectRecorder) connect(context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, time.Now())
+	return nil
+}
+func (c *connectRecorder) count() int { c.mu.Lock(); defer c.mu.Unlock(); return len(c.calls) }
+func (c *connectRecorder) last() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls[len(c.calls)-1]
+}
+
+func waitCalls(t *testing.T, c *connectRecorder, n int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for c.count() < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("connect calls = %d, want %d", c.count(), n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// waitIdle waits until no connect loop is running, so the next failure can start one.
+func waitIdle(t *testing.T, w *Whatsmeow) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for w.connecting.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("connect loop still running")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func cf() *events.ConnectFailure {
+	return &events.ConnectFailure{Reason: events.ConnectFailureReason(418)}
+}
+
+func TestConnectFailureBacksOffAndGivesUp(t *testing.T) {
+	c := &connectRecorder{}
+	w, r := newTestAdapter(t, true, c.connect)
+	w.failureBase = 40 * time.Millisecond
+
+	start := time.Now()
+	w.handle(cf()) // 1st: reconnect after 40ms
+	waitCalls(t, c, 1)
+	if d := c.last().Sub(start); d < 40*time.Millisecond {
+		t.Fatalf("first reconnect after %s, want >= 40ms", d)
+	}
+	waitIdle(t, w)
+	start = time.Now()
+	w.handle(cf()) // 2nd: reconnect only after the doubled delay
+	waitCalls(t, c, 2)
+	if d := c.last().Sub(start); d < 80*time.Millisecond {
+		t.Fatalf("second reconnect after %s, want >= 80ms", d)
+	}
+	waitIdle(t, w)
+	for i := 3; i <= 4; i++ {
+		w.handle(cf())
+		waitCalls(t, c, i)
+		waitIdle(t, w)
+	}
+	w.handle(cf()) // 5th consecutive: give up
+	time.Sleep(400 * time.Millisecond)
+	if n := c.count(); n != 4 {
+		t.Fatalf("connect calls = %d after the 5th failure, want 4", n)
+	}
+	states, _ := r.snapshot()
+	if last := states[len(states)-1]; last != (connEvt{"failed", "connect_failure_418"}) {
+		t.Fatalf("last state = %v, want failed/connect_failure_418", last)
+	}
+	if !w.terminal.Load() {
+		t.Fatal("giving up must be terminal")
+	}
+}
+
+func TestConnectedResetsConnectFailureCount(t *testing.T) {
+	c := &connectRecorder{}
+	w, r := newTestAdapter(t, true, c.connect)
+	for i := 1; i <= 4; i++ {
+		w.handle(cf())
+		waitCalls(t, c, i)
+		waitIdle(t, w)
+	}
+	w.handle(&events.Connected{})
+	start := time.Now()
+	w.handle(cf()) // counts as the first failure again, with the base delay
+	waitCalls(t, c, 5)
+	if d := c.last().Sub(start); d > 150*time.Millisecond {
+		t.Fatalf("delay not reset: reconnect after %s", d)
+	}
+	states, _ := r.snapshot()
+	if last := states[len(states)-1]; last.state != "reconnecting" {
+		t.Fatalf("last state = %v, want reconnecting", last)
+	}
+	if w.terminal.Load() {
+		t.Fatal("a Connected in between must reset the failure count")
 	}
 }
