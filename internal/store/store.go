@@ -29,7 +29,8 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
-	// One connection serializes writes and avoids SQLITE_BUSY; enough for marco 1.
+	// One connection serializes writes and avoids SQLITE_BUSY. Consequence: never run a
+	// query while iterating another query's rows (the second query would wait forever).
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db}
 	if err := s.migrate(context.Background()); err != nil {
@@ -103,3 +104,17 @@ func (s *Store) exec1(ctx context.Context, q string, args ...any) error {
 const tsLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 func now() string { return time.Now().UTC().Format(tsLayout) }
+
+// fmtTS formats t for storage; the zero time is stored as "".
+func fmtTS(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(tsLayout)
+}
+
+// parseTS is the inverse of fmtTS ("" and malformed values give the zero time).
+func parseTS(v string) time.Time {
+	t, _ := time.Parse(tsLayout, v)
+	return t
+}

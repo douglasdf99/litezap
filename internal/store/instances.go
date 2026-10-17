@@ -16,18 +16,23 @@ type Instance struct {
 	StateReason string
 	JID         string
 	TokenHash   string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// SettingsJSON holds the instance's settings overrides (a settings.Patch document).
+	SettingsJSON string
+	// FirstConnectedAt is when the instance first reached connected (zero if never); the ramp counts from it.
+	FirstConnectedAt time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
-const instanceCols = `id, name, state, state_reason, jid, token_hash, created_at, updated_at`
+const instanceCols = `id, name, state, state_reason, jid, token_hash, settings_json, first_connected_at, created_at, updated_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanInstance(row scanner) (Instance, error) {
 	var in Instance
-	var state, created, updated string
-	err := row.Scan(&in.ID, &in.Name, &state, &in.StateReason, &in.JID, &in.TokenHash, &created, &updated)
+	var state, firstConn, created, updated string
+	err := row.Scan(&in.ID, &in.Name, &state, &in.StateReason, &in.JID, &in.TokenHash,
+		&in.SettingsJSON, &firstConn, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return in, ErrNotFound
 	}
@@ -35,6 +40,7 @@ func scanInstance(row scanner) (Instance, error) {
 		return in, err
 	}
 	in.State = instance.State(state)
+	in.FirstConnectedAt = parseTS(firstConn)
 	in.CreatedAt, _ = time.Parse(tsLayout, created)
 	in.UpdatedAt, _ = time.Parse(tsLayout, updated)
 	return in, nil
@@ -42,9 +48,13 @@ func scanInstance(row scanner) (Instance, error) {
 
 func (s *Store) CreateInstance(ctx context.Context, in Instance) error {
 	ts := now()
+	if in.SettingsJSON == "" {
+		in.SettingsJSON = "{}"
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO instances (`+instanceCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.ID, in.Name, string(in.State), in.StateReason, in.JID, in.TokenHash, ts, ts)
+		`INSERT INTO instances (`+instanceCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.ID, in.Name, string(in.State), in.StateReason, in.JID, in.TokenHash, in.SettingsJSON,
+		fmtTS(in.FirstConnectedAt), ts, ts)
 	return err
 }
 
@@ -88,4 +98,15 @@ func (s *Store) SetInstanceTokenHash(ctx context.Context, id, hash string) error
 
 func (s *Store) DeleteInstance(ctx context.Context, id string) error {
 	return s.exec1(ctx, `DELETE FROM instances WHERE id = ?`, id)
+}
+
+func (s *Store) SetInstanceSettings(ctx context.Context, id, settingsJSON string) error {
+	return s.exec1(ctx, `UPDATE instances SET settings_json = ?, updated_at = ? WHERE id = ?`, settingsJSON, now(), id)
+}
+
+// MarkFirstConnected records the first time an instance reached connected; later calls are no-ops.
+func (s *Store) MarkFirstConnected(ctx context.Context, id string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE instances SET first_connected_at = ? WHERE id = ? AND first_connected_at = ''`, fmtTS(at), id)
+	return err
 }
