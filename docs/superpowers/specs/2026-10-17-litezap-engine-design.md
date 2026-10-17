@@ -304,9 +304,9 @@ Toda transição é persistida e emitida como `instance.status`.
 ### 9.2 Supervisão
 
 - **Heartbeat** `Ping` a cada 10s; 3 falhas seguidas → kill do processo + restart.
-- **Watchdog de conexão** no worker: em `connected` sem nenhum evento/keepalive por `zombie_timeout` (padrão 5min) → força reconexão.
+- **Watchdog de conexão** no worker: em `connected` sem nenhum evento/keepalive por `zombie_timeout` (padrão 5min) → força reconexão. *Ainda não implementado* (marco 2b/3); `zombie_timeout` não é lido da configuração.
 - **Restart com backoff exponencial** (1s → 5min). **Circuit breaker**: 5 crashes em 10min → `failed` + evento; sem restart até ação manual.
-- **Limite de memória** por worker: `GOMEMLIMIT` + kill acima de `worker_memory_max` (padrão 512MB).
+- **Limite de memória** por worker: `GOMEMLIMIT` + kill acima de `worker_memory_max_mb` (padrão 512).
 - **Erros terminais** (`logged_out`, `banned`): sem retry.
 - **Shutdown gracioso**: para despachantes, aguarda envios em voo (até 10s), desconecta workers e encerra.
 - **Boot**: cada worker grava `data/run/X.pid`. No boot, o supervisor mata PIDs órfãos que ainda sejam `litezap worker`, remove sockets antigos, devolve itens `in_flight` para `queued` (exceto os cujo registro no log já foi promovido por um recibo; o reenvio usa o mesmo `wa_message_id`) e sobe as instâncias que não estavam `stopped`.
@@ -323,7 +323,7 @@ Códigos estáveis: `unauthorized`, `forbidden`, `instance_not_found`, `not_foun
 
 ## 10. Configuração
 
-`litezap.yaml` + variáveis `LITEZAP_*` (env sobrescreve arquivo): `listen_addr` (padrão `127.0.0.1:8787`), `public_url`, `data_dir`, `admin_token`, `default_proxy_url`, `media_allow_private_urls` (padrão `false`), `instance_defaults` (ritmo, janela, fuso, rampa e `unsafe_pacing`; só no arquivo), `worker_memory_max`, `zombie_timeout`, limites de mídia, `media_retention_days`, `message_retention_days`.
+`litezap.yaml` + variáveis `LITEZAP_*` (env sobrescreve arquivo): `listen_addr` (padrão `127.0.0.1:8787`), `public_url`, `data_dir`, `admin_token`, `default_proxy_url`, `media_allow_private_urls` (padrão `false`), `instance_defaults` (ritmo, janela, fuso, rampa e `unsafe_pacing`; só no arquivo), `worker_memory_max_mb`, `zombie_timeout` (ainda não implementado, marco 2b/3), limites de mídia, `media_retention_days`, `message_retention_days`.
 
 ## 11. Testes
 

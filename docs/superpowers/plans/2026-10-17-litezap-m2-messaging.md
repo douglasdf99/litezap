@@ -12752,6 +12752,16 @@ Já aplicadas em `docs/superpowers/specs/2026-10-17-litezap-engine-design.md` ju
 - **Fuso e horário de verão**: a janela usa o fuso IANA da instância; no dia da mudança de horário a janela pode começar uma hora antes/depois do esperado pela conta do Go (`time.Date` normaliza horários inexistentes).
 - **Verificação real** depende do roteiro manual da última task; nada aqui foi testado contra o WhatsApp de verdade ainda.
 
+### Correções da revisão final (aplicadas no código, fora dos blocos das tasks)
+
+Os blocos das Tasks 12–18 acima não foram atualizados para estas correções; o código da branch é a referência:
+
+- **Consultas de número com ritmo e limite diário** (`queue`, `lookup`, `store.LookupsSince`): uma consulta que vai ao WhatsApp espera `pacer.wait` e é registrada no pacer (conta para `min_interval_ms` e `max_per_minute`); por dia (fuso da instância) a fila faz no máximo `Ramp.DailyCap` consultas (contadas em `number_cache.checked_at`, inclusive as de `check-numbers`; o 9º dígito grava duas linhas, então a conta erra para o lado seguro) e depois adia para a janela do dia seguinte com `lookup_daily_limit`. Com a rampa desligada não há limite diário para a fila. `check-numbers` ganha `CheckPerDay` (padrão 200 por dia UTC, contador em memória: zera ao reiniciar) → `ErrDailyLimit` (também `ErrRateLimited`, 429). `lookup.Lookup` informa se foi à rede; `Resolve` é o mesmo sem esse retorno.
+- **Resposta no outro formato do 9º dígito**: antes da janela, `cachedTarget` consulta só o cache (`lookup.Cached`, sem rede nem cota); entrada fresca com outro JID de telefone redireciona o chat e recomeça, e entrada fresca "sem WhatsApp" falha `invalid_number` na hora.
+- **Falhas de consulta que não são do número**: `manager.ErrNotRunning` ou `Unavailable` adiam o item 5s (`instance_not_connected:`) sem contar em `lookup_failures`; `lookup` só gasta cota depois de `Workers.Client()` dar certo.
+- **`mapErr`**: `Unavailable` com `media_download_failed` → `502 worker_error` (retentável), não `instance_not_connected`.
+- **README/spec**: roteiro do primeiro envio com `?wait=true&timeout=90s`, carência e janela; `to` com `@lid`, status `pending`/`received` no log, espera limitada a 2 minutos; spec com `worker_memory_max_mb` e `zombie_timeout` marcado como não implementado.
+
 ## Ao terminar o marco 2
 
 - `go test -race ./...` verde e o roteiro da última task executado com sucesso.
