@@ -2741,6 +2741,20 @@ func TestProcessEnvironAddsInstanceEnv(t *testing.T) {
 		t.Fatal("expected env error")
 	}
 }
+
+func TestProcessEnvironStripsInheritedProxySettings(t *testing.T) {
+	t.Setenv("LITEZAP_WORKER_PROXY_URL", "socks5://stale:1080")
+	t.Setenv("Https_Proxy", "http://mixed-case:3128") // Windows environment names are case-insensitive
+	p := &Process{}
+	env, err := p.environ(context.Background(), exec.Command("true"), "inst_e")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "stale") || strings.Contains(joined, "mixed-case") {
+		t.Fatal("inherited proxy settings leaked into the worker environment")
+	}
+}
 ```
 
 - [ ] **Step 2: Rodar e ver falhar**
@@ -2978,10 +2992,18 @@ por:
 
 ```go
 // proxyVars are dropped from the worker environment: the worker's only proxy is the one
-// the supervisor passes explicitly (spec 4.6), never one inherited from our environment.
-var proxyVars = map[string]bool{
-	"HTTP_PROXY": true, "HTTPS_PROXY": true, "ALL_PROXY": true, "NO_PROXY": true,
-	"http_proxy": true, "https_proxy": true, "all_proxy": true, "no_proxy": true,
+// the supervisor passes explicitly (spec 4.6), never one inherited from our environment
+// (including a stale LITEZAP_WORKER_PROXY_URL; the per-instance value is appended after).
+// Names are compared case-insensitively, as Windows environment names are.
+var proxyVars = []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "LITEZAP_WORKER_PROXY_URL"}
+
+func isProxyVar(name string) bool {
+	for _, v := range proxyVars {
+		if strings.EqualFold(name, v) {
+			return true
+		}
+	}
+	return false
 }
 
 // environ is the worker's environment: ours without proxy variables, plus GOMEMLIMIT and
@@ -2989,7 +3011,7 @@ var proxyVars = map[string]bool{
 func (p *Process) environ(ctx context.Context, cmd *exec.Cmd, id string) ([]string, error) {
 	var env []string
 	for _, kv := range cmd.Environ() {
-		if k, _, _ := strings.Cut(kv, "="); !proxyVars[k] {
+		if k, _, _ := strings.Cut(kv, "="); !isProxyVar(k) {
 			env = append(env, kv)
 		}
 	}
@@ -4245,6 +4267,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	nethttp "net/http"
 	"sync"
 	"testing"
 	"time"
@@ -4253,6 +4276,8 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waHistorySync"
+	"go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -4417,6 +4442,144 @@ func TestDataPathOnlyInstanceAreas(t *testing.T) {
 		if _, err := w.dataPath(b.path, b.area); status.Code(err) != codes.InvalidArgument {
 			t.Errorf("dataPath(%q, %s) = %v, want InvalidArgument", b.path, b.area, err)
 		}
+	}
+}
+
+func newMsgAdapter(t *testing.T) *Whatsmeow {
+	t.Helper()
+	own := types.NewJID("5511999999999", types.DefaultUserServer)
+	w := NewWhatsmeow(whatsmeow.NewClient(&store.Device{ID: &own}, nil), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	w.sink = &dataRec{}
+	return w
+}
+
+// The mappings shipped inside the history blob are used directly: whatsmeow stores them
+// from a goroutine that may not have finished when the event is handled.
+func TestHistoryResolvesLIDFromBlob(t *testing.T) {
+	w := newMsgAdapter(t)
+	r := w.sink.(*dataRec)
+	web := func(chat, participant, id string) *waWeb.WebMessageInfo {
+		key := &waCommon.MessageKey{RemoteJID: proto.String(chat), ID: proto.String(id)}
+		if participant != "" {
+			key.Participant = proto.String(participant)
+		}
+		return &waWeb.WebMessageInfo{Key: key, MessageTimestamp: proto.Uint64(1_800_000_000),
+			Message: &waE2E.Message{Conversation: proto.String("hi " + id)}}
+	}
+	hs := &waHistorySync.HistorySync{
+		PhoneNumberToLidMappings: []*waHistorySync.PhoneNumberToLIDMapping{
+			{PnJID: proto.String("5511888887777@s.whatsapp.net"), LidJID: proto.String("111@lid")},
+			{PnJID: proto.String("5511777776666"), LidJID: proto.String("222")}, // bare user parts
+		},
+		Conversations: []*waHistorySync.Conversation{
+			{ID: proto.String("111@lid"), Messages: []*waHistorySync.HistorySyncMsg{{Message: web("111@lid", "", "M1")}}},
+			// Conversation-level mapping only.
+			{ID: proto.String("333@lid"), PnJID: proto.String("5511666665555@s.whatsapp.net"),
+				Messages: []*waHistorySync.HistorySyncMsg{{Message: web("333@lid", "", "M2")}}},
+			// Group whose participant is a LID.
+			{ID: proto.String("120363@g.us"), Name: proto.String("G"),
+				Messages: []*waHistorySync.HistorySyncMsg{{Message: web("120363@g.us", "222@lid", "M3")}}},
+		},
+	}
+	w.onHistory(&events.HistorySync{Data: hs})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.evs) != 3 {
+		t.Fatalf("events = %d", len(r.evs))
+	}
+	got := func(i int) *workerv1.HistoryChunk { return r.evs[i].GetHistory() }
+	if c := got(0); c.Chat != "5511888887777@s.whatsapp.net" || c.Messages[0].Sender != c.Chat {
+		t.Fatalf("lid dm = %+v", c)
+	}
+	if c := got(1); c.Chat != "5511666665555@s.whatsapp.net" {
+		t.Fatalf("conversation mapping = %+v", c)
+	}
+	if c := got(2); c.Chat != "120363@g.us" || c.Messages[0].Sender != "5511777776666@s.whatsapp.net" {
+		t.Fatalf("group participant = %+v", c.Messages[0])
+	}
+}
+
+func TestGroupParticipantAddressing(t *testing.T) {
+	w := newMsgAdapter(t)
+	group := types.NewJID("120363", types.GroupServer)
+	pn := types.NewJID("5511888887777", types.DefaultUserServer)
+	lid := types.NewJID("555", types.HiddenUserServer)
+	calls := 0
+	mode := types.AddressingModeLID
+	w.groupInfo = func(context.Context, types.JID) (*types.GroupInfo, error) {
+		calls++
+		return &types.GroupInfo{AddressingMode: mode}, nil
+	}
+	w.lidFor = func(_ context.Context, p types.JID) (types.JID, error) { return lid, nil }
+	ctx := context.Background()
+	if got := w.groupParticipant(ctx, group, pn); got != lid {
+		t.Fatalf("lid group: %v", got)
+	}
+	w.groupParticipant(ctx, group, pn)
+	if calls != 1 {
+		t.Fatalf("group info not cached: %d calls", calls)
+	}
+	// Phone-addressed group keeps the phone participant.
+	pnGroup := types.NewJID("999", types.GroupServer)
+	mode = types.AddressingModePN
+	if got := w.groupParticipant(ctx, pnGroup, pn); got != pn {
+		t.Fatalf("pn group: %v", got)
+	}
+	// Lookup failures fall back to the participant as given (and are not cached).
+	errGroup := types.NewJID("777", types.GroupServer)
+	w.groupInfo = func(context.Context, types.JID) (*types.GroupInfo, error) { return nil, errors.New("boom") }
+	if got := w.groupParticipant(ctx, errGroup, pn); got != pn {
+		t.Fatalf("error fallback: %v", got)
+	}
+	// A LID participant, an empty one or a direct chat are left alone.
+	if got := w.groupParticipant(ctx, group, lid); got != lid {
+		t.Fatalf("lid participant: %v", got)
+	}
+	if got := w.groupParticipant(ctx, pn, pn); got != pn {
+		t.Fatalf("direct chat: %v", got)
+	}
+}
+
+func TestGroupReactionNeedsSender(t *testing.T) {
+	w := newMsgAdapter(t)
+	_, err := w.Send(context.Background(), &workerv1.SendRequest{
+		To: "120363@g.us", MessageId: "X", Type: "reaction", Text: "👍", ReactionMessageId: "T1"})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDownloadErrCodes(t *testing.T) {
+	http := func(code int) error {
+		return fmt.Errorf("wrap: %w", whatsmeow.DownloadHTTPError{Response: &nethttp.Response{StatusCode: code}})
+	}
+	cases := []struct {
+		err  error
+		code codes.Code
+	}{
+		{http(403), codes.NotFound}, {http(404), codes.NotFound}, {http(410), codes.NotFound},
+		{http(500), codes.Unavailable}, {http(429), codes.Unavailable}, {http(503), codes.Unavailable},
+		{whatsmeow.ErrNoURLPresent, codes.NotFound},
+		{errors.New("boom"), codes.Unknown},
+	}
+	for _, c := range cases {
+		if got := status.Code(downloadErr(c.err)); got != c.code {
+			t.Errorf("%v -> %v, want %v", c.err, got, c.code)
+		}
+	}
+}
+
+func TestReceiptTypes(t *testing.T) {
+	for in, want := range map[types.ReceiptType]string{
+		types.ReceiptTypeDelivered: "delivered", types.ReceiptTypeInactive: "delivered",
+		types.ReceiptTypeRead: "read", types.ReceiptTypePlayed: "played",
+	} {
+		if got, ok := receiptType(in); !ok || got != want {
+			t.Errorf("%q -> %q, %v", in, got, ok)
+		}
+	}
+	if _, ok := receiptType(types.ReceiptTypeRetry); ok {
+		t.Error("retry must not be a delivery report")
 	}
 }
 ```
@@ -4625,7 +4788,11 @@ func (w *Whatsmeow) Send(ctx context.Context, req *workerv1.SendRequest) (*worke
 			if sender, err = types.ParseJID(req.ReactionSender); err != nil {
 				return nil, grpcErr(codes.InvalidArgument, "validation_failed", "invalid reaction sender")
 			}
+		} else if to.Server == types.GroupServer {
+			// The key of a group reaction names the author of the target message.
+			return nil, grpcErr(codes.InvalidArgument, "validation_failed", "reaction_sender is required in groups")
 		}
+		sender = w.groupParticipant(ctx, to, sender)
 		msg = w.cli.BuildReaction(to, sender, types.MessageID(req.ReactionMessageId), req.Text)
 	default:
 		mt, ok := mediaType(req.Type)
@@ -4688,10 +4855,63 @@ func (w *Whatsmeow) MarkRead(ctx context.Context, req *workerv1.MarkReadRequest)
 	for i, id := range req.MessageIds {
 		ids[i] = types.MessageID(id)
 	}
+	sender = w.groupParticipant(ctx, chat, sender)
 	if err := w.cli.MarkRead(ctx, ids, time.Now(), chat, sender); err != nil {
 		return sendErr(err)
 	}
 	return nil
+}
+
+// groupParticipant converts a phone-number participant to its LID when chat is a group
+// that addresses members by LID: the key of a reaction and the read receipt must name the
+// participant the way the group does. Anything it cannot determine (lookup failure, no
+// mapping) leaves the participant as given.
+func (w *Whatsmeow) groupParticipant(ctx context.Context, chat, p types.JID) types.JID {
+	if chat.Server != types.GroupServer || p.Server != types.DefaultUserServer {
+		return p
+	}
+	if !w.groupUsesLID(ctx, chat) {
+		return p
+	}
+	lidFor := w.lidFor
+	if lidFor == nil {
+		if w.cli.Store.LIDs == nil {
+			return p
+		}
+		lidFor = w.cli.Store.LIDs.GetLIDForPN
+	}
+	if lid, err := lidFor(ctx, p.ToNonAD()); err == nil && !lid.IsEmpty() {
+		return lid.ToNonAD()
+	}
+	return p
+}
+
+// groupUsesLID reports whether the group addresses its members by LID. The answer is
+// cached for the life of the worker (a group's addressing mode does not change); failed
+// lookups are not cached.
+func (w *Whatsmeow) groupUsesLID(ctx context.Context, group types.JID) bool {
+	w.groupMu.Lock()
+	lid, ok := w.groupLID[group]
+	w.groupMu.Unlock()
+	if ok {
+		return lid
+	}
+	info := w.groupInfo
+	if info == nil {
+		info = w.cli.GetGroupInfo
+	}
+	gi, err := info(ctx, group)
+	if err != nil || gi == nil {
+		return false
+	}
+	lid = gi.AddressingMode == types.AddressingModeLID
+	w.groupMu.Lock()
+	if w.groupLID == nil {
+		w.groupLID = map[types.JID]bool{}
+	}
+	w.groupLID[group] = lid
+	w.groupMu.Unlock()
+	return lid
 }
 
 // mediaRef serializes the attachment sub-message: it carries everything needed to download it later.
@@ -4747,13 +4967,26 @@ func (w *Whatsmeow) DownloadMedia(ctx context.Context, kind string, ref []byte, 
 	f.Close()
 	if err != nil {
 		os.Remove(path)
-		var httpErr whatsmeow.DownloadHTTPError
-		if errors.As(err, &httpErr) || errors.Is(err, whatsmeow.ErrNoURLPresent) {
-			return 0, grpcErr(codes.NotFound, "media_unavailable", err.Error())
-		}
-		return 0, grpcErr(codes.Unknown, "media_download_failed", err.Error())
+		return 0, downloadErr(err)
 	}
 	return size, nil
+}
+
+// downloadErr maps a download failure: only 403/404/410 (and a missing URL) mean the
+// media is gone for good; other HTTP statuses (5xx, 429) are worth retrying later.
+func downloadErr(err error) error {
+	var httpErr whatsmeow.DownloadHTTPError
+	switch {
+	case errors.As(err, &httpErr):
+		switch httpErr.StatusCode {
+		case 403, 404, 410:
+			return grpcErr(codes.NotFound, "media_unavailable", err.Error())
+		}
+		return grpcErr(codes.Unavailable, "media_download_failed", err.Error())
+	case errors.Is(err, whatsmeow.ErrNoURLPresent):
+		return grpcErr(codes.NotFound, "media_unavailable", err.Error())
+	}
+	return grpcErr(codes.Unknown, "media_download_failed", err.Error())
 }
 
 func contactOf(jid types.JID, c types.ContactInfo) *workerv1.Contact {
@@ -4856,16 +5089,48 @@ func content(m *waE2E.Message) (typ, text string, media *workerv1.Media, reactio
 	return "unknown", "", nil, "", true
 }
 
-// phoneJID returns the phone-number JID for a LID when it is known (alt or the LID store),
-// so a contact keeps one chat whatever addressing WhatsApp uses.
-func (w *Whatsmeow) phoneJID(ctx context.Context, jid, alt types.JID) types.JID {
+// lidLookupTimeout bounds each LID store lookup. History sync can block for a long time on
+// backpressure, so no overall deadline covers a whole blob.
+const lidLookupTimeout = 2 * time.Second
+
+// lidMap maps LID users to phone-number JIDs learned from a history sync blob.
+type lidMap map[string]types.JID
+
+// add records lid -> pn; both may be full JIDs or bare user parts.
+func (m lidMap) add(lid, pn string) {
+	if lid == "" || pn == "" {
+		return
+	}
+	l, err1 := parseJIDOr(lid, types.HiddenUserServer)
+	p, err2 := parseJIDOr(pn, types.DefaultUserServer)
+	if err1 != nil || err2 != nil || l.Server != types.HiddenUserServer || p.Server != types.DefaultUserServer {
+		return
+	}
+	m[l.User] = p.ToNonAD()
+}
+
+func parseJIDOr(s, server string) (types.JID, error) {
+	if !strings.Contains(s, "@") {
+		return types.NewJID(s, server), nil
+	}
+	return types.ParseJID(s)
+}
+
+// phoneJID returns the phone-number JID for a LID when it is known (the blob's mappings,
+// alt, or the LID store), so a contact keeps one chat whatever addressing WhatsApp uses.
+func (w *Whatsmeow) phoneJID(jid, alt types.JID, known lidMap) types.JID {
 	if jid.Server != types.HiddenUserServer {
 		return jid.ToNonAD()
+	}
+	if pn, ok := known[jid.User]; ok {
+		return pn
 	}
 	if alt.Server == types.DefaultUserServer {
 		return alt.ToNonAD()
 	}
 	if w.cli.Store.LIDs != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), lidLookupTimeout)
+		defer cancel()
 		if pn, err := w.cli.Store.LIDs.GetPNForLID(ctx, jid); err == nil && !pn.IsEmpty() {
 			return pn.ToNonAD()
 		}
@@ -4874,7 +5139,7 @@ func (w *Whatsmeow) phoneJID(ctx context.Context, jid, alt types.JID) types.JID 
 }
 
 // toMessage normalizes a whatsmeow message; nil means it is not logged.
-func (w *Whatsmeow) toMessage(ctx context.Context, info types.MessageInfo, m *waE2E.Message) *workerv1.Message {
+func (w *Whatsmeow) toMessage(info types.MessageInfo, m *waE2E.Message, known lidMap) *workerv1.Message {
 	if info.Chat.Server == types.BroadcastServer || info.Chat.Server == types.NewsletterServer {
 		return nil // status updates, broadcast lists and channels are out of scope
 	}
@@ -4888,10 +5153,10 @@ func (w *Whatsmeow) toMessage(ctx context.Context, info types.MessageInfo, m *wa
 		if info.IsFromMe {
 			alt = info.RecipientAlt
 		}
-		chat = w.phoneJID(ctx, info.Chat, alt)
+		chat = w.phoneJID(info.Chat, alt, known)
 	}
 	return &workerv1.Message{
-		Id: string(info.ID), Chat: chat.String(), Sender: w.phoneJID(ctx, info.Sender, info.SenderAlt).String(),
+		Id: string(info.ID), Chat: chat.String(), Sender: w.phoneJID(info.Sender, info.SenderAlt, known).String(),
 		FromMe: info.IsFromMe, IsGroup: info.IsGroup, TimestampMs: info.Timestamp.UnixMilli(),
 		PushName: info.PushName, Type: typ, Text: text, Media: media, ReactionTo: reactionTo,
 	}
@@ -4899,7 +5164,7 @@ func (w *Whatsmeow) toMessage(ctx context.Context, info types.MessageInfo, m *wa
 
 func receiptType(t types.ReceiptType) (string, bool) {
 	switch t {
-	case types.ReceiptTypeDelivered:
+	case types.ReceiptTypeDelivered, types.ReceiptTypeInactive:
 		return "delivered", true
 	case types.ReceiptTypeRead:
 		return "read", true
@@ -4911,16 +5176,9 @@ func receiptType(t types.ReceiptType) (string, bool) {
 
 // onData handles the message-related whatsmeow events; it reports whether evt was one.
 func (w *Whatsmeow) onData(evt any) bool {
-	switch evt.(type) {
-	case *events.Message, *events.Receipt, *events.HistorySync:
-	default:
-		return false
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	switch e := evt.(type) {
 	case *events.Message:
-		if m := w.toMessage(ctx, e.Info, e.Message); m != nil {
+		if m := w.toMessage(e.Info, e.Message, nil); m != nil {
 			w.sink.Data(&workerv1.Event{Kind: &workerv1.Event_Message{Message: m}})
 		}
 	case *events.Receipt:
@@ -4936,12 +5194,28 @@ func (w *Whatsmeow) onData(evt any) bool {
 			MessageIds: ids, Chat: e.Chat.ToNonAD().String(), Type: typ, TimestampMs: e.Timestamp.UnixMilli(),
 		}}})
 	case *events.HistorySync:
-		w.onHistory(ctx, e)
+		w.onHistory(e)
+	default:
+		return false
 	}
 	return true
 }
 
-func (w *Whatsmeow) onHistory(ctx context.Context, e *events.HistorySync) {
+// onHistory turns a history blob into HistoryChunk events. Sink.Data may block for a long
+// time (backpressure), so nothing here has an overall deadline. LIDs are resolved from the
+// blob's own mappings first: whatsmeow stores them from a goroutine that can still be
+// running, so the LID store alone is not reliable yet.
+func (w *Whatsmeow) onHistory(e *events.HistorySync) {
+	known := lidMap{}
+	for _, m := range e.Data.GetPhoneNumberToLidMappings() {
+		known.add(m.GetLidJID(), m.GetPnJID())
+	}
+	for _, conv := range e.Data.GetConversations() {
+		known.add(conv.GetLidJID(), conv.GetPnJID())
+		if id := conv.GetID(); strings.HasSuffix(id, "@"+types.HiddenUserServer) {
+			known.add(id, conv.GetPnJID())
+		}
+	}
 	for _, conv := range e.Data.GetConversations() {
 		chatJID, err := types.ParseJID(conv.GetID())
 		if err != nil {
@@ -4967,7 +5241,7 @@ func (w *Whatsmeow) onHistory(ctx context.Context, e *events.HistorySync) {
 			if err != nil {
 				continue
 			}
-			if m := w.toMessage(ctx, evt.Info, evt.Message); m != nil {
+			if m := w.toMessage(evt.Info, evt.Message, known); m != nil {
 				msgs = append(msgs, m)
 			}
 			if len(msgs) >= historyChunkSize {
@@ -4997,7 +5271,31 @@ por:
 	// DownloadMedia writes (media/<instance>/).
 	dataDir    string
 	instanceID string
+
+	// Group addressing (reactions and read receipts must name participants the way the
+	// group does). groupInfo and lidFor default to the client and its LID store; tests
+	// replace them.
+	groupMu   sync.Mutex
+	groupLID  map[types.JID]bool // group -> addresses members by LID (successful lookups only)
+	groupInfo func(context.Context, types.JID) (*types.GroupInfo, error)
+	lidFor    func(context.Context, types.JID) (types.JID, error)
 ```
+
+Em `internal/worker/whatsmeow.go` (imports), trocar:
+
+```go
+	"go.mau.fi/whatsmeow/types/events"
+```
+
+por:
+
+```go
+	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
+```
+
+> Revisão pós-replay: os blocos de `messaging.go`/`messaging_test.go` abaixo já incluem as correções do histórico (sem prazo geral, mapeamentos LID do próprio blob, consultas ao store com 2s cada), endereçamento LID em reações/`MarkRead` de grupos, mapeamento dos erros de download e `inactive` como `delivered` (commits `a790ab9` e `e9e784a`).
+
 
 Em `internal/worker/whatsmeow.go`, trocar:
 
