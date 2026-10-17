@@ -17,6 +17,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -288,28 +289,55 @@ func NewSigner(key []byte, baseURL string) *Signer {
 // LoadOrCreateKey reads the signing secret at path (hex), creating a random one (0600)
 // the first time. Deleting the file invalidates every signed URL.
 func LoadOrCreateKey(path string) ([]byte, error) {
-	if b, err := os.ReadFile(path); err == nil {
-		key, err := hex.DecodeString(strings.TrimSpace(string(b)))
-		if err != nil || len(key) < 32 {
-			return nil, fmt.Errorf("media key %s is corrupt", path)
-		}
-		return key, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
+	if key, err := readKey(path); !errors.Is(err, os.ErrNotExist) {
+		return key, err
 	}
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(path, []byte(hex.EncodeToString(key)+"\n"), 0o600); err != nil {
+	// Write a temporary file (CreateTemp makes it 0600) and publish it with a hard link:
+	// the link is atomic, so nobody reads a half-written key, and it fails if the key
+	// already exists, so concurrent first starts all end up with the same key.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".media_key-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmp.Name())
+	_, werr := tmp.WriteString(hex.EncodeToString(key) + "\n")
+	if err := tmp.Sync(); werr == nil {
+		werr = err
+	}
+	if err := tmp.Close(); werr == nil {
+		werr = err
+	}
+	if werr != nil {
+		return nil, werr
+	}
+	if err := os.Link(tmp.Name(), path); errors.Is(err, os.ErrExist) {
+		return readKey(path) // another process created it first
+	} else if err != nil {
 		return nil, err
 	}
 	return key, nil
 }
 
+func readKey(path string) ([]byte, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	key, err := hex.DecodeString(strings.TrimSpace(string(b)))
+	if err != nil || len(key) < 32 {
+		return nil, fmt.Errorf("media key %s is corrupt", path)
+	}
+	return key, nil
+}
+
+// mac length-prefixes each part, so ids containing separators cannot shift between parts.
 func (s *Signer) mac(instanceID, mediaID string, exp int64) string {
 	h := hmac.New(sha256.New, s.Key)
-	fmt.Fprintf(h, "%s/%s/%d", instanceID, mediaID, exp)
+	fmt.Fprintf(h, "%d:%s|%d:%s|%d", len(instanceID), instanceID, len(mediaID), mediaID, exp)
 	return hex.EncodeToString(h.Sum(nil))
 }
 

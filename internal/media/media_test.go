@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -185,5 +186,46 @@ func TestKeyAndSigner(t *testing.T) {
 	}
 	if MaxSize("image") != 16<<20 || MaxSize("document") != 100<<20 || MaxSize("audio") != 64<<20 {
 		t.Fatal("limits")
+	}
+}
+
+// Concurrent first starts agree on one key, and no temporary file is left behind.
+func TestKeyConcurrentCreation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "media_key")
+	const n = 16
+	keys := make([][]byte, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			keys[i], errs[i] = LoadOrCreateKey(path)
+		}()
+	}
+	wg.Wait()
+	for i := range n {
+		if errs[i] != nil || string(keys[i]) != string(keys[0]) {
+			t.Fatalf("call %d: key %x, %v (first %x)", i, keys[i], errs[i], keys[0])
+		}
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("files left: %v", entries)
+	}
+}
+
+// The MAC input cannot be shifted between instance and media ids.
+func TestSignatureIsUnambiguous(t *testing.T) {
+	s := NewSigner([]byte("0123456789abcdef0123456789abcdef"), "http://127.0.0.1:8787")
+	raw, _ := s.URL("a/b", "c")
+	u, _ := url.Parse(raw)
+	q := u.Query()
+	if !s.Verify("a/b", "c", q.Get("exp"), q.Get("sig")) {
+		t.Fatal("valid signature rejected")
+	}
+	if s.Verify("a", "b/c", q.Get("exp"), q.Get("sig")) {
+		t.Fatal("signature of a/b + c accepted for a + b/c")
 	}
 }
