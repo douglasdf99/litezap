@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +30,7 @@ type Whatsmeow struct {
 	roundEnded chan struct{} // codes exhausted, or unpaired socket dropped
 	paired     chan struct{} // events.PairSuccess
 	terminalCh chan struct{} // a logged_out/banned/failed state was reported
+	firstShown chan struct{} // the current round showed its first code
 	rotate     chan *events.RotateADVSecret
 
 	terminal  atomic.Bool // set before reporting logged_out/banned/failed
@@ -53,6 +55,7 @@ func NewWhatsmeow(cli *whatsmeow.Client, log *slog.Logger) *Whatsmeow {
 		roundEnded: make(chan struct{}, 1),
 		paired:     make(chan struct{}, 1),
 		terminalCh: make(chan struct{}, 1),
+		firstShown: make(chan struct{}, 1),
 		rotate:     make(chan *events.RotateADVSecret, 4),
 	}
 }
@@ -158,10 +161,15 @@ func (w *Whatsmeow) pairLoop(ctx context.Context) {
 	for ctx.Err() == nil && !w.terminal.Load() {
 		drain(w.roundEnded)
 		drain(w.restart)
+		drain(w.firstShown)
 		w.mu.Lock()
 		w.delivered = false
 		w.mu.Unlock()
+		// Accept round-end signals from before the connect returns, so an early
+		// Disconnected is not lost.
+		w.accepting.Store(true)
 		if err := w.cli.ConnectContext(ctx); err != nil {
+			w.accepting.Store(false)
 			if ctx.Err() != nil {
 				return
 			}
@@ -172,21 +180,39 @@ func (w *Whatsmeow) pairLoop(ctx context.Context) {
 			backoff = nextBackoff(backoff)
 			continue
 		}
-		w.accepting.Store(true)
-		select {
-		case <-ctx.Done():
-			w.endRound()
-			return
-		case <-w.paired:
-			w.stopRotation()
-			return
-		case <-w.terminalCh:
-			w.stopRotation()
-			return
-		case <-w.restart:
-			w.endRound()
-		case <-w.roundEnded:
-			w.endRound()
+		// A socket that died silently must not block us: the round needs a first code in time.
+		firstTimer := time.NewTimer(firstQRTimeout)
+		firstC := firstTimer.C
+		ended, retry := false, false
+		for !ended {
+			select {
+			case <-ctx.Done():
+				firstTimer.Stop()
+				w.endRound()
+				return
+			case <-w.paired:
+				firstTimer.Stop()
+				w.stopRotation()
+				return
+			case <-w.terminalCh:
+				firstTimer.Stop()
+				w.stopRotation()
+				return
+			case <-w.firstShown:
+				firstTimer.Stop()
+				firstC = nil
+			case <-firstC:
+				w.log.Warn("no QR code in time; restarting round")
+				retry, ended = true, true
+			case <-w.restart:
+				ended = true
+			case <-w.roundEnded:
+				retry, ended = true, true
+			}
+		}
+		firstTimer.Stop()
+		w.endRound()
+		if retry {
 			w.mu.Lock()
 			if w.delivered {
 				backoff = time.Second
@@ -200,10 +226,15 @@ func (w *Whatsmeow) pairLoop(ctx context.Context) {
 	}
 }
 
+const firstQRTimeout = 30 * time.Second
+
 // endRound stops the rotation and drops the socket (never called from the event handler).
 func (w *Whatsmeow) endRound() {
 	w.accepting.Store(false)
 	w.stopRotation()
+	w.mu.Lock()
+	w.ready, w.roundStart = nil, time.Time{}
+	w.mu.Unlock()
 	w.cli.Disconnect()
 }
 
@@ -245,8 +276,9 @@ func (w *Whatsmeow) startRotation(codes []string) {
 			w.delivered = true
 			w.mu.Unlock()
 			close(ready)
+			notify(w.firstShown)
 		}
-		if rotateQRs(rctx, codes, defaultQRTiming, w.sink, w.rotate, first) {
+		if rotateQRs(rctx, slices.Clone(codes), defaultQRTiming, w.sink, w.rotate, first) {
 			notify(w.roundEnded)
 		}
 	}()
