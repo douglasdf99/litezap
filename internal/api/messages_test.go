@@ -1,14 +1,17 @@
 package api
 
 import (
+	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
+	"github.com/douglasdf99/litezap/internal/apierr"
 )
 
 // connected creates an instance whose fake worker is connected.
@@ -211,5 +214,22 @@ func TestReceivedSVGIsNeverInline(t *testing.T) {
 	}
 	if resp.Header.Get("X-Content-Type-Options") != "nosniff" || resp.Header.Get("Content-Security-Policy") != "sandbox; default-src 'none'" {
 		t.Fatalf("headers = %v", resp.Header)
+	}
+}
+
+// A body over the limit is 413, not a JSON error.
+func TestOversizedBodyIs413(t *testing.T) {
+	e := newEnv(t)
+	id, tok := e.connected("Big")
+	big := `{"to":"5511988887777","type":"text","text":"` + strings.Repeat("x", 1<<20) + `"}`
+	if code, body := e.do("PUT", "/v1/instances/"+id+"/settings", tok, big); code != 413 || errCode(body) != "media_too_large" {
+		t.Fatalf("oversized settings body = %d %v", code, body)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"text":"`+strings.Repeat("x", 100)+`"}`))
+	var v map[string]any
+	var ae *apierr.Error
+	if err := decodeMax(rec, req, &v, 10); !errors.As(err, &ae) || ae.Status != 413 || ae.Code != "media_too_large" {
+		t.Fatalf("decodeMax over the limit = %v", err)
 	}
 }

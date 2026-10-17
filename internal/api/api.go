@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -206,6 +207,11 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 func decodeMax(w http.ResponseWriter, r *http.Request, v any, limit int64) error {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	if err := dec.Decode(v); err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			return apierr.New(http.StatusRequestEntityTooLarge, "media_too_large",
+				fmt.Sprintf("request body exceeds %d bytes", mbe.Limit), false)
+		}
 		return apierr.Validation("invalid JSON body")
 	}
 	return nil
