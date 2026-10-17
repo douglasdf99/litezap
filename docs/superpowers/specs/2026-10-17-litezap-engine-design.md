@@ -18,7 +18,7 @@ O produto é decomposto em peças, cada uma com seu próprio spec → plano → 
 |---|------|-----------|
 | 1 | **Motor (Go)**: conexão WhatsApp, REST, webhooks, MCP, hook de agente | **Sim** |
 | 2 | App local (desktop): bandeja, QR, auto-update, túnel opcional | Não |
-| 3 | Nuvem: control plane, billing, ContainerSpawner, Postgres, S3 | Não |
+| 3 | Nuvem: control plane fechado, um projeto LiteZap isolado por cliente, billing, pool gerenciado de IPs de saída | Não |
 | 4 | Atendente IA completo: memória, base de conhecimento, painel | Não |
 | 5 | Ferramentas por cima | Não |
 
@@ -30,6 +30,9 @@ O produto é decomposto em peças, cada uma com seu próprio spec → plano → 
 4. **Modelo de processo**: **supervisor + um worker por instância, mesmo binário**. `Spawner` é uma interface: `ProcessSpawner` (esta peça) e `ContainerSpawner` (peça #3).
 5. **IA de referência**: exemplos e testes manuais do hook de agente usam o Claude padrão (modelo default configurável, chave via `ANTHROPIC_API_KEY`). Depois migra para uma conta/chave exclusiva do LiteZap, só por configuração.
 6. **Streams em tempo real**: só SSE (WebSocket fora do escopo).
+7. **Modelo de distribuição (estilo Supabase)**: o motor é open source e idêntico em três formas: app local (PC), self-host (servidor/VPS próprio, Docker) e nuvem gerenciada. A nuvem vende um **projeto pré-instalado por cliente**: um container/VM isolado rodando o mesmo binário, com upgrades, backup, monitoramento e IPs gerenciados. O que fica fechado é só o control plane da nuvem (provisionamento, billing, pool de IPs).
+8. **IP de saída por instância**: o motor suporta proxy HTTP/SOCKS5 por instância (seção 4.6). Isso é o que permite, na nuvem, não colocar vários números de clientes diferentes atrás do mesmo IP de datacenter.
+9. **Rampa de envio para números novos**: limites diários crescem com a idade da instância (seção 4.1). Vem ligada por padrão e é configurável.
 
 ## 3. Arquitetura
 
@@ -88,6 +91,8 @@ Sem dependências externas no modo local.
 4. Falha retentável (timeout ou erro de rede do worker com a instância `connected`) → volta para a fila com backoff, até **5 tentativas**; depois `failed`. Falha não retentável (`invalid_number`, mídia inválida, `logged_out`, `banned`) → `failed` imediato.
 5. Status `delivered`/`read` chegam como eventos (receipts) → atualizam o store → evento `message.status`.
 6. **Modo síncrono** `?wait=true&timeout=30s`: a requisição aguarda o item sair de `queued`. Se ficar `sent` dentro do prazo → `200` com `wa_message_id`; se `failed` → erro; se o prazo estourar, a mensagem **continua na fila** e a resposta é `202 {id, status:"queued"}`.
+
+**Rampa por idade da instância** (padrão ligado, configurável por instância em `settings`): o limite diário de destinatários *novos* (chats sem mensagem recebida anteriormente) começa em 50/dia e sobe linearmente até 150/dia ao longo de 14 dias desde o primeiro `connected`. Acima do limite, os envios para destinatários novos ficam `queued` até o dia seguinte; respostas a chats que já falaram com a instância não contam. Mensagens idênticas para muitos destinatários novos em sequência são espaçadas com o dobro do `min_interval`.
 
 Tipos de mensagem suportados (lista fechada nesta peça): `text`, `image`, `video`, `audio` (inclui voz/ptt), `document`, `sticker`, `location`, `contact`, `reaction`. Mídia entra por `media.url` (o supervisor baixa) ou `media.base64`; multipart fica fora. O download por URL tem proteção contra SSRF: timeout 30s, limite de tamanho do tipo, e bloqueio de IPs privados/loopback/link-local (desligável por config para uso local).
 
@@ -151,6 +156,14 @@ Exemplo de referência em `examples/agent-claude/`: servidor mínimo em Go que i
 
 - Recebida: **download sob demanda**. O evento traz `media.id`; `GET /v1/instances/{id}/media/{media_id}` baixa via worker na primeira vez e guarda em `data/media/`. `GET .../media/{media_id}?signed=1` devolve `{url}` assinada (TTL 1h) que funciona sem token, para repassar a terceiros (ex.: IA). Arquivos expiram após 7 dias (configurável).
 - Enviada: limites de tamanho por tipo (padrão: imagem 16MB, vídeo/áudio 64MB, documento 100MB).
+
+### 4.6 Rede: proxy por instância
+
+- Config por instância em `settings.proxy_url` (`http://`, `https://` ou `socks5://`, com usuário/senha opcionais), mais um `default_proxy_url` global na config.
+- O worker aplica o proxy antes de conectar (`whatsmeow.Client.SetProxyAddress`), tanto no websocket quanto em upload/download de mídia. Trocar o proxy reinicia o worker.
+- **Fixo por sessão**: o motor nunca troca o IP de saída sozinho durante uma sessão. Mudar de IP com frequência é um sinal suspeito.
+- Falha de conexão pelo proxy entra como `reconnecting` com `reason: proxy_unreachable`; o motor não cai silenciosamente para conexão direta.
+- O motor não fornece IPs. Ele só aceita proxies. No modo local, o padrão é a conexão da própria máquina (IP residencial do usuário). Na nuvem, o control plane atribui proxies do pool gerenciado (peça #3).
 
 ## 5. Eventos
 
@@ -316,7 +329,7 @@ Go na versão exigida pela versão mais recente do whatsmeow (fixada no `go.mod`
 Cada marco é testável sozinho:
 
 1. Esqueleto: binário, config, store e migrações, `spawner` + worker com whatsmeow, máquina de estados, pareamento (QR e código).
-2. Envio (fila, ritmo, idempotência, `wait`) e recebimento (log, chats, history sync).
+2. Envio (fila, ritmo, rampa, idempotência, `wait`), recebimento (log, chats, history sync) e proxy por instância.
 3. Eventos: barramento, SSE, webhooks com assinatura, retry e dead-letter.
 4. MCP: HTTP em `/mcp` e `litezap mcp` (stdio).
 5. Hook de agente + `examples/agent-claude/`.
@@ -328,5 +341,6 @@ Painel web, cobrança, organizações e multi-usuário, `ContainerSpawner`, Post
 ## 15. Riscos
 
 - **Mudanças no protocolo do WhatsApp**: dependemos do ritmo de atualização do whatsmeow. Mitigação: envelope de eventos LiteZap isola consumidores; atualizar = trocar binário e reiniciar.
-- **Banimento de números**: inerente ao uso não oficial. Mitigação: ritmo conservador por padrão e documentação de boas práticas.
+- **Banimento de números**: inerente ao uso não oficial. Os principais gatilhos são mensagens idênticas em massa, velocidade anormal, muitas denúncias ou bloqueios e muitos números no mesmo IP. Mitigação: ritmo e rampa conservadores por padrão, proxy por instância, e na nuvem um pool de IPs com no máximo um cliente por IP. O LiteZap é voltado a conversas que o destinatário espera (atendimento, clientes, opt-in). Não terá recursos para fabricar perfis falsos ou conversas artificiais de "maturação".
+- **Contaminação entre clientes na nuvem**: um cliente que faz spam marca o IP de saída, e os outros no mesmo IP pagam o preço. Mitigação: na nuvem, isolamento de IP por cliente (peça #3).
 - **Licença MPL-2.0**: modificações em arquivos do whatsmeow precisam ser publicadas; usar como dependência não impõe licença ao restante do código.
