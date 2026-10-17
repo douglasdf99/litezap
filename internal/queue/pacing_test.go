@@ -57,3 +57,13 @@ func TestDelays(t *testing.T) {
 		t.Fatal("retry delay cap")
 	}
 }
+
+func TestPacerNoPerMinuteLimitWhenZero(t *testing.T) {
+	s := settings.Defaults()
+	s.MinIntervalMS, s.JitterMS, s.MaxPerMinute = 0, 0, 0
+	p := &pacer{rand: func() float64 { return 0 }}
+	p.record(t0, s)
+	if d := p.wait(t0, s, false); d != 0 {
+		t.Fatalf("wait = %v", d)
+	}
+}

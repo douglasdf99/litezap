@@ -5461,6 +5461,77 @@ func TestHistoryDoesNotBlockStateAndLiveEvents(t *testing.T) {
 		return len(evs) == 1 && evs[0].GetMessage().GetId() == "LIVE"
 	})
 }
+
+// first_connected_at is only recorded when the connected state was actually persisted.
+func TestFirstConnectedNeedsPersistedConnected(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	obs := &recObserver{}
+	m.SetObserver(obs)
+	if err := m.Start(context.Background(), "i1"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "starting", stateIs(t, st, "i1", instance.Starting))
+	// stopped -> connected is not an allowed transition: setState will refuse it.
+	if err := st.UpdateInstanceState(context.Background(), "i1", instance.Stopped, ""); err != nil {
+		t.Fatal(err)
+	}
+	f := sp.Last("i1")
+	f.Emit("connected")
+	f.EmitMessage(&workerv1.Message{Id: "AFTER", Chat: "a@s.whatsapp.net", Type: "text"})
+	eventually(t, "message after connected", func() bool {
+		evs, _ := obs.snapshot()
+		return len(evs) == 1
+	})
+	in, _ := st.GetInstance(context.Background(), "i1")
+	if in.State != instance.Stopped || !in.FirstConnectedAt.IsZero() {
+		t.Fatalf("state=%s first=%v", in.State, in.FirstConnectedAt)
+	}
+}
+
+// After Stop returns, the history consumer is done: nothing more is written for the worker.
+func TestStopWaitsForHistoryWriter(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	obs := &slowHistory{}
+	m.SetObserver(obs)
+	sp.OnStart = func(f *workertest.Fake) { f.Emit("connected") }
+	if err := m.Start(context.Background(), "i1"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "connected", stateIs(t, st, "i1", instance.Connected))
+	f := sp.Last("i1")
+	for i := 0; i < 5; i++ {
+		f.EmitHistory(&workerv1.HistoryChunk{Chat: "a@s.whatsapp.net"})
+	}
+	eventually(t, "first chunk being written", func() bool { return obs.count() >= 1 })
+	if err := m.Stop(context.Background(), "i1"); err != nil {
+		t.Fatal(err)
+	}
+	n := obs.count()
+	time.Sleep(300 * time.Millisecond)
+	if got := obs.count(); got != n {
+		t.Fatalf("history written after Stop returned: %d -> %d", n, got)
+	}
+}
+
+type slowHistory struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (s *slowHistory) WorkerEvent(_ string, ev *workerv1.Event) {
+	if ev.GetHistory() != nil {
+		time.Sleep(100 * time.Millisecond)
+		s.mu.Lock()
+		s.n++
+		s.mu.Unlock()
+	}
+}
+func (s *slowHistory) StateChanged(string, instance.State) {}
+func (s *slowHistory) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.n
+}
 ```
 
 Run: `go test ./internal/manager/`
@@ -5600,10 +5671,19 @@ por:
 	// sync never holds up state changes and heartbeats; live events wait at most for the
 	// chunk being written (the worker already sends live events before queued chunks).
 	hist := make(chan *workerv1.Event, 1)
+	var histDone sync.WaitGroup
+	histDone.Add(1)
 	go func() {
+		defer histDone.Done()
 		for ev := range hist {
 			m.observer.WorkerEvent(s.id, ev)
 		}
+	}()
+	// Once runWorker returns nothing more is written for this worker: cancel ends the
+	// reader, which closes hist, and we wait for the writer to finish its current chunk.
+	defer func() {
+		cancel()
+		histDone.Wait()
 	}()
 	go func() {
 		defer close(hist)
@@ -5650,23 +5730,39 @@ por:
 Em `internal/manager/manager.go` (`runWorker`), trocar:
 
 ```go
-			if st == instance.Connected {
-				healthy = true
-				if c.Jid != "" {
+			m.setState(s.id, st, c.Reason)
+			if st.Terminal() {
 ```
 
 por:
 
 ```go
-			if st == instance.Connected {
-				healthy = true
+			persisted := m.setState(s.id, st, c.Reason)
+			if persisted && st == instance.Connected {
 				if err := m.store.MarkFirstConnected(context.Background(), s.id, time.Now()); err != nil {
 					m.log.Error("save first connection", "instance_id", s.id, "err", err)
 				}
-				if c.Jid != "" {
+			}
+			if st.Terminal() {
 ```
 
-Em `internal/manager/manager.go` (fim de `setState`), trocar:
+Em `internal/manager/manager.go` (`setState`), trocar o cabeçalho (comentário e assinatura):
+
+```go
+// setState persists a transition if the state machine allows it. Persisting logged_out
+// also clears the instance's JID.
+func (m *Manager) setState(id string, to instance.State, reason string) {
+```
+
+por:
+
+```go
+// setState persists a transition if the state machine allows it and reports whether it
+// wrote one. Persisting logged_out also clears the instance's JID.
+func (m *Manager) setState(id string, to instance.State, reason string) bool {
+```
+
+e trocar cada `return` sem valor dentro de `setState` (são quatro) por `return false`. Depois, trocar o fim:
 
 ```go
 	m.log.Info("instance state", "instance_id", id, "from", in.State, "to", to, "reason", reason)
@@ -5678,6 +5774,7 @@ por:
 ```go
 	m.log.Info("instance state", "instance_id", id, "from", in.State, "to", to, "reason", reason)
 	m.observer.StateChanged(id, to)
+	return true
 }
 ```
 
@@ -6066,6 +6163,16 @@ func TestPacerMaxPerMinute(t *testing.T) {
 	}
 }
 
+func TestPacerNoPerMinuteLimitWhenZero(t *testing.T) {
+	s := settings.Defaults()
+	s.MinIntervalMS, s.JitterMS, s.MaxPerMinute = 0, 0, 0
+	p := &pacer{rand: func() float64 { return 0 }}
+	p.record(t0, s)
+	if d := p.wait(t0, s, false); d != 0 {
+		t.Fatalf("wait = %v", d)
+	}
+}
+
 func TestDelays(t *testing.T) {
 	if typingDelay("oi") != 100*time.Millisecond || typingDelay(string(make([]rune, 1000))) != 5*time.Second {
 		t.Fatal("typing delay")
@@ -6230,7 +6337,7 @@ func (p *pacer) wait(now time.Time, s settings.Settings, double bool) time.Durat
 		}
 	}
 	p.recent = keep
-	if len(p.recent) >= s.MaxPerMinute {
+	if s.MaxPerMinute > 0 && len(p.recent) >= s.MaxPerMinute {
 		if w := p.recent[len(p.recent)-s.MaxPerMinute].Add(time.Minute).Sub(now); w > d {
 			d = w
 		}

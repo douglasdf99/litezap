@@ -41,7 +41,7 @@ func (p *pacer) wait(now time.Time, s settings.Settings, double bool) time.Durat
 		}
 	}
 	p.recent = keep
-	if len(p.recent) >= s.MaxPerMinute {
+	if s.MaxPerMinute > 0 && len(p.recent) >= s.MaxPerMinute {
 		if w := p.recent[len(p.recent)-s.MaxPerMinute].Add(time.Minute).Sub(now); w > d {
 			d = w
 		}
