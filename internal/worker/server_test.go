@@ -164,3 +164,31 @@ func TestServerStopEndsEventStreams(t *testing.T) {
 		t.Fatalf("stream took %v to end", time.Since(start))
 	}
 }
+
+func TestServerEmptyQRClearsSnapshot(t *testing.T) {
+	srv := NewServer(&stubWA{})
+	srv.Start(context.Background()) // qr_pending + QR-1
+	srv.QR("", 0)                   // the pairing round ended: the code is expired
+
+	cli := dial(t, srv)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := cli.Events(ctx, &workerv1.EventsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev, err := stream.Recv(); err != nil || ev.GetConn().GetState() != "qr_pending" {
+		t.Fatalf("snapshot = %v, %v", ev, err)
+	}
+	got := make(chan *workerv1.Event, 1)
+	go func() {
+		if e, err := stream.Recv(); err == nil {
+			got <- e
+		}
+	}()
+	select {
+	case e := <-got:
+		t.Fatalf("expired QR replayed in snapshot: %v", e)
+	case <-time.After(100 * time.Millisecond):
+	}
+}

@@ -246,13 +246,15 @@ func (w *Whatsmeow) pairLoop(ctx context.Context) {
 
 const firstQRTimeout = 30 * time.Second
 
-// endRound stops the rotation and drops the socket (never called from the event handler).
+// endRound stops the rotation, clears the now-expired code and drops the socket
+// (never called from the event handler).
 func (w *Whatsmeow) endRound() {
 	w.accepting.Store(false)
 	w.stopRotation()
 	w.mu.Lock()
 	w.ready, w.roundStart = nil, time.Time{}
 	w.mu.Unlock()
+	w.sink.QR("", 0)
 	w.cli.Disconnect()
 }
 

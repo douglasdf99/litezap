@@ -92,6 +92,18 @@ func TestStartReachesQRPendingAndExposesQR(t *testing.T) {
 	}
 }
 
+func TestEmptyQRClearsCachedCode(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	sp.OnStart = func(f *workertest.Fake) { f.Emit("qr_pending"); f.EmitQR("QR-1") }
+	if err := m.Start(context.Background(), "i1"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "qr_pending", stateIs(t, st, "i1", instance.QRPending))
+	eventually(t, "qr code", func() bool { _, ok := m.QR("i1"); return ok })
+	sp.Last("i1").EmitQR("") // pairing round ended
+	eventually(t, "qr cleared", func() bool { _, ok := m.QR("i1"); return !ok })
+}
+
 func TestCrashRestartsWorker(t *testing.T) {
 	m, st, sp := setup(t, "i1")
 	sp.OnStart = func(f *workertest.Fake) { f.Emit("connecting"); f.Emit("connected") }

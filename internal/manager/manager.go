@@ -420,7 +420,7 @@ func (m *Manager) runWorker(ctx context.Context, s *supervised, h spawner.Worker
 			return false, healthy
 		case ev := <-evs:
 			if qr := ev.GetQr(); qr != nil {
-				s.setQR(qr.Code)
+				s.setQR(qr.Code) // an empty code clears it: the worker's pairing round ended
 				continue
 			}
 			c := ev.GetConn()

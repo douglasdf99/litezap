@@ -12,6 +12,7 @@ import (
 // Sink receives connection events from a WAClient.
 type Sink interface {
 	ConnState(state, reason, jid string)
+	// QR delivers a pairing code; an empty code means the previous one expired.
 	QR(code string, timeout time.Duration)
 }
 
@@ -62,11 +63,17 @@ func (s *Server) ConnState(state, reason, jid string) {
 	s.broadcast(&workerv1.Event{Kind: &workerv1.Event_Conn{Conn: c}})
 }
 
+// QR caches and broadcasts a pairing code. An empty code means the pairing round
+// ended: the cached code is dropped (so snapshots stop replaying an expired code) and
+// the empty code is broadcast so subscribers clear theirs too.
 func (s *Server) QR(code string, timeout time.Duration) {
 	q := &workerv1.QR{Code: code, TimeoutMs: timeout.Milliseconds()}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.conn.GetState() == "qr_pending" {
+	switch {
+	case code == "":
+		s.qr = nil
+	case s.conn.GetState() == "qr_pending":
 		s.qr = q
 	}
 	s.broadcast(&workerv1.Event{Kind: &workerv1.Event_Qr{Qr: q}})

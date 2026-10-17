@@ -179,3 +179,12 @@ func TestConnectFailureAfterTerminalDoesNotReconnect(t *testing.T) {
 		t.Fatal("reconnected after a terminal state")
 	}
 }
+
+func TestEndRoundClearsQR(t *testing.T) {
+	w, r := newTestAdapter(t, false, func(context.Context) error { return nil })
+	w.endRound()
+	_, qrs := r.snapshot()
+	if len(qrs) != 1 || qrs[0] != "" {
+		t.Fatalf("qrs = %q, want one empty (clear) code", qrs)
+	}
+}
