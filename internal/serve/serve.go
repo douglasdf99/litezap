@@ -117,7 +117,11 @@ func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
 		}
 	}
 	hctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	_ = srv.Shutdown(hctx)
+	if err := srv.Shutdown(hctx); err != nil {
+		// Requests still running after the grace period are cut, so none outlives the
+		// queues, workers and store stopped below.
+		_ = srv.Close()
+	}
 	cancel()
 	shutdownAll(q, mgr)
 	return serveErr

@@ -2,11 +2,16 @@ package serve
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/douglasdf99/litezap/internal/config"
 	"github.com/douglasdf99/litezap/internal/instance"
@@ -83,5 +88,55 @@ func TestWorkerEnvPassesEffectiveProxy(t *testing.T) {
 	}
 	if _, err := env(ctx, "missing"); err == nil {
 		t.Error("expected error for unknown instance")
+	}
+}
+
+// A request still running when the graceful shutdown gives up is cut (srv.Close) before the
+// queues, workers and store go away.
+func TestShutdownClosesHungRequests(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := probe.Addr().String()
+	probe.Close()
+	dir := t.TempDir()
+	t.Setenv("LITEZAP_DATA_DIR", dir)
+	t.Setenv("LITEZAP_LISTEN_ADDR", addr)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, "", slog.New(slog.DiscardHandler)) }()
+	var conn net.Conn
+	for i := 0; i < 100; i++ {
+		if conn, err = net.Dial("tcp", addr); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if conn == nil {
+		t.Fatalf("server did not start: %v", err)
+	}
+	defer conn.Close()
+	tok, err := os.ReadFile(filepath.Join(dir, "admin_token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A send whose body never finishes arriving: the handler blocks reading it.
+	fmt.Fprintf(conn, "POST /v1/instances/inst_x/messages HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\n"+
+		"Content-Type: application/json\r\nContent-Length: 1000000\r\n\r\n{\"to\":", strings.TrimSpace(string(tok)))
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("Run did not return")
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.ReadAll(conn); err != nil {
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			t.Fatal("the hung request's connection is still open after Run returned")
+		}
 	}
 }
