@@ -19,6 +19,10 @@ import (
 // ErrRateLimited means the instance looked up too many uncached numbers in the last minute.
 var ErrRateLimited = errors.New("too many number lookups; try again in a minute")
 
+// ErrTooManyNumbers means one request has more uncached numbers than the purpose's
+// per-minute limit, so it could never be served (not retryable).
+var ErrTooManyNumbers = errors.New("too many uncached numbers in one request")
+
 // Workers gives access to running workers (implemented by *manager.Manager).
 type Workers interface {
 	Client(instanceID string) (workerv1.WorkerClient, error)
@@ -75,8 +79,8 @@ func (r *Resolver) fresh(c store.CachedNumber, now time.Time) bool {
 	return now.Sub(c.CheckedAt) < ttl
 }
 
-// take reserves n lookups in the instance's one-minute window for purpose.
-func (r *Resolver) take(instanceID string, purpose Purpose, n int, now time.Time) bool {
+// limit is the per-minute quota of purpose.
+func (r *Resolver) limit(purpose Purpose) int {
 	limit := r.PerMinute
 	if limit == 0 {
 		limit = 30
@@ -86,6 +90,12 @@ func (r *Resolver) take(instanceID string, purpose Purpose, n int, now time.Time
 			limit = 10
 		}
 	}
+	return limit
+}
+
+// take reserves n lookups in the instance's one-minute window for purpose.
+func (r *Resolver) take(instanceID string, purpose Purpose, n int, now time.Time) bool {
+	limit := r.limit(purpose)
 	key := instanceID + "/" + string(purpose)
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -134,6 +144,9 @@ func (r *Resolver) Resolve(ctx context.Context, instanceID string, phones []stri
 	}
 	if len(missing) == 0 {
 		return out, nil
+	}
+	if len(missing) > r.limit(purpose) {
+		return nil, ErrTooManyNumbers
 	}
 	if !r.take(instanceID, purpose, len(missing), now) {
 		return nil, ErrRateLimited

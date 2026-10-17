@@ -6275,7 +6275,7 @@ Expected: `go mod tidy` não altera `go.mod`/`go.sum` (se alterar, inclua-os no 
 - Create: `internal/lookup/lookup.go`
 - Test: `internal/lookup/lookup_test.go`
 
-`Resolver.Resolve` devolve um resultado por telefone: usa o `number_cache` enquanto fresco (encontrado: 30 dias; não encontrado: 24h) e só consulta o worker (`CheckNumbers` → `IsOnWhatsApp`) para o resto, com cotas separadas por finalidade: 30 consultas novas por instância por minuto para a fila (`ForSend`) e 10 para `check-numbers` (`ForCheck`), de modo que a API nunca esgota a cota dos envios (`ErrRateLimited` acima disso; consultas em massa parecem raspagem de contatos). Quando o WhatsApp devolve outro JID (9º dígito), o número canônico também entra no cache.
+`Resolver.Resolve` devolve um resultado por telefone: usa o `number_cache` enquanto fresco (encontrado: 30 dias; não encontrado: 24h) e só consulta o worker (`CheckNumbers` → `IsOnWhatsApp`) para o resto, com cotas separadas por finalidade: 30 consultas novas por instância por minuto para a fila (`ForSend`) e 10 para `check-numbers` (`ForCheck`), de modo que a API nunca esgota a cota dos envios (`ErrRateLimited` acima disso; consultas em massa parecem raspagem de contatos; um pedido com mais números não cacheados que a cota por minuto nunca poderia ser atendido e devolve `ErrTooManyNumbers`, não retentável, sem gastar cota). Quando o WhatsApp devolve outro JID (9º dígito), o número canônico também entra no cache.
 
 - [ ] **Step 1: Escrever os testes**
 
@@ -6369,6 +6369,23 @@ func TestResolveRateLimit(t *testing.T) {
 		t.Fatalf("after a minute: %v (checks %d)", err, wa.Checks())
 	}
 }
+
+func TestResolveBatchLargerThanBucket(t *testing.T) {
+	r, wa, _ := setup(t)
+	ctx := context.Background()
+	// check bucket is 1/min: two uncached numbers can never be served, so it must not be retryable.
+	_, err := r.Resolve(ctx, "i1", []string{"5511900000001", "5511900000002"}, ForCheck)
+	if !errors.Is(err, ErrTooManyNumbers) || errors.Is(err, ErrRateLimited) {
+		t.Fatalf("err = %v", err)
+	}
+	if wa.Checks() != 0 {
+		t.Fatalf("worker was called: %d", wa.Checks())
+	}
+	// no quota was consumed
+	if _, err := r.Resolve(ctx, "i1", []string{"5511900000003"}, ForCheck); err != nil {
+		t.Fatalf("quota consumed by the rejected batch: %v", err)
+	}
+}
 ```
 
 Run: `go test ./internal/lookup/`
@@ -6399,6 +6416,10 @@ import (
 
 // ErrRateLimited means the instance looked up too many uncached numbers in the last minute.
 var ErrRateLimited = errors.New("too many number lookups; try again in a minute")
+
+// ErrTooManyNumbers means one request has more uncached numbers than the purpose's
+// per-minute limit, so it could never be served (not retryable).
+var ErrTooManyNumbers = errors.New("too many uncached numbers in one request")
 
 // Workers gives access to running workers (implemented by *manager.Manager).
 type Workers interface {
@@ -6456,8 +6477,8 @@ func (r *Resolver) fresh(c store.CachedNumber, now time.Time) bool {
 	return now.Sub(c.CheckedAt) < ttl
 }
 
-// take reserves n lookups in the instance's one-minute window for purpose.
-func (r *Resolver) take(instanceID string, purpose Purpose, n int, now time.Time) bool {
+// limit is the per-minute quota of purpose.
+func (r *Resolver) limit(purpose Purpose) int {
 	limit := r.PerMinute
 	if limit == 0 {
 		limit = 30
@@ -6467,6 +6488,12 @@ func (r *Resolver) take(instanceID string, purpose Purpose, n int, now time.Time
 			limit = 10
 		}
 	}
+	return limit
+}
+
+// take reserves n lookups in the instance's one-minute window for purpose.
+func (r *Resolver) take(instanceID string, purpose Purpose, n int, now time.Time) bool {
+	limit := r.limit(purpose)
 	key := instanceID + "/" + string(purpose)
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -6515,6 +6542,9 @@ func (r *Resolver) Resolve(ctx context.Context, instanceID string, phones []stri
 	}
 	if len(missing) == 0 {
 		return out, nil
+	}
+	if len(missing) > r.limit(purpose) {
+		return nil, ErrTooManyNumbers
 	}
 	if !r.take(instanceID, purpose, len(missing), now) {
 		return nil, ErrRateLimited
@@ -9583,7 +9613,7 @@ Expected: `go mod tidy` não altera `go.mod`/`go.sum` (se alterar, inclua-os no 
 - Create: `internal/service/inbox.go`
 - Test: `internal/service/inbox_test.go`
 
-Paginação por cursor opaco (base64url do último item da página; `limit` padrão 50, máximo 200); `next_cursor` só aparece quando a página veio cheia. `MarkRead` envia recibos das últimas mensagens recebidas (até `max(unread, 1)`, no máximo 100), agrupadas por remetente em grupos, e zera `unread_count`. `CheckNumbers` usa o `lookup` com a cota própria de `check-numbers` (cache + limite; acima do limite → `429 rate_limited`). A mídia recebida é baixada pelo worker direto para um arquivo temporário único (`os.CreateTemp` em `data/media/<instância>/`) e renomeada quando completa; leituras simultâneas da primeira vez compartilham um único download (singleflight por mídia), com `expires_at` = agora + 7 dias (a limpeza é do marco 2b). `?signed=1` é recusado (`409 conflict`) quando as URLs assinadas estão desligadas.
+Paginação por cursor opaco (base64url do último item da página; `limit` padrão 50, máximo 200); `next_cursor` só aparece quando a página veio cheia. `MarkRead` envia recibos das últimas mensagens recebidas (até `max(unread, 1)`, no máximo 100), agrupadas por remetente em grupos, e zera `unread_count`. `CheckNumbers` usa o `lookup` com a cota própria de `check-numbers` (cache + limite; no máximo 10 telefones por chamada, acima disso `400 validation_failed`; acima da cota por minuto → `429 rate_limited`). A mídia recebida é baixada pelo worker direto para um arquivo temporário único (`os.CreateTemp` em `data/media/<instância>/`) e renomeada quando completa; leituras simultâneas da primeira vez compartilham um único download (singleflight por mídia), com `expires_at` = agora + 7 dias (a limpeza é do marco 2b). `?signed=1` é recusado (`409 conflict`) quando as URLs assinadas estão desligadas.
 
 - [ ] **Step 1: Escrever os testes**
 
@@ -9594,6 +9624,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -9674,6 +9705,13 @@ func TestContactsAndCheckNumbers(t *testing.T) {
 	}
 	if _, err := e.svc.CheckNumbers(ctx, "i1", []string{"12"}); apiCode(err) != "validation_failed" {
 		t.Fatalf("short number = %v", err)
+	}
+	eleven := make([]string, 11)
+	for i := range eleven {
+		eleven[i] = fmt.Sprintf("55119000000%02d", i)
+	}
+	if _, err := e.svc.CheckNumbers(ctx, "i1", eleven); apiCode(err) != "validation_failed" {
+		t.Fatalf("11 numbers = %v", err)
 	}
 }
 
@@ -9997,14 +10035,14 @@ type NumberView struct {
 	JID    string `json:"jid,omitempty"`
 }
 
-// CheckNumbers asks WhatsApp which phone numbers have an account (at most 50 per call).
+// CheckNumbers asks WhatsApp which phone numbers have an account (at most 10 per call, the size of the check bucket).
 // Results are cached and uncached lookups are rate-limited per instance.
 func (s *Messaging) CheckNumbers(ctx context.Context, instanceID string, phones []string) ([]NumberView, error) {
 	if _, err := s.Store.GetInstance(ctx, instanceID); err != nil {
 		return nil, mapErr(err)
 	}
-	if len(phones) == 0 || len(phones) > 50 {
-		return nil, apierr.Validation("phones must have 1 to 50 numbers")
+	if len(phones) == 0 || len(phones) > 10 {
+		return nil, apierr.Validation("phones must have 1 to 10 numbers")
 	}
 	clean := make([]string, len(phones))
 	for i, p := range phones {
@@ -10019,6 +10057,9 @@ func (s *Messaging) CheckNumbers(ctx context.Context, instanceID string, phones 
 	res, err := s.Resolver.Resolve(rctx, instanceID, clean, lookup.ForCheck)
 	if errors.Is(err, lookup.ErrRateLimited) {
 		return nil, apierr.New(http.StatusTooManyRequests, "rate_limited", err.Error(), true)
+	}
+	if errors.Is(err, lookup.ErrTooManyNumbers) {
+		return nil, apierr.Validation("too many uncached numbers in one request; send at most 10 phones per call")
 	}
 	if err != nil {
 		return nil, mapErr(err)

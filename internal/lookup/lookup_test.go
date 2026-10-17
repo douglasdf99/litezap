@@ -85,3 +85,20 @@ func TestResolveRateLimit(t *testing.T) {
 		t.Fatalf("after a minute: %v (checks %d)", err, wa.Checks())
 	}
 }
+
+func TestResolveBatchLargerThanBucket(t *testing.T) {
+	r, wa, _ := setup(t)
+	ctx := context.Background()
+	// check bucket is 1/min: two uncached numbers can never be served, so it must not be retryable.
+	_, err := r.Resolve(ctx, "i1", []string{"5511900000001", "5511900000002"}, ForCheck)
+	if !errors.Is(err, ErrTooManyNumbers) || errors.Is(err, ErrRateLimited) {
+		t.Fatalf("err = %v", err)
+	}
+	if wa.Checks() != 0 {
+		t.Fatalf("worker was called: %d", wa.Checks())
+	}
+	// no quota was consumed
+	if _, err := r.Resolve(ctx, "i1", []string{"5511900000003"}, ForCheck); err != nil {
+		t.Fatalf("quota consumed by the rejected batch: %v", err)
+	}
+}
