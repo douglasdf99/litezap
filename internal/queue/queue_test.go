@@ -18,6 +18,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/settings"
 	"github.com/douglasdf99/litezap/internal/store"
 	"github.com/douglasdf99/litezap/internal/workertest"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -431,6 +432,97 @@ func TestLookupGivesUpAfterFiveFailures(t *testing.T) {
 	if o := e.status(x); !strings.HasPrefix(o.LastError, "worker_error: recipient lookup failed") || len(e.fake.WA.Sent()) != 0 {
 		t.Fatalf("final = %+v", o)
 	}
+}
+
+// Past today's ramp limit, new numbers are deferred without a lookup: a stream of lookups
+// looks like contact scraping.
+func TestRampLimitSkipsLookups(t *testing.T) {
+	s := fastSettings()
+	s.Ramp = settings.Ramp{Enabled: true, StartPerDay: 1, EndPerDay: 1, Days: 1}
+	s.SendWindow = settings.Window{Start: "08:00", End: "20:00"}
+	e := newEnv(t, s, instance.Connected)
+	a := e.enqueue(chatA, Payload{Type: "text", Text: "um"})
+	b := e.enqueue(chatB, Payload{Type: "text", Text: "dois"})
+	c := e.enqueue(chatC, Payload{Type: "text", Text: "três"})
+	e.eventually("a sent, b and c deferred", func() bool {
+		return e.status(a).Status == store.OutSent && strings.HasPrefix(e.status(b).LastError, "ramp_limit:") &&
+			strings.HasPrefix(e.status(c).LastError, "ramp_limit:")
+	})
+	if n := e.fake.WA.Checks(); n != 1 {
+		t.Fatalf("lookups = %d, want 1 (only the recipient that went out)", n)
+	}
+}
+
+func TestLookupRateLimitDefersWithoutCountingFailure(t *testing.T) {
+	e := newEnvAt(t, t0, fastSettings(), instance.Connected, func(o *Options) { o.Resolver.PerMinute = 1 })
+	a := e.enqueue(chatA, Payload{Type: "text", Text: "um"})
+	b := e.enqueue(chatB, Payload{Type: "text", Text: "dois"})
+	e.eventually("a sent, b deferred", func() bool {
+		return e.status(a).Status == store.OutSent && strings.HasPrefix(e.status(b).LastError, "lookup_rate_limited:")
+	})
+	if o := e.status(b); o.Status != store.OutQueued || o.LookupFailures != 0 || o.Attempts != 0 ||
+		!o.NextAttemptAt.Equal(t0.Add(time.Minute)) || e.fake.WA.Checks() != 1 {
+		t.Fatalf("b = %+v, lookups %d", o, e.fake.WA.Checks())
+	}
+	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(time.Minute)
+	e.eventually("b sent after a minute", func() bool { return e.status(b).Status == store.OutSent })
+}
+
+// blockingCheck holds CheckNumbers until the caller's context ends.
+type blockingCheck struct {
+	workerv1.WorkerClient
+	started chan struct{}
+}
+
+func (b blockingCheck) CheckNumbers(ctx context.Context, _ *workerv1.CheckNumbersRequest, _ ...grpc.CallOption) (*workerv1.CheckNumbersResponse, error) {
+	close(b.started)
+	<-ctx.Done()
+	return nil, status.FromContextError(ctx.Err()).Err()
+}
+
+// A lookup cut short by shutdown is not a lookup failure (not even the fifth one).
+func TestLookupInterruptedByShutdownIsNotAFailure(t *testing.T) {
+	started := make(chan struct{})
+	e := newEnvAt(t, t0, fastSettings(), instance.Reconnecting, func(o *Options) {
+		base, _ := o.Resolver.Workers.Client("i1")
+		o.Resolver.Workers = workers{"i1": blockingCheck{WorkerClient: base, started: started}}
+	})
+	id := e.enqueue(chatA, Payload{Type: "text", Text: "oi"})
+	if err := e.st.DeferLookup(context.Background(), id, t0, maxLookupFailures-1, "worker_error: recipient lookup failed"); err != nil {
+		t.Fatal(err)
+	}
+	e.connect()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("lookup never started")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	e.q.Shutdown(ctx)
+	if o := e.status(id); o.Status != store.OutQueued || o.LookupFailures != maxLookupFailures-1 {
+		t.Fatalf("after shutdown: %+v", o)
+	}
+}
+
+// The stored state may read connected before the connected notice arrives: nothing goes
+// out until the notice starts the grace period.
+func TestGraceStartsWithTheConnectedNotice(t *testing.T) {
+	e := newEnvAt(t, t0, fastSettings(), instance.Reconnecting, func(o *Options) { o.ConnectGrace = 20 * time.Second })
+	e.q.StateChanged("i1", instance.Reconnecting)
+	if err := e.st.UpdateInstanceState(context.Background(), "i1", instance.Connected, ""); err != nil {
+		t.Fatal(err)
+	}
+	id := e.enqueue(chatA, Payload{Type: "text", Text: "oi"}) // wakes the dispatcher before the notice
+	time.Sleep(50 * time.Millisecond)
+	if n := len(e.fake.WA.Sent()); n != 0 {
+		t.Fatalf("sent %d before the connected notice", n)
+	}
+	e.q.StateChanged("i1", instance.Connected)
+	e.eventually("grace timer", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(30 * time.Second)
+	e.eventually("sent after grace", func() bool { return e.status(id).Status == store.OutSent })
 }
 
 func TestWorkerNotConnectedKeepsAttempts(t *testing.T) {

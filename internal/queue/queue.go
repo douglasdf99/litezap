@@ -111,11 +111,22 @@ func (q *Queues) Recover(ctx context.Context) (int, error) { return q.store.Reco
 
 func (q *Queues) WorkerEvent(string, *workerv1.Event) {}
 
+// notReady marks an instance whose connected notice has not arrived yet.
+var notReady = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+
 func (q *Queues) StateChanged(id string, st instance.State) {
+	g := q.opt.ConnectGrace
 	if st != instance.Connected {
+		if g > 0 {
+			// The stored state may read connected before this notice arrives: hold sends
+			// until the connected notice starts the grace period.
+			q.mu.Lock()
+			q.readyAt[id] = notReady
+			q.mu.Unlock()
+		}
 		return
 	}
-	if g := q.opt.ConnectGrace; g > 0 {
+	if g > 0 {
 		ready := q.opt.Clock.Now().Add(g + time.Duration(q.opt.Rand()*float64(g)))
 		q.mu.Lock()
 		q.readyAt[id] = ready
@@ -295,7 +306,9 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 		return -1, true // paused: no attempt is consumed while disconnected
 	}
 	now := opt.Clock.Now()
-	if ready := d.q.ready(d.id); now.Before(ready) {
+	if ready := d.q.ready(d.id); ready.Equal(notReady) {
+		return -1, true // the connected notice will wake us
+	} else if now.Before(ready) {
 		return ready.Sub(now), true // grace period after connecting
 	}
 	set, err := settings.Effective(opt.Defaults, "", in.SettingsJSON)
@@ -336,10 +349,6 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 		}
 		return 0, true
 	}
-	if d.resolve(ctx, item, now) {
-		return 0, true
-	}
-
 	isNew, err := d.newRecipient(ctx, item)
 	if err != nil {
 		d.log().Error("queue: load chat", "err", err)
@@ -354,6 +363,12 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 			return errPause, true
 		}
 		return 0, true
+	}
+	// The number lookup comes after the ramp: past today's limit new numbers are not even
+	// looked up (a stream of lookups looks like contact scraping). An item moved to the
+	// canonical JID is picked again, so the ramp is checked for that JID too.
+	if next, done := d.resolve(ctx, item, now); done {
+		return next, true
 	}
 	// Doubled only towards another chat: a retry of the same item is not a repeated text.
 	double := isNew && p.Type == "text" && p.Text != "" && p.Text == d.lastNewText && item.ChatJID != d.lastNewChat
@@ -447,50 +462,53 @@ const maxLookupFailures = 5
 // number without WhatsApp fails without sending, and a number WhatsApp knows under another
 // phone JID (Brazilian 9th digit) has its queued items moved there. A failed or
 // rate-limited lookup only postpones this item; other recipients keep going. done=true
-// means the item was handled (failed, deferred or moved) and the step should pick again.
-func (d *dispatcher) resolve(ctx context.Context, item store.Outbound, now time.Time) (done bool) {
+// means the item was handled (failed, deferred or moved) and the step should sleep next
+// (errPause after a failed store write) and pick again.
+func (d *dispatcher) resolve(ctx context.Context, item store.Outbound, now time.Time) (next time.Duration, done bool) {
 	r := d.q.opt.Resolver
 	user, ok := strings.CutSuffix(item.ChatJID, "@s.whatsapp.net")
 	if r == nil || !ok {
-		return false
+		return 0, false
 	}
 	st := d.q.store
 	if _, err := st.GetChat(ctx, d.id, item.ChatJID); err == nil {
-		return false // known chat: we already talked to this JID
+		return 0, false // known chat: we already talked to this JID
 	} else if !errors.Is(err, store.ErrNotFound) {
 		d.log().Error("queue: load chat", "err", err)
-		return false
+		return errPause, true
 	}
 	res, err := r.Resolve(ctx, d.id, []string{user}, lookup.ForSend)
 	switch {
+	case ctx.Err() != nil:
+		return 0, true // shutting down: an interrupted lookup is not a lookup failure
 	case errors.Is(err, lookup.ErrRateLimited):
-		if err := st.Defer(ctx, item.ID, now.Add(time.Minute), "lookup_rate_limited: retrying in a minute"); err != nil {
+		err := st.Defer(ctx, item.ID, now.Add(time.Minute), "lookup_rate_limited: retrying in a minute")
+		if err != nil {
 			d.log().Error("queue: defer", "err", err)
 		}
-		return true
+		return pauseOn(err), true
 	case err != nil:
 		n := item.LookupFailures + 1
 		msg := "worker_error: recipient lookup failed: " + status.Convert(err).Message()
 		if n >= maxLookupFailures {
-			d.fail(item, item.Attempts, msg)
-			return true
+			return pauseOn(d.fail(item, item.Attempts, msg)), true
 		}
-		if err := st.DeferLookup(ctx, item.ID, now.Add(lookupBackoff(n)), n, msg); err != nil {
+		err := st.DeferLookup(ctx, item.ID, now.Add(lookupBackoff(n)), n, msg)
+		if err != nil {
 			d.log().Error("queue: defer", "err", err)
 		}
-		return true
+		return pauseOn(err), true
 	case !res[0].Found:
-		d.fail(item, item.Attempts, "invalid_number: recipient is not on WhatsApp")
-		return true
+		return pauseOn(d.fail(item, item.Attempts, "invalid_number: recipient is not on WhatsApp")), true
 	case res[0].JID != item.ChatJID && strings.HasSuffix(res[0].JID, "@s.whatsapp.net"):
 		// Only to another phone JID: a LID answer keeps the phone JID (chats are by phone).
 		if err := st.RetargetChat(ctx, d.id, item.ChatJID, res[0].JID); err != nil {
 			d.log().Error("queue: retarget", "err", err)
-			return false
+			return errPause, true
 		}
-		return true
+		return 0, true
 	}
-	return false
+	return 0, false
 }
 
 // newRecipient reports whether item goes to a chat (groups included) that never sent us
