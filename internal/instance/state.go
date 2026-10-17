@@ -34,11 +34,13 @@ var edges = map[State][]State{
 	Created: {Starting, Stopped},
 	// The worker's event snapshot carries only its latest state, so from starting
 	// any worker-reported state may arrive first.
-	Starting:     {QRPending, Connecting, Connected, Reconnecting},
-	QRPending:    {Connecting, Connected},
+	Starting: {QRPending, Connecting, Connected, Reconnecting},
+	// A pairing worker that loses WhatsApp (e.g. proxy down) reports reconnecting, then
+	// qr_pending again once it can show codes.
+	QRPending:    {Connecting, Connected, Reconnecting},
 	Connecting:   {Connected, Reconnecting},
 	Connected:    {Reconnecting},
-	Reconnecting: {Connected},
+	Reconnecting: {Connected, QRPending},
 	LoggedOut:    {Starting, Stopped},
 	Failed:       {Starting, Stopped},
 	Stopped:      {Starting},

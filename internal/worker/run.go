@@ -12,6 +12,7 @@ import (
 	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
+	"github.com/douglasdf99/litezap/internal/settings"
 	"github.com/douglasdf99/litezap/internal/wire"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -24,6 +25,8 @@ type Options struct {
 	InstanceID string
 	Socket     string
 	DataDir    string
+	// ProxyURL, when set, routes the websocket and media through this proxy (spec 4.6).
+	ProxyURL string
 	// Parent, when non-nil, is a parent-liveness pipe (the supervisor's end is held open
 	// for as long as the supervisor lives). Reaching EOF means the supervisor is gone,
 	// and the worker shuts down. The worker command passes os.Stdin.
@@ -64,7 +67,17 @@ func Run(ctx context.Context, opt Options, log *slog.Logger) error {
 		return fmt.Errorf("load device: %w", err)
 	}
 	cli := whatsmeow.NewClient(device, waLog.Stdout("whatsmeow", "WARN", false))
-	srv := NewServer(NewWhatsmeow(cli, log))
+	// Always set, before connecting: applies to the websocket and to media upload/download,
+	// and an empty URL replaces the default transports, which would honor HTTPS_PROXY.
+	if err := cli.SetProxyAddress(opt.ProxyURL); err != nil {
+		return fmt.Errorf("proxy: %w", err)
+	}
+	if opt.ProxyURL != "" {
+		log.Info("using proxy", "proxy", settings.RedactProxy(opt.ProxyURL))
+	}
+	wa := NewWhatsmeow(cli, log)
+	wa.proxied = opt.ProxyURL != ""
+	srv := NewServer(wa)
 
 	_ = os.Remove(opt.Socket)
 	lis, err := net.Listen("unix", opt.Socket)

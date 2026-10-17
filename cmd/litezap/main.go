@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	_ "time/tzdata" // IANA zones for settings.timezone even where the OS has none (Windows, slim images)
 
 	"github.com/douglasdf99/litezap/internal/serve"
 	"github.com/douglasdf99/litezap/internal/worker"
@@ -48,7 +49,9 @@ func main() {
 		fs.Parse(os.Args[2:])
 		err = worker.Run(ctx, worker.Options{
 			InstanceID: *id, Socket: *sock, DataDir: *dataDir,
-			Parent: os.Stdin, // parent-liveness pipe: exit when the supervisor goes away
+			// Set by the supervisor (env, not a flag: flags are visible to every user in ps).
+			ProxyURL: os.Getenv("LITEZAP_WORKER_PROXY_URL"),
+			Parent:   os.Stdin, // parent-liveness pipe: exit when the supervisor goes away
 		}, log.With("instance_id", *id))
 	case "version":
 		fmt.Println(version)

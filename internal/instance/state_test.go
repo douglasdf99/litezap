@@ -20,6 +20,8 @@ func TestCanTransition(t *testing.T) {
 		{Connecting, Reconnecting, true},
 		{Connected, Reconnecting, true},
 		{Reconnecting, Connected, true},
+		{Reconnecting, QRPending, true}, // pairing worker reached WhatsApp again
+		{QRPending, Reconnecting, true}, // pairing worker lost WhatsApp (e.g. proxy down)
 		{Connected, QRPending, false},
 		{Connected, LoggedOut, true},
 		{Reconnecting, Banned, true},

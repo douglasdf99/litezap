@@ -167,3 +167,26 @@ func TestIsWorkerProcessMatchesExactInstanceID(t *testing.T) {
 		t.Fatal("data dir prefix must not match a longer data dir")
 	}
 }
+
+func TestProcessEnvironAddsInstanceEnv(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://leak:3128")
+	t.Setenv("all_proxy", "socks5://leak:1080")
+	p := &Process{MemoryLimitMB: 64, Env: func(_ context.Context, id string) ([]string, error) {
+		return []string{"LITEZAP_WORKER_PROXY_URL=socks5://" + id + ":1080"}, nil
+	}}
+	env, err := p.environ(context.Background(), exec.Command("true"), "inst_e")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "GOMEMLIMIT=64MiB") || !strings.Contains(joined, "LITEZAP_WORKER_PROXY_URL=socks5://inst_e:1080") {
+		t.Fatalf("env misses entries: %v", env[len(env)-2:])
+	}
+	if strings.Contains(joined, "leak") {
+		t.Fatal("proxy variables of the supervisor leaked into the worker environment")
+	}
+	p.Env = func(context.Context, string) ([]string, error) { return nil, io.ErrUnexpectedEOF }
+	if _, err := p.environ(context.Background(), exec.Command("true"), "inst_e"); err == nil {
+		t.Fatal("expected env error")
+	}
+}

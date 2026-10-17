@@ -33,6 +33,8 @@ type Process struct {
 	Command       CommandFunc   // nil: `<this executable> worker ...`
 	StartTimeout  time.Duration // default 10s
 	Log           *slog.Logger
+	// Env, when set, adds per-instance variables to the worker environment (e.g. its proxy).
+	Env func(ctx context.Context, instanceID string) ([]string, error)
 }
 
 func (p *Process) pidFile(id string) string { return filepath.Join(p.DataDir, "run", id+".pid") }
@@ -48,6 +50,35 @@ func (p *Process) command(id, sock string) *exec.Cmd {
 	return exec.Command(exe, "worker", "--instance", id, "--socket", sock, "--data-dir", p.DataDir)
 }
 
+// proxyVars are dropped from the worker environment: the worker's only proxy is the one
+// the supervisor passes explicitly (spec 4.6), never one inherited from our environment.
+var proxyVars = map[string]bool{
+	"HTTP_PROXY": true, "HTTPS_PROXY": true, "ALL_PROXY": true, "NO_PROXY": true,
+	"http_proxy": true, "https_proxy": true, "all_proxy": true, "no_proxy": true,
+}
+
+// environ is the worker's environment: ours without proxy variables, plus GOMEMLIMIT and
+// p.Env (later entries win).
+func (p *Process) environ(ctx context.Context, cmd *exec.Cmd, id string) ([]string, error) {
+	var env []string
+	for _, kv := range cmd.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); !proxyVars[k] {
+			env = append(env, kv)
+		}
+	}
+	if p.MemoryLimitMB > 0 {
+		env = append(env, fmt.Sprintf("GOMEMLIMIT=%dMiB", p.MemoryLimitMB))
+	}
+	if p.Env != nil {
+		extra, err := p.Env(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		env = append(env, extra...)
+	}
+	return env, nil
+}
+
 func (p *Process) Start(ctx context.Context, id string) (WorkerHandle, error) {
 	sock := SocketPath(p.DataDir, id)
 	if err := ensureSocketDir(sock); err != nil {
@@ -59,9 +90,11 @@ func (p *Process) Start(ctx context.Context, id string) (WorkerHandle, error) {
 	_ = os.Remove(sock)
 
 	cmd := p.command(id, sock)
-	if p.MemoryLimitMB > 0 {
-		cmd.Env = append(cmd.Environ(), fmt.Sprintf("GOMEMLIMIT=%dMiB", p.MemoryLimitMB))
+	env, err := p.environ(ctx, cmd, id)
+	if err != nil {
+		return nil, fmt.Errorf("worker env: %w", err)
 	}
+	cmd.Env = env
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 	detach(cmd) // own process group: Ctrl+C on the supervisor must not hit workers directly
 	// Parent-liveness pipe: the worker reads its stdin and exits on EOF, which happens

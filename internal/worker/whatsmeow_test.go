@@ -2,8 +2,10 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -296,5 +298,30 @@ func TestConnectedResetsConnectFailureCount(t *testing.T) {
 	}
 	if w.terminal.Load() {
 		t.Fatal("a Connected in between must reset the failure count")
+	}
+}
+
+func TestConnectFailureThroughProxyIsProxyUnreachable(t *testing.T) {
+	var calls atomic.Int32
+	w, r := newTestAdapter(t, true, func(ctx context.Context) error {
+		if calls.Add(1) == 1 {
+			return &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+		}
+		return nil
+	})
+	w.proxied = true
+	w.startConnectLoop(w.loopCtx, false, 0)
+	deadline := time.Now().Add(5 * time.Second)
+	for calls.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	states, _ := r.snapshot()
+	if len(states) == 0 || states[0] != (connEvt{"reconnecting", "proxy_unreachable"}) {
+		t.Fatalf("states = %v", states)
+	}
+	// Without a proxy the same error is a plain connect failure.
+	w.proxied = false
+	if got := w.connectFailReason(&net.OpError{Op: "dial", Err: errors.New("x")}); got != "connect_failed" {
+		t.Fatalf("reason = %q", got)
 	}
 }

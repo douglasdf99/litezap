@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"slices"
 	"strings"
 	"sync"
@@ -28,6 +29,9 @@ type Whatsmeow struct {
 	connect func(context.Context) error
 	// failureBase is the first reconnect delay after an unknown ConnectFailure.
 	failureBase time.Duration
+	// proxied is set when the client goes through a proxy (spec 4.6): connection errors
+	// are then reported as proxy_unreachable. There is never a fallback to direct.
+	proxied bool
 
 	// Signals to pairLoop; all are buffered (1) and sent to without blocking.
 	restart    chan struct{} // from PairPhone: end the current round now
@@ -171,12 +175,25 @@ func (w *Whatsmeow) connectLoop(ctx context.Context) {
 			return
 		}
 		w.log.Warn("connect failed; retrying", "err", err, "in", delay)
-		w.sink.ConnState("reconnecting", "connect_failed", w.jid())
+		w.sink.ConnState("reconnecting", w.connectFailReason(err), w.jid())
 		if !sleep(ctx, delay) {
 			return
 		}
 		delay = nextBackoff(delay)
 	}
+}
+
+// connectFailReason names a failed connect: proxy_unreachable when a proxy is configured
+// and the error is a network/proxy failure, connect_failed otherwise.
+func (w *Whatsmeow) connectFailReason(err error) string {
+	if w.proxied {
+		var opErr *net.OpError
+		msg := strings.ToLower(err.Error())
+		if errors.As(err, &opErr) || strings.Contains(msg, "proxy") || strings.Contains(msg, "socks") {
+			return "proxy_unreachable"
+		}
+	}
+	return "connect_failed"
 }
 
 // pairLoop connects an unpaired client and keeps it offering QR codes (rotated by
@@ -209,6 +226,9 @@ func (w *Whatsmeow) pairLoop(ctx context.Context) {
 				return
 			}
 			w.log.Error("connect for pairing", "err", err, "in", backoff)
+			if reason := w.connectFailReason(err); reason == "proxy_unreachable" {
+				w.sink.ConnState("reconnecting", reason, "")
+			}
 			if !sleep(ctx, backoff) {
 				return
 			}
