@@ -6,12 +6,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"github.com/douglasdf99/litezap/internal/clock"
 	"github.com/douglasdf99/litezap/internal/instance"
+	"github.com/douglasdf99/litezap/internal/lookup"
 	"github.com/douglasdf99/litezap/internal/manager"
 	"github.com/douglasdf99/litezap/internal/settings"
 	"github.com/douglasdf99/litezap/internal/store"
@@ -69,7 +71,8 @@ func newEnvAt(t *testing.T, start time.Time, defaults settings.Settings, state i
 	}
 	fc := clock.NewFake(start)
 	ws := workers{"i1": h.Client()}
-	opt := Options{Clock: fc, Rand: func() float64 { return 0.5 }, Defaults: defaults, Log: slog.New(slog.DiscardHandler)}
+	opt := Options{Clock: fc, Rand: func() float64 { return 0.5 }, Defaults: defaults, Log: slog.New(slog.DiscardHandler),
+		Resolver: &lookup.Resolver{Store: st, Workers: ws, Clock: fc}}
 	if tweak != nil {
 		tweak(&opt)
 	}
@@ -84,15 +87,28 @@ func newEnvAt(t *testing.T, start time.Time, defaults settings.Settings, state i
 
 func (e *env) enqueue(chat string, p Payload) string {
 	e.t.Helper()
+	return e.enqueueExpiring(chat, p, time.Time{})
+}
+
+func (e *env) enqueueExpiring(chat string, p Payload, expires time.Time) string {
+	e.t.Helper()
 	e.seq++
 	id := "q" + string(rune('0'+e.seq))
 	b, _ := json.Marshal(p)
 	if _, _, err := e.st.Enqueue(context.Background(), store.Outbound{ID: id, InstanceID: "i1", ChatJID: chat,
-		WAMessageID: "WA-" + id, Payload: string(b), NextAttemptAt: e.clock.Now()}); err != nil {
+		WAMessageID: "WA-" + id, Payload: string(b), NextAttemptAt: e.clock.Now(), ExpiresAt: expires}); err != nil {
 		e.t.Fatal(err)
 	}
 	e.q.Wake("i1")
 	return id
+}
+
+func (e *env) connect() {
+	e.t.Helper()
+	if err := e.st.UpdateInstanceState(context.Background(), "i1", instance.Connected, ""); err != nil {
+		e.t.Fatal(err)
+	}
+	e.q.StateChanged("i1", instance.Connected)
 }
 
 func (e *env) eventually(what string, cond func() bool) {
@@ -270,6 +286,151 @@ func TestRampDefersNewRecipientsToNextWindow(t *testing.T) {
 	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
 	e.clock.Advance(8*time.Hour + 150*time.Second)
 	e.eventually("a sent in the next window", func() bool { return e.status(a).Status == store.OutSent })
+}
+
+func TestOutsideWindowWaitsForNextWindow(t *testing.T) {
+	s := fastSettings()
+	s.SendWindow = settings.Window{Start: "08:00", End: "20:00"}
+	e := newEnvAt(t, time.Date(2026, 10, 17, 21, 0, 0, 0, time.UTC), s, instance.Connected, nil)
+	id := e.enqueue(chatA, Payload{Type: "text", Text: "boa noite"})
+	e.eventually("waiting for the window", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(11 * time.Hour) // 08:00: still inside the jitter
+	time.Sleep(20 * time.Millisecond)
+	if len(e.fake.WA.Sent()) != 0 {
+		t.Fatal("sent before window start + jitter")
+	}
+	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(150 * time.Second)
+	e.eventually("sent at 08:02:30", func() bool { return e.status(id).Status == store.OutSent })
+}
+
+// Replies to an active conversation (something received in the last 24h) are not held
+// by the send window; cold recipients wait for the next window.
+func TestWindowLetsActiveConversationsThrough(t *testing.T) {
+	s := fastSettings()
+	s.SendWindow = settings.Window{Start: "08:00", End: "20:00"}
+	start := time.Date(2026, 10, 17, 20, 5, 0, 0, time.UTC)
+	e := newEnvAt(t, start, s, instance.Connected, nil)
+	if _, err := e.st.InsertMessage(context.Background(), "i1", store.Message{ID: "in1", WAMessageID: "IN1", ChatJID: chatA,
+		Source: "contact", Type: "text", Status: "received", Timestamp: start.Add(-10 * time.Minute)},
+		store.ChatUpdate{Inbound: true}); err != nil {
+		t.Fatal(err)
+	}
+	cold := e.enqueue(chatB, Payload{Type: "text", Text: "oi"})
+	reply := e.enqueue(chatA, Payload{Type: "text", Text: "respondendo"})
+	e.eventually("reply sent at 20:05", func() bool { return e.status(reply).Status == store.OutSent })
+	o := e.status(cold)
+	if want := time.Date(2026, 10, 18, 8, 2, 30, 0, time.UTC); o.Status != store.OutQueued || !o.NextAttemptAt.Equal(want) || o.Attempts != 0 {
+		t.Fatalf("cold recipient = %+v, want due at %v", o, want)
+	}
+}
+
+func TestGraceAfterConnect(t *testing.T) {
+	e := newEnvAt(t, t0, fastSettings(), instance.Reconnecting, func(o *Options) { o.ConnectGrace = 20 * time.Second })
+	id := e.enqueue(chatA, Payload{Type: "text", Text: "oi"})
+	e.connect()
+	e.eventually("grace timer", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(29 * time.Second) // grace is 20s + 0.5 x 20s
+	time.Sleep(20 * time.Millisecond)
+	if len(e.fake.WA.Sent()) != 0 {
+		t.Fatal("sent during the grace period")
+	}
+	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(time.Second)
+	e.eventually("sent after grace", func() bool { return e.status(id).Status == store.OutSent })
+}
+
+func TestExpiredItemFails(t *testing.T) {
+	e := newEnv(t, fastSettings(), instance.Reconnecting)
+	id := e.enqueueExpiring(chatA, Payload{Type: "text", Text: "oi"}, t0.Add(time.Hour))
+	e.clock.Advance(2 * time.Hour)
+	e.connect()
+	e.eventually("expired", func() bool { return e.status(id).Status == store.OutFailed })
+	if o := e.status(id); !strings.HasPrefix(o.LastError, "expired:") || len(e.fake.WA.Sent()) != 0 {
+		t.Fatalf("expired item = %+v, sent %d", o, len(e.fake.WA.Sent()))
+	}
+}
+
+func TestRecipientResolution(t *testing.T) {
+	e := newEnv(t, fastSettings(), instance.Connected)
+	e.fake.WA.SetRegistered("551188887777", "5511988887777@s.whatsapp.net")
+	e.fake.WA.SetUnregistered("5511000000000")
+	a := e.enqueue("551188887777@s.whatsapp.net", Payload{Type: "text", Text: "um"})
+	b := e.enqueue("551188887777@s.whatsapp.net", Payload{Type: "text", Text: "dois"})
+	x := e.enqueue("5511000000000@s.whatsapp.net", Payload{Type: "text", Text: "ninguém"})
+	e.eventually("resolved sends", func() bool {
+		return e.status(a).Status == store.OutSent && e.status(b).Status == store.OutSent && e.status(x).Status == store.OutFailed
+	})
+	sent := e.fake.WA.Sent()
+	if len(sent) != 2 || sent[0].To != "5511988887777@s.whatsapp.net" || sent[1].To != "5511988887777@s.whatsapp.net" || sent[0].MessageId != "WA-q1" {
+		t.Fatalf("sent = %v", sent)
+	}
+	if o := e.status(x); !strings.HasPrefix(o.LastError, "invalid_number:") {
+		t.Fatalf("x = %+v", o)
+	}
+	if e.fake.WA.Checks() != 2 {
+		t.Fatalf("lookups = %d, want 2 (the second item reused the cache/chat)", e.fake.WA.Checks())
+	}
+}
+
+// A LID answer never becomes the chat: the item goes to the phone JID.
+func TestResolutionNeverRetargetsToLID(t *testing.T) {
+	e := newEnv(t, fastSettings(), instance.Connected)
+	e.fake.WA.SetRegistered("5511777766665", "123456789@lid")
+	id := e.enqueue("5511777766665@s.whatsapp.net", Payload{Type: "text", Text: "oi"})
+	e.eventually("sent", func() bool { return e.status(id).Status == store.OutSent })
+	if to := e.fake.WA.Sent()[0].To; to != "5511777766665@s.whatsapp.net" {
+		t.Fatalf("sent to %q", to)
+	}
+}
+
+// A failing lookup only postpones its own item, with growing backoff, and never re-queries
+// before the backoff; a known chat's item is not held.
+func TestLookupFailureDefersOnlyThatItem(t *testing.T) {
+	e := newEnv(t, fastSettings(), instance.Connected)
+	ctx := context.Background()
+	if _, err := e.st.InsertMessage(ctx, "i1", store.Message{ID: "in1", WAMessageID: "IN1", ChatJID: chatC,
+		Source: "contact", Type: "text", Status: "received", Timestamp: t0}, store.ChatUpdate{Inbound: true}); err != nil {
+		t.Fatal(err)
+	}
+	e.fake.WA.SetCheckErr(status.Error(codes.Unknown, "worker_error: usync failed"))
+	x := e.enqueue(chatA, Payload{Type: "text", Text: "novo"})
+	c := e.enqueue(chatC, Payload{Type: "text", Text: "conhecido"})
+	e.eventually("known chat sent", func() bool { return e.status(c).Status == store.OutSent })
+	o := e.status(x)
+	if o.Status != store.OutQueued || o.LookupFailures != 1 || o.Attempts != 0 || !o.NextAttemptAt.Equal(t0.Add(time.Minute)) {
+		t.Fatalf("after 1st lookup failure: %+v", o)
+	}
+	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(30 * time.Second)
+	time.Sleep(20 * time.Millisecond)
+	if e.fake.WA.Checks() != 1 {
+		t.Fatalf("looked up again before the backoff: %d", e.fake.WA.Checks())
+	}
+	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(30 * time.Second)
+	e.eventually("2nd lookup failure", func() bool { return e.status(x).LookupFailures == 2 })
+	if o := e.status(x); !o.NextAttemptAt.Equal(t0.Add(3 * time.Minute)) {
+		t.Fatalf("2nd backoff = %v", o.NextAttemptAt)
+	}
+	e.fake.WA.SetCheckErr(nil)
+	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(2 * time.Minute)
+	e.eventually("sent once the lookup works", func() bool { return e.status(x).Status == store.OutSent })
+}
+
+func TestLookupGivesUpAfterFiveFailures(t *testing.T) {
+	e := newEnv(t, fastSettings(), instance.Connected)
+	e.fake.WA.SetCheckErr(status.Error(codes.Unknown, "worker_error: usync failed"))
+	x := e.enqueue(chatA, Payload{Type: "text", Text: "novo"})
+	for i := 1; i < maxLookupFailures; i++ {
+		e.eventually("deferred", func() bool { return e.status(x).LookupFailures == i && e.clock.Waiters() > 0 })
+		e.clock.Advance(lookupBackoff(i))
+	}
+	e.eventually("failed", func() bool { return e.status(x).Status == store.OutFailed })
+	if o := e.status(x); !strings.HasPrefix(o.LastError, "worker_error: recipient lookup failed") || len(e.fake.WA.Sent()) != 0 {
+		t.Fatalf("final = %+v", o)
+	}
 }
 
 func TestWorkerNotConnectedKeepsAttempts(t *testing.T) {

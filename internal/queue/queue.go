@@ -16,6 +16,7 @@ import (
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"github.com/douglasdf99/litezap/internal/clock"
 	"github.com/douglasdf99/litezap/internal/instance"
+	"github.com/douglasdf99/litezap/internal/lookup"
 	"github.com/douglasdf99/litezap/internal/settings"
 	"github.com/douglasdf99/litezap/internal/store"
 	"google.golang.org/grpc/codes"
@@ -55,10 +56,15 @@ type Options struct {
 	MaxAttempts int
 	// SendTimeout bounds one Send RPC; whatsmeow itself waits up to 75s for the server ack.
 	SendTimeout time.Duration
-	// WindowJitter spreads ramp-deferred sends over [0, WindowJitter) after the next
-	// window start (default 5 minutes).
+	// ConnectGrace delays the first send after reaching connected by ConnectGrace plus a
+	// random part of up to ConnectGrace (0 disables; serve uses 15s).
+	ConnectGrace time.Duration
+	// WindowJitter spreads the first send of each send window over [0, WindowJitter)
+	// (default 5 minutes), so queued work does not start exactly on the hour.
 	WindowJitter time.Duration
-	Log          *slog.Logger
+	// Resolver, when set, resolves a phone number before the first send to it.
+	Resolver *lookup.Resolver
+	Log      *slog.Logger
 }
 
 // Queues owns the per-instance dispatchers. It is a manager.Observer: reaching connected
@@ -76,6 +82,7 @@ type Queues struct {
 	closed  bool
 	disp    map[string]*dispatcher
 	waiters map[string][]chan struct{}
+	readyAt map[string]time.Time // end of the grace period after connecting
 }
 
 func New(st *store.Store, workers Workers, opt Options) *Queues {
@@ -96,7 +103,7 @@ func New(st *store.Store, workers Workers, opt Options) *Queues {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Queues{store: st, workers: workers, opt: opt, ctx: ctx, cancel: cancel,
-		disp: map[string]*dispatcher{}, waiters: map[string][]chan struct{}{}}
+		disp: map[string]*dispatcher{}, waiters: map[string][]chan struct{}{}, readyAt: map[string]time.Time{}}
 }
 
 // Recover runs at boot, before any worker starts: in_flight items go back to queued.
@@ -105,9 +112,22 @@ func (q *Queues) Recover(ctx context.Context) (int, error) { return q.store.Reco
 func (q *Queues) WorkerEvent(string, *workerv1.Event) {}
 
 func (q *Queues) StateChanged(id string, st instance.State) {
-	if st == instance.Connected {
-		q.Wake(id)
+	if st != instance.Connected {
+		return
 	}
+	if g := q.opt.ConnectGrace; g > 0 {
+		ready := q.opt.Clock.Now().Add(g + time.Duration(q.opt.Rand()*float64(g)))
+		q.mu.Lock()
+		q.readyAt[id] = ready
+		q.mu.Unlock()
+	}
+	q.Wake(id)
+}
+
+func (q *Queues) ready(id string) time.Time {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.readyAt[id]
 }
 
 // Wake makes the instance's dispatcher look at the queue now (new item, new settings,
@@ -203,6 +223,18 @@ type dispatcher struct {
 	pacer pacer
 	// lastNewText is the text of the previous send when it went to a new recipient.
 	lastNewText string
+	// winStart/winJitter: the jitter drawn for the send window starting at winStart.
+	winStart  time.Time
+	winJitter time.Duration
+}
+
+// windowOpensAt is when sending may start in the window beginning at start (start + jitter).
+func (d *dispatcher) windowOpensAt(start time.Time) time.Time {
+	if !start.Equal(d.winStart) {
+		d.winStart = start
+		d.winJitter = time.Duration(d.q.opt.Rand() * float64(d.q.opt.WindowJitter))
+	}
+	return start.Add(d.winJitter)
 }
 
 func (d *dispatcher) log() *slog.Logger { return d.q.opt.Log.With("instance_id", d.id) }
@@ -262,6 +294,9 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 		return -1, true // paused: no attempt is consumed while disconnected
 	}
 	now := opt.Clock.Now()
+	if ready := d.q.ready(d.id); now.Before(ready) {
+		return ready.Sub(now), true // grace period after connecting
+	}
 	set, err := settings.Effective(opt.Defaults, "", in.SettingsJSON)
 	if err != nil {
 		d.log().Error("queue: bad settings; using defaults", "err", err)
@@ -283,9 +318,25 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 		d.log().Error("queue: next item", "err", err)
 		return errPause, true
 	}
+	if !item.ExpiresAt.IsZero() && now.After(item.ExpiresAt) {
+		d.fail(item, item.Attempts, "expired: not sent before expires_after")
+		return 0, true
+	}
 	var p Payload
 	if err := json.Unmarshal([]byte(item.Payload), &p); err != nil {
 		d.fail(item, item.Attempts, "validation_failed: unreadable payload")
+		return 0, true
+	}
+	if opens, wait, err := d.window(ctx, set, item, now); err != nil {
+		d.log().Error("queue: send window", "err", err)
+		return errPause, true
+	} else if wait {
+		if err := st.Defer(ctx, item.ID, opens, "send_window: waiting for the send window"); err != nil {
+			d.log().Error("queue: defer", "err", err)
+		}
+		return 0, true
+	}
+	if d.resolve(ctx, item, now) {
 		return 0, true
 	}
 
@@ -337,6 +388,97 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 	}
 	d.finish(item, p, resp, sendErr)
 	return 0, true
+}
+
+// activeWindow is how recent a received message must be for a chat to count as an active
+// conversation, which the send window does not hold back.
+const activeWindow = 24 * time.Hour
+
+// window decides whether item must wait for the send window: only recipients without a
+// message received in the last 24h wait (replies to active conversations go out at any
+// hour). opens is when the next window opens, plus its jitter.
+func (d *dispatcher) window(ctx context.Context, set settings.Settings, item store.Outbound, now time.Time) (opens time.Time, wait bool, err error) {
+	start, _, open := set.WindowAt(now)
+	if start.IsZero() {
+		return time.Time{}, false, nil
+	}
+	opens = d.windowOpensAt(start)
+	if open && !now.Before(opens) {
+		return time.Time{}, false, nil
+	}
+	chat, err := d.q.store.GetChat(ctx, d.id, item.ChatJID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return time.Time{}, false, err
+	}
+	if !chat.LastInboundAt.IsZero() && now.Sub(chat.LastInboundAt) < activeWindow {
+		return time.Time{}, false, nil
+	}
+	return opens, true, nil
+}
+
+// lookupBackoff is the wait after n consecutive failed lookups of an item's recipient.
+func lookupBackoff(n int) time.Duration {
+	switch n {
+	case 1:
+		return time.Minute
+	case 2:
+		return 2 * time.Minute
+	case 3:
+		return 5 * time.Minute
+	}
+	return 15 * time.Minute
+}
+
+const maxLookupFailures = 5
+
+// resolve checks a phone-number recipient the first time it is used (no chat yet): a
+// number without WhatsApp fails without sending, and a number WhatsApp knows under another
+// phone JID (Brazilian 9th digit) has its queued items moved there. A failed or
+// rate-limited lookup only postpones this item; other recipients keep going. done=true
+// means the item was handled (failed, deferred or moved) and the step should pick again.
+func (d *dispatcher) resolve(ctx context.Context, item store.Outbound, now time.Time) (done bool) {
+	r := d.q.opt.Resolver
+	user, ok := strings.CutSuffix(item.ChatJID, "@s.whatsapp.net")
+	if r == nil || !ok {
+		return false
+	}
+	st := d.q.store
+	if _, err := st.GetChat(ctx, d.id, item.ChatJID); err == nil {
+		return false // known chat: we already talked to this JID
+	} else if !errors.Is(err, store.ErrNotFound) {
+		d.log().Error("queue: load chat", "err", err)
+		return false
+	}
+	res, err := r.Resolve(ctx, d.id, []string{user}, lookup.ForSend)
+	switch {
+	case errors.Is(err, lookup.ErrRateLimited):
+		if err := st.Defer(ctx, item.ID, now.Add(time.Minute), "lookup_rate_limited: retrying in a minute"); err != nil {
+			d.log().Error("queue: defer", "err", err)
+		}
+		return true
+	case err != nil:
+		n := item.LookupFailures + 1
+		msg := "worker_error: recipient lookup failed: " + status.Convert(err).Message()
+		if n >= maxLookupFailures {
+			d.fail(item, item.Attempts, msg)
+			return true
+		}
+		if err := st.DeferLookup(ctx, item.ID, now.Add(lookupBackoff(n)), n, msg); err != nil {
+			d.log().Error("queue: defer", "err", err)
+		}
+		return true
+	case !res[0].Found:
+		d.fail(item, item.Attempts, "invalid_number: recipient is not on WhatsApp")
+		return true
+	case res[0].JID != item.ChatJID && strings.HasSuffix(res[0].JID, "@s.whatsapp.net"):
+		// Only to another phone JID: a LID answer keeps the phone JID (chats are by phone).
+		if err := st.RetargetChat(ctx, d.id, item.ChatJID, res[0].JID); err != nil {
+			d.log().Error("queue: retarget", "err", err)
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // ramp decides whether item goes to a new recipient (counting against today's limit) or
