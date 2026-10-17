@@ -9202,10 +9202,14 @@ Expected: `go mod tidy` não altera `go.mod`/`go.sum` (se alterar, inclua-os no 
 - Test: `internal/service/messages_test.go`
 - Modify: `internal/service/instances.go`
 - Test: `internal/service/instances_test.go`
+- Modify: `internal/queue/queue.go` (`Forget`, `Dispatchers`)
+- Test: `internal/queue/queue_test.go`
+- Modify: `internal/media/media.go` (`ErrInvalidURL`)
+- Test: `internal/media/media_test.go`
 
-Corpo do envio (`SendInput`): `to` (número ou JID), `type` (`text` | `image` | `video` | `audio` | `document` | `reaction`), `text` (texto), `caption` (mídia), `media{url | base64, mime?, file_name?, ptt?}`, `reaction{message_id, emoji}` (id do LiteZap ou `wa_message_id` de uma mensagem do chat), `client_message_id?` (até 128; reuso com outro corpo → `409 conflict`), `expires_after?` (padrão `24h`, de `1m` a `168h`). Instância `banned` ou `logged_out` recusa na hora; em outros estados o item espera na fila. No máximo 3 downloads/decodificações de mídia ao mesmo tempo. Falha de `media.url` → `422 media_fetch_failed` (retentável); `media_unavailable` (410) fica para mídia recebida que expirou no WhatsApp.
+Corpo do envio (`SendInput`): `to` (número ou JID), `type` (`text` | `image` | `video` | `audio` | `document` | `reaction`), `text` (texto), `caption` (mídia), `media{url | base64, mime?, file_name?, ptt?}`, `reaction{message_id, emoji}` (id do LiteZap ou `wa_message_id` de uma mensagem do chat), `client_message_id?` (até 128; reuso com outro corpo → `409 conflict`), `expires_after?` (padrão `24h`, de `1m` a `168h`). Instância `banned` ou `logged_out` recusa na hora; em outros estados o item espera na fila. No máximo 3 downloads/decodificações de mídia ao mesmo tempo. Limites: `text` e `caption` até 64KB, `reaction.emoji` até 64 bytes, `media.file_name` até 255 bytes (`400 validation_failed`). `media.url` que não é URL http(s) → `400 validation_failed`; falha ao baixar `media.url` → `422 media_fetch_failed` (retentável); `media_unavailable` (410) fica para mídia recebida que expirou no WhatsApp. Dois envios simultâneos com o mesmo `client_message_id` e corpos diferentes: o que perde a corrida no `Enqueue` também recebe `409 conflict`. `UpdateSettings` é serializado por instância (patches simultâneos não perdem campos).
 
-`mapErr` passa a traduzir os códigos dos RPCs de mensagens: `InvalidArgument` → 400 (`invalid_number` ou `validation_failed`), `NotFound` com `media_unavailable` → 410, `FailedPrecondition` → 409 `instance_not_connected`; mensagens continuam com telefones e tokens redigidos. O `Delete` da instância também apaga `data/media/<id>` e `data/outbox/<id>`.
+`mapErr` passa a traduzir os códigos dos RPCs de mensagens: `InvalidArgument` → 400 (`invalid_number` ou `validation_failed`), `NotFound` com `media_unavailable` → 410, `FailedPrecondition` → 409 `instance_not_connected`; mensagens continuam com telefones e tokens redigidos. O `Delete` da instância também apaga `data/media/<id>` e `data/outbox/<id>` e, depois de remover a linha do store, chama `Queues.Forget(id)`: o despachante acorda, não acha a instância e termina; esperas (`?wait=true`) nos itens dela retornam.
 
 - [ ] **Step 1: Escrever os testes**
 
@@ -9218,11 +9222,14 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -9381,6 +9388,11 @@ func TestSendTextWaitAndIdempotency(t *testing.T) {
 func TestSendValidationAndFailures(t *testing.T) {
 	e := newMsgEnv(t)
 	ctx := context.Background()
+	pngB64 := base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\nimage"))
+	sent, err := e.svc.Send(ctx, "i1", SendInput{To: "5511988887777", Type: "text", Text: "alvo"}, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
 	bad := []SendInput{
 		{To: "123", Type: "text", Text: "x"},
 		{To: "5511988887777", Type: "text"},
@@ -9390,6 +9402,10 @@ func TestSendValidationAndFailures(t *testing.T) {
 		{To: "5511988887777", Type: "reaction", Reaction: &ReactionInput{MessageID: "nope", Emoji: "👍"}},
 		{To: "5511988887777", Type: "text", Text: "x", ExpiresAfter: "10s"},
 		{To: "5511988887777", Type: "image", Media: &MediaInput{Base64: base64.StdEncoding.EncodeToString([]byte("not an image"))}},
+		{To: "5511988887777", Type: "image", Media: &MediaInput{URL: "ftp://example.com/x.png"}},
+		{To: "5511988887777", Type: "image", Caption: strings.Repeat("x", maxTextBytes+1), Media: &MediaInput{Base64: pngB64}},
+		{To: "5511988887777", Type: "document", Media: &MediaInput{Base64: pngB64, FileName: strings.Repeat("a", 256)}},
+		{To: "5511988887777", Type: "reaction", Reaction: &ReactionInput{MessageID: sent.ID, Emoji: strings.Repeat("x", 65)}},
 	}
 	for i, in := range bad {
 		if _, err := e.svc.Send(ctx, "i1", in, 0); apiCode(err) != "validation_failed" {
@@ -9401,13 +9417,13 @@ func TestSendValidationAndFailures(t *testing.T) {
 		t.Fatalf("big image = %v", err)
 	}
 	e.sp.Last("i1").WA.SetUnregistered("5511900000000")
-	_, err := e.svc.Send(ctx, "i1", SendInput{To: "5511900000000", Type: "text", Text: "oi"}, 2*time.Second)
+	_, err = e.svc.Send(ctx, "i1", SendInput{To: "5511900000000", Type: "text", Text: "oi"}, 2*time.Second)
 	var ae *apierr.Error
 	if !errors.As(err, &ae) || ae.Code != "invalid_number" || ae.Status != http.StatusBadRequest {
 		t.Fatalf("failed send = %v", err)
 	}
-	if n := len(e.sp.Last("i1").WA.Sent()); n != 0 {
-		t.Fatalf("a number without WhatsApp was sent to (%d sends)", n)
+	if n := len(e.sp.Last("i1").WA.Sent()); n != 1 {
+		t.Fatalf("a number without WhatsApp was sent to (%d sends, want only the reaction target)", n)
 	}
 	e.sp.Last("i1").WA.SetSendFunc(func(*workerv1.SendRequest) (*workerv1.SendResponse, error) {
 		return nil, status.Error(codes.PermissionDenied, "forbidden: no permission to send in this group")
@@ -9473,6 +9489,100 @@ func TestSettingsProxyRestartsWorker(t *testing.T) {
 		t.Fatalf("bad proxy = %v", err)
 	}
 }
+
+// Concurrent sends with the same client_message_id but different bodies: all pass the
+// idempotency check before any is queued (the media server releases them together), so
+// the losers learn about the winner from Enqueue and must get a conflict, never its view.
+func TestConcurrentClientIDWithDifferentBodies(t *testing.T) {
+	e := newMsgEnv(t)
+	ctx := context.Background()
+	const n = maxMediaJobs // every request downloads at the same time
+	var arrived sync.WaitGroup
+	arrived.Add(n)
+	release := make(chan struct{})
+	go func() { arrived.Wait(); close(release) }()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		arrived.Done()
+		select {
+		case <-release:
+		case <-time.After(3 * time.Second):
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Write([]byte("\x89PNG\r\n\x1a\n" + r.URL.Path))
+	}))
+	defer srv.Close()
+	type res struct {
+		v   MessageView
+		err error
+	}
+	out := make(chan res, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			v, err := e.svc.Send(ctx, "i1", SendInput{To: "5511988887777", Type: "image", ClientMessageID: "dup",
+				Media: &MediaInput{URL: fmt.Sprintf("%s/%d.png", srv.URL, i)}}, 0)
+			out <- res{v, err}
+		}()
+	}
+	ok := 0
+	for i := 0; i < n; i++ {
+		r := <-out
+		switch {
+		case r.err == nil:
+			ok++
+		case apiCode(r.err) != "conflict":
+			t.Errorf("unexpected error: %v", r.err)
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("%d requests got the message, want exactly 1 (the others: conflict)", ok)
+	}
+}
+
+// Deleting an instance stops its send dispatcher.
+func TestDeleteStopsTheDispatcher(t *testing.T) {
+	e := newMsgEnv(t)
+	ctx := context.Background()
+	if _, err := e.svc.Send(ctx, "i1", SendInput{To: "5511988887777", Type: "text", Text: "oi"}, 2*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.svc.Queues.Dispatchers(); n != 1 {
+		t.Fatalf("dispatchers = %d", n)
+	}
+	inst := &Instances{Store: e.st, Manager: e.svc.Manager, DataDir: e.dir, Queues: e.svc.Queues}
+	if err := inst.Delete(ctx, "i1"); err != nil {
+		t.Fatal(err)
+	}
+	e.eventually("dispatcher stopped", func() bool { return e.svc.Queues.Dispatchers() == 0 })
+}
+
+// Concurrent settings updates of different fields all stick (no lost update).
+func TestConcurrentSettingsUpdates(t *testing.T) {
+	e := newMsgEnv(t)
+	ctx := context.Background()
+	for round := 1; round <= 20; round++ {
+		minI, jit, maxPM, tz := 1000+round, 100+round, 10+round%50, []string{"UTC", "America/Sao_Paulo"}[round%2]
+		typing := round%2 == 0
+		patches := []settings.Patch{{MinIntervalMS: &minI}, {JitterMS: &jit}, {MaxPerMinute: &maxPM}, {Timezone: &tz}, {TypingSimulation: &typing}}
+		var wg sync.WaitGroup
+		for _, p := range patches {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if _, err := e.svc.UpdateSettings(ctx, "i1", p); err != nil {
+					t.Error(err)
+				}
+			}()
+		}
+		wg.Wait()
+		got, err := e.svc.Settings(ctx, "i1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.MinIntervalMS != minI || got.JitterMS != jit || got.MaxPerMinute != maxPM || got.Timezone != tz || got.TypingSimulation != typing {
+			t.Fatalf("round %d: lost update: %+v", round, got)
+		}
+	}
+}
 ```
 
 Acrescentar ao fim de `internal/service/instances_test.go`:
@@ -9501,8 +9611,101 @@ func TestMapErrMessagingCodes(t *testing.T) {
 }
 ```
 
-Run: `go test ./internal/service/`
-Expected: FAIL — `undefined: Messaging`, `undefined: ChatJID`; `TestMapErrMessagingCodes` ainda não compila junto.
+Em `internal/queue/queue_test.go` (teste do `Forget`), trocar:
+
+```go
+	"context"
+	"encoding/json"
+	"log/slog"
+	"os"
+```
+
+por:
+
+```go
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"os"
+```
+
+Em `internal/queue/queue_test.go` (teste do `Forget`), trocar:
+
+```go
+	e.eventually("sent at 10s", func() bool { return e.status(id).Status == store.OutSent })
+}
+```
+
+por:
+
+```go
+	e.eventually("sent at 10s", func() bool { return e.status(id).Status == store.OutSent })
+}
+
+// Forget (instance deleted) ends its dispatcher, releases Wait calls on its items and
+// drops its per-instance state.
+func TestForgetStopsTheDispatcher(t *testing.T) {
+	e := newEnvAt(t, t0, fastSettings(), instance.Reconnecting, func(o *Options) { o.ConnectGrace = 20 * time.Second })
+	ctx := context.Background()
+	id := e.enqueue(chatA, Payload{Type: "text", Text: "oi"})
+	e.q.StateChanged("i1", instance.Reconnecting) // records readyAt
+	e.q.Wake("i1")
+	e.eventually("dispatcher running", func() bool { return e.q.Dispatchers() == 1 })
+	waited := make(chan error, 1)
+	go func() { _, err := e.q.Wait(ctx, "i1", id); waited <- err }()
+	e.eventually("waiter registered", func() bool {
+		e.q.mu.Lock()
+		defer e.q.mu.Unlock()
+		return len(e.q.waiters) == 1
+	})
+	if err := e.st.DeleteInstance(ctx, "i1"); err != nil {
+		t.Fatal(err)
+	}
+	e.q.Forget("i1")
+	e.eventually("dispatcher gone", func() bool { return e.q.Dispatchers() == 0 })
+	select {
+	case err := <-waited:
+		if !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("wait = %v, want ErrNotFound", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait still blocked after Forget")
+	}
+	e.q.mu.Lock()
+	defer e.q.mu.Unlock()
+	if _, ok := e.q.readyAt["i1"]; ok || len(e.q.waiters) != 0 {
+		t.Fatalf("state left: readyAt=%v waiters=%v", e.q.readyAt, e.q.waiters)
+	}
+}
+```
+
+Em `internal/media/media_test.go` (URL inválida não é falha de download), trocar:
+
+```go
+		t.Fatalf("missing = %v", err)
+	}
+	if _, _, err := f.Fetch(context.Background(), "ftp://example.com/x", 100); !errors.Is(err, ErrFetch) {
+		t.Fatalf("non-http url = %v", err)
+	}
+}
+```
+
+por:
+
+```go
+		t.Fatalf("missing = %v", err)
+	}
+	for _, bad := range []string{"ftp://example.com/x", "http:///nohost", "::nope"} {
+		if _, _, err := f.Fetch(context.Background(), bad, 100); !errors.Is(err, ErrInvalidURL) || errors.Is(err, ErrFetch) {
+			t.Fatalf("invalid url %q = %v", bad, err)
+		}
+	}
+}
+```
+
+Run: `go test ./internal/service/ ./internal/queue/ ./internal/media/`
+Expected: FAIL — `undefined: Messaging`, `undefined: ChatJID`, `e.q.Dispatchers undefined`, `undefined: ErrInvalidURL`; `TestMapErrMessagingCodes` ainda não compila junto.
 
 - [ ] **Step 2: Implementar o envio**
 
@@ -9562,6 +9765,25 @@ type Messaging struct {
 
 	flightMu sync.Mutex
 	flights  map[string]*mediaFlight // first downloads in progress (inbox.go)
+
+	settingsMu    sync.Mutex
+	settingsLocks map[string]*sync.Mutex // per instance: read-merge-write of the overrides
+}
+
+// settingsLock serializes UpdateSettings per instance so concurrent patches never lose
+// each other's fields.
+func (s *Messaging) settingsLock(instanceID string) *sync.Mutex {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	if s.settingsLocks == nil {
+		s.settingsLocks = map[string]*sync.Mutex{}
+	}
+	mu := s.settingsLocks[instanceID]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		s.settingsLocks[instanceID] = mu
+	}
+	return mu
 }
 
 // mediaFlight is one media download in progress; concurrent callers wait for it.
@@ -9579,9 +9801,11 @@ type MediaFile struct {
 }
 
 const (
-	maxWait      = 2 * time.Minute
-	rpcTimeout   = 30 * time.Second
-	maxTextBytes = 65536
+	maxWait          = 2 * time.Minute
+	rpcTimeout       = 30 * time.Second
+	maxTextBytes     = 65536
+	maxEmojiBytes    = 64
+	maxFileNameBytes = 255
 	// maxMediaJobs bounds concurrent media downloads/decodes (each holds the file in memory).
 	maxMediaJobs   = 3
 	defaultExpires = 24 * time.Hour
@@ -9824,6 +10048,10 @@ func (s *Messaging) Send(ctx context.Context, instanceID string, in SendInput, w
 		if err != nil {
 			return MessageView{}, err
 		}
+		if o.RequestHash != hash {
+			return MessageView{}, apierr.New(http.StatusConflict, "conflict",
+				"client_message_id was already used for a different message", false)
+		}
 	}
 	s.Queues.Wake(instanceID)
 	return s.finish(ctx, instanceID, o, wait)
@@ -9849,7 +10077,7 @@ func (s *Messaging) finish(ctx context.Context, instanceID string, o store.Outbo
 		o, err = s.Queues.Wait(wctx, instanceID, o.ID)
 		cancel()
 		if err != nil {
-			return MessageView{}, err
+			return MessageView{}, mapErr(err) // ErrNotFound: the instance was deleted meanwhile
 		}
 	}
 	if o.Status == store.OutFailed {
@@ -9878,6 +10106,9 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 		if in.Reaction == nil || in.Reaction.MessageID == "" {
 			return p, apierr.Validation("reaction.message_id is required")
 		}
+		if len(in.Reaction.Emoji) > maxEmojiBytes {
+			return p, apierr.Validation("reaction.emoji is limited to 64 bytes")
+		}
 		target, err := s.Store.GetMessage(ctx, instanceID, in.Reaction.MessageID)
 		if errors.Is(err, store.ErrNotFound) || (err == nil && target.ChatJID != chat) {
 			target, err = s.Store.MessageByWAID(ctx, instanceID, chat, in.Reaction.MessageID)
@@ -9902,6 +10133,12 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 	if m == nil || (m.URL == "") == (m.Base64 == "") {
 		return p, apierr.Validation("media needs exactly one of url or base64")
 	}
+	if len(in.Caption) > maxTextBytes {
+		return p, apierr.Validation("caption is limited to 64KB")
+	}
+	if len(m.FileName) > maxFileNameBytes {
+		return p, apierr.Validation("media.file_name is limited to 255 bytes")
+	}
 	release, err := s.acquireMedia(ctx)
 	if err != nil {
 		return p, err
@@ -9920,6 +10157,8 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 		return p, apierr.New(http.StatusRequestEntityTooLarge, "media_too_large", in.Type+" exceeds the size limit", false)
 	case errors.Is(err, media.ErrBlocked):
 		return p, apierr.Validation("media.url points to a private or local address")
+	case errors.Is(err, media.ErrInvalidURL):
+		return p, apierr.Validation(err.Error())
 	case errors.Is(err, media.ErrFetch):
 		return p, apierr.New(http.StatusUnprocessableEntity, "media_fetch_failed", "media.url could not be downloaded", true)
 	case err != nil:
@@ -9932,7 +10171,9 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 	name := m.FileName
 	if name == "" && in.Type == "document" && m.URL != "" {
 		if u, err := url.Parse(m.URL); err == nil {
-			name = path.Base(u.Path)
+			if name = path.Base(u.Path); len(name) > maxFileNameBytes {
+				name = "" // a name taken from the URL never exceeds the limit either
+			}
 		}
 	}
 	dir := filepath.Join(s.DataDir, "outbox", instanceID)
@@ -9995,6 +10236,9 @@ func (s *Messaging) Settings(ctx context.Context, instanceID string) (settings.S
 // UpdateSettings merges patch into the instance's overrides. Changing the effective proxy
 // restarts a running worker (the proxy is fixed for the whole session, spec 4.6).
 func (s *Messaging) UpdateSettings(ctx context.Context, instanceID string, patch settings.Patch) (settings.Settings, error) {
+	mu := s.settingsLock(instanceID)
+	mu.Lock()
+	defer mu.Unlock()
 	in, err := s.Store.GetInstance(ctx, instanceID)
 	if err != nil {
 		return settings.Settings{}, mapErr(err)
@@ -10090,9 +10334,333 @@ por:
 	}
 ```
 
+O `Delete` também encerra o despachante da instância (campo `Queues`, opcional):
+
+Em `internal/service/instances.go` (`Queues` e `Forget` no `Delete`), trocar:
+
+```go
+	"github.com/douglasdf99/litezap/internal/instance"
+	"github.com/douglasdf99/litezap/internal/manager"
+	"github.com/douglasdf99/litezap/internal/secure"
+	"github.com/douglasdf99/litezap/internal/store"
+```
+
+por:
+
+```go
+	"github.com/douglasdf99/litezap/internal/instance"
+	"github.com/douglasdf99/litezap/internal/manager"
+	"github.com/douglasdf99/litezap/internal/queue"
+	"github.com/douglasdf99/litezap/internal/secure"
+	"github.com/douglasdf99/litezap/internal/store"
+```
+
+Em `internal/service/instances.go` (`Queues` e `Forget` no `Delete`), trocar:
+
+```go
+	Manager *manager.Manager
+	DataDir string
+}
+
+```
+
+por:
+
+```go
+	Manager *manager.Manager
+	DataDir string
+	// Queues, when set, has a deleted instance's send dispatcher stopped.
+	Queues *queue.Queues
+}
+
+```
+
+Em `internal/service/instances.go` (`Queues` e `Forget` no `Delete`), trocar:
+
+```go
+		return mapErr(err)
+	}
+	return nil
+}
+```
+
+por:
+
+```go
+		return mapErr(err)
+	}
+	if s.Queues != nil {
+		s.Queues.Forget(id) // after the row is gone, so the dispatcher sees it and exits
+	}
+	return nil
+}
+```
+
+- [ ] **Step 3b: `Queues.Forget` e `ErrInvalidURL`**
+
+As esperas passam a ser indexadas por instância + item, para o `Forget` liberar as de uma instância apagada.
+
+Em `internal/queue/queue.go` (`Forget`, `Dispatchers` e esperas por instância), trocar:
+
+```go
+	closed  bool
+	disp    map[string]*dispatcher
+	waiters map[string][]chan struct{}
+	readyAt map[string]time.Time // end of the grace period after connecting
+}
+
+```
+
+por:
+
+```go
+	closed  bool
+	disp    map[string]*dispatcher
+	waiters map[string][]chan struct{} // by waiterKey(instance, item)
+	readyAt map[string]time.Time       // end of the grace period after connecting
+}
+
+```
+
+Em `internal/queue/queue.go` (`Forget`, `Dispatchers` e esperas por instância), trocar:
+
+```go
+}
+
+// Shutdown stops the dispatchers; a send in progress is allowed to finish until ctx ends.
+func (q *Queues) Shutdown(ctx context.Context) {
+```
+
+por:
+
+```go
+}
+
+// Forget drops a deleted instance: its dispatcher wakes, finds the instance gone and
+// exits; Wait calls on its items return (the items went with the instance).
+func (q *Queues) Forget(id string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	delete(q.readyAt, id)
+	if d := q.disp[id]; d != nil {
+		select {
+		case d.wake <- struct{}{}:
+		default:
+		}
+	}
+	prefix := id + "/"
+	for k, chans := range q.waiters {
+		if strings.HasPrefix(k, prefix) {
+			for _, ch := range chans {
+				close(ch)
+			}
+			delete(q.waiters, k)
+		}
+	}
+}
+
+// Dispatchers is the number of running dispatchers (for tests and diagnostics).
+func (q *Queues) Dispatchers() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.disp)
+}
+
+func waiterKey(instanceID, id string) string { return instanceID + "/" + id }
+
+// Shutdown stops the dispatchers; a send in progress is allowed to finish until ctx ends.
+func (q *Queues) Shutdown(ctx context.Context) {
+```
+
+Em `internal/queue/queue.go` (`Forget`, `Dispatchers` e esperas por instância), trocar:
+
+```go
+// (still queued or in_flight when ctx ended first).
+func (q *Queues) Wait(ctx context.Context, instanceID, id string) (store.Outbound, error) {
+	for {
+		ch := make(chan struct{})
+		q.mu.Lock()
+		q.waiters[id] = append(q.waiters[id], ch)
+		q.mu.Unlock()
+		o, err := q.store.GetOutbound(ctx, instanceID, id)
+		if err != nil || final(o.Status) {
+			q.dropWaiter(id, ch)
+			return o, err
+		}
+```
+
+por:
+
+```go
+// (still queued or in_flight when ctx ended first).
+func (q *Queues) Wait(ctx context.Context, instanceID, id string) (store.Outbound, error) {
+	key := waiterKey(instanceID, id)
+	for {
+		ch := make(chan struct{})
+		q.mu.Lock()
+		q.waiters[key] = append(q.waiters[key], ch)
+		q.mu.Unlock()
+		o, err := q.store.GetOutbound(ctx, instanceID, id)
+		if err != nil || final(o.Status) {
+			q.dropWaiter(key, ch)
+			return o, err
+		}
+```
+
+Em `internal/queue/queue.go` (`Forget`, `Dispatchers` e esperas por instância), trocar:
+
+```go
+		case <-ch:
+		case <-ctx.Done():
+			q.dropWaiter(id, ch)
+			// The request context is over, not the store: read with a fresh one.
+			o, err = q.store.GetOutbound(context.WithoutCancel(ctx), instanceID, id)
+```
+
+por:
+
+```go
+		case <-ch:
+		case <-ctx.Done():
+			q.dropWaiter(key, ch)
+			// The request context is over, not the store: read with a fresh one.
+			o, err = q.store.GetOutbound(context.WithoutCancel(ctx), instanceID, id)
+```
+
+Em `internal/queue/queue.go` (`Forget`, `Dispatchers` e esperas por instância), trocar:
+
+```go
+}
+
+func (q *Queues) dropWaiter(id string, ch chan struct{}) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	l := q.waiters[id]
+	for i, c := range l {
+		if c == ch {
+			q.waiters[id] = append(l[:i], l[i+1:]...)
+			break
+		}
+	}
+	if len(q.waiters[id]) == 0 {
+		delete(q.waiters, id)
+	}
+}
+
+// notify wakes the Wait calls of an item whose status changed.
+func (q *Queues) notify(id string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, ch := range q.waiters[id] {
+		close(ch)
+	}
+	delete(q.waiters, id)
+}
+
+```
+
+por:
+
+```go
+}
+
+func (q *Queues) dropWaiter(key string, ch chan struct{}) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	l := q.waiters[key]
+	for i, c := range l {
+		if c == ch {
+			q.waiters[key] = append(l[:i], l[i+1:]...)
+			break
+		}
+	}
+	if len(q.waiters[key]) == 0 {
+		delete(q.waiters, key)
+	}
+}
+
+// notify wakes the Wait calls of an item whose status changed.
+func (q *Queues) notify(instanceID, id string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	key := waiterKey(instanceID, id)
+	for _, ch := range q.waiters[key] {
+		close(ch)
+	}
+	delete(q.waiters, key)
+}
+
+```
+
+Em `internal/queue/queue.go` (`Forget`, `Dispatchers` e esperas por instância), trocar:
+
+```go
+		_ = os.Remove(p.MediaFile)
+	}
+	d.q.notify(item.ID)
+}
+
+```
+
+por:
+
+```go
+		_ = os.Remove(p.MediaFile)
+	}
+	d.q.notify(d.id, item.ID)
+}
+
+```
+
+Em `internal/media/media.go` (URL inválida é erro do cliente), trocar:
+
+```go
+var (
+	ErrTooLarge = errors.New("media exceeds the size limit")
+	// ErrFetch means media.url could not be downloaded (network, HTTP status, bad URL).
+	ErrFetch   = errors.New("media could not be fetched")
+	ErrBlocked = errors.New("media URL points to a private or local address")
+)
+
+```
+
+por:
+
+```go
+var (
+	ErrTooLarge = errors.New("media exceeds the size limit")
+	// ErrFetch means media.url could not be downloaded (network, HTTP status).
+	ErrFetch   = errors.New("media could not be fetched")
+	ErrBlocked = errors.New("media URL points to a private or local address")
+	// ErrInvalidURL means media.url is not an absolute http(s) URL (a client error).
+	ErrInvalidURL = errors.New("media.url must be an http(s) URL")
+)
+
+```
+
+Em `internal/media/media.go` (URL inválida é erro do cliente), trocar:
+
+```go
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, "", fmt.Errorf("%w: media.url must be an http(s) URL", ErrFetch)
+	}
+	timeout := f.Timeout
+```
+
+por:
+
+```go
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, "", ErrInvalidURL
+	}
+	timeout := f.Timeout
+```
+
 - [ ] **Step 4: Rodar e ver passar**
 
-Run: `go test -race ./internal/service/`
+Run: `go test -race ./internal/service/ ./internal/queue/ ./internal/media/`
 Expected: `ok`.
 
 - [ ] **Step 5: Commit**
@@ -10100,7 +10668,7 @@ Expected: `ok`.
 ```bash
 go mod tidy
 go test ./...
-git add internal/service
+git add internal/service internal/queue internal/media
 git commit -m "feat(service): envio com validação, mídia, idempotência, TTL e wait; settings com restart por proxy" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
@@ -10704,9 +11272,9 @@ Expected: `go mod tidy` não altera `go.mod`/`go.sum` (se alterar, inclua-os no 
 - Modify: `internal/serve/serve.go`
 - Test: `internal/serve/serve_test.go`
 
-Rotas novas, todas sob `/v1/instances/{id}` (token da instância ou admin): `GET|PUT /settings` (`proxy_url` e `unsafe_pacing` só com token admin: 403 para token de instância), `POST /messages[?wait=true&timeout=30s]` (202 enquanto na fila, 200 quando `sent`; corpo até 140MB, prazo de leitura estendido para 5 min com `http.ResponseController`, no máximo 3 corpos grandes ao mesmo tempo — os demais esperam vaga — e a vaga é liberada assim que a mensagem entra na fila, antes da espera do `?wait=true`, feita por `Messaging.Wait`), `GET /messages/{msg_id}`, `GET /chats`, `GET /chats/{jid}/messages`, `POST /chats/{jid}/read` (204), `GET /contacts`, `GET /contacts/{jid}`, `POST /check-numbers`, `GET /media/{media_id}[?signed=1]`. Fora de `/v1` e sem token: `GET /media/{id}/{media_id}?exp=&sig=` (URL assinada). Toda mídia servida leva `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'` e `Content-Disposition: attachment`, salvo JPEG/PNG/WebP/GIF, áudio e vídeo (`inline`).
+Rotas novas, todas sob `/v1/instances/{id}` (token da instância ou admin): `GET|PUT /settings` (`proxy_url` e `unsafe_pacing` só com token admin: 403 para token de instância), `POST /messages[?wait=true&timeout=30s]` (202 enquanto na fila, 200 quando `sent`; corpo até 140MB, prazo de leitura estendido para 5 min com `http.ResponseController`, no máximo 3 corpos grandes ao mesmo tempo — os demais esperam vaga — e a vaga é liberada assim que a mensagem entra na fila, antes da espera do `?wait=true`, feita por `Messaging.Wait`), `GET /messages/{msg_id}`, `GET /chats`, `GET /chats/{jid}/messages`, `POST /chats/{jid}/read` (204), `GET /contacts`, `GET /contacts/{jid}`, `POST /check-numbers`, `GET /media/{media_id}[?signed=1]`. Corpo acima do limite → `413 media_too_large`. Fora de `/v1` e sem token: `GET /media/{id}/{media_id}?exp=&sig=` (URL assinada). Toda mídia servida leva `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'` e `Content-Disposition: attachment`, salvo JPEG/PNG/WebP/GIF, áudio e vídeo (`inline`).
 
-No `serve`: `Recover` da fila antes de `Boot` (spec 9.2), observers `ingest` + `queue` no manager, `lookup` compartilhado por fila e service, carência de 15s após conectar, segredo de mídia em `data/media_key`, URLs assinadas só com `public_url` ou bind loopback, ambiente do worker com o proxy efetivo, e shutdown em ordem: HTTP → despachantes (até 10s para envio em voo) → workers.
+No `serve`: `Recover` da fila antes de `Boot` (spec 9.2), `Queues` no `service.Instances` (o `Delete` encerra o despachante), observers `ingest` + `queue` no manager, `lookup` compartilhado por fila e service, carência de 15s após conectar, segredo de mídia em `data/media_key`, URLs assinadas só com `public_url` ou bind loopback, ambiente do worker com o proxy efetivo, e shutdown em ordem: HTTP (requisições que passam do prazo de 5s são cortadas com `srv.Close`) → despachantes (até 10s para envio em voo) → workers.
 
 - [ ] **Step 1: Escrever os testes**
 
@@ -10769,7 +11337,7 @@ por:
 		q.Shutdown(ctx)
 		mgr.Shutdown(ctx)
 	})
-	svc := &service.Instances{Store: st, Manager: mgr, DataDir: dir}
+	svc := &service.Instances{Store: st, Manager: mgr, DataDir: dir, Queues: q}
 	msg := &service.Messaging{Store: st, Manager: mgr, Queues: q, Fetcher: &media.Fetcher{AllowPrivate: true},
 		Signer:  media.NewSigner([]byte("0123456789abcdef0123456789abcdef"), "http://example.invalid"),
 		DataDir: dir, Defaults: defaults, Resolver: resolver, SignedURLs: true}
@@ -10798,14 +11366,17 @@ Criar `internal/api/messages_test.go`:
 package api
 
 import (
+	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
+	"github.com/douglasdf99/litezap/internal/apierr"
 )
 
 // connected creates an instance whose fake worker is connected.
@@ -11010,11 +11581,33 @@ func TestReceivedSVGIsNeverInline(t *testing.T) {
 		t.Fatalf("headers = %v", resp.Header)
 	}
 }
+
+// A body over the limit is 413, not a JSON error.
+func TestOversizedBodyIs413(t *testing.T) {
+	e := newEnv(t)
+	id, tok := e.connected("Big")
+	big := `{"to":"5511988887777","type":"text","text":"` + strings.Repeat("x", 1<<20) + `"}`
+	if code, body := e.do("PUT", "/v1/instances/"+id+"/settings", tok, big); code != 413 || errCode(body) != "media_too_large" {
+		t.Fatalf("oversized settings body = %d %v", code, body)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"text":"`+strings.Repeat("x", 100)+`"}`))
+	var v map[string]any
+	var ae *apierr.Error
+	if err := decodeMax(rec, req, &v, 10); !errors.As(err, &ae) || ae.Status != 413 || ae.Code != "media_too_large" {
+		t.Fatalf("decodeMax over the limit = %v", err)
+	}
+}
 ```
 
 Em `internal/serve/serve_test.go` (imports), trocar:
 
 ```go
+import (
+	"context"
+	"log/slog"
+	"net"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -11023,8 +11616,18 @@ Em `internal/serve/serve_test.go` (imports), trocar:
 por:
 
 ```go
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/douglasdf99/litezap/internal/config"
 	"github.com/douglasdf99/litezap/internal/instance"
@@ -11064,10 +11667,60 @@ func TestWorkerEnvPassesEffectiveProxy(t *testing.T) {
 		t.Error("expected error for unknown instance")
 	}
 }
+
+// A request still running when the graceful shutdown gives up is cut (srv.Close) before the
+// queues, workers and store go away.
+func TestShutdownClosesHungRequests(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := probe.Addr().String()
+	probe.Close()
+	dir := t.TempDir()
+	t.Setenv("LITEZAP_DATA_DIR", dir)
+	t.Setenv("LITEZAP_LISTEN_ADDR", addr)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, "", slog.New(slog.DiscardHandler)) }()
+	var conn net.Conn
+	for i := 0; i < 100; i++ {
+		if conn, err = net.Dial("tcp", addr); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if conn == nil {
+		t.Fatalf("server did not start: %v", err)
+	}
+	defer conn.Close()
+	tok, err := os.ReadFile(filepath.Join(dir, "admin_token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A send whose body never finishes arriving: the handler blocks reading it.
+	fmt.Fprintf(conn, "POST /v1/instances/inst_x/messages HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\n"+
+		"Content-Type: application/json\r\nContent-Length: 1000000\r\n\r\n{\"to\":", strings.TrimSpace(string(tok)))
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("Run did not return")
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.ReadAll(conn); err != nil {
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			t.Fatal("the hung request's connection is still open after Run returned")
+		}
+	}
+}
 ```
 
 Run: `go test ./internal/api/ ./internal/serve/`
-Expected: FAIL — `too many arguments in call to New`, `undefined: workerEnv`.
+Expected: FAIL — `too many arguments in call to New`, `undefined: workerEnv`; `TestOversizedBodyIs413` e `TestShutdownClosesHungRequests` falham.
 
 - [ ] **Step 2: API: interface, rotas e decode com limite**
 
@@ -11093,6 +11746,21 @@ por:
 	"github.com/douglasdf99/litezap/internal/secure"
 	"github.com/douglasdf99/litezap/internal/service"
 	"github.com/douglasdf99/litezap/internal/settings"
+```
+
+Em `internal/api/api.go` (imports), trocar:
+
+```go
+	"errors"
+	"log/slog"
+```
+
+por:
+
+```go
+	"errors"
+	"fmt"
+	"log/slog"
 ```
 
 Em `internal/api/api.go`, trocar:
@@ -11210,9 +11878,14 @@ Em `internal/api/api.go`, trocar:
 ```go
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err := dec.Decode(v); err != nil {
+		return apierr.Validation("invalid JSON body")
+	}
+	return nil
+}
 ```
 
-por:
+por (um corpo acima do limite é `413`, não JSON inválido):
 
 ```go
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
@@ -11221,6 +11894,16 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 
 func decodeMax(w http.ResponseWriter, r *http.Request, v any, limit int64) error {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
+	if err := dec.Decode(v); err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			return apierr.New(http.StatusRequestEntityTooLarge, "media_too_large",
+				fmt.Sprintf("request body exceeds %d bytes", mbe.Limit), false)
+		}
+		return apierr.Validation("invalid JSON body")
+	}
+	return nil
+}
 ```
 
 - [ ] **Step 3: Handlers**
@@ -11545,7 +12228,7 @@ por:
 		shutdownAll(q, mgr)
 		return fmt.Errorf("media key: %w", err)
 	}
-	svc := &service.Instances{Store: st, Manager: mgr, DataDir: cfg.DataDir}
+	svc := &service.Instances{Store: st, Manager: mgr, DataDir: cfg.DataDir, Queues: q}
 	msg := &service.Messaging{
 		Store: st, Manager: mgr, Queues: q, Resolver: resolver,
 		Fetcher:  &media.Fetcher{AllowPrivate: cfg.MediaAllowPrivateURLs},
@@ -11561,6 +12244,7 @@ por:
 Em `internal/serve/serve.go` (fim de `Run` e funções de shutdown), trocar:
 
 ```go
+	_ = srv.Shutdown(hctx)
 	cancel()
 	shutdownManager(mgr)
 	return serveErr
@@ -11578,6 +12262,11 @@ func shutdownManager(mgr *manager.Manager) {
 por:
 
 ```go
+	if err := srv.Shutdown(hctx); err != nil {
+		// Requests still running after the grace period are cut, so none outlives the
+		// queues, workers and store stopped below.
+		_ = srv.Close()
+	}
 	cancel()
 	shutdownAll(q, mgr)
 	return serveErr
