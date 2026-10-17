@@ -21,6 +21,35 @@ var (
 	ErrShuttingDown = errors.New("manager is shutting down")
 )
 
+// Observer receives worker data events (messages, receipts, history) and every persisted
+// state change. Calls are synchronous, sometimes with the Manager's lock held: they must
+// be quick and must never call into the Manager. History chunks arrive on a separate
+// goroutine, concurrently with the other calls, so observers must be safe for concurrent use.
+type Observer interface {
+	WorkerEvent(instanceID string, ev *workerv1.Event)
+	StateChanged(instanceID string, st instance.State)
+}
+
+// Observers fans out to several observers, in order.
+type Observers []Observer
+
+func (obs Observers) WorkerEvent(id string, ev *workerv1.Event) {
+	for _, o := range obs {
+		o.WorkerEvent(id, ev)
+	}
+}
+
+func (obs Observers) StateChanged(id string, st instance.State) {
+	for _, o := range obs {
+		o.StateChanged(id, st)
+	}
+}
+
+type nopObserver struct{}
+
+func (nopObserver) WorkerEvent(string, *workerv1.Event) {}
+func (nopObserver) StateChanged(string, instance.State) {}
+
 type Options struct {
 	HeartbeatInterval time.Duration
 	HeartbeatFailures int
@@ -50,10 +79,11 @@ func DefaultOptions() Options {
 // (and Stop does the same when no supervisor runs). Callers must never hold a store
 // transaction while calling into the Manager, or they can deadlock against that write.
 type Manager struct {
-	store   *store.Store
-	spawner spawner.Spawner
-	opt     Options
-	log     *slog.Logger
+	store    *store.Store
+	spawner  spawner.Spawner
+	opt      Options
+	log      *slog.Logger
+	observer Observer
 
 	mu      sync.Mutex
 	running map[string]*supervised
@@ -90,8 +120,13 @@ func (s *supervised) setQR(c string) { s.mu.Lock(); s.qr = c; s.mu.Unlock() }
 func (s *supervised) getQR() string  { s.mu.Lock(); defer s.mu.Unlock(); return s.qr }
 
 func New(st *store.Store, sp spawner.Spawner, opt Options, log *slog.Logger) *Manager {
-	return &Manager{store: st, spawner: sp, opt: opt, log: log, running: map[string]*supervised{}, retired: map[string]bool{}}
+	return &Manager{store: st, spawner: sp, opt: opt, log: log, observer: nopObserver{},
+		running: map[string]*supervised{}, retired: map[string]bool{}}
 }
+
+// SetObserver registers the observer of worker events and state changes. Call it before
+// Boot or Start; it is not safe to change while instances run.
+func (m *Manager) SetObserver(o Observer) { m.observer = o }
 
 // Start begins supervising an instance; it is a no-op if already running.
 func (m *Manager) Start(ctx context.Context, id string) error {
@@ -258,6 +293,15 @@ func (m *Manager) handle(id string) (spawner.WorkerHandle, error) {
 	return h, nil
 }
 
+// Client returns the gRPC client of the instance's running worker (ErrNotRunning otherwise).
+func (m *Manager) Client(id string) (workerv1.WorkerClient, error) {
+	h, err := m.handle(id)
+	if err != nil {
+		return nil, err
+	}
+	return h.Client(), nil
+}
+
 // QR returns the latest QR code while the instance is waiting to be paired.
 func (m *Manager) QR(id string) (string, bool) {
 	m.mu.Lock()
@@ -387,15 +431,29 @@ func (m *Manager) runWorker(ctx context.Context, s *supervised, h spawner.Worker
 	}
 	evs := make(chan *workerv1.Event)
 	errc := make(chan error, 1)
+	// History chunks are written by their own goroutine, one at a time, so a large history
+	// sync never holds up state changes and heartbeats; live events wait at most for the
+	// chunk being written (the worker already sends live events before queued chunks).
+	hist := make(chan *workerv1.Event, 1)
 	go func() {
+		for ev := range hist {
+			m.observer.WorkerEvent(s.id, ev)
+		}
+	}()
+	go func() {
+		defer close(hist)
 		for {
 			ev, err := stream.Recv()
 			if err != nil {
 				errc <- err
 				return
 			}
+			out := evs
+			if ev.GetHistory() != nil {
+				out = hist
+			}
 			select {
-			case evs <- ev:
+			case out <- ev:
 			case <-sctx.Done():
 				return
 			}
@@ -425,6 +483,7 @@ func (m *Manager) runWorker(ctx context.Context, s *supervised, h spawner.Worker
 			}
 			c := ev.GetConn()
 			if c == nil {
+				m.observer.WorkerEvent(s.id, ev) // message or receipt
 				continue
 			}
 			st := instance.State(c.State)
@@ -433,6 +492,9 @@ func (m *Manager) runWorker(ctx context.Context, s *supervised, h spawner.Worker
 			}
 			if st == instance.Connected {
 				healthy = true
+				if err := m.store.MarkFirstConnected(context.Background(), s.id, time.Now()); err != nil {
+					m.log.Error("save first connection", "instance_id", s.id, "err", err)
+				}
 				if c.Jid != "" {
 					if err := m.store.SetInstanceJID(context.Background(), s.id, c.Jid); err != nil {
 						m.log.Error("save jid", "instance_id", s.id, "err", err)
@@ -490,4 +552,5 @@ func (m *Manager) setState(id string, to instance.State, reason string) {
 		}
 	}
 	m.log.Info("instance state", "instance_id", id, "from", in.State, "to", to, "reason", reason)
+	m.observer.StateChanged(id, to)
 }

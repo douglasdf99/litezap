@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"github.com/douglasdf99/litezap/internal/instance"
 	"github.com/douglasdf99/litezap/internal/store"
 	"github.com/douglasdf99/litezap/internal/workertest"
@@ -447,4 +448,93 @@ func TestUnretireAllowsStartAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, "worker started", func() bool { return sp.Starts("i1") == 1 })
+}
+
+type recObserver struct {
+	mu     sync.Mutex
+	events []*workerv1.Event
+	states []instance.State
+}
+
+func (r *recObserver) WorkerEvent(_ string, ev *workerv1.Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, ev)
+}
+
+func (r *recObserver) StateChanged(_ string, st instance.State) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.states = append(r.states, st)
+}
+
+func (r *recObserver) snapshot() ([]*workerv1.Event, []instance.State) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]*workerv1.Event(nil), r.events...), append([]instance.State(nil), r.states...)
+}
+
+func TestObserverGetsDataEventsAndStates(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	obs := &recObserver{}
+	m.SetObserver(Observers{obs})
+	sp.OnStart = func(f *workertest.Fake) { f.Emit("connected") }
+	if err := m.Start(context.Background(), "i1"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "connected", stateIs(t, st, "i1", instance.Connected))
+	sp.Last("i1").EmitMessage(&workerv1.Message{Id: "W1", Chat: "a@s.whatsapp.net", Type: "text"})
+	eventually(t, "message observed", func() bool {
+		evs, _ := obs.snapshot()
+		return len(evs) == 1 && evs[0].GetMessage().GetId() == "W1"
+	})
+	_, states := obs.snapshot()
+	if len(states) < 2 || states[0] != instance.Starting || states[len(states)-1] != instance.Connected {
+		t.Fatalf("states = %v", states)
+	}
+	in, _ := st.GetInstance(context.Background(), "i1")
+	if in.FirstConnectedAt.IsZero() {
+		t.Fatal("first connection not recorded")
+	}
+	if cli, err := m.Client("i1"); err != nil || cli == nil {
+		t.Fatalf("client = %v, %v", cli, err)
+	}
+	if _, err := m.Client("nope"); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("client of unknown = %v", err)
+	}
+}
+
+type blockingHistory struct {
+	recObserver
+	release chan struct{}
+}
+
+func (b *blockingHistory) WorkerEvent(id string, ev *workerv1.Event) {
+	if ev.GetHistory() != nil {
+		<-b.release
+	}
+	b.recObserver.WorkerEvent(id, ev)
+}
+
+// A slow history write must not hold up state changes or live messages.
+func TestHistoryDoesNotBlockStateAndLiveEvents(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	obs := &blockingHistory{release: make(chan struct{})}
+	defer close(obs.release)
+	m.SetObserver(obs)
+	sp.OnStart = func(f *workertest.Fake) { f.Emit("connected") }
+	if err := m.Start(context.Background(), "i1"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "connected", stateIs(t, st, "i1", instance.Connected))
+	f := sp.Last("i1")
+	f.EmitHistory(&workerv1.HistoryChunk{Chat: "a@s.whatsapp.net"})
+	f.EmitHistory(&workerv1.HistoryChunk{Chat: "b@s.whatsapp.net"})
+	f.EmitMessage(&workerv1.Message{Id: "LIVE", Chat: "c@s.whatsapp.net"})
+	f.Emit("reconnecting")
+	eventually(t, "reconnecting while history is stuck", stateIs(t, st, "i1", instance.Reconnecting))
+	eventually(t, "live message while history is stuck", func() bool {
+		evs, _ := obs.snapshot()
+		return len(evs) == 1 && evs[0].GetMessage().GetId() == "LIVE"
+	})
 }
