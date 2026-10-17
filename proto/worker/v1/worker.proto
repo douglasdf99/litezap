@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package worker.v1;
+
+option go_package = "github.com/douglasdf99/litezap/gen/worker/v1;workerv1";
+
+// Worker is served by `litezap worker` (one process per WhatsApp instance).
+service Worker {
+  rpc Ping(PingRequest) returns (PingResponse);
+  rpc PairPhone(PairPhoneRequest) returns (PairPhoneResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  // Events streams the latest snapshot first (connection state, then QR if pairing), then live events.
+  rpc Events(EventsRequest) returns (stream Event);
+}
+
+message PingRequest {}
+message PingResponse {
+  string state = 1;
+}
+
+message PairPhoneRequest {
+  string phone = 1; // digits only, with country code
+}
+message PairPhoneResponse {
+  string code = 1;
+}
+
+message LogoutRequest {}
+message LogoutResponse {}
+
+message EventsRequest {}
+
+message Event {
+  oneof kind {
+    ConnState conn = 1;
+    QR qr = 2;
+  }
+}
+
+// ConnState.state uses the instance.State strings:
+// qr_pending | connecting | connected | reconnecting | logged_out | banned | failed
+message ConnState {
+  string state = 1;
+  string reason = 2;
+  string jid = 3;
+}
+
+message QR {
+  string code = 1;
+  int64 timeout_ms = 2;
+}
