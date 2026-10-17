@@ -5,12 +5,31 @@ package worker.v1;
 option go_package = "github.com/douglasdf99/litezap/gen/worker/v1;workerv1";
 
 // Worker is served by `litezap worker` (one process per WhatsApp instance).
+//
+// Error codes of the messaging RPCs: InvalidArgument and PermissionDenied are permanent
+// (the status message starts with a stable code such as "invalid_number:"),
+// FailedPrecondition means the session is not logged in, Unavailable means not connected
+// right now, DeadlineExceeded means WhatsApp did not answer in time; any other code is a
+// retryable worker error.
+//
+// Media never travels inline: Send reads media_path and DownloadMedia writes dest_path,
+// both inside the worker's data directory (shared with the supervisor).
 service Worker {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc PairPhone(PairPhoneRequest) returns (PairPhoneResponse);
   rpc Logout(LogoutRequest) returns (LogoutResponse);
-  // Events streams the latest snapshot first (connection state, then QR if pairing), then live events.
+  // Events streams the latest snapshot first (connection state, then QR if pairing), then
+  // data events kept while nobody was subscribed, then live events. Live events always go
+  // before history chunks; a connection state is never dropped.
   rpc Events(EventsRequest) returns (stream Event);
+
+  rpc Send(SendRequest) returns (SendResponse);
+  rpc SendPresence(SendPresenceRequest) returns (SendPresenceResponse);
+  rpc MarkRead(MarkReadRequest) returns (MarkReadResponse);
+  rpc DownloadMedia(DownloadMediaRequest) returns (DownloadMediaResponse);
+  rpc GetContacts(GetContactsRequest) returns (GetContactsResponse);
+  rpc GetContact(GetContactRequest) returns (GetContactResponse);
+  rpc CheckNumbers(CheckNumbersRequest) returns (CheckNumbersResponse);
 }
 
 message PingRequest {}
@@ -34,6 +53,9 @@ message Event {
   oneof kind {
     ConnState conn = 1;
     QR qr = 2;
+    Message message = 3;
+    Receipt receipt = 4;
+    HistoryChunk history = 5;
   }
 }
 
@@ -48,4 +70,115 @@ message ConnState {
 message QR {
   string code = 1;
   int64 timeout_ms = 2;
+}
+
+// Message is a received message, or one sent from another device of the account (from_me).
+message Message {
+  string id = 1;     // WhatsApp message id
+  string chat = 2;   // chat JID; for direct chats always the phone-number JID when known
+  string sender = 3; // sender JID (without device)
+  bool from_me = 4;
+  bool is_group = 5;
+  int64 timestamp_ms = 6;
+  string push_name = 7;
+  // text | image | video | audio | document | sticker | location | contact | reaction | unknown
+  string type = 8;
+  string text = 9;      // body, caption, reaction emoji, or a short description
+  Media media = 10;     // set for image | video | audio | document | sticker
+  string reaction_to = 11; // WhatsApp id of the message a reaction refers to
+}
+
+message Media {
+  string kind = 1; // image | video | audio | document | sticker
+  string mime = 2;
+  uint64 size = 3;
+  string file_name = 4;
+  uint32 seconds = 5;
+  bool ptt = 6;
+  bytes ref = 7; // opaque: pass back to DownloadMedia
+}
+
+message Receipt {
+  repeated string message_ids = 1;
+  string chat = 2;
+  string type = 3; // delivered | read | played
+  int64 timestamp_ms = 4;
+}
+
+// HistoryChunk carries messages of one chat from a history sync.
+message HistoryChunk {
+  string chat = 1;
+  string name = 2;
+  bool is_group = 3;
+  repeated Message messages = 4;
+}
+
+message SendRequest {
+  string to = 1;         // chat JID
+  string message_id = 2; // WhatsApp message id chosen by the supervisor (same on every retry)
+  string type = 3;       // text | image | video | audio | document | reaction
+  string text = 4;       // body, caption, or reaction emoji ("" removes a reaction)
+  string media_path = 5; // file with the attachment, inside the data directory
+  string mime = 6;
+  string file_name = 7;
+  bool ptt = 8; // audio as a voice note
+  string reaction_message_id = 9;
+  bool reaction_from_me = 10;
+  string reaction_sender = 11; // sender JID of the reacted message (groups)
+}
+message SendResponse {
+  string message_id = 1;
+  int64 timestamp_ms = 2;
+}
+
+message SendPresenceRequest {
+  string to = 1;
+  string state = 2; // composing | recording | paused
+}
+message SendPresenceResponse {}
+
+message MarkReadRequest {
+  string chat = 1;
+  string sender = 2; // required in groups: all ids must be from this sender
+  repeated string message_ids = 3;
+}
+message MarkReadResponse {}
+
+message DownloadMediaRequest {
+  string kind = 1;
+  bytes ref = 2;
+  string dest_path = 3; // file to write, inside the data directory
+}
+message DownloadMediaResponse {
+  int64 size = 1;
+}
+
+message Contact {
+  string jid = 1;
+  string name = 2;
+  string push_name = 3;
+  string business_name = 4;
+}
+message GetContactsRequest {}
+message GetContactsResponse {
+  repeated Contact contacts = 1;
+}
+message GetContactRequest {
+  string jid = 1;
+}
+message GetContactResponse {
+  Contact contact = 1;
+  bool found = 2;
+}
+
+message CheckNumbersRequest {
+  repeated string phones = 1; // digits with country code
+}
+message NumberStatus {
+  string phone = 1;
+  bool exists = 2;
+  string jid = 3;
+}
+message CheckNumbersResponse {
+  repeated NumberStatus results = 1;
 }

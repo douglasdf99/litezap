@@ -19,10 +19,17 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Worker_Ping_FullMethodName      = "/worker.v1.Worker/Ping"
-	Worker_PairPhone_FullMethodName = "/worker.v1.Worker/PairPhone"
-	Worker_Logout_FullMethodName    = "/worker.v1.Worker/Logout"
-	Worker_Events_FullMethodName    = "/worker.v1.Worker/Events"
+	Worker_Ping_FullMethodName          = "/worker.v1.Worker/Ping"
+	Worker_PairPhone_FullMethodName     = "/worker.v1.Worker/PairPhone"
+	Worker_Logout_FullMethodName        = "/worker.v1.Worker/Logout"
+	Worker_Events_FullMethodName        = "/worker.v1.Worker/Events"
+	Worker_Send_FullMethodName          = "/worker.v1.Worker/Send"
+	Worker_SendPresence_FullMethodName  = "/worker.v1.Worker/SendPresence"
+	Worker_MarkRead_FullMethodName      = "/worker.v1.Worker/MarkRead"
+	Worker_DownloadMedia_FullMethodName = "/worker.v1.Worker/DownloadMedia"
+	Worker_GetContacts_FullMethodName   = "/worker.v1.Worker/GetContacts"
+	Worker_GetContact_FullMethodName    = "/worker.v1.Worker/GetContact"
+	Worker_CheckNumbers_FullMethodName  = "/worker.v1.Worker/CheckNumbers"
 )
 
 // WorkerClient is the client API for Worker service.
@@ -30,12 +37,30 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // Worker is served by `litezap worker` (one process per WhatsApp instance).
+//
+// Error codes of the messaging RPCs: InvalidArgument and PermissionDenied are permanent
+// (the status message starts with a stable code such as "invalid_number:"),
+// FailedPrecondition means the session is not logged in, Unavailable means not connected
+// right now, DeadlineExceeded means WhatsApp did not answer in time; any other code is a
+// retryable worker error.
+//
+// Media never travels inline: Send reads media_path and DownloadMedia writes dest_path,
+// both inside the worker's data directory (shared with the supervisor).
 type WorkerClient interface {
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 	PairPhone(ctx context.Context, in *PairPhoneRequest, opts ...grpc.CallOption) (*PairPhoneResponse, error)
 	Logout(ctx context.Context, in *LogoutRequest, opts ...grpc.CallOption) (*LogoutResponse, error)
-	// Events streams the latest snapshot first (connection state, then QR if pairing), then live events.
+	// Events streams the latest snapshot first (connection state, then QR if pairing), then
+	// data events kept while nobody was subscribed, then live events. Live events always go
+	// before history chunks; a connection state is never dropped.
 	Events(ctx context.Context, in *EventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
+	Send(ctx context.Context, in *SendRequest, opts ...grpc.CallOption) (*SendResponse, error)
+	SendPresence(ctx context.Context, in *SendPresenceRequest, opts ...grpc.CallOption) (*SendPresenceResponse, error)
+	MarkRead(ctx context.Context, in *MarkReadRequest, opts ...grpc.CallOption) (*MarkReadResponse, error)
+	DownloadMedia(ctx context.Context, in *DownloadMediaRequest, opts ...grpc.CallOption) (*DownloadMediaResponse, error)
+	GetContacts(ctx context.Context, in *GetContactsRequest, opts ...grpc.CallOption) (*GetContactsResponse, error)
+	GetContact(ctx context.Context, in *GetContactRequest, opts ...grpc.CallOption) (*GetContactResponse, error)
+	CheckNumbers(ctx context.Context, in *CheckNumbersRequest, opts ...grpc.CallOption) (*CheckNumbersResponse, error)
 }
 
 type workerClient struct {
@@ -95,17 +120,105 @@ func (c *workerClient) Events(ctx context.Context, in *EventsRequest, opts ...gr
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Worker_EventsClient = grpc.ServerStreamingClient[Event]
 
+func (c *workerClient) Send(ctx context.Context, in *SendRequest, opts ...grpc.CallOption) (*SendResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SendResponse)
+	err := c.cc.Invoke(ctx, Worker_Send_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) SendPresence(ctx context.Context, in *SendPresenceRequest, opts ...grpc.CallOption) (*SendPresenceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SendPresenceResponse)
+	err := c.cc.Invoke(ctx, Worker_SendPresence_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) MarkRead(ctx context.Context, in *MarkReadRequest, opts ...grpc.CallOption) (*MarkReadResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MarkReadResponse)
+	err := c.cc.Invoke(ctx, Worker_MarkRead_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) DownloadMedia(ctx context.Context, in *DownloadMediaRequest, opts ...grpc.CallOption) (*DownloadMediaResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DownloadMediaResponse)
+	err := c.cc.Invoke(ctx, Worker_DownloadMedia_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) GetContacts(ctx context.Context, in *GetContactsRequest, opts ...grpc.CallOption) (*GetContactsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetContactsResponse)
+	err := c.cc.Invoke(ctx, Worker_GetContacts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) GetContact(ctx context.Context, in *GetContactRequest, opts ...grpc.CallOption) (*GetContactResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetContactResponse)
+	err := c.cc.Invoke(ctx, Worker_GetContact_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) CheckNumbers(ctx context.Context, in *CheckNumbersRequest, opts ...grpc.CallOption) (*CheckNumbersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckNumbersResponse)
+	err := c.cc.Invoke(ctx, Worker_CheckNumbers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkerServer is the server API for Worker service.
 // All implementations must embed UnimplementedWorkerServer
 // for forward compatibility.
 //
 // Worker is served by `litezap worker` (one process per WhatsApp instance).
+//
+// Error codes of the messaging RPCs: InvalidArgument and PermissionDenied are permanent
+// (the status message starts with a stable code such as "invalid_number:"),
+// FailedPrecondition means the session is not logged in, Unavailable means not connected
+// right now, DeadlineExceeded means WhatsApp did not answer in time; any other code is a
+// retryable worker error.
+//
+// Media never travels inline: Send reads media_path and DownloadMedia writes dest_path,
+// both inside the worker's data directory (shared with the supervisor).
 type WorkerServer interface {
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	PairPhone(context.Context, *PairPhoneRequest) (*PairPhoneResponse, error)
 	Logout(context.Context, *LogoutRequest) (*LogoutResponse, error)
-	// Events streams the latest snapshot first (connection state, then QR if pairing), then live events.
+	// Events streams the latest snapshot first (connection state, then QR if pairing), then
+	// data events kept while nobody was subscribed, then live events. Live events always go
+	// before history chunks; a connection state is never dropped.
 	Events(*EventsRequest, grpc.ServerStreamingServer[Event]) error
+	Send(context.Context, *SendRequest) (*SendResponse, error)
+	SendPresence(context.Context, *SendPresenceRequest) (*SendPresenceResponse, error)
+	MarkRead(context.Context, *MarkReadRequest) (*MarkReadResponse, error)
+	DownloadMedia(context.Context, *DownloadMediaRequest) (*DownloadMediaResponse, error)
+	GetContacts(context.Context, *GetContactsRequest) (*GetContactsResponse, error)
+	GetContact(context.Context, *GetContactRequest) (*GetContactResponse, error)
+	CheckNumbers(context.Context, *CheckNumbersRequest) (*CheckNumbersResponse, error)
 	mustEmbedUnimplementedWorkerServer()
 }
 
@@ -127,6 +240,27 @@ func (UnimplementedWorkerServer) Logout(context.Context, *LogoutRequest) (*Logou
 }
 func (UnimplementedWorkerServer) Events(*EventsRequest, grpc.ServerStreamingServer[Event]) error {
 	return status.Error(codes.Unimplemented, "method Events not implemented")
+}
+func (UnimplementedWorkerServer) Send(context.Context, *SendRequest) (*SendResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Send not implemented")
+}
+func (UnimplementedWorkerServer) SendPresence(context.Context, *SendPresenceRequest) (*SendPresenceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SendPresence not implemented")
+}
+func (UnimplementedWorkerServer) MarkRead(context.Context, *MarkReadRequest) (*MarkReadResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MarkRead not implemented")
+}
+func (UnimplementedWorkerServer) DownloadMedia(context.Context, *DownloadMediaRequest) (*DownloadMediaResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DownloadMedia not implemented")
+}
+func (UnimplementedWorkerServer) GetContacts(context.Context, *GetContactsRequest) (*GetContactsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetContacts not implemented")
+}
+func (UnimplementedWorkerServer) GetContact(context.Context, *GetContactRequest) (*GetContactResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetContact not implemented")
+}
+func (UnimplementedWorkerServer) CheckNumbers(context.Context, *CheckNumbersRequest) (*CheckNumbersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckNumbers not implemented")
 }
 func (UnimplementedWorkerServer) mustEmbedUnimplementedWorkerServer() {}
 func (UnimplementedWorkerServer) testEmbeddedByValue()                {}
@@ -214,6 +348,132 @@ func _Worker_Events_Handler(srv interface{}, stream grpc.ServerStream) error {
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Worker_EventsServer = grpc.ServerStreamingServer[Event]
 
+func _Worker_Send_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).Send(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_Send_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).Send(ctx, req.(*SendRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_SendPresence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendPresenceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).SendPresence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_SendPresence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).SendPresence(ctx, req.(*SendPresenceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_MarkRead_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MarkReadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).MarkRead(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_MarkRead_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).MarkRead(ctx, req.(*MarkReadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_DownloadMedia_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DownloadMediaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).DownloadMedia(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_DownloadMedia_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).DownloadMedia(ctx, req.(*DownloadMediaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_GetContacts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetContactsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).GetContacts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_GetContacts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).GetContacts(ctx, req.(*GetContactsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_GetContact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetContactRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).GetContact(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_GetContact_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).GetContact(ctx, req.(*GetContactRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_CheckNumbers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckNumbersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).CheckNumbers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_CheckNumbers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).CheckNumbers(ctx, req.(*CheckNumbersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Worker_ServiceDesc is the grpc.ServiceDesc for Worker service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -232,6 +492,34 @@ var Worker_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Logout",
 			Handler:    _Worker_Logout_Handler,
+		},
+		{
+			MethodName: "Send",
+			Handler:    _Worker_Send_Handler,
+		},
+		{
+			MethodName: "SendPresence",
+			Handler:    _Worker_SendPresence_Handler,
+		},
+		{
+			MethodName: "MarkRead",
+			Handler:    _Worker_MarkRead_Handler,
+		},
+		{
+			MethodName: "DownloadMedia",
+			Handler:    _Worker_DownloadMedia_Handler,
+		},
+		{
+			MethodName: "GetContacts",
+			Handler:    _Worker_GetContacts_Handler,
+		},
+		{
+			MethodName: "GetContact",
+			Handler:    _Worker_GetContact_Handler,
+		},
+		{
+			MethodName: "CheckNumbers",
+			Handler:    _Worker_CheckNumbers_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

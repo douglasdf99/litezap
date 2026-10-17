@@ -12,6 +12,7 @@ import (
 	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
+	"github.com/douglasdf99/litezap/internal/wire"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -70,7 +71,7 @@ func Run(ctx context.Context, opt Options, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", opt.Socket, err)
 	}
-	g := grpc.NewServer()
+	g := grpc.NewServer(wire.ServerOptions()...)
 	workerv1.RegisterWorkerServer(g, srv)
 
 	stopped := make(chan struct{})

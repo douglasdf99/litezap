@@ -303,6 +303,9 @@ type Event struct {
 	//
 	//	*Event_Conn
 	//	*Event_Qr
+	//	*Event_Message
+	//	*Event_Receipt
+	//	*Event_History
 	Kind          isEvent_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -363,6 +366,33 @@ func (x *Event) GetQr() *QR {
 	return nil
 }
 
+func (x *Event) GetMessage() *Message {
+	if x != nil {
+		if x, ok := x.Kind.(*Event_Message); ok {
+			return x.Message
+		}
+	}
+	return nil
+}
+
+func (x *Event) GetReceipt() *Receipt {
+	if x != nil {
+		if x, ok := x.Kind.(*Event_Receipt); ok {
+			return x.Receipt
+		}
+	}
+	return nil
+}
+
+func (x *Event) GetHistory() *HistoryChunk {
+	if x != nil {
+		if x, ok := x.Kind.(*Event_History); ok {
+			return x.History
+		}
+	}
+	return nil
+}
+
 type isEvent_Kind interface {
 	isEvent_Kind()
 }
@@ -375,9 +405,27 @@ type Event_Qr struct {
 	Qr *QR `protobuf:"bytes,2,opt,name=qr,proto3,oneof"`
 }
 
+type Event_Message struct {
+	Message *Message `protobuf:"bytes,3,opt,name=message,proto3,oneof"`
+}
+
+type Event_Receipt struct {
+	Receipt *Receipt `protobuf:"bytes,4,opt,name=receipt,proto3,oneof"`
+}
+
+type Event_History struct {
+	History *HistoryChunk `protobuf:"bytes,5,opt,name=history,proto3,oneof"`
+}
+
 func (*Event_Conn) isEvent_Kind() {}
 
 func (*Event_Qr) isEvent_Kind() {}
+
+func (*Event_Message) isEvent_Kind() {}
+
+func (*Event_Receipt) isEvent_Kind() {}
+
+func (*Event_History) isEvent_Kind() {}
 
 // ConnState.state uses the instance.State strings:
 // qr_pending | connecting | connected | reconnecting | logged_out | banned | failed
@@ -493,6 +541,1217 @@ func (x *QR) GetTimeoutMs() int64 {
 	return 0
 }
 
+// Message is a received message, or one sent from another device of the account (from_me).
+type Message struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Id          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`         // WhatsApp message id
+	Chat        string                 `protobuf:"bytes,2,opt,name=chat,proto3" json:"chat,omitempty"`     // chat JID; for direct chats always the phone-number JID when known
+	Sender      string                 `protobuf:"bytes,3,opt,name=sender,proto3" json:"sender,omitempty"` // sender JID (without device)
+	FromMe      bool                   `protobuf:"varint,4,opt,name=from_me,json=fromMe,proto3" json:"from_me,omitempty"`
+	IsGroup     bool                   `protobuf:"varint,5,opt,name=is_group,json=isGroup,proto3" json:"is_group,omitempty"`
+	TimestampMs int64                  `protobuf:"varint,6,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
+	PushName    string                 `protobuf:"bytes,7,opt,name=push_name,json=pushName,proto3" json:"push_name,omitempty"`
+	// text | image | video | audio | document | sticker | location | contact | reaction | unknown
+	Type          string `protobuf:"bytes,8,opt,name=type,proto3" json:"type,omitempty"`
+	Text          string `protobuf:"bytes,9,opt,name=text,proto3" json:"text,omitempty"`                                // body, caption, reaction emoji, or a short description
+	Media         *Media `protobuf:"bytes,10,opt,name=media,proto3" json:"media,omitempty"`                             // set for image | video | audio | document | sticker
+	ReactionTo    string `protobuf:"bytes,11,opt,name=reaction_to,json=reactionTo,proto3" json:"reaction_to,omitempty"` // WhatsApp id of the message a reaction refers to
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Message) Reset() {
+	*x = Message{}
+	mi := &file_worker_v1_worker_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Message) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Message) ProtoMessage() {}
+
+func (x *Message) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Message.ProtoReflect.Descriptor instead.
+func (*Message) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *Message) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Message) GetChat() string {
+	if x != nil {
+		return x.Chat
+	}
+	return ""
+}
+
+func (x *Message) GetSender() string {
+	if x != nil {
+		return x.Sender
+	}
+	return ""
+}
+
+func (x *Message) GetFromMe() bool {
+	if x != nil {
+		return x.FromMe
+	}
+	return false
+}
+
+func (x *Message) GetIsGroup() bool {
+	if x != nil {
+		return x.IsGroup
+	}
+	return false
+}
+
+func (x *Message) GetTimestampMs() int64 {
+	if x != nil {
+		return x.TimestampMs
+	}
+	return 0
+}
+
+func (x *Message) GetPushName() string {
+	if x != nil {
+		return x.PushName
+	}
+	return ""
+}
+
+func (x *Message) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *Message) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *Message) GetMedia() *Media {
+	if x != nil {
+		return x.Media
+	}
+	return nil
+}
+
+func (x *Message) GetReactionTo() string {
+	if x != nil {
+		return x.ReactionTo
+	}
+	return ""
+}
+
+type Media struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"` // image | video | audio | document | sticker
+	Mime          string                 `protobuf:"bytes,2,opt,name=mime,proto3" json:"mime,omitempty"`
+	Size          uint64                 `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
+	FileName      string                 `protobuf:"bytes,4,opt,name=file_name,json=fileName,proto3" json:"file_name,omitempty"`
+	Seconds       uint32                 `protobuf:"varint,5,opt,name=seconds,proto3" json:"seconds,omitempty"`
+	Ptt           bool                   `protobuf:"varint,6,opt,name=ptt,proto3" json:"ptt,omitempty"`
+	Ref           []byte                 `protobuf:"bytes,7,opt,name=ref,proto3" json:"ref,omitempty"` // opaque: pass back to DownloadMedia
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Media) Reset() {
+	*x = Media{}
+	mi := &file_worker_v1_worker_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Media) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Media) ProtoMessage() {}
+
+func (x *Media) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Media.ProtoReflect.Descriptor instead.
+func (*Media) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *Media) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *Media) GetMime() string {
+	if x != nil {
+		return x.Mime
+	}
+	return ""
+}
+
+func (x *Media) GetSize() uint64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *Media) GetFileName() string {
+	if x != nil {
+		return x.FileName
+	}
+	return ""
+}
+
+func (x *Media) GetSeconds() uint32 {
+	if x != nil {
+		return x.Seconds
+	}
+	return 0
+}
+
+func (x *Media) GetPtt() bool {
+	if x != nil {
+		return x.Ptt
+	}
+	return false
+}
+
+func (x *Media) GetRef() []byte {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+type Receipt struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MessageIds    []string               `protobuf:"bytes,1,rep,name=message_ids,json=messageIds,proto3" json:"message_ids,omitempty"`
+	Chat          string                 `protobuf:"bytes,2,opt,name=chat,proto3" json:"chat,omitempty"`
+	Type          string                 `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"` // delivered | read | played
+	TimestampMs   int64                  `protobuf:"varint,4,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Receipt) Reset() {
+	*x = Receipt{}
+	mi := &file_worker_v1_worker_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Receipt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Receipt) ProtoMessage() {}
+
+func (x *Receipt) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Receipt.ProtoReflect.Descriptor instead.
+func (*Receipt) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *Receipt) GetMessageIds() []string {
+	if x != nil {
+		return x.MessageIds
+	}
+	return nil
+}
+
+func (x *Receipt) GetChat() string {
+	if x != nil {
+		return x.Chat
+	}
+	return ""
+}
+
+func (x *Receipt) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *Receipt) GetTimestampMs() int64 {
+	if x != nil {
+		return x.TimestampMs
+	}
+	return 0
+}
+
+// HistoryChunk carries messages of one chat from a history sync.
+type HistoryChunk struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Chat          string                 `protobuf:"bytes,1,opt,name=chat,proto3" json:"chat,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	IsGroup       bool                   `protobuf:"varint,3,opt,name=is_group,json=isGroup,proto3" json:"is_group,omitempty"`
+	Messages      []*Message             `protobuf:"bytes,4,rep,name=messages,proto3" json:"messages,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HistoryChunk) Reset() {
+	*x = HistoryChunk{}
+	mi := &file_worker_v1_worker_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HistoryChunk) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HistoryChunk) ProtoMessage() {}
+
+func (x *HistoryChunk) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HistoryChunk.ProtoReflect.Descriptor instead.
+func (*HistoryChunk) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *HistoryChunk) GetChat() string {
+	if x != nil {
+		return x.Chat
+	}
+	return ""
+}
+
+func (x *HistoryChunk) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *HistoryChunk) GetIsGroup() bool {
+	if x != nil {
+		return x.IsGroup
+	}
+	return false
+}
+
+func (x *HistoryChunk) GetMessages() []*Message {
+	if x != nil {
+		return x.Messages
+	}
+	return nil
+}
+
+type SendRequest struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	To                string                 `protobuf:"bytes,1,opt,name=to,proto3" json:"to,omitempty"`                                // chat JID
+	MessageId         string                 `protobuf:"bytes,2,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"` // WhatsApp message id chosen by the supervisor (same on every retry)
+	Type              string                 `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`                            // text | image | video | audio | document | reaction
+	Text              string                 `protobuf:"bytes,4,opt,name=text,proto3" json:"text,omitempty"`                            // body, caption, or reaction emoji ("" removes a reaction)
+	MediaPath         string                 `protobuf:"bytes,5,opt,name=media_path,json=mediaPath,proto3" json:"media_path,omitempty"` // file with the attachment, inside the data directory
+	Mime              string                 `protobuf:"bytes,6,opt,name=mime,proto3" json:"mime,omitempty"`
+	FileName          string                 `protobuf:"bytes,7,opt,name=file_name,json=fileName,proto3" json:"file_name,omitempty"`
+	Ptt               bool                   `protobuf:"varint,8,opt,name=ptt,proto3" json:"ptt,omitempty"` // audio as a voice note
+	ReactionMessageId string                 `protobuf:"bytes,9,opt,name=reaction_message_id,json=reactionMessageId,proto3" json:"reaction_message_id,omitempty"`
+	ReactionFromMe    bool                   `protobuf:"varint,10,opt,name=reaction_from_me,json=reactionFromMe,proto3" json:"reaction_from_me,omitempty"`
+	ReactionSender    string                 `protobuf:"bytes,11,opt,name=reaction_sender,json=reactionSender,proto3" json:"reaction_sender,omitempty"` // sender JID of the reacted message (groups)
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *SendRequest) Reset() {
+	*x = SendRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendRequest) ProtoMessage() {}
+
+func (x *SendRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendRequest.ProtoReflect.Descriptor instead.
+func (*SendRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *SendRequest) GetTo() string {
+	if x != nil {
+		return x.To
+	}
+	return ""
+}
+
+func (x *SendRequest) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
+}
+
+func (x *SendRequest) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *SendRequest) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *SendRequest) GetMediaPath() string {
+	if x != nil {
+		return x.MediaPath
+	}
+	return ""
+}
+
+func (x *SendRequest) GetMime() string {
+	if x != nil {
+		return x.Mime
+	}
+	return ""
+}
+
+func (x *SendRequest) GetFileName() string {
+	if x != nil {
+		return x.FileName
+	}
+	return ""
+}
+
+func (x *SendRequest) GetPtt() bool {
+	if x != nil {
+		return x.Ptt
+	}
+	return false
+}
+
+func (x *SendRequest) GetReactionMessageId() string {
+	if x != nil {
+		return x.ReactionMessageId
+	}
+	return ""
+}
+
+func (x *SendRequest) GetReactionFromMe() bool {
+	if x != nil {
+		return x.ReactionFromMe
+	}
+	return false
+}
+
+func (x *SendRequest) GetReactionSender() string {
+	if x != nil {
+		return x.ReactionSender
+	}
+	return ""
+}
+
+type SendResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MessageId     string                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	TimestampMs   int64                  `protobuf:"varint,2,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendResponse) Reset() {
+	*x = SendResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendResponse) ProtoMessage() {}
+
+func (x *SendResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendResponse.ProtoReflect.Descriptor instead.
+func (*SendResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *SendResponse) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
+}
+
+func (x *SendResponse) GetTimestampMs() int64 {
+	if x != nil {
+		return x.TimestampMs
+	}
+	return 0
+}
+
+type SendPresenceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	To            string                 `protobuf:"bytes,1,opt,name=to,proto3" json:"to,omitempty"`
+	State         string                 `protobuf:"bytes,2,opt,name=state,proto3" json:"state,omitempty"` // composing | recording | paused
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendPresenceRequest) Reset() {
+	*x = SendPresenceRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendPresenceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendPresenceRequest) ProtoMessage() {}
+
+func (x *SendPresenceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendPresenceRequest.ProtoReflect.Descriptor instead.
+func (*SendPresenceRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *SendPresenceRequest) GetTo() string {
+	if x != nil {
+		return x.To
+	}
+	return ""
+}
+
+func (x *SendPresenceRequest) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+type SendPresenceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendPresenceResponse) Reset() {
+	*x = SendPresenceResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendPresenceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendPresenceResponse) ProtoMessage() {}
+
+func (x *SendPresenceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendPresenceResponse.ProtoReflect.Descriptor instead.
+func (*SendPresenceResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{17}
+}
+
+type MarkReadRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Chat          string                 `protobuf:"bytes,1,opt,name=chat,proto3" json:"chat,omitempty"`
+	Sender        string                 `protobuf:"bytes,2,opt,name=sender,proto3" json:"sender,omitempty"` // required in groups: all ids must be from this sender
+	MessageIds    []string               `protobuf:"bytes,3,rep,name=message_ids,json=messageIds,proto3" json:"message_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MarkReadRequest) Reset() {
+	*x = MarkReadRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MarkReadRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MarkReadRequest) ProtoMessage() {}
+
+func (x *MarkReadRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MarkReadRequest.ProtoReflect.Descriptor instead.
+func (*MarkReadRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *MarkReadRequest) GetChat() string {
+	if x != nil {
+		return x.Chat
+	}
+	return ""
+}
+
+func (x *MarkReadRequest) GetSender() string {
+	if x != nil {
+		return x.Sender
+	}
+	return ""
+}
+
+func (x *MarkReadRequest) GetMessageIds() []string {
+	if x != nil {
+		return x.MessageIds
+	}
+	return nil
+}
+
+type MarkReadResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MarkReadResponse) Reset() {
+	*x = MarkReadResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MarkReadResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MarkReadResponse) ProtoMessage() {}
+
+func (x *MarkReadResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MarkReadResponse.ProtoReflect.Descriptor instead.
+func (*MarkReadResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{19}
+}
+
+type DownloadMediaRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	Ref           []byte                 `protobuf:"bytes,2,opt,name=ref,proto3" json:"ref,omitempty"`
+	DestPath      string                 `protobuf:"bytes,3,opt,name=dest_path,json=destPath,proto3" json:"dest_path,omitempty"` // file to write, inside the data directory
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DownloadMediaRequest) Reset() {
+	*x = DownloadMediaRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DownloadMediaRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DownloadMediaRequest) ProtoMessage() {}
+
+func (x *DownloadMediaRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DownloadMediaRequest.ProtoReflect.Descriptor instead.
+func (*DownloadMediaRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *DownloadMediaRequest) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *DownloadMediaRequest) GetRef() []byte {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *DownloadMediaRequest) GetDestPath() string {
+	if x != nil {
+		return x.DestPath
+	}
+	return ""
+}
+
+type DownloadMediaResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Size          int64                  `protobuf:"varint,1,opt,name=size,proto3" json:"size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DownloadMediaResponse) Reset() {
+	*x = DownloadMediaResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DownloadMediaResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DownloadMediaResponse) ProtoMessage() {}
+
+func (x *DownloadMediaResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DownloadMediaResponse.ProtoReflect.Descriptor instead.
+func (*DownloadMediaResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *DownloadMediaResponse) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+type Contact struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jid           string                 `protobuf:"bytes,1,opt,name=jid,proto3" json:"jid,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	PushName      string                 `protobuf:"bytes,3,opt,name=push_name,json=pushName,proto3" json:"push_name,omitempty"`
+	BusinessName  string                 `protobuf:"bytes,4,opt,name=business_name,json=businessName,proto3" json:"business_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Contact) Reset() {
+	*x = Contact{}
+	mi := &file_worker_v1_worker_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Contact) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Contact) ProtoMessage() {}
+
+func (x *Contact) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Contact.ProtoReflect.Descriptor instead.
+func (*Contact) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *Contact) GetJid() string {
+	if x != nil {
+		return x.Jid
+	}
+	return ""
+}
+
+func (x *Contact) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Contact) GetPushName() string {
+	if x != nil {
+		return x.PushName
+	}
+	return ""
+}
+
+func (x *Contact) GetBusinessName() string {
+	if x != nil {
+		return x.BusinessName
+	}
+	return ""
+}
+
+type GetContactsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetContactsRequest) Reset() {
+	*x = GetContactsRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetContactsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetContactsRequest) ProtoMessage() {}
+
+func (x *GetContactsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetContactsRequest.ProtoReflect.Descriptor instead.
+func (*GetContactsRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{23}
+}
+
+type GetContactsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Contacts      []*Contact             `protobuf:"bytes,1,rep,name=contacts,proto3" json:"contacts,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetContactsResponse) Reset() {
+	*x = GetContactsResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetContactsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetContactsResponse) ProtoMessage() {}
+
+func (x *GetContactsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetContactsResponse.ProtoReflect.Descriptor instead.
+func (*GetContactsResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *GetContactsResponse) GetContacts() []*Contact {
+	if x != nil {
+		return x.Contacts
+	}
+	return nil
+}
+
+type GetContactRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jid           string                 `protobuf:"bytes,1,opt,name=jid,proto3" json:"jid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetContactRequest) Reset() {
+	*x = GetContactRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetContactRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetContactRequest) ProtoMessage() {}
+
+func (x *GetContactRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetContactRequest.ProtoReflect.Descriptor instead.
+func (*GetContactRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *GetContactRequest) GetJid() string {
+	if x != nil {
+		return x.Jid
+	}
+	return ""
+}
+
+type GetContactResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Contact       *Contact               `protobuf:"bytes,1,opt,name=contact,proto3" json:"contact,omitempty"`
+	Found         bool                   `protobuf:"varint,2,opt,name=found,proto3" json:"found,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetContactResponse) Reset() {
+	*x = GetContactResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetContactResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetContactResponse) ProtoMessage() {}
+
+func (x *GetContactResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetContactResponse.ProtoReflect.Descriptor instead.
+func (*GetContactResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *GetContactResponse) GetContact() *Contact {
+	if x != nil {
+		return x.Contact
+	}
+	return nil
+}
+
+func (x *GetContactResponse) GetFound() bool {
+	if x != nil {
+		return x.Found
+	}
+	return false
+}
+
+type CheckNumbersRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Phones        []string               `protobuf:"bytes,1,rep,name=phones,proto3" json:"phones,omitempty"` // digits with country code
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckNumbersRequest) Reset() {
+	*x = CheckNumbersRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckNumbersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckNumbersRequest) ProtoMessage() {}
+
+func (x *CheckNumbersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckNumbersRequest.ProtoReflect.Descriptor instead.
+func (*CheckNumbersRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *CheckNumbersRequest) GetPhones() []string {
+	if x != nil {
+		return x.Phones
+	}
+	return nil
+}
+
+type NumberStatus struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Phone         string                 `protobuf:"bytes,1,opt,name=phone,proto3" json:"phone,omitempty"`
+	Exists        bool                   `protobuf:"varint,2,opt,name=exists,proto3" json:"exists,omitempty"`
+	Jid           string                 `protobuf:"bytes,3,opt,name=jid,proto3" json:"jid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NumberStatus) Reset() {
+	*x = NumberStatus{}
+	mi := &file_worker_v1_worker_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NumberStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NumberStatus) ProtoMessage() {}
+
+func (x *NumberStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NumberStatus.ProtoReflect.Descriptor instead.
+func (*NumberStatus) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *NumberStatus) GetPhone() string {
+	if x != nil {
+		return x.Phone
+	}
+	return ""
+}
+
+func (x *NumberStatus) GetExists() bool {
+	if x != nil {
+		return x.Exists
+	}
+	return false
+}
+
+func (x *NumberStatus) GetJid() string {
+	if x != nil {
+		return x.Jid
+	}
+	return ""
+}
+
+type CheckNumbersResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Results       []*NumberStatus        `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckNumbersResponse) Reset() {
+	*x = CheckNumbersResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckNumbersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckNumbersResponse) ProtoMessage() {}
+
+func (x *CheckNumbersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckNumbersResponse.ProtoReflect.Descriptor instead.
+func (*CheckNumbersResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *CheckNumbersResponse) GetResults() []*NumberStatus {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
 var File_worker_v1_worker_proto protoreflect.FileDescriptor
 
 const file_worker_v1_worker_proto_rawDesc = "" +
@@ -507,10 +1766,13 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x04code\x18\x01 \x01(\tR\x04code\"\x0f\n" +
 	"\rLogoutRequest\"\x10\n" +
 	"\x0eLogoutResponse\"\x0f\n" +
-	"\rEventsRequest\"\\\n" +
+	"\rEventsRequest\"\xf1\x01\n" +
 	"\x05Event\x12*\n" +
 	"\x04conn\x18\x01 \x01(\v2\x14.worker.v1.ConnStateH\x00R\x04conn\x12\x1f\n" +
-	"\x02qr\x18\x02 \x01(\v2\r.worker.v1.QRH\x00R\x02qrB\x06\n" +
+	"\x02qr\x18\x02 \x01(\v2\r.worker.v1.QRH\x00R\x02qr\x12.\n" +
+	"\amessage\x18\x03 \x01(\v2\x12.worker.v1.MessageH\x00R\amessage\x12.\n" +
+	"\areceipt\x18\x04 \x01(\v2\x12.worker.v1.ReceiptH\x00R\areceipt\x123\n" +
+	"\ahistory\x18\x05 \x01(\v2\x17.worker.v1.HistoryChunkH\x00R\ahistoryB\x06\n" +
 	"\x04kind\"K\n" +
 	"\tConnState\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x16\n" +
@@ -519,12 +1781,109 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x02QR\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x1d\n" +
 	"\n" +
-	"timeout_ms\x18\x02 \x01(\x03R\ttimeoutMs2\x80\x02\n" +
+	"timeout_ms\x18\x02 \x01(\x03R\ttimeoutMs\"\xaa\x02\n" +
+	"\aMessage\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04chat\x18\x02 \x01(\tR\x04chat\x12\x16\n" +
+	"\x06sender\x18\x03 \x01(\tR\x06sender\x12\x17\n" +
+	"\afrom_me\x18\x04 \x01(\bR\x06fromMe\x12\x19\n" +
+	"\bis_group\x18\x05 \x01(\bR\aisGroup\x12!\n" +
+	"\ftimestamp_ms\x18\x06 \x01(\x03R\vtimestampMs\x12\x1b\n" +
+	"\tpush_name\x18\a \x01(\tR\bpushName\x12\x12\n" +
+	"\x04type\x18\b \x01(\tR\x04type\x12\x12\n" +
+	"\x04text\x18\t \x01(\tR\x04text\x12&\n" +
+	"\x05media\x18\n" +
+	" \x01(\v2\x10.worker.v1.MediaR\x05media\x12\x1f\n" +
+	"\vreaction_to\x18\v \x01(\tR\n" +
+	"reactionTo\"\x9e\x01\n" +
+	"\x05Media\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04mime\x18\x02 \x01(\tR\x04mime\x12\x12\n" +
+	"\x04size\x18\x03 \x01(\x04R\x04size\x12\x1b\n" +
+	"\tfile_name\x18\x04 \x01(\tR\bfileName\x12\x18\n" +
+	"\aseconds\x18\x05 \x01(\rR\aseconds\x12\x10\n" +
+	"\x03ptt\x18\x06 \x01(\bR\x03ptt\x12\x10\n" +
+	"\x03ref\x18\a \x01(\fR\x03ref\"u\n" +
+	"\aReceipt\x12\x1f\n" +
+	"\vmessage_ids\x18\x01 \x03(\tR\n" +
+	"messageIds\x12\x12\n" +
+	"\x04chat\x18\x02 \x01(\tR\x04chat\x12\x12\n" +
+	"\x04type\x18\x03 \x01(\tR\x04type\x12!\n" +
+	"\ftimestamp_ms\x18\x04 \x01(\x03R\vtimestampMs\"\x81\x01\n" +
+	"\fHistoryChunk\x12\x12\n" +
+	"\x04chat\x18\x01 \x01(\tR\x04chat\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x19\n" +
+	"\bis_group\x18\x03 \x01(\bR\aisGroup\x12.\n" +
+	"\bmessages\x18\x04 \x03(\v2\x12.worker.v1.MessageR\bmessages\"\xc9\x02\n" +
+	"\vSendRequest\x12\x0e\n" +
+	"\x02to\x18\x01 \x01(\tR\x02to\x12\x1d\n" +
+	"\n" +
+	"message_id\x18\x02 \x01(\tR\tmessageId\x12\x12\n" +
+	"\x04type\x18\x03 \x01(\tR\x04type\x12\x12\n" +
+	"\x04text\x18\x04 \x01(\tR\x04text\x12\x1d\n" +
+	"\n" +
+	"media_path\x18\x05 \x01(\tR\tmediaPath\x12\x12\n" +
+	"\x04mime\x18\x06 \x01(\tR\x04mime\x12\x1b\n" +
+	"\tfile_name\x18\a \x01(\tR\bfileName\x12\x10\n" +
+	"\x03ptt\x18\b \x01(\bR\x03ptt\x12.\n" +
+	"\x13reaction_message_id\x18\t \x01(\tR\x11reactionMessageId\x12(\n" +
+	"\x10reaction_from_me\x18\n" +
+	" \x01(\bR\x0ereactionFromMe\x12'\n" +
+	"\x0freaction_sender\x18\v \x01(\tR\x0ereactionSender\"P\n" +
+	"\fSendResponse\x12\x1d\n" +
+	"\n" +
+	"message_id\x18\x01 \x01(\tR\tmessageId\x12!\n" +
+	"\ftimestamp_ms\x18\x02 \x01(\x03R\vtimestampMs\";\n" +
+	"\x13SendPresenceRequest\x12\x0e\n" +
+	"\x02to\x18\x01 \x01(\tR\x02to\x12\x14\n" +
+	"\x05state\x18\x02 \x01(\tR\x05state\"\x16\n" +
+	"\x14SendPresenceResponse\"^\n" +
+	"\x0fMarkReadRequest\x12\x12\n" +
+	"\x04chat\x18\x01 \x01(\tR\x04chat\x12\x16\n" +
+	"\x06sender\x18\x02 \x01(\tR\x06sender\x12\x1f\n" +
+	"\vmessage_ids\x18\x03 \x03(\tR\n" +
+	"messageIds\"\x12\n" +
+	"\x10MarkReadResponse\"Y\n" +
+	"\x14DownloadMediaRequest\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x10\n" +
+	"\x03ref\x18\x02 \x01(\fR\x03ref\x12\x1b\n" +
+	"\tdest_path\x18\x03 \x01(\tR\bdestPath\"+\n" +
+	"\x15DownloadMediaResponse\x12\x12\n" +
+	"\x04size\x18\x01 \x01(\x03R\x04size\"q\n" +
+	"\aContact\x12\x10\n" +
+	"\x03jid\x18\x01 \x01(\tR\x03jid\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1b\n" +
+	"\tpush_name\x18\x03 \x01(\tR\bpushName\x12#\n" +
+	"\rbusiness_name\x18\x04 \x01(\tR\fbusinessName\"\x14\n" +
+	"\x12GetContactsRequest\"E\n" +
+	"\x13GetContactsResponse\x12.\n" +
+	"\bcontacts\x18\x01 \x03(\v2\x12.worker.v1.ContactR\bcontacts\"%\n" +
+	"\x11GetContactRequest\x12\x10\n" +
+	"\x03jid\x18\x01 \x01(\tR\x03jid\"X\n" +
+	"\x12GetContactResponse\x12,\n" +
+	"\acontact\x18\x01 \x01(\v2\x12.worker.v1.ContactR\acontact\x12\x14\n" +
+	"\x05found\x18\x02 \x01(\bR\x05found\"-\n" +
+	"\x13CheckNumbersRequest\x12\x16\n" +
+	"\x06phones\x18\x01 \x03(\tR\x06phones\"N\n" +
+	"\fNumberStatus\x12\x14\n" +
+	"\x05phone\x18\x01 \x01(\tR\x05phone\x12\x16\n" +
+	"\x06exists\x18\x02 \x01(\bR\x06exists\x12\x10\n" +
+	"\x03jid\x18\x03 \x01(\tR\x03jid\"I\n" +
+	"\x14CheckNumbersResponse\x121\n" +
+	"\aresults\x18\x01 \x03(\v2\x17.worker.v1.NumberStatusR\aresults2\x8d\x06\n" +
 	"\x06Worker\x127\n" +
 	"\x04Ping\x12\x16.worker.v1.PingRequest\x1a\x17.worker.v1.PingResponse\x12F\n" +
 	"\tPairPhone\x12\x1b.worker.v1.PairPhoneRequest\x1a\x1c.worker.v1.PairPhoneResponse\x12=\n" +
 	"\x06Logout\x12\x18.worker.v1.LogoutRequest\x1a\x19.worker.v1.LogoutResponse\x126\n" +
-	"\x06Events\x12\x18.worker.v1.EventsRequest\x1a\x10.worker.v1.Event0\x01B7Z5github.com/douglasdf99/litezap/gen/worker/v1;workerv1b\x06proto3"
+	"\x06Events\x12\x18.worker.v1.EventsRequest\x1a\x10.worker.v1.Event0\x01\x127\n" +
+	"\x04Send\x12\x16.worker.v1.SendRequest\x1a\x17.worker.v1.SendResponse\x12O\n" +
+	"\fSendPresence\x12\x1e.worker.v1.SendPresenceRequest\x1a\x1f.worker.v1.SendPresenceResponse\x12C\n" +
+	"\bMarkRead\x12\x1a.worker.v1.MarkReadRequest\x1a\x1b.worker.v1.MarkReadResponse\x12R\n" +
+	"\rDownloadMedia\x12\x1f.worker.v1.DownloadMediaRequest\x1a .worker.v1.DownloadMediaResponse\x12L\n" +
+	"\vGetContacts\x12\x1d.worker.v1.GetContactsRequest\x1a\x1e.worker.v1.GetContactsResponse\x12I\n" +
+	"\n" +
+	"GetContact\x12\x1c.worker.v1.GetContactRequest\x1a\x1d.worker.v1.GetContactResponse\x12O\n" +
+	"\fCheckNumbers\x12\x1e.worker.v1.CheckNumbersRequest\x1a\x1f.worker.v1.CheckNumbersResponseB7Z5github.com/douglasdf99/litezap/gen/worker/v1;workerv1b\x06proto3"
 
 var (
 	file_worker_v1_worker_proto_rawDescOnce sync.Once
@@ -538,35 +1897,77 @@ func file_worker_v1_worker_proto_rawDescGZIP() []byte {
 	return file_worker_v1_worker_proto_rawDescData
 }
 
-var file_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_worker_v1_worker_proto_goTypes = []any{
-	(*PingRequest)(nil),       // 0: worker.v1.PingRequest
-	(*PingResponse)(nil),      // 1: worker.v1.PingResponse
-	(*PairPhoneRequest)(nil),  // 2: worker.v1.PairPhoneRequest
-	(*PairPhoneResponse)(nil), // 3: worker.v1.PairPhoneResponse
-	(*LogoutRequest)(nil),     // 4: worker.v1.LogoutRequest
-	(*LogoutResponse)(nil),    // 5: worker.v1.LogoutResponse
-	(*EventsRequest)(nil),     // 6: worker.v1.EventsRequest
-	(*Event)(nil),             // 7: worker.v1.Event
-	(*ConnState)(nil),         // 8: worker.v1.ConnState
-	(*QR)(nil),                // 9: worker.v1.QR
+	(*PingRequest)(nil),           // 0: worker.v1.PingRequest
+	(*PingResponse)(nil),          // 1: worker.v1.PingResponse
+	(*PairPhoneRequest)(nil),      // 2: worker.v1.PairPhoneRequest
+	(*PairPhoneResponse)(nil),     // 3: worker.v1.PairPhoneResponse
+	(*LogoutRequest)(nil),         // 4: worker.v1.LogoutRequest
+	(*LogoutResponse)(nil),        // 5: worker.v1.LogoutResponse
+	(*EventsRequest)(nil),         // 6: worker.v1.EventsRequest
+	(*Event)(nil),                 // 7: worker.v1.Event
+	(*ConnState)(nil),             // 8: worker.v1.ConnState
+	(*QR)(nil),                    // 9: worker.v1.QR
+	(*Message)(nil),               // 10: worker.v1.Message
+	(*Media)(nil),                 // 11: worker.v1.Media
+	(*Receipt)(nil),               // 12: worker.v1.Receipt
+	(*HistoryChunk)(nil),          // 13: worker.v1.HistoryChunk
+	(*SendRequest)(nil),           // 14: worker.v1.SendRequest
+	(*SendResponse)(nil),          // 15: worker.v1.SendResponse
+	(*SendPresenceRequest)(nil),   // 16: worker.v1.SendPresenceRequest
+	(*SendPresenceResponse)(nil),  // 17: worker.v1.SendPresenceResponse
+	(*MarkReadRequest)(nil),       // 18: worker.v1.MarkReadRequest
+	(*MarkReadResponse)(nil),      // 19: worker.v1.MarkReadResponse
+	(*DownloadMediaRequest)(nil),  // 20: worker.v1.DownloadMediaRequest
+	(*DownloadMediaResponse)(nil), // 21: worker.v1.DownloadMediaResponse
+	(*Contact)(nil),               // 22: worker.v1.Contact
+	(*GetContactsRequest)(nil),    // 23: worker.v1.GetContactsRequest
+	(*GetContactsResponse)(nil),   // 24: worker.v1.GetContactsResponse
+	(*GetContactRequest)(nil),     // 25: worker.v1.GetContactRequest
+	(*GetContactResponse)(nil),    // 26: worker.v1.GetContactResponse
+	(*CheckNumbersRequest)(nil),   // 27: worker.v1.CheckNumbersRequest
+	(*NumberStatus)(nil),          // 28: worker.v1.NumberStatus
+	(*CheckNumbersResponse)(nil),  // 29: worker.v1.CheckNumbersResponse
 }
 var file_worker_v1_worker_proto_depIdxs = []int32{
-	8, // 0: worker.v1.Event.conn:type_name -> worker.v1.ConnState
-	9, // 1: worker.v1.Event.qr:type_name -> worker.v1.QR
-	0, // 2: worker.v1.Worker.Ping:input_type -> worker.v1.PingRequest
-	2, // 3: worker.v1.Worker.PairPhone:input_type -> worker.v1.PairPhoneRequest
-	4, // 4: worker.v1.Worker.Logout:input_type -> worker.v1.LogoutRequest
-	6, // 5: worker.v1.Worker.Events:input_type -> worker.v1.EventsRequest
-	1, // 6: worker.v1.Worker.Ping:output_type -> worker.v1.PingResponse
-	3, // 7: worker.v1.Worker.PairPhone:output_type -> worker.v1.PairPhoneResponse
-	5, // 8: worker.v1.Worker.Logout:output_type -> worker.v1.LogoutResponse
-	7, // 9: worker.v1.Worker.Events:output_type -> worker.v1.Event
-	6, // [6:10] is the sub-list for method output_type
-	2, // [2:6] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	8,  // 0: worker.v1.Event.conn:type_name -> worker.v1.ConnState
+	9,  // 1: worker.v1.Event.qr:type_name -> worker.v1.QR
+	10, // 2: worker.v1.Event.message:type_name -> worker.v1.Message
+	12, // 3: worker.v1.Event.receipt:type_name -> worker.v1.Receipt
+	13, // 4: worker.v1.Event.history:type_name -> worker.v1.HistoryChunk
+	11, // 5: worker.v1.Message.media:type_name -> worker.v1.Media
+	10, // 6: worker.v1.HistoryChunk.messages:type_name -> worker.v1.Message
+	22, // 7: worker.v1.GetContactsResponse.contacts:type_name -> worker.v1.Contact
+	22, // 8: worker.v1.GetContactResponse.contact:type_name -> worker.v1.Contact
+	28, // 9: worker.v1.CheckNumbersResponse.results:type_name -> worker.v1.NumberStatus
+	0,  // 10: worker.v1.Worker.Ping:input_type -> worker.v1.PingRequest
+	2,  // 11: worker.v1.Worker.PairPhone:input_type -> worker.v1.PairPhoneRequest
+	4,  // 12: worker.v1.Worker.Logout:input_type -> worker.v1.LogoutRequest
+	6,  // 13: worker.v1.Worker.Events:input_type -> worker.v1.EventsRequest
+	14, // 14: worker.v1.Worker.Send:input_type -> worker.v1.SendRequest
+	16, // 15: worker.v1.Worker.SendPresence:input_type -> worker.v1.SendPresenceRequest
+	18, // 16: worker.v1.Worker.MarkRead:input_type -> worker.v1.MarkReadRequest
+	20, // 17: worker.v1.Worker.DownloadMedia:input_type -> worker.v1.DownloadMediaRequest
+	23, // 18: worker.v1.Worker.GetContacts:input_type -> worker.v1.GetContactsRequest
+	25, // 19: worker.v1.Worker.GetContact:input_type -> worker.v1.GetContactRequest
+	27, // 20: worker.v1.Worker.CheckNumbers:input_type -> worker.v1.CheckNumbersRequest
+	1,  // 21: worker.v1.Worker.Ping:output_type -> worker.v1.PingResponse
+	3,  // 22: worker.v1.Worker.PairPhone:output_type -> worker.v1.PairPhoneResponse
+	5,  // 23: worker.v1.Worker.Logout:output_type -> worker.v1.LogoutResponse
+	7,  // 24: worker.v1.Worker.Events:output_type -> worker.v1.Event
+	15, // 25: worker.v1.Worker.Send:output_type -> worker.v1.SendResponse
+	17, // 26: worker.v1.Worker.SendPresence:output_type -> worker.v1.SendPresenceResponse
+	19, // 27: worker.v1.Worker.MarkRead:output_type -> worker.v1.MarkReadResponse
+	21, // 28: worker.v1.Worker.DownloadMedia:output_type -> worker.v1.DownloadMediaResponse
+	24, // 29: worker.v1.Worker.GetContacts:output_type -> worker.v1.GetContactsResponse
+	26, // 30: worker.v1.Worker.GetContact:output_type -> worker.v1.GetContactResponse
+	29, // 31: worker.v1.Worker.CheckNumbers:output_type -> worker.v1.CheckNumbersResponse
+	21, // [21:32] is the sub-list for method output_type
+	10, // [10:21] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_worker_v1_worker_proto_init() }
@@ -577,6 +1978,9 @@ func file_worker_v1_worker_proto_init() {
 	file_worker_v1_worker_proto_msgTypes[7].OneofWrappers = []any{
 		(*Event_Conn)(nil),
 		(*Event_Qr)(nil),
+		(*Event_Message)(nil),
+		(*Event_Receipt)(nil),
+		(*Event_History)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -584,7 +1988,7 @@ func file_worker_v1_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_worker_v1_worker_proto_rawDesc), len(file_worker_v1_worker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

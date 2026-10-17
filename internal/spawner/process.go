@@ -18,6 +18,7 @@ import (
 	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
+	"github.com/douglasdf99/litezap/internal/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -98,7 +99,7 @@ func (p *Process) Start(ctx context.Context, id string) (WorkerHandle, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "unix", sock)
 		}),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(insecure.NewCredentials()), wire.DialOption())
 	if err != nil {
 		_ = h.Kill()
 		return nil, fmt.Errorf("dial worker: %w", err)

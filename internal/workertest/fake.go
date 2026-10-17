@@ -10,6 +10,7 @@ import (
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"github.com/douglasdf99/litezap/internal/spawner"
+	"github.com/douglasdf99/litezap/internal/wire"
 	"github.com/douglasdf99/litezap/internal/worker"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -90,12 +91,12 @@ func newFake(id string, onDone func()) *Fake {
 	f.server = worker.NewServer(f.WA)
 	_ = f.server.Start(context.Background())
 	lis := bufconn.Listen(1 << 20)
-	f.grpc = grpc.NewServer()
+	f.grpc = grpc.NewServer(wire.ServerOptions()...)
 	workerv1.RegisterWorkerServer(f.grpc, fakeService{Server: f.server, f: f})
 	go f.grpc.Serve(lis)
 	f.cc, _ = grpc.NewClient("passthrough:///bufnet",
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(insecure.NewCredentials()), wire.DialOption())
 	f.client = workerv1.NewWorkerClient(f.cc)
 	return f
 }
