@@ -29,6 +29,8 @@ func Run(ctx context.Context, opt Options, log *slog.Logger) error {
 	if opt.InstanceID == "" || opt.Socket == "" || opt.DataDir == "" {
 		return fmt.Errorf("worker: --instance, --socket and --data-dir are required")
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	dir := filepath.Join(opt.DataDir, "instances", opt.InstanceID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -60,7 +62,11 @@ func Run(ctx context.Context, opt Options, log *slog.Logger) error {
 	g := grpc.NewServer()
 	workerv1.RegisterWorkerServer(g, srv)
 
+	stopped := make(chan struct{})
+	// Runs before db.Close: cancel so the shutdown goroutine always finishes, then wait for it.
+	defer func() { cancel(); <-stopped }()
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
 		srv.Stop()
 		// Events streams never finish on their own; give unary calls a moment, then force.

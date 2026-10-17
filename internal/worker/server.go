@@ -33,17 +33,23 @@ type Server struct {
 	conn *workerv1.ConnState
 	qr   *workerv1.QR
 	subs map[chan *workerv1.Event]struct{}
+
+	done     chan struct{}
+	doneOnce sync.Once
 }
 
 func NewServer(wa WAClient) *Server {
-	return &Server{wa: wa, subs: map[chan *workerv1.Event]struct{}{}}
+	return &Server{wa: wa, subs: map[chan *workerv1.Event]struct{}{}, done: make(chan struct{})}
 }
 
 // Start runs the WAClient with the server as its sink.
 func (s *Server) Start(ctx context.Context) error { return s.wa.Run(ctx, s) }
 
-// Stop disconnects the WAClient.
-func (s *Server) Stop() { s.wa.Disconnect() }
+// Stop disconnects the WAClient and ends all open Events streams.
+func (s *Server) Stop() {
+	s.doneOnce.Do(func() { close(s.done) })
+	s.wa.Disconnect()
+}
 
 func (s *Server) ConnState(state, reason, jid string) {
 	c := &workerv1.ConnState{State: state, Reason: reason, Jid: jid}
@@ -96,6 +102,8 @@ func (s *Server) Events(_ *workerv1.EventsRequest, stream workerv1.Worker_Events
 	for {
 		select {
 		case <-stream.Context().Done():
+			return nil
+		case <-s.done:
 			return nil
 		case ev := <-ch:
 			if err := stream.Send(ev); err != nil {

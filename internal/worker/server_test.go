@@ -117,4 +117,50 @@ func TestServerDropsQRSnapshotAfterConnect(t *testing.T) {
 	if ev.GetQr().GetCode() != "late" {
 		t.Fatalf("live = %v", ev)
 	}
+
+	// A new subscriber's snapshot has the conn state only: the late QR is not replayed.
+	stream2, err := cli.Events(ctx, &workerv1.EventsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev, err = stream2.Recv()
+	if err != nil || ev.GetConn().GetState() != "connected" {
+		t.Fatalf("second snapshot = %v, %v", ev, err)
+	}
+	got := make(chan *workerv1.Event, 1)
+	go func() {
+		if e, err := stream2.Recv(); err == nil {
+			got <- e
+		}
+	}()
+	select {
+	case e := <-got:
+		t.Fatalf("unexpected extra event in snapshot: %v", e)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestServerStopEndsEventStreams(t *testing.T) {
+	srv := NewServer(&stubWA{})
+	srv.Start(context.Background())
+	cli := dial(t, srv)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := cli.Events(ctx, &workerv1.EventsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil { // snapshot
+		t.Fatal(err)
+	}
+	srv.Stop()
+	start := time.Now()
+	for {
+		if _, err := stream.Recv(); err != nil {
+			break
+		}
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("stream took %v to end", time.Since(start))
+	}
 }
