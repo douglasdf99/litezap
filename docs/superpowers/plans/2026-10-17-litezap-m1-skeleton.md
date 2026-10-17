@@ -1338,6 +1338,8 @@ func (w *Whatsmeow) Run(ctx context.Context, sink Sink) error {
 }
 
 // connectLoop retries the initial connection (e.g. no network at boot) instead of
+// exiting. With whatsmeow's InitialAutoReconnect enabled, Connect returns nil and
+// retries internally, so this loop simply ends. Without it, we retry here instead of
 // exiting, which would trip the supervisor's circuit breaker. Once connected,
 // whatsmeow's own auto-reconnect takes over.
 func (w *Whatsmeow) connectLoop(ctx context.Context) {
@@ -1875,6 +1877,13 @@ func (p *Process) Start(ctx context.Context, id string) (WorkerHandle, error) {
 	// The socket file exists from bind(), slightly before listen(); wait until the worker answers.
 	pctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	go func() { // abort the readiness wait if the worker dies
+		select {
+		case <-h.done:
+			cancel()
+		case <-pctx.Done():
+		}
+	}()
 	if _, err := h.client.Ping(pctx, &workerv1.PingRequest{}, grpc.WaitForReady(true)); err != nil {
 		_ = h.Kill()
 		return nil, fmt.Errorf("worker not answering: %w", err)
@@ -2512,6 +2521,22 @@ func TestLogoutIsTerminal(t *testing.T) {
 	}
 }
 
+func TestStartRightAfterLogoutRestarts(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	sp.OnStart = func(f *workertest.Fake) { f.Emit("connected") }
+	ctx := context.Background()
+	m.Start(ctx, "i1")
+	eventually(t, "connected", stateIs(t, st, "i1", instance.Connected))
+	if err := m.Logout(ctx, "i1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(ctx, "i1"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "second start", func() bool { return sp.Starts("i1") == 2 })
+	eventually(t, "connected again", stateIs(t, st, "i1", instance.Connected))
+}
+
 func TestStopAndRestart(t *testing.T) {
 	m, st, sp := setup(t, "i1")
 	sp.OnStart = func(f *workertest.Fake) { f.Emit("connected") }
@@ -2846,6 +2871,7 @@ func (m *Manager) supervise(ctx context.Context, s *supervised) {
 			}
 		}
 		if s.breaker.Record(time.Now()) {
+			s.exiting.Store(true)
 			m.log.Error("worker crash loop; giving up", "instance_id", s.id)
 			m.setState(s.id, instance.Failed, "crash_loop")
 			return
@@ -2902,6 +2928,7 @@ func (m *Manager) runWorker(ctx context.Context, s *supervised, h spawner.Worker
 	for {
 		select {
 		case <-ctx.Done():
+			s.exiting.Store(true)
 			closeWorker()
 			return true, healthy
 		case <-h.Done():
@@ -2934,6 +2961,7 @@ func (m *Manager) runWorker(ctx context.Context, s *supervised, h spawner.Worker
 			}
 			m.setState(s.id, st, c.Reason)
 			if st.Terminal() {
+				s.exiting.Store(true) // before the (possibly slow) close, so a concurrent Start waits
 				closeWorker()
 				return true, healthy
 			}
@@ -4151,6 +4179,8 @@ go build -o litezap ./cmd/litezap
 ```
 
 O token admin fica em `data/admin_token` (ou defina `LITEZAP_ADMIN_TOKEN`).
+
+Workers rodam em grupo de processos próprio. Se o supervisor morrer à força (SIGKILL), eles são encerrados no próximo `serve` (limpeza de órfãos via `data/run/*.pid`).
 
 ## API (marco 1)
 
