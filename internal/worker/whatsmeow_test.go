@@ -2,10 +2,16 @@ package worker
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/store"
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
 
@@ -75,5 +81,101 @@ func TestRotateQRsRotatesSecret(t *testing.T) {
 	got := r.snapshot()
 	if len(got) < 3 || got[0] != "xOLD" || got[1] != "xNEW" || got[len(got)-1] != "yNEW" {
 		t.Fatalf("codes = %v", got)
+	}
+}
+
+type connEvt struct{ state, reason string }
+
+type stateRec struct {
+	mu     sync.Mutex
+	states []connEvt
+	qrs    []string
+}
+
+func (r *stateRec) ConnState(state, reason, _ string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.states = append(r.states, connEvt{state, reason})
+}
+func (r *stateRec) QR(code string, _ time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.qrs = append(r.qrs, code)
+}
+func (r *stateRec) snapshot() ([]connEvt, []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]connEvt(nil), r.states...), append([]string(nil), r.qrs...)
+}
+
+// newTestAdapter builds an adapter over a real (never connected) whatsmeow client whose
+// connect is replaced by fake.
+func newTestAdapter(t *testing.T, loggedIn bool, fake func(context.Context) error) (*Whatsmeow, *stateRec) {
+	t.Helper()
+	dev := &store.Device{}
+	if loggedIn {
+		jid := types.NewJID("5511999999999", types.DefaultUserServer)
+		dev.ID = &jid
+	}
+	w := NewWhatsmeow(whatsmeow.NewClient(dev, nil), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	w.connect = fake
+	r := &stateRec{}
+	w.sink = r
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	w.loopCtx, w.cancel = ctx, cancel
+	return w, r
+}
+
+func TestTemporaryBanIsRecoverableFailure(t *testing.T) {
+	w, r := newTestAdapter(t, true, func(context.Context) error { return nil })
+	w.handle(&events.TemporaryBan{Code: events.TempBanReason(101), Expire: time.Hour})
+	states, _ := r.snapshot()
+	want := connEvt{"failed", "temp_banned:1h0m0s"}
+	if len(states) != 1 || states[0] != want {
+		t.Fatalf("states = %v, want [%v]", states, want)
+	}
+	if !w.terminal.Load() {
+		t.Fatal("temporary ban must stop the adapter's loops")
+	}
+}
+
+func TestConnectFailureWhileLoggedInReconnects(t *testing.T) {
+	var calls atomic.Int32
+	block := make(chan struct{})
+	w, r := newTestAdapter(t, true, func(ctx context.Context) error {
+		calls.Add(1)
+		select {
+		case <-block:
+		case <-ctx.Done():
+		}
+		return nil
+	})
+	defer close(block)
+	// Two failures in a row must not start two connect loops.
+	w.handle(&events.ConnectFailure{Reason: events.ConnectFailureReason(418)})
+	w.handle(&events.ConnectFailure{Reason: events.ConnectFailureReason(418)})
+	deadline := time.Now().Add(5 * time.Second)
+	for calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("connect calls = %d, want 1", n)
+	}
+	states, _ := r.snapshot()
+	if len(states) == 0 || states[0] != (connEvt{"reconnecting", "connect_failure_418"}) {
+		t.Fatalf("states = %v", states)
+	}
+}
+
+func TestConnectFailureAfterTerminalDoesNotReconnect(t *testing.T) {
+	var calls atomic.Int32
+	w, _ := newTestAdapter(t, true, func(context.Context) error { calls.Add(1); return nil })
+	w.terminal.Store(true)
+	w.handle(&events.ConnectFailure{Reason: events.ConnectFailureReason(418)})
+	time.Sleep(50 * time.Millisecond)
+	if calls.Load() != 0 {
+		t.Fatal("reconnected after a terminal state")
 	}
 }
