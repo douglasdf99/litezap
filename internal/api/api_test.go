@@ -1,0 +1,242 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/douglasdf99/litezap/internal/manager"
+	"github.com/douglasdf99/litezap/internal/service"
+	"github.com/douglasdf99/litezap/internal/store"
+	"github.com/douglasdf99/litezap/internal/workertest"
+)
+
+const admin = "lza_admin"
+
+type env struct {
+	t   *testing.T
+	srv *httptest.Server
+	sp  *workertest.Spawner
+}
+
+func newEnv(t *testing.T) *env {
+	t.Helper()
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "api.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	sp := workertest.NewSpawner()
+	sp.OnStart = func(f *workertest.Fake) { f.Emit("qr_pending"); f.EmitQR("QR-API") }
+	opt := manager.DefaultOptions()
+	opt.HeartbeatInterval = time.Hour
+	mgr := manager.New(st, sp, opt, slog.New(slog.DiscardHandler))
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		mgr.Shutdown(ctx)
+	})
+	svc := &service.Instances{Store: st, Manager: mgr, DataDir: dir}
+	h := New(svc, Options{AdminToken: admin, Ready: st.Ping}, slog.New(slog.DiscardHandler))
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	return &env{t: t, srv: srv, sp: sp}
+}
+
+func (e *env) do(method, path, token, body string) (int, map[string]any) {
+	e.t.Helper()
+	var rd io.Reader
+	if body != "" {
+		rd = strings.NewReader(body)
+	}
+	req, _ := http.NewRequest(method, e.srv.URL+path, rd)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	out := map[string]any{}
+	b, _ := io.ReadAll(resp.Body)
+	_ = json.Unmarshal(b, &out)
+	return resp.StatusCode, out
+}
+
+func errCode(body map[string]any) string {
+	e, _ := body["error"].(map[string]any)
+	c, _ := e["code"].(string)
+	return c
+}
+
+func (e *env) create(name string) (id, token string) {
+	e.t.Helper()
+	code, body := e.do("POST", "/v1/instances", admin, `{"name":"`+name+`"}`)
+	if code != http.StatusCreated {
+		e.t.Fatalf("create = %d %v", code, body)
+	}
+	inst := body["instance"].(map[string]any)
+	return inst["id"].(string), body["token"].(string)
+}
+
+func (e *env) waitState(id, want string) {
+	e.t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		_, body := e.do("GET", "/v1/instances/"+id, admin, "")
+		if body["state"] == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	e.t.Fatalf("instance %s never reached %s", id, want)
+}
+
+func TestHealth(t *testing.T) {
+	e := newEnv(t)
+	if code, _ := e.do("GET", "/healthz", "", ""); code != 200 {
+		t.Fatalf("healthz = %d", code)
+	}
+	if code, _ := e.do("GET", "/readyz", "", ""); code != 200 {
+		t.Fatalf("readyz = %d", code)
+	}
+}
+
+func TestAuth(t *testing.T) {
+	e := newEnv(t)
+	if code, body := e.do("GET", "/v1/instances", "", ""); code != 401 || errCode(body) != "unauthorized" {
+		t.Fatalf("no token = %d %v", code, body)
+	}
+	if code, _ := e.do("GET", "/v1/instances", "lzi_wrong", ""); code != 401 {
+		t.Fatalf("bad token = %d", code)
+	}
+	id1, tok1 := e.create("A")
+	id2, _ := e.create("B")
+	if code, _ := e.do("GET", "/v1/instances/"+id1, tok1, ""); code != 200 {
+		t.Fatalf("own instance = %d", code)
+	}
+	if code, _ := e.do("GET", "/v1/instances/"+id2, tok1, ""); code != 403 {
+		t.Fatalf("other instance = %d", code)
+	}
+	if code, _ := e.do("GET", "/v1/instances", tok1, ""); code != 403 {
+		t.Fatalf("list with instance token = %d", code)
+	}
+	if code, _ := e.do("DELETE", "/v1/instances/"+id1, tok1, ""); code != 403 {
+		t.Fatalf("delete with instance token = %d", code)
+	}
+}
+
+func TestCreateValidation(t *testing.T) {
+	e := newEnv(t)
+	code, body := e.do("POST", "/v1/instances", admin, `{"name":"  "}`)
+	if code != 400 || errCode(body) != "validation_failed" {
+		t.Fatalf("got %d %v", code, body)
+	}
+}
+
+func TestPairingFlow(t *testing.T) {
+	e := newEnv(t)
+	id, tok := e.create("Loja")
+	e.waitState(id, "qr_pending")
+
+	code, body := e.do("GET", "/v1/instances/"+id+"/qr", tok, "")
+	if code != 200 || body["code"] != "QR-API" {
+		t.Fatalf("qr = %d %v", code, body)
+	}
+
+	req, _ := http.NewRequest("GET", e.srv.URL+"/v1/instances/"+id+"/qr?format=png", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "image/png" {
+		t.Fatalf("png = %d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+
+	if code, body := e.do("POST", "/v1/instances/"+id+"/pair-phone", tok, `{"phone":"123"}`); code != 400 {
+		t.Fatalf("bad phone = %d %v", code, body)
+	}
+	code, body = e.do("POST", "/v1/instances/"+id+"/pair-phone", tok, `{"phone":"+55 11 99999-9999"}`)
+	if code != 200 || body["code"] != "PAIR-CODE" {
+		t.Fatalf("pair = %d %v", code, body)
+	}
+
+	e.sp.Last(id).Emit("connected")
+	e.waitState(id, "connected")
+	_, body = e.do("GET", "/v1/instances/"+id, tok, "")
+	if body["phone"] != "5511999999999" {
+		t.Fatalf("phone = %v", body["phone"])
+	}
+	if code, body := e.do("GET", "/v1/instances/"+id+"/qr", tok, ""); code != 409 || errCode(body) != "instance_not_pairing" {
+		t.Fatalf("qr after connect = %d %v", code, body)
+	}
+}
+
+func TestStopStartRestartLogout(t *testing.T) {
+	e := newEnv(t)
+	id, tok := e.create("Ops")
+	e.waitState(id, "qr_pending")
+	if code, _ := e.do("POST", "/v1/instances/"+id+"/stop", tok, ""); code != 200 {
+		t.Fatalf("stop = %d", code)
+	}
+	e.waitState(id, "stopped")
+	if code, body := e.do("POST", "/v1/instances/"+id+"/logout", tok, ""); code != 409 || errCode(body) != "instance_not_connected" {
+		t.Fatalf("logout while stopped = %d %v", code, body)
+	}
+	if code, _ := e.do("POST", "/v1/instances/"+id+"/start", tok, ""); code != 200 {
+		t.Fatalf("start = %d", code)
+	}
+	e.waitState(id, "qr_pending")
+	if code, _ := e.do("POST", "/v1/instances/"+id+"/restart", tok, ""); code != 200 {
+		t.Fatalf("restart = %d", code)
+	}
+	e.waitState(id, "qr_pending")
+	if code, _ := e.do("POST", "/v1/instances/"+id+"/logout", tok, ""); code != 200 {
+		t.Fatalf("logout = %d", code)
+	}
+	e.waitState(id, "logged_out")
+}
+
+func TestRotateAndDelete(t *testing.T) {
+	e := newEnv(t)
+	id, oldTok := e.create("Rot")
+	code, body := e.do("POST", "/v1/instances/"+id+"/token/rotate", admin, "")
+	if code != 200 {
+		t.Fatalf("rotate = %d", code)
+	}
+	newTok := body["token"].(string)
+	if code, _ := e.do("GET", "/v1/instances/"+id, oldTok, ""); code != 401 {
+		t.Fatalf("old token = %d", code)
+	}
+	if code, _ := e.do("GET", "/v1/instances/"+id, newTok, ""); code != 200 {
+		t.Fatalf("new token = %d", code)
+	}
+	if code, _ := e.do("DELETE", "/v1/instances/"+id, admin, ""); code != 204 {
+		t.Fatalf("delete = %d", code)
+	}
+	if code, body := e.do("GET", "/v1/instances/"+id, admin, ""); code != 404 || errCode(body) != "instance_not_found" {
+		t.Fatalf("after delete = %d %v", code, body)
+	}
+}
+
+func TestListInstances(t *testing.T) {
+	e := newEnv(t)
+	e.create("A")
+	e.create("B")
+	code, body := e.do("GET", "/v1/instances", admin, "")
+	list, _ := body["instances"].([]any)
+	if code != 200 || len(list) != 2 {
+		t.Fatalf("list = %d %v", code, body)
+	}
+}
