@@ -270,6 +270,10 @@ func TestStartDuringSlowStopWaitsForOldWorker(t *testing.T) {
 	if n := sp.MaxLive("i1"); n > 1 {
 		t.Fatalf("%d workers alive at once", n)
 	}
+	eventually(t, "connected after start", stateIs(t, st, "i1", instance.Connected))
+	if !m.Running("i1") || sp.Starts("i1") != 2 {
+		t.Fatalf("running = %v, starts = %d", m.Running("i1"), sp.Starts("i1"))
+	}
 }
 
 func TestConcurrentStopStartNeverTwoWorkers(t *testing.T) {

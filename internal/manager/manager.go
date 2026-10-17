@@ -44,6 +44,11 @@ func DefaultOptions() Options {
 	}
 }
 
+// Manager supervises one worker per instance.
+//
+// Locking: supervise's cleanup writes the final state to the store while holding m.mu
+// (and Stop does the same when no supervisor runs). Callers must never hold a store
+// transaction while calling into the Manager, or they can deadlock against that write.
 type Manager struct {
 	store   *store.Store
 	spawner spawner.Spawner
@@ -165,6 +170,7 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 		return nil
 	}
 	s.stopRequested.Store(true) // supervise's cleanup persists stopped
+	s.exiting.Store(true)       // under m.mu, so a concurrent Start waits instead of no-op
 	m.mu.Unlock()
 	return m.end(ctx, s)
 }
@@ -275,6 +281,7 @@ func (m *Manager) Logout(ctx context.Context, id string) error {
 	m.mu.Lock()
 	if m.running[s.id] == s {
 		s.logoutRequested.Store(true)
+		s.exiting.Store(true) // under m.mu, so a concurrent Start waits instead of no-op
 	}
 	m.mu.Unlock()
 	return m.end(ctx, s)
