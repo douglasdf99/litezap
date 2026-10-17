@@ -43,6 +43,8 @@ internal/serve/serve.go             wiring do supervisor
 
 Convenção de testes: `go test ./...` deve passar ao fim de cada task. Use `-race` nos pacotes concorrentes (`worker`, `spawner`, `manager`, `api`).
 
+Convenção de dependências: a partir da Task 2, rode `go mod tidy` antes de cada commit e inclua `go.mod`/`go.sum` no commit se mudaram (a Task 1 só registra as dependências; o `tidy` passa a mantê-las conforme o código as importa).
+
 ---
 
 ## Chunk 1: Fundação
@@ -431,6 +433,8 @@ func TestCanTransition(t *testing.T) {
 		{Created, Connected, false},
 		{Starting, QRPending, true},
 		{Starting, Connecting, true},
+		{Starting, Connected, true},    // worker snapshot may skip connecting
+		{Starting, Reconnecting, true}, // initial connect failed, retrying
 		{QRPending, Connecting, true},
 		{QRPending, Connected, true},
 		{Connecting, Connected, true},
@@ -517,7 +521,9 @@ func (s State) Terminal() bool {
 
 var edges = map[State][]State{
 	Created:      {Starting, Stopped},
-	Starting:     {QRPending, Connecting},
+	// The worker's event snapshot carries only its latest state, so from starting
+	// any worker-reported state may arrive first.
+	Starting:     {QRPending, Connecting, Connected, Reconnecting},
 	QRPending:    {Connecting, Connected},
 	Connecting:   {Connected, Reconnecting},
 	Connected:    {Reconnecting},
@@ -788,7 +794,10 @@ func (s *Store) exec1(ctx context.Context, q string, args ...any) error {
 	return nil
 }
 
-func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
+// tsLayout is fixed-width so lexicographic order equals chronological order.
+const tsLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+func now() string { return time.Now().UTC().Format(tsLayout) }
 ```
 
 - [ ] **Step 5: Implementar `internal/store/instances.go`**
@@ -831,8 +840,8 @@ func scanInstance(row scanner) (Instance, error) {
 		return in, err
 	}
 	in.State = instance.State(state)
-	in.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-	in.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	in.CreatedAt, _ = time.Parse(tsLayout, created)
+	in.UpdatedAt, _ = time.Parse(tsLayout, updated)
 	return in, nil
 }
 
@@ -990,7 +999,7 @@ message QR {
 
 - [ ] **Step 4: Gerar o código**
 
-Run: `go tool buf generate && go build ./gen/...`
+Run: `go tool buf generate && go mod tidy && go build ./gen/...`
 Expected: cria `gen/worker/v1/worker.pb.go` e `gen/worker/v1/worker_grpc.pb.go`; o build passa.
 
 - [ ] **Step 5: Commit**
@@ -1274,7 +1283,7 @@ func (s *Server) Logout(ctx context.Context, _ *workerv1.LogoutRequest) (*worker
 
 - [ ] **Step 4: Rodar e ver passar**
 
-Run: `go test -race ./internal/worker/`
+Run: `go mod tidy && go test -race ./internal/worker/`
 Expected: `ok`.
 
 - [ ] **Step 5: Commit**
@@ -1321,10 +1330,34 @@ func (w *Whatsmeow) Run(ctx context.Context, sink Sink) error {
 	w.cli.AddEventHandler(w.handle)
 	if w.cli.Store.ID != nil {
 		sink.ConnState("connecting", "", w.jid())
-		return w.cli.Connect()
+		go w.connectLoop(ctx)
+		return nil
 	}
 	go w.qrLoop(ctx)
 	return nil
+}
+
+// connectLoop retries the initial connection (e.g. no network at boot) instead of
+// exiting, which would trip the supervisor's circuit breaker. Once connected,
+// whatsmeow's own auto-reconnect takes over.
+func (w *Whatsmeow) connectLoop(ctx context.Context) {
+	delay := time.Second
+	for ctx.Err() == nil {
+		err := w.cli.Connect()
+		if err == nil {
+			return
+		}
+		w.log.Warn("connect failed; retrying", "err", err, "in", delay)
+		w.sink.ConnState("reconnecting", "connect_failed", w.jid())
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		if delay < time.Minute {
+			delay *= 2
+		}
+	}
 }
 
 // qrLoop keeps offering QR codes until pairing succeeds or ctx ends.
@@ -1344,10 +1377,15 @@ func (w *Whatsmeow) qrLoop(ctx context.Context) {
 				continue
 			}
 		}
-		w.sink.ConnState("qr_pending", "", "")
+		announced := false
 		for item := range ch {
 			switch item.Event {
 			case whatsmeow.QRChannelEventCode:
+				// Only report qr_pending once the socket is ready: PairPhone must wait for the first QR.
+				if !announced {
+					w.sink.ConnState("qr_pending", "", "")
+					announced = true
+				}
 				w.sink.QR(item.Code, item.Timeout)
 			case whatsmeow.QRChannelSuccess.Event:
 				return
@@ -1398,7 +1436,15 @@ func (w *Whatsmeow) PairPhone(ctx context.Context, phone string) (string, error)
 	return w.cli.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 }
 
-func (w *Whatsmeow) Logout(ctx context.Context) error { return w.cli.Logout(ctx) }
+// Logout unlinks the device. whatsmeow emits no event for a self-initiated logout,
+// so we report logged_out ourselves.
+func (w *Whatsmeow) Logout(ctx context.Context) error {
+	if err := w.cli.Logout(ctx); err != nil {
+		return err
+	}
+	w.sink.ConnState("logged_out", "api", "")
+	return nil
+}
 
 func (w *Whatsmeow) Disconnect() { w.cli.Disconnect() }
 ```
@@ -1495,7 +1541,7 @@ func Run(ctx context.Context, opt Options, log *slog.Logger) error {
 
 - [ ] **Step 3: Compilar e vet**
 
-Run: `go build ./... && go vet ./internal/worker/`
+Run: `go mod tidy && go build ./... && go vet ./internal/worker/`
 Expected: sem erros. (Se o whatsmeow tiver mudado alguma assinatura, ajuste conforme `go doc go.mau.fi/whatsmeow.Client`.)
 
 - [ ] **Step 4: Commit**
@@ -1611,7 +1657,7 @@ git commit -m "feat(spawner): interfaces e caminho curto de socket"
 ### Task 10: Process spawner
 
 **Files:**
-- Create: `internal/spawner/process.go`
+- Create: `internal/spawner/process.go`, `internal/spawner/detach_unix.go`, `internal/spawner/detach_windows.go`
 - Test: `internal/spawner/process_test.go`
 
 O teste usa o próprio binário de teste como worker (padrão "re-exec" via `TestMain`), servindo um `worker.Server` com um WAClient stub.
@@ -1799,6 +1845,7 @@ func (p *Process) Start(ctx context.Context, id string) (WorkerHandle, error) {
 		cmd.Env = append(cmd.Environ(), fmt.Sprintf("GOMEMLIMIT=%dMiB", p.MemoryLimitMB))
 	}
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	detach(cmd) // own process group: Ctrl+C on the supervisor must not hit workers directly
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start worker: %w", err)
 	}
@@ -1825,6 +1872,13 @@ func (p *Process) Start(ctx context.Context, id string) (WorkerHandle, error) {
 	}
 	h.conn = conn
 	h.client = workerv1.NewWorkerClient(conn)
+	// The socket file exists from bind(), slightly before listen(); wait until the worker answers.
+	pctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if _, err := h.client.Ping(pctx, &workerv1.PingRequest{}, grpc.WaitForReady(true)); err != nil {
+		_ = h.Kill()
+		return nil, fmt.Errorf("worker not answering: %w", err)
+	}
 	return h, nil
 }
 
@@ -1927,15 +1981,42 @@ func isWorkerProcess(pid int) bool {
 }
 ```
 
-- [ ] **Step 4: Rodar e ver passar**
+- [ ] **Step 4: Implementar `detach_unix.go` e `detach_windows.go`**
+
+```go
+//go:build !windows
+
+package spawner
+
+import (
+	"os/exec"
+	"syscall"
+)
+
+func detach(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+}
+```
+
+```go
+//go:build windows
+
+package spawner
+
+import "os/exec"
+
+func detach(cmd *exec.Cmd) {}
+```
+
+- [ ] **Step 5: Rodar e ver passar**
 
 Run: `go test -race ./internal/spawner/`
 Expected: `ok`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add internal/spawner
+git add internal/spawner go.mod go.sum
 git commit -m "feat(spawner): spawner de processos com pid files e limpeza de órfãos"
 ```
 
@@ -2116,7 +2197,18 @@ func (f *Fake) Crash() {
 func (f *Fake) Client() workerv1.WorkerClient { return f.client }
 func (f *Fake) Done() <-chan struct{}         { return f.done }
 func (f *Fake) Kill() error                   { f.Crash(); return nil }
-func (f *Fake) Close(context.Context) error   { f.Closed.Store(true); f.Crash(); return nil }
+// Close mimics a graceful stop: in-flight RPCs (e.g. Logout) finish before the fake dies.
+func (f *Fake) Close(context.Context) error {
+	f.Closed.Store(true)
+	done := make(chan struct{})
+	go func() { f.grpc.GracefulStop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+	}
+	f.Crash()
+	return nil
+}
 
 // Spawner is a spawner.Spawner that creates Fakes and records every start.
 type Spawner struct {
@@ -2495,6 +2587,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
@@ -2545,6 +2638,7 @@ type supervised struct {
 	id      string
 	cancel  context.CancelFunc
 	done    chan struct{}
+	exiting atomic.Bool // supervise is returning; a new Start must wait for done
 	breaker Breaker
 
 	mu     sync.Mutex
@@ -2572,8 +2666,23 @@ func (m *Manager) Start(ctx context.Context, id string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.running[id]; ok {
-		return nil
+	for {
+		old, ok := m.running[id]
+		if !ok {
+			break
+		}
+		if !old.exiting.Load() {
+			return nil
+		}
+		// The previous supervisor is shutting down (e.g. just logged out): wait for it.
+		m.mu.Unlock()
+		select {
+		case <-old.done:
+		case <-ctx.Done():
+			m.mu.Lock()
+			return ctx.Err()
+		}
+		m.mu.Lock()
 	}
 	sctx, cancel := context.WithCancel(context.Background())
 	s := &supervised{
@@ -2710,6 +2819,7 @@ func (m *Manager) Logout(ctx context.Context, id string) error {
 
 func (m *Manager) supervise(ctx context.Context, s *supervised) {
 	defer func() {
+		s.exiting.Store(true)
 		m.mu.Lock()
 		if m.running[s.id] == s {
 			delete(m.running, s.id)
@@ -2757,6 +2867,7 @@ func (m *Manager) runWorker(ctx context.Context, s *supervised, h spawner.Worker
 	defer cancel()
 
 	closeWorker := func() {
+		cancel() // end our Events stream first so the worker's graceful stop is not held open
 		cctx, c := context.WithTimeout(context.Background(), m.opt.StopTimeout)
 		defer c()
 		_ = h.Close(cctx)
@@ -3750,7 +3861,7 @@ func (s *server) pairPhone(w http.ResponseWriter, r *http.Request) {
 
 - [ ] **Step 4: Rodar e ver passar**
 
-Run: `go test -race -count=3 ./internal/api/`
+Run: `go mod tidy && go test -race -count=3 ./internal/api/`
 Expected: `ok`.
 
 - [ ] **Step 5: Commit**

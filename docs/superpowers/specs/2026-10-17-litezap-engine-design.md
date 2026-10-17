@@ -200,7 +200,7 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 
 | Método e rota | Escopo | Descrição |
 |---|---|---|
-| `POST /instances` | admin | cria instância; devolve `{id, token}` |
+| `POST /instances` | admin | cria instância; devolve `{instance, token}` |
 | `GET /instances` | admin | lista |
 | `GET /instances/{id}` | inst | estado e dados do número |
 | `DELETE /instances/{id}` | admin | logout + para worker + apaga dados |
@@ -260,6 +260,7 @@ Retenção do log de mensagens: ilimitada por padrão, com `message_retention_da
 | `created` | `starting` | `start` (automático na criação) |
 | `starting` | `qr_pending` | worker ativo, sem sessão salva |
 | `starting` | `connecting` | worker ativo, com sessão salva |
+| `starting` | `connected` · `reconnecting` | o snapshot do worker traz só o estado mais recente |
 | `qr_pending` | `connecting` | QR escaneado / código pareado |
 | `connecting` | `connected` | conexão estabelecida |
 | `connected` | `reconnecting` | queda de conexão ou watchdog |
