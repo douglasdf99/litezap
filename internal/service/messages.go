@@ -68,9 +68,11 @@ type MediaFile struct {
 }
 
 const (
-	maxWait      = 2 * time.Minute
-	rpcTimeout   = 30 * time.Second
-	maxTextBytes = 65536
+	maxWait          = 2 * time.Minute
+	rpcTimeout       = 30 * time.Second
+	maxTextBytes     = 65536
+	maxEmojiBytes    = 64
+	maxFileNameBytes = 255
 	// maxMediaJobs bounds concurrent media downloads/decodes (each holds the file in memory).
 	maxMediaJobs   = 3
 	defaultExpires = 24 * time.Hour
@@ -367,6 +369,9 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 		if in.Reaction == nil || in.Reaction.MessageID == "" {
 			return p, apierr.Validation("reaction.message_id is required")
 		}
+		if len(in.Reaction.Emoji) > maxEmojiBytes {
+			return p, apierr.Validation("reaction.emoji is limited to 64 bytes")
+		}
 		target, err := s.Store.GetMessage(ctx, instanceID, in.Reaction.MessageID)
 		if errors.Is(err, store.ErrNotFound) || (err == nil && target.ChatJID != chat) {
 			target, err = s.Store.MessageByWAID(ctx, instanceID, chat, in.Reaction.MessageID)
@@ -390,6 +395,12 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 	m := in.Media
 	if m == nil || (m.URL == "") == (m.Base64 == "") {
 		return p, apierr.Validation("media needs exactly one of url or base64")
+	}
+	if len(in.Caption) > maxTextBytes {
+		return p, apierr.Validation("caption is limited to 64KB")
+	}
+	if len(m.FileName) > maxFileNameBytes {
+		return p, apierr.Validation("media.file_name is limited to 255 bytes")
 	}
 	release, err := s.acquireMedia(ctx)
 	if err != nil {
@@ -421,7 +432,9 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 	name := m.FileName
 	if name == "" && in.Type == "document" && m.URL != "" {
 		if u, err := url.Parse(m.URL); err == nil {
-			name = path.Base(u.Path)
+			if name = path.Base(u.Path); len(name) > maxFileNameBytes {
+				name = "" // a name taken from the URL never exceeds the limit either
+			}
 		}
 	}
 	dir := filepath.Join(s.DataDir, "outbox", instanceID)

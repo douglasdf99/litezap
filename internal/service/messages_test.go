@@ -167,6 +167,11 @@ func TestSendTextWaitAndIdempotency(t *testing.T) {
 func TestSendValidationAndFailures(t *testing.T) {
 	e := newMsgEnv(t)
 	ctx := context.Background()
+	pngB64 := base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\nimage"))
+	sent, err := e.svc.Send(ctx, "i1", SendInput{To: "5511988887777", Type: "text", Text: "alvo"}, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
 	bad := []SendInput{
 		{To: "123", Type: "text", Text: "x"},
 		{To: "5511988887777", Type: "text"},
@@ -176,6 +181,9 @@ func TestSendValidationAndFailures(t *testing.T) {
 		{To: "5511988887777", Type: "reaction", Reaction: &ReactionInput{MessageID: "nope", Emoji: "👍"}},
 		{To: "5511988887777", Type: "text", Text: "x", ExpiresAfter: "10s"},
 		{To: "5511988887777", Type: "image", Media: &MediaInput{Base64: base64.StdEncoding.EncodeToString([]byte("not an image"))}},
+		{To: "5511988887777", Type: "image", Caption: strings.Repeat("x", maxTextBytes+1), Media: &MediaInput{Base64: pngB64}},
+		{To: "5511988887777", Type: "document", Media: &MediaInput{Base64: pngB64, FileName: strings.Repeat("a", 256)}},
+		{To: "5511988887777", Type: "reaction", Reaction: &ReactionInput{MessageID: sent.ID, Emoji: strings.Repeat("x", 65)}},
 	}
 	for i, in := range bad {
 		if _, err := e.svc.Send(ctx, "i1", in, 0); apiCode(err) != "validation_failed" {
@@ -187,13 +195,13 @@ func TestSendValidationAndFailures(t *testing.T) {
 		t.Fatalf("big image = %v", err)
 	}
 	e.sp.Last("i1").WA.SetUnregistered("5511900000000")
-	_, err := e.svc.Send(ctx, "i1", SendInput{To: "5511900000000", Type: "text", Text: "oi"}, 2*time.Second)
+	_, err = e.svc.Send(ctx, "i1", SendInput{To: "5511900000000", Type: "text", Text: "oi"}, 2*time.Second)
 	var ae *apierr.Error
 	if !errors.As(err, &ae) || ae.Code != "invalid_number" || ae.Status != http.StatusBadRequest {
 		t.Fatalf("failed send = %v", err)
 	}
-	if n := len(e.sp.Last("i1").WA.Sent()); n != 0 {
-		t.Fatalf("a number without WhatsApp was sent to (%d sends)", n)
+	if n := len(e.sp.Last("i1").WA.Sent()); n != 1 {
+		t.Fatalf("a number without WhatsApp was sent to (%d sends, want only the reaction target)", n)
 	}
 	e.sp.Last("i1").WA.SetSendFunc(func(*workerv1.SendRequest) (*workerv1.SendResponse, error) {
 		return nil, status.Error(codes.PermissionDenied, "forbidden: no permission to send in this group")
