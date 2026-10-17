@@ -515,3 +515,70 @@ func TestDeletedInstanceStopsDispatcher(t *testing.T) {
 		return len(e.q.disp) == 0
 	})
 }
+
+// An identical text to new recipients in a row doubles the interval, ramp or not.
+func TestDoubledIntervalForIdenticalTextToNewRecipients(t *testing.T) {
+	for _, ramp := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ramp off", true: "ramp on"}[ramp], func(t *testing.T) {
+			s := fastSettings()
+			s.MinIntervalMS = 3000
+			s.Ramp = settings.Ramp{Enabled: ramp, StartPerDay: 10, EndPerDay: 10, Days: 1}
+			e := newEnv(t, s, instance.Connected)
+			e.enqueue(chatA, Payload{Type: "text", Text: "promo"})
+			e.enqueue(chatB, Payload{Type: "text", Text: "promo"})
+			e.eventually("first send", func() bool { return len(e.fake.WA.Sent()) == 1 && e.clock.Waiters() > 0 })
+			e.clock.Advance(3 * time.Second)
+			time.Sleep(20 * time.Millisecond)
+			if n := len(e.fake.WA.Sent()); n != 1 {
+				t.Fatalf("sent %d after 3s, want the doubled 6s interval", n)
+			}
+			e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+			e.clock.Advance(3 * time.Second)
+			e.eventually("second send", func() bool { return len(e.fake.WA.Sent()) == 2 })
+		})
+	}
+}
+
+func TestMaxPerMinuteAcrossSends(t *testing.T) {
+	s := fastSettings()
+	s.MaxPerMinute = 2
+	e := newEnv(t, s, instance.Connected)
+	e.enqueue(chatA, Payload{Type: "text", Text: "um"})
+	e.enqueue(chatB, Payload{Type: "text", Text: "dois"})
+	c := e.enqueue(chatC, Payload{Type: "text", Text: "três"})
+	e.eventually("two sends", func() bool { return len(e.fake.WA.Sent()) == 2 && e.clock.Waiters() > 0 })
+	e.clock.Advance(59 * time.Second)
+	time.Sleep(20 * time.Millisecond)
+	if n := len(e.fake.WA.Sent()); n != 2 {
+		t.Fatalf("sent %d inside the minute, max_per_minute is 2", n)
+	}
+	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(time.Second)
+	e.eventually("third send after a minute", func() bool { return e.status(c).Status == store.OutSent })
+}
+
+// A retry waits for its backoff and for min_interval since the previous attempt.
+func TestPacingAppliesBetweenRetries(t *testing.T) {
+	s := fastSettings()
+	s.MinIntervalMS = 10000
+	e := newEnv(t, s, instance.Connected)
+	calls := 0
+	e.fake.WA.SetSendFunc(func(req *workerv1.SendRequest) (*workerv1.SendResponse, error) {
+		if calls++; calls == 1 {
+			return nil, status.Error(codes.Unknown, "worker_error: transient")
+		}
+		return &workerv1.SendResponse{MessageId: req.MessageId}, nil
+	})
+	id := e.enqueue(chatA, Payload{Type: "text", Text: "oi"})
+	e.eventually("first attempt", func() bool { return len(e.fake.WA.Sent()) == 1 && e.clock.Waiters() > 0 })
+	e.clock.Advance(retryDelay(1)) // 5s: the backoff is over, min_interval (10s) is not
+	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(4 * time.Second)
+	time.Sleep(20 * time.Millisecond)
+	if n := len(e.fake.WA.Sent()); n != 1 {
+		t.Fatalf("retried after 9s, min_interval is 10s (%d attempts)", n)
+	}
+	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
+	e.clock.Advance(time.Second)
+	e.eventually("sent at 10s", func() bool { return e.status(id).Status == store.OutSent })
+}

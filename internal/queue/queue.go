@@ -221,8 +221,9 @@ type dispatcher struct {
 	id    string
 	wake  chan struct{}
 	pacer pacer
-	// lastNewText is the text of the previous send when it went to a new recipient.
-	lastNewText string
+	// lastNewText/lastNewChat: the text and chat of the previous send when it went to a new
+	// recipient.
+	lastNewText, lastNewChat string
 	// winStart/winJitter: the jitter drawn for the send window starting at winStart.
 	winStart  time.Time
 	winJitter time.Duration
@@ -319,13 +320,11 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 		return errPause, true
 	}
 	if !item.ExpiresAt.IsZero() && now.After(item.ExpiresAt) {
-		d.fail(item, item.Attempts, "expired: not sent before expires_after")
-		return 0, true
+		return pauseOn(d.fail(item, item.Attempts, "expired: not sent before expires_after")), true
 	}
 	var p Payload
 	if err := json.Unmarshal([]byte(item.Payload), &p); err != nil {
-		d.fail(item, item.Attempts, "validation_failed: unreadable payload")
-		return 0, true
+		return pauseOn(d.fail(item, item.Attempts, "validation_failed: unreadable payload")), true
 	}
 	if opens, wait, err := d.window(ctx, set, item, now); err != nil {
 		d.log().Error("queue: send window", "err", err)
@@ -333,6 +332,7 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 	} else if wait {
 		if err := st.Defer(ctx, item.ID, opens, "send_window: waiting for the send window"); err != nil {
 			d.log().Error("queue: defer", "err", err)
+			return errPause, true
 		}
 		return 0, true
 	}
@@ -340,18 +340,23 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 		return 0, true
 	}
 
-	isNew, deferUntil, err := d.ramp(ctx, in, set, item, now)
+	isNew, err := d.newRecipient(ctx, item)
 	if err != nil {
-		d.log().Error("queue: ramp", "err", err)
+		d.log().Error("queue: load chat", "err", err)
 		return errPause, true
 	}
-	if !deferUntil.IsZero() {
-		if err := st.Defer(ctx, item.ID, deferUntil, "ramp_limit: daily limit of new recipients reached"); err != nil {
+	if until, err := d.ramp(ctx, in, set, item, isNew, now); err != nil {
+		d.log().Error("queue: ramp", "err", err)
+		return errPause, true
+	} else if !until.IsZero() {
+		if err := st.Defer(ctx, item.ID, until, "ramp_limit: daily limit of new recipients reached"); err != nil {
 			d.log().Error("queue: defer", "err", err)
+			return errPause, true
 		}
 		return 0, true
 	}
-	double := isNew && p.Type == "text" && p.Text != "" && p.Text == d.lastNewText
+	// Doubled only towards another chat: a retry of the same item is not a repeated text.
+	double := isNew && p.Type == "text" && p.Text != "" && p.Text == d.lastNewText && item.ChatJID != d.lastNewChat
 	if w := d.pacer.wait(now, set, double); w > 0 {
 		return w, true
 	}
@@ -361,8 +366,7 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 	}
 	req, err := buildRequest(item, p)
 	if err != nil {
-		d.fail(item, item.Attempts, "validation_failed: "+err.Error())
-		return 0, true
+		return pauseOn(d.fail(item, item.Attempts, "validation_failed: "+err.Error())), true
 	}
 	if err := st.MarkInFlight(ctx, item.ID, isNew, pendingMessage(item, p, now)); err != nil {
 		d.log().Error("queue: mark in flight", "err", err)
@@ -382,12 +386,20 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 	cancel()
 	d.pacer.record(opt.Clock.Now(), set)
 	if isNew && p.Type == "text" {
-		d.lastNewText = p.Text
+		d.lastNewText, d.lastNewChat = p.Text, item.ChatJID
 	} else {
-		d.lastNewText = ""
+		d.lastNewText, d.lastNewChat = "", ""
 	}
-	d.finish(item, p, resp, sendErr)
-	return 0, true
+	return pauseOn(d.finish(item, p, resp, sendErr)), true
+}
+
+// pauseOn is the pause after a store write: errPause when it failed (no tight loop on the
+// store's single connection), else none.
+func pauseOn(err error) time.Duration {
+	if err != nil {
+		return errPause
+	}
+	return 0
 }
 
 // activeWindow is how recent a received message must be for a chat to count as an active
@@ -481,27 +493,27 @@ func (d *dispatcher) resolve(ctx context.Context, item store.Outbound, now time.
 	return false
 }
 
-// ramp decides whether item goes to a new recipient (counting against today's limit) or
-// must wait for the next day's send window (deferUntil set). Chats (groups included) that
-// already sent us something never count.
-func (d *dispatcher) ramp(ctx context.Context, in store.Instance, set settings.Settings, item store.Outbound, now time.Time) (isNew bool, deferUntil time.Time, err error) {
-	if !set.Ramp.Enabled {
-		return false, time.Time{}, nil
-	}
+// newRecipient reports whether item goes to a chat (groups included) that never sent us
+// anything. Such sends count against the ramp, and an identical text to new recipients in
+// a row doubles the interval, whether or not the ramp is enabled.
+func (d *dispatcher) newRecipient(ctx context.Context, item store.Outbound) (bool, error) {
 	chat, err := d.q.store.GetChat(ctx, d.id, item.ChatJID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return false, time.Time{}, err
+		return false, err
 	}
-	if chat.HasInbound {
-		return false, time.Time{}, nil
+	return !chat.HasInbound, nil
+}
+
+// ramp returns when item must be deferred to because today's limit of new recipients is
+// reached (zero: it may go now). Each new chat counts once a day.
+func (d *dispatcher) ramp(ctx context.Context, in store.Instance, set settings.Settings, item store.Outbound, isNew bool, now time.Time) (time.Time, error) {
+	if !set.Ramp.Enabled || !isNew {
+		return time.Time{}, nil
 	}
 	day := set.DayStart(now)
 	count, counted, err := d.q.store.NewRecipientsSince(ctx, d.id, item.ChatJID, day)
-	if err != nil || counted {
-		return false, time.Time{}, err
-	}
-	if count < set.Ramp.DailyCap(in.FirstConnectedAt, now) {
-		return true, time.Time{}, nil
+	if err != nil || counted || count < set.Ramp.DailyCap(in.FirstConnectedAt, now) {
+		return time.Time{}, err
 	}
 	// Not at midnight: at the next day's window start plus jitter (a burst of deferred
 	// messages at night looks like spam).
@@ -509,7 +521,7 @@ func (d *dispatcher) ramp(ctx context.Context, in store.Instance, set settings.S
 	if start, _, _ := set.WindowAt(tomorrow); !start.IsZero() {
 		tomorrow = start
 	}
-	return false, tomorrow.Add(time.Duration(d.q.opt.Rand() * float64(d.q.opt.WindowJitter))), nil
+	return tomorrow.Add(time.Duration(d.q.opt.Rand() * float64(d.q.opt.WindowJitter))), nil
 }
 
 func buildRequest(item store.Outbound, p Payload) (*workerv1.SendRequest, error) {
@@ -555,8 +567,8 @@ func (d *dispatcher) typing(ctx context.Context, cli workerv1.WorkerClient, chat
 	}
 }
 
-// finish records the outcome of a send attempt.
-func (d *dispatcher) finish(item store.Outbound, p Payload, resp *workerv1.SendResponse, sendErr error) {
+// finish records the outcome of a send attempt; an error means the store write failed.
+func (d *dispatcher) finish(item store.Outbound, p Payload, resp *workerv1.SendResponse, sendErr error) error {
 	ctx := context.Background()
 	st, opt := d.q.store, d.q.opt
 	if sendErr == nil {
@@ -564,19 +576,11 @@ func (d *dispatcher) finish(item store.Outbound, p Payload, resp *workerv1.SendR
 		if resp.GetTimestampMs() > 0 {
 			at = time.UnixMilli(resp.GetTimestampMs())
 		}
-		if err := st.MarkSent(ctx, item.ID, at); err != nil {
-			d.log().Error("queue: mark sent", "err", err)
-		}
-		d.done(item, p)
-		return
+		return d.sent(item, p, at)
 	}
 	// A receipt already proved delivery (the worker's answer was lost or late): it was sent.
 	if m, err := st.GetMessage(ctx, d.id, item.ID); err == nil && (m.Status == "delivered" || m.Status == "read") {
-		if err := st.MarkSent(ctx, item.ID, opt.Clock.Now()); err != nil {
-			d.log().Error("queue: mark sent", "err", err)
-		}
-		d.done(item, p)
-		return
+		return d.sent(item, p, opt.Clock.Now())
 	}
 	s := status.Convert(sendErr)
 	msg := s.Message()
@@ -587,43 +591,57 @@ func (d *dispatcher) finish(item store.Outbound, p Payload, resp *workerv1.SendR
 	if strings.HasPrefix(msg, "instance_not_connected:") {
 		// The worker itself says it is not connected: wait without spending an attempt,
 		// whatever the stored state says (it may lag behind).
-		if err := st.Requeue(ctx, item.ID, opt.Clock.Now().Add(errPause), item.Attempts, msg); err != nil {
-			d.log().Error("queue: requeue", "err", err)
-		}
-		return
+		return d.requeue(item, opt.Clock.Now().Add(errPause), item.Attempts, msg)
 	}
 	switch s.Code() {
 	case codes.InvalidArgument, codes.PermissionDenied, codes.FailedPrecondition:
-		d.fail(item, attempts, msg)
-		return
+		return d.fail(item, attempts, msg)
 	case codes.Unavailable, codes.Canceled:
 		// Not connected: unless the instance still claims to be connected, wait for the
 		// reconnection without consuming an attempt.
 		if in, err := st.GetInstance(ctx, d.id); err == nil && in.State != instance.Connected {
-			if err := st.Requeue(ctx, item.ID, opt.Clock.Now(), item.Attempts, msg); err != nil {
-				d.log().Error("queue: requeue", "err", err)
-			}
-			return
+			return d.requeue(item, opt.Clock.Now(), item.Attempts, msg)
 		}
 	case codes.DeadlineExceeded:
 		msg = "worker_timeout: " + strings.TrimPrefix(msg, "worker_timeout: ")
 	}
 	if attempts >= opt.MaxAttempts {
-		d.fail(item, attempts, msg)
-		return
+		return d.fail(item, attempts, msg)
 	}
-	if err := st.Requeue(ctx, item.ID, opt.Clock.Now().Add(retryDelay(attempts)), attempts, msg); err != nil {
-		d.log().Error("queue: requeue", "err", err)
-	}
+	return d.requeue(item, opt.Clock.Now().Add(retryDelay(attempts)), attempts, msg)
 }
 
-func (d *dispatcher) fail(item store.Outbound, attempts int, msg string) {
+func (d *dispatcher) requeue(item store.Outbound, next time.Time, attempts int, msg string) error {
+	err := d.q.store.Requeue(context.Background(), item.ID, next, attempts, msg)
+	if err != nil {
+		d.log().Error("queue: requeue", "err", err)
+	}
+	return err
+}
+
+// sent finishes a delivered item. If the write fails the item stays in flight (boot
+// recovery requeues it; the reused wa_message_id keeps the resend idempotent), so the
+// staged media is kept.
+func (d *dispatcher) sent(item store.Outbound, p Payload, at time.Time) error {
+	if err := d.q.store.MarkSent(context.Background(), item.ID, at); err != nil {
+		d.log().Error("queue: mark sent", "err", err)
+		return err
+	}
+	d.done(item, p)
+	return nil
+}
+
+// fail finishes an item for good. If the write fails the item is still queued and keeps
+// its staged media.
+func (d *dispatcher) fail(item store.Outbound, attempts int, msg string) error {
 	if err := d.q.store.MarkFailed(context.Background(), item.ID, attempts, msg); err != nil {
 		d.log().Error("queue: mark failed", "err", err)
+		return err
 	}
 	var p Payload
 	_ = json.Unmarshal([]byte(item.Payload), &p)
 	d.done(item, p)
+	return nil
 }
 
 // done cleans up a final item and wakes its waiters.
