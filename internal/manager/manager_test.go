@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +28,11 @@ func testOptions() Options {
 
 func setup(t *testing.T, ids ...string) (*Manager, *store.Store, *workertest.Spawner) {
 	t.Helper()
+	return setupWith(t, testOptions(), ids...)
+}
+
+func setupWith(t *testing.T, opt Options, ids ...string) (*Manager, *store.Store, *workertest.Spawner) {
+	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "m.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +44,7 @@ func setup(t *testing.T, ids ...string) (*Manager, *store.Store, *workertest.Spa
 		}
 	}
 	sp := workertest.NewSpawner()
-	m := New(st, sp, testOptions(), slog.New(slog.DiscardHandler))
+	m := New(st, sp, opt, slog.New(slog.DiscardHandler))
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -214,5 +220,144 @@ func TestStartRefusesBanned(t *testing.T) {
 	st.UpdateInstanceState(context.Background(), "i1", instance.Banned, "")
 	if err := m.Start(context.Background(), "i1"); !errors.Is(err, ErrBanned) {
 		t.Fatalf("expected ErrBanned, got %v", err)
+	}
+}
+
+func TestLogoutWithMissedEventEndsSupervision(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	sp.OnStart = func(f *workertest.Fake) { f.WA.SilentLogout.Store(true); f.Emit("connected") }
+	m.Start(context.Background(), "i1")
+	eventually(t, "connected", stateIs(t, st, "i1", instance.Connected))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	begin := time.Now()
+	if err := m.Logout(ctx, "i1"); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	if d := time.Since(begin); d > time.Second {
+		t.Fatalf("logout took %s", d)
+	}
+	if !stateIs(t, st, "i1", instance.LoggedOut)() {
+		t.Fatal("state must be logged_out when Logout returns")
+	}
+	if m.Running("i1") {
+		t.Fatal("must not be running after logout")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := sp.Starts("i1"); n != 1 {
+		t.Fatalf("starts = %d, want 1", n)
+	}
+	if sp.Live("i1") != 0 {
+		t.Fatal("worker must be closed after logout")
+	}
+}
+
+func TestStartDuringSlowStopWaitsForOldWorker(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	sp.OnStart = func(f *workertest.Fake) { f.CloseDelay = 200 * time.Millisecond; f.Emit("connected") }
+	ctx := context.Background()
+	m.Start(ctx, "i1")
+	eventually(t, "connected", stateIs(t, st, "i1", instance.Connected))
+	stopped := make(chan error, 1)
+	go func() { stopped <- m.Stop(ctx, "i1") }()
+	eventually(t, "close begun", func() bool { return sp.Last("i1").Closed.Load() })
+	if err := m.Start(ctx, "i1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+	if n := sp.MaxLive("i1"); n > 1 {
+		t.Fatalf("%d workers alive at once", n)
+	}
+}
+
+func TestConcurrentStopStartNeverTwoWorkers(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	sp.OnStart = func(f *workertest.Fake) { f.CloseDelay = 20 * time.Millisecond; f.Emit("connected") }
+	ctx := context.Background()
+	m.Start(ctx, "i1")
+	eventually(t, "connected", stateIs(t, st, "i1", instance.Connected))
+	for range 10 {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _ = m.Stop(ctx, "i1") }()
+		go func() { defer wg.Done(); _ = m.Start(ctx, "i1") }()
+		wg.Wait()
+		if n := sp.MaxLive("i1"); n > 1 {
+			t.Fatalf("%d workers alive at once", n)
+		}
+	}
+}
+
+func TestWorkerReportedTerminalStates(t *testing.T) {
+	for _, want := range []instance.State{instance.Banned, instance.Failed} {
+		t.Run(string(want), func(t *testing.T) {
+			m, st, sp := setup(t, "i1")
+			sp.OnStart = func(f *workertest.Fake) { f.Emit("connected") }
+			m.Start(context.Background(), "i1")
+			eventually(t, "connected", stateIs(t, st, "i1", instance.Connected))
+			sp.Last("i1").Emit(string(want))
+			eventually(t, string(want), stateIs(t, st, "i1", want))
+			eventually(t, "not running", func() bool { return !m.Running("i1") })
+			time.Sleep(50 * time.Millisecond)
+			if n := sp.Starts("i1"); n != 1 {
+				t.Fatalf("starts = %d, want 1", n)
+			}
+			if !stateIs(t, st, "i1", want)() {
+				t.Fatal("terminal state must persist")
+			}
+		})
+	}
+}
+
+func TestStopDuringBackoff(t *testing.T) {
+	opt := testOptions()
+	opt.BackoffBase, opt.BackoffMax, opt.BreakerMax = 10*time.Second, 10*time.Second, 100
+	m, st, sp := setupWith(t, opt, "i1")
+	sp.FailStart = errors.New("spawn failed")
+	ctx := context.Background()
+	m.Start(ctx, "i1")
+	eventually(t, "starting", stateIs(t, st, "i1", instance.Starting))
+	time.Sleep(20 * time.Millisecond) // let the failed spawn enter backoff
+	sctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err := m.Stop(sctx, "i1"); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if !stateIs(t, st, "i1", instance.Stopped)() || m.Running("i1") {
+		t.Fatal("instance should be stopped and not running")
+	}
+}
+
+func TestStartTwiceIsNoop(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	sp.OnStart = func(f *workertest.Fake) { f.Emit("connected") }
+	ctx := context.Background()
+	m.Start(ctx, "i1")
+	m.Start(ctx, "i1")
+	eventually(t, "connected", stateIs(t, st, "i1", instance.Connected))
+	m.Start(ctx, "i1")
+	time.Sleep(50 * time.Millisecond)
+	if n := sp.Starts("i1"); n != 1 {
+		t.Fatalf("starts = %d, want 1", n)
+	}
+}
+
+func TestShutdownKeepsStateAndRefusesStart(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	sp.OnStart = func(f *workertest.Fake) { f.Emit("connected") }
+	ctx := context.Background()
+	m.Start(ctx, "i1")
+	eventually(t, "connected", stateIs(t, st, "i1", instance.Connected))
+	m.Shutdown(ctx)
+	if m.Running("i1") || sp.Live("i1") != 0 {
+		t.Fatal("worker should be closed after shutdown")
+	}
+	if !stateIs(t, st, "i1", instance.Connected)() {
+		t.Fatal("shutdown must keep the stored state")
+	}
+	if err := m.Start(ctx, "i1"); !errors.Is(err, ErrShuttingDown) {
+		t.Fatalf("expected ErrShuttingDown, got %v", err)
 	}
 }

@@ -24,6 +24,8 @@ type FakeWA struct {
 	sink     worker.Sink
 	PairCode string
 	Logouts  atomic.Int32
+	// SilentLogout makes Logout succeed without reporting logged_out (a missed event).
+	SilentLogout atomic.Bool
 }
 
 func (f *FakeWA) Run(ctx context.Context, sink worker.Sink) error {
@@ -43,6 +45,9 @@ func (f *FakeWA) PairPhone(context.Context, string) (string, error) { return f.P
 
 func (f *FakeWA) Logout(context.Context) error {
 	f.Logouts.Add(1)
+	if f.SilentLogout.Load() {
+		return nil
+	}
 	f.getSink().ConnState("logged_out", "api", "")
 	return nil
 }
@@ -55,6 +60,8 @@ type Fake struct {
 	WA        *FakeWA
 	PingBlock atomic.Bool
 	Closed    atomic.Bool
+	// CloseDelay makes Close slow, like a worker taking time to stop. Set it in OnStart.
+	CloseDelay time.Duration
 
 	server *worker.Server
 	grpc   *grpc.Server
@@ -62,6 +69,7 @@ type Fake struct {
 	client workerv1.WorkerClient
 	done   chan struct{}
 	once   sync.Once
+	onDone func() // called synchronously once the fake has died
 }
 
 type fakeService struct {
@@ -77,8 +85,8 @@ func (s fakeService) Ping(ctx context.Context, req *workerv1.PingRequest) (*work
 	return s.Server.Ping(ctx, req)
 }
 
-func newFake(id string) *Fake {
-	f := &Fake{ID: id, WA: &FakeWA{PairCode: "PAIR-CODE"}, done: make(chan struct{})}
+func newFake(id string, onDone func()) *Fake {
+	f := &Fake{ID: id, WA: &FakeWA{PairCode: "PAIR-CODE"}, done: make(chan struct{}), onDone: onDone}
 	f.server = worker.NewServer(f.WA)
 	_ = f.server.Start(context.Background())
 	lis := bufconn.Listen(1 << 20)
@@ -107,6 +115,9 @@ func (f *Fake) EmitQR(code string) { f.WA.getSink().QR(code, time.Minute) }
 func (f *Fake) Crash() {
 	f.once.Do(func() {
 		close(f.done)
+		if f.onDone != nil {
+			f.onDone()
+		}
 		f.grpc.Stop()
 		f.cc.Close()
 	})
@@ -119,6 +130,12 @@ func (f *Fake) Kill() error                   { f.Crash(); return nil }
 // Close mimics a graceful stop: in-flight RPCs (e.g. Logout) finish before the fake dies.
 func (f *Fake) Close(ctx context.Context) error {
 	f.Closed.Store(true)
+	if f.CloseDelay > 0 {
+		select {
+		case <-time.After(f.CloseDelay):
+		case <-ctx.Done():
+		}
+	}
 	done := make(chan struct{})
 	go func() { f.grpc.GracefulStop(); close(done) }()
 	select {
@@ -133,11 +150,15 @@ func (f *Fake) Close(ctx context.Context) error {
 type Spawner struct {
 	mu        sync.Mutex
 	fakes     map[string][]*Fake
+	live      map[string]int
+	maxLive   map[string]int
 	OnStart   func(*Fake)
 	FailStart error
 }
 
-func NewSpawner() *Spawner { return &Spawner{fakes: map[string][]*Fake{}} }
+func NewSpawner() *Spawner {
+	return &Spawner{fakes: map[string][]*Fake{}, live: map[string]int{}, maxLive: map[string]int{}}
+}
 
 func (s *Spawner) Start(ctx context.Context, id string) (spawner.WorkerHandle, error) {
 	s.mu.Lock()
@@ -146,9 +167,17 @@ func (s *Spawner) Start(ctx context.Context, id string) (spawner.WorkerHandle, e
 	if fail != nil {
 		return nil, fail
 	}
-	f := newFake(id)
+	f := newFake(id, func() {
+		s.mu.Lock()
+		s.live[id]--
+		s.mu.Unlock()
+	})
 	s.mu.Lock()
 	s.fakes[id] = append(s.fakes[id], f)
+	s.live[id]++
+	if s.live[id] > s.maxLive[id] {
+		s.maxLive[id] = s.live[id]
+	}
 	s.mu.Unlock()
 	if onStart != nil {
 		onStart(f)
@@ -160,6 +189,20 @@ func (s *Spawner) Starts(id string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.fakes[id])
+}
+
+// Live is the number of fakes for id that have started and not yet died.
+func (s *Spawner) Live(id string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.live[id]
+}
+
+// MaxLive is the highest Live value ever seen for id.
+func (s *Spawner) MaxLive(id string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.maxLive[id]
 }
 
 func (s *Spawner) Last(id string) *Fake {

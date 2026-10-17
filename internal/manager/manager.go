@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	ErrNotRunning = errors.New("instance worker is not running")
-	ErrBanned     = errors.New("instance is banned")
+	ErrNotRunning   = errors.New("instance worker is not running")
+	ErrBanned       = errors.New("instance is banned")
+	ErrShuttingDown = errors.New("manager is shutting down")
 )
 
 type Options struct {
@@ -51,6 +52,7 @@ type Manager struct {
 
 	mu      sync.Mutex
 	running map[string]*supervised
+	closed  bool // set by Shutdown; Start refuses afterwards
 }
 
 type supervised struct {
@@ -59,6 +61,11 @@ type supervised struct {
 	done    chan struct{}
 	exiting atomic.Bool // supervise is returning; a new Start must wait for done
 	breaker Breaker
+
+	// Final state requests, read by supervise's cleanup. Set under Manager.mu while the
+	// entry is still in the map, so the cleanup either sees them or the caller sees no entry.
+	logoutRequested atomic.Bool
+	stopRequested   atomic.Bool
 
 	mu     sync.Mutex
 	handle spawner.WorkerHandle
@@ -90,6 +97,9 @@ func (m *Manager) Start(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for {
+		if m.closed {
+			return ErrShuttingDown
+		}
 		old, ok := m.running[id]
 		if !ok {
 			break
@@ -118,14 +128,21 @@ func (m *Manager) Start(ctx context.Context, id string) error {
 }
 
 // halt stops supervision and waits for the worker to exit, without changing the stored state.
+// The entry stays in the map until supervise's cleanup removes it, so a concurrent Start
+// waits for the old worker instead of spawning a second one on the same session.
 func (m *Manager) halt(ctx context.Context, id string) error {
 	m.mu.Lock()
 	s := m.running[id]
-	delete(m.running, id)
 	m.mu.Unlock()
 	if s == nil {
 		return nil
 	}
+	return m.end(ctx, s)
+}
+
+// end asks a supervisor to exit and waits for it.
+func (m *Manager) end(ctx context.Context, s *supervised) error {
+	s.exiting.Store(true)
 	s.cancel()
 	select {
 	case <-s.done:
@@ -139,11 +156,17 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 	if _, err := m.store.GetInstance(ctx, id); err != nil {
 		return err
 	}
-	if err := m.halt(ctx, id); err != nil {
-		return err
+	m.mu.Lock()
+	s := m.running[id]
+	if s == nil {
+		// Under m.mu so a concurrent Start cannot slip a supervisor in before the write.
+		m.setState(id, instance.Stopped, "")
+		m.mu.Unlock()
+		return nil
 	}
-	m.setState(id, instance.Stopped, "")
-	return nil
+	s.stopRequested.Store(true) // supervise's cleanup persists stopped
+	m.mu.Unlock()
+	return m.end(ctx, s)
 }
 
 func (m *Manager) Restart(ctx context.Context, id string) error {
@@ -156,6 +179,7 @@ func (m *Manager) Restart(ctx context.Context, id string) error {
 // Shutdown halts every worker but keeps stored states, so Boot resumes them.
 func (m *Manager) Shutdown(ctx context.Context) {
 	m.mu.Lock()
+	m.closed = true
 	ids := make([]string, 0, len(m.running))
 	for id := range m.running {
 		ids = append(ids, id)
@@ -230,8 +254,10 @@ func (m *Manager) PairPhone(ctx context.Context, id, phone string) (string, erro
 	return resp.Code, nil
 }
 
-// Logout unlinks the number; the worker then reports logged_out, which ends supervision.
-// It returns once supervision has ended, so a following Start begins a fresh worker.
+// Logout unlinks the number and ends supervision. The worker normally reports
+// logged_out itself; if that event is missed, supervise's cleanup persists it.
+// It blocks until the worker has been closed (up to about Options.StopTimeout),
+// so a following Start begins a fresh worker.
 func (m *Manager) Logout(ctx context.Context, id string) error {
 	m.mu.Lock()
 	s := m.running[id]
@@ -246,23 +272,28 @@ func (m *Manager) Logout(ctx context.Context, id string) error {
 	if _, err := h.Client().Logout(ctx, &workerv1.LogoutRequest{}); err != nil {
 		return err
 	}
-	// The worker reported logged_out before the RPC returned, but the supervisor handles
-	// that event asynchronously: mark it exiting now so a concurrent Start waits for it
-	// and supervise does not restart the worker even if the event was missed.
-	s.exiting.Store(true)
-	select {
-	case <-s.done:
-	case <-ctx.Done():
-		return ctx.Err()
+	m.mu.Lock()
+	if m.running[s.id] == s {
+		s.logoutRequested.Store(true)
 	}
-	m.setState(id, instance.LoggedOut, "api") // no-op unless the event was missed
-	return nil
+	m.mu.Unlock()
+	return m.end(ctx, s)
 }
 
 func (m *Manager) supervise(ctx context.Context, s *supervised) {
 	defer func() {
 		s.exiting.Store(true)
 		m.mu.Lock()
+		// Persist the requested final state before removing the entry: a concurrent Start
+		// waits for done, so its new supervisor cannot be overwritten by this write.
+		switch {
+		case s.stopRequested.Load():
+			m.setState(s.id, instance.Stopped, "")
+		case s.logoutRequested.Load():
+			if in, err := m.store.GetInstance(context.Background(), s.id); err == nil && in.State != instance.LoggedOut {
+				m.setState(s.id, instance.LoggedOut, "api") // the worker's event was missed
+			}
+		}
 		if m.running[s.id] == s {
 			delete(m.running, s.id)
 		}
@@ -274,6 +305,9 @@ func (m *Manager) supervise(ctx context.Context, s *supervised) {
 		m.setState(s.id, instance.Starting, "")
 		h, err := m.spawner.Start(ctx, s.id)
 		if err != nil {
+			if ctx.Err() != nil {
+				return // a cancelled spawn is not a crash
+			}
 			m.log.Error("spawn worker", "instance_id", s.id, "err", err)
 		} else {
 			s.setHandle(h)
