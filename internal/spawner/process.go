@@ -51,10 +51,18 @@ func (p *Process) command(id, sock string) *exec.Cmd {
 }
 
 // proxyVars are dropped from the worker environment: the worker's only proxy is the one
-// the supervisor passes explicitly (spec 4.6), never one inherited from our environment.
-var proxyVars = map[string]bool{
-	"HTTP_PROXY": true, "HTTPS_PROXY": true, "ALL_PROXY": true, "NO_PROXY": true,
-	"http_proxy": true, "https_proxy": true, "all_proxy": true, "no_proxy": true,
+// the supervisor passes explicitly (spec 4.6), never one inherited from our environment
+// (including a stale LITEZAP_WORKER_PROXY_URL; the per-instance value is appended after).
+// Names are compared case-insensitively, as Windows environment names are.
+var proxyVars = []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "LITEZAP_WORKER_PROXY_URL"}
+
+func isProxyVar(name string) bool {
+	for _, v := range proxyVars {
+		if strings.EqualFold(name, v) {
+			return true
+		}
+	}
+	return false
 }
 
 // environ is the worker's environment: ours without proxy variables, plus GOMEMLIMIT and
@@ -62,7 +70,7 @@ var proxyVars = map[string]bool{
 func (p *Process) environ(ctx context.Context, cmd *exec.Cmd, id string) ([]string, error) {
 	var env []string
 	for _, kv := range cmd.Environ() {
-		if k, _, _ := strings.Cut(kv, "="); !proxyVars[k] {
+		if k, _, _ := strings.Cut(kv, "="); !isProxyVar(k) {
 			env = append(env, kv)
 		}
 	}

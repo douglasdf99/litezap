@@ -190,3 +190,17 @@ func TestProcessEnvironAddsInstanceEnv(t *testing.T) {
 		t.Fatal("expected env error")
 	}
 }
+
+func TestProcessEnvironStripsInheritedProxySettings(t *testing.T) {
+	t.Setenv("LITEZAP_WORKER_PROXY_URL", "socks5://stale:1080")
+	t.Setenv("Https_Proxy", "http://mixed-case:3128") // Windows environment names are case-insensitive
+	p := &Process{}
+	env, err := p.environ(context.Background(), exec.Command("true"), "inst_e")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "stale") || strings.Contains(joined, "mixed-case") {
+		t.Fatal("inherited proxy settings leaked into the worker environment")
+	}
+}
