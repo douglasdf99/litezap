@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -673,4 +674,40 @@ func TestPacingAppliesBetweenRetries(t *testing.T) {
 	e.eventually("waiting", func() bool { return e.clock.Waiters() > 0 })
 	e.clock.Advance(time.Second)
 	e.eventually("sent at 10s", func() bool { return e.status(id).Status == store.OutSent })
+}
+
+// Forget (instance deleted) ends its dispatcher, releases Wait calls on its items and
+// drops its per-instance state.
+func TestForgetStopsTheDispatcher(t *testing.T) {
+	e := newEnvAt(t, t0, fastSettings(), instance.Reconnecting, func(o *Options) { o.ConnectGrace = 20 * time.Second })
+	ctx := context.Background()
+	id := e.enqueue(chatA, Payload{Type: "text", Text: "oi"})
+	e.q.StateChanged("i1", instance.Reconnecting) // records readyAt
+	e.q.Wake("i1")
+	e.eventually("dispatcher running", func() bool { return e.q.Dispatchers() == 1 })
+	waited := make(chan error, 1)
+	go func() { _, err := e.q.Wait(ctx, "i1", id); waited <- err }()
+	e.eventually("waiter registered", func() bool {
+		e.q.mu.Lock()
+		defer e.q.mu.Unlock()
+		return len(e.q.waiters) == 1
+	})
+	if err := e.st.DeleteInstance(ctx, "i1"); err != nil {
+		t.Fatal(err)
+	}
+	e.q.Forget("i1")
+	e.eventually("dispatcher gone", func() bool { return e.q.Dispatchers() == 0 })
+	select {
+	case err := <-waited:
+		if !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("wait = %v, want ErrNotFound", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait still blocked after Forget")
+	}
+	e.q.mu.Lock()
+	defer e.q.mu.Unlock()
+	if _, ok := e.q.readyAt["i1"]; ok || len(e.q.waiters) != 0 {
+		t.Fatalf("state left: readyAt=%v waiters=%v", e.q.readyAt, e.q.waiters)
+	}
 }

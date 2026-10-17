@@ -318,3 +318,20 @@ func TestConcurrentClientIDWithDifferentBodies(t *testing.T) {
 		t.Fatalf("%d requests got the message, want exactly 1 (the others: conflict)", ok)
 	}
 }
+
+// Deleting an instance stops its send dispatcher.
+func TestDeleteStopsTheDispatcher(t *testing.T) {
+	e := newMsgEnv(t)
+	ctx := context.Background()
+	if _, err := e.svc.Send(ctx, "i1", SendInput{To: "5511988887777", Type: "text", Text: "oi"}, 2*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.svc.Queues.Dispatchers(); n != 1 {
+		t.Fatalf("dispatchers = %d", n)
+	}
+	inst := &Instances{Store: e.st, Manager: e.svc.Manager, DataDir: e.dir, Queues: e.svc.Queues}
+	if err := inst.Delete(ctx, "i1"); err != nil {
+		t.Fatal(err)
+	}
+	e.eventually("dispatcher stopped", func() bool { return e.svc.Queues.Dispatchers() == 0 })
+}

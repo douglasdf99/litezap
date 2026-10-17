@@ -81,8 +81,8 @@ type Queues struct {
 	mu      sync.Mutex
 	closed  bool
 	disp    map[string]*dispatcher
-	waiters map[string][]chan struct{}
-	readyAt map[string]time.Time // end of the grace period after connecting
+	waiters map[string][]chan struct{} // by waiterKey(instance, item)
+	readyAt map[string]time.Time       // end of the grace period after connecting
 }
 
 func New(st *store.Store, workers Workers, opt Options) *Queues {
@@ -162,6 +162,38 @@ func (q *Queues) Wake(id string) {
 	}
 }
 
+// Forget drops a deleted instance: its dispatcher wakes, finds the instance gone and
+// exits; Wait calls on its items return (the items went with the instance).
+func (q *Queues) Forget(id string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	delete(q.readyAt, id)
+	if d := q.disp[id]; d != nil {
+		select {
+		case d.wake <- struct{}{}:
+		default:
+		}
+	}
+	prefix := id + "/"
+	for k, chans := range q.waiters {
+		if strings.HasPrefix(k, prefix) {
+			for _, ch := range chans {
+				close(ch)
+			}
+			delete(q.waiters, k)
+		}
+	}
+}
+
+// Dispatchers is the number of running dispatchers (for tests and diagnostics).
+func (q *Queues) Dispatchers() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.disp)
+}
+
+func waiterKey(instanceID, id string) string { return instanceID + "/" + id }
+
 // Shutdown stops the dispatchers; a send in progress is allowed to finish until ctx ends.
 func (q *Queues) Shutdown(ctx context.Context) {
 	q.mu.Lock()
@@ -181,20 +213,21 @@ func final(st string) bool { return st == store.OutSent || st == store.OutFailed
 // Wait blocks until the item is sent or failed, or ctx ends, and returns its latest state
 // (still queued or in_flight when ctx ended first).
 func (q *Queues) Wait(ctx context.Context, instanceID, id string) (store.Outbound, error) {
+	key := waiterKey(instanceID, id)
 	for {
 		ch := make(chan struct{})
 		q.mu.Lock()
-		q.waiters[id] = append(q.waiters[id], ch)
+		q.waiters[key] = append(q.waiters[key], ch)
 		q.mu.Unlock()
 		o, err := q.store.GetOutbound(ctx, instanceID, id)
 		if err != nil || final(o.Status) {
-			q.dropWaiter(id, ch)
+			q.dropWaiter(key, ch)
 			return o, err
 		}
 		select {
 		case <-ch:
 		case <-ctx.Done():
-			q.dropWaiter(id, ch)
+			q.dropWaiter(key, ch)
 			// The request context is over, not the store: read with a fresh one.
 			o, err = q.store.GetOutbound(context.WithoutCancel(ctx), instanceID, id)
 			return o, err
@@ -202,29 +235,30 @@ func (q *Queues) Wait(ctx context.Context, instanceID, id string) (store.Outboun
 	}
 }
 
-func (q *Queues) dropWaiter(id string, ch chan struct{}) {
+func (q *Queues) dropWaiter(key string, ch chan struct{}) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	l := q.waiters[id]
+	l := q.waiters[key]
 	for i, c := range l {
 		if c == ch {
-			q.waiters[id] = append(l[:i], l[i+1:]...)
+			q.waiters[key] = append(l[:i], l[i+1:]...)
 			break
 		}
 	}
-	if len(q.waiters[id]) == 0 {
-		delete(q.waiters, id)
+	if len(q.waiters[key]) == 0 {
+		delete(q.waiters, key)
 	}
 }
 
 // notify wakes the Wait calls of an item whose status changed.
-func (q *Queues) notify(id string) {
+func (q *Queues) notify(instanceID, id string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	for _, ch := range q.waiters[id] {
+	key := waiterKey(instanceID, id)
+	for _, ch := range q.waiters[key] {
 		close(ch)
 	}
-	delete(q.waiters, id)
+	delete(q.waiters, key)
 }
 
 type dispatcher struct {
@@ -667,7 +701,7 @@ func (d *dispatcher) done(item store.Outbound, p Payload) {
 	if p.MediaFile != "" {
 		_ = os.Remove(p.MediaFile)
 	}
-	d.q.notify(item.ID)
+	d.q.notify(d.id, item.ID)
 }
 
 // pendingMessage is the log row written when the item goes in flight.

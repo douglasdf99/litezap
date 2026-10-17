@@ -344,7 +344,7 @@ func (s *Messaging) finish(ctx context.Context, instanceID string, o store.Outbo
 		o, err = s.Queues.Wait(wctx, instanceID, o.ID)
 		cancel()
 		if err != nil {
-			return MessageView{}, err
+			return MessageView{}, mapErr(err) // ErrNotFound: the instance was deleted meanwhile
 		}
 	}
 	if o.Status == store.OutFailed {

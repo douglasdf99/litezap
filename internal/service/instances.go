@@ -14,6 +14,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/apierr"
 	"github.com/douglasdf99/litezap/internal/instance"
 	"github.com/douglasdf99/litezap/internal/manager"
+	"github.com/douglasdf99/litezap/internal/queue"
 	"github.com/douglasdf99/litezap/internal/secure"
 	"github.com/douglasdf99/litezap/internal/store"
 	"google.golang.org/grpc/codes"
@@ -24,6 +25,8 @@ type Instances struct {
 	Store   *store.Store
 	Manager *manager.Manager
 	DataDir string
+	// Queues, when set, has a deleted instance's send dispatcher stopped.
+	Queues *queue.Queues
 }
 
 type InstanceView struct {
@@ -166,6 +169,9 @@ func (s *Instances) Delete(ctx context.Context, id string) error {
 	if err := s.Store.DeleteInstance(ctx, id); err != nil {
 		s.Manager.Unretire(id)
 		return mapErr(err)
+	}
+	if s.Queues != nil {
+		s.Queues.Forget(id) // after the row is gone, so the dispatcher sees it and exits
 	}
 	return nil
 }

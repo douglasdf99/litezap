@@ -65,7 +65,7 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 		q.Shutdown(ctx)
 		mgr.Shutdown(ctx)
 	})
-	svc := &service.Instances{Store: st, Manager: mgr, DataDir: dir}
+	svc := &service.Instances{Store: st, Manager: mgr, DataDir: dir, Queues: q}
 	msg := &service.Messaging{Store: st, Manager: mgr, Queues: q, Fetcher: &media.Fetcher{AllowPrivate: true},
 		Signer:  media.NewSigner([]byte("0123456789abcdef0123456789abcdef"), "http://example.invalid"),
 		DataDir: dir, Defaults: defaults, Resolver: resolver, SignedURLs: true}

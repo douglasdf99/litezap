@@ -77,7 +77,7 @@ func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
 		shutdownAll(q, mgr)
 		return fmt.Errorf("media key: %w", err)
 	}
-	svc := &service.Instances{Store: st, Manager: mgr, DataDir: cfg.DataDir}
+	svc := &service.Instances{Store: st, Manager: mgr, DataDir: cfg.DataDir, Queues: q}
 	msg := &service.Messaging{
 		Store: st, Manager: mgr, Queues: q, Resolver: resolver,
 		Fetcher:  &media.Fetcher{AllowPrivate: cfg.MediaAllowPrivateURLs},
