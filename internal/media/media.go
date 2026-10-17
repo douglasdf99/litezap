@@ -202,19 +202,44 @@ func fits(kind, mime string) bool {
 	return mime != ""
 }
 
+// notMedia reports sniffed types that are certainly not audio or video.
+func notMedia(sniffed string) bool {
+	switch {
+	case strings.HasPrefix(sniffed, "text/"), strings.HasPrefix(sniffed, "application/x-"):
+		return true // text, HTML, XML/SVG, scripts, archives, executables
+	}
+	switch sniffed {
+	case "application/pdf", "application/zip", "image/svg+xml":
+		return true
+	}
+	return false
+}
+
 // ResolveMime picks the attachment's MIME type: the one the client declared if it fits the
 // message type, else the server's Content-Type if it fits, else what the bytes look like.
-// A remote Content-Type that contradicts the type is ignored; content that is not an
-// image/video/audio at all is refused for those types.
+// The bytes are always checked first: an image must sniff as an image (never SVG), and
+// audio/video must not sniff as text, documents, archives or executables, whatever type
+// was declared. A remote Content-Type that contradicts the message type is ignored.
 func ResolveMime(kind, declared, remote string, data []byte) (string, error) {
+	sniffed := baseType(http.DetectContentType(data))
+	if kind == "audio" && sniffed == "application/ogg" {
+		sniffed = "audio/ogg"
+	}
+	bad := fmt.Errorf("media content is not a valid %s", kind)
+	switch kind {
+	case "image":
+		if !fits(kind, sniffed) {
+			return "", bad
+		}
+	case "video", "audio":
+		if notMedia(sniffed) {
+			return "", bad
+		}
+	}
 	for _, m := range []string{declared, remote} {
 		if b := baseType(m); b != "" && b != "application/octet-stream" && fits(kind, b) {
 			return b, nil
 		}
-	}
-	sniffed := baseType(http.DetectContentType(data))
-	if kind == "audio" && sniffed == "application/ogg" {
-		return "audio/ogg", nil
 	}
 	if fits(kind, sniffed) {
 		return sniffed, nil
@@ -222,7 +247,7 @@ func ResolveMime(kind, declared, remote string, data []byte) (string, error) {
 	if kind == "document" {
 		return "application/octet-stream", nil
 	}
-	return "", fmt.Errorf("media content is not a valid %s", kind)
+	return "", bad
 }
 
 // DecodeBase64 decodes media.base64 (plain or as a data: URL, whose type is returned),

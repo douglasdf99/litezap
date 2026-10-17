@@ -97,6 +97,7 @@ func TestFetchWhenPrivateAllowed(t *testing.T) {
 func TestResolveMime(t *testing.T) {
 	png := []byte("\x89PNG\r\n\x1a\nrest")
 	ogg := []byte("OggS\x00\x02rest-of-ogg")
+	html := []byte("<!DOCTYPE html><html><script>alert(1)</script></html>")
 	cases := []struct {
 		kind, declared, remote string
 		data                   []byte
@@ -112,6 +113,16 @@ func TestResolveMime(t *testing.T) {
 		{"video", "", "", []byte("plain text"), "", true},
 		{"document", "", "application/pdf", []byte("%PDF"), "application/pdf", false},
 		{"document", "", "", []byte{0, 1, 2}, "application/octet-stream", false},
+		// The bytes are always checked: a declared or remote type does not make HTML media.
+		{"image", "image/png", "", html, "", true},
+		{"image", "", "image/png", html, "", true},
+		{"video", "video/mp4", "", html, "", true},
+		{"audio", "", "audio/mpeg", html, "", true},
+		{"video", "video/mp4", "", []byte("%PDF-1.4 rest"), "", true},
+		{"audio", "audio/ogg", "", []byte("PK\x03\x04rest-of-zip"), "", true},
+		{"audio", "audio/mpeg", "", []byte("\x1f\x8b\x08rest-of-gzip"), "", true},
+		// Audio/video the sniffer does not know (e.g. AMR) keeps the declared type.
+		{"audio", "audio/amr", "", []byte("#!AMR\n\x00\x01"), "audio/amr", false},
 	}
 	for i, c := range cases {
 		got, err := ResolveMime(c.kind, c.declared, c.remote, c.data)
