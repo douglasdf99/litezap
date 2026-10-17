@@ -86,9 +86,8 @@ func New(svc InstanceService, opt Options, log *slog.Logger) http.Handler {
 
 func (s *server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		tok, ok := strings.CutPrefix(auth, "Bearer ")
-		if !ok || tok == "" {
+		tok, ok := bearerToken(r.Header.Get("Authorization"))
+		if !ok {
 			apierr.Write(w, apierr.Unauthorized())
 			return
 		}
@@ -105,6 +104,17 @@ func (s *server) authenticate(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
 	})
+}
+
+// bearerToken extracts the token of a "Bearer" Authorization header; the scheme is
+// case-insensitive (RFC 9110 section 11.1).
+func bearerToken(auth string) (string, bool) {
+	const scheme = "Bearer "
+	if len(auth) <= len(scheme) || !strings.EqualFold(auth[:len(scheme)], scheme) {
+		return "", false
+	}
+	tok := strings.TrimSpace(auth[len(scheme):])
+	return tok, tok != ""
 }
 
 func principalFrom(r *http.Request) principal {
@@ -148,8 +158,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func decode(r *http.Request, v any) error {
-	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
+// noStore marks a response that carries a secret (token, QR) as not cacheable.
+func noStore(w http.ResponseWriter) { w.Header().Set("Cache-Control", "no-store") }
+
+func decode(w http.ResponseWriter, r *http.Request, v any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err := dec.Decode(v); err != nil {
 		return apierr.Validation("invalid JSON body")
 	}
@@ -170,7 +183,7 @@ func (s *server) createInstance(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 	}
-	if err := decode(r, &req); err != nil {
+	if err := decode(w, r, &req); err != nil {
 		s.writeErr(w, err)
 		return
 	}
@@ -179,6 +192,7 @@ func (s *server) createInstance(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
+	noStore(w)
 	writeJSON(w, http.StatusCreated, map[string]any{"instance": v, "token": tok})
 }
 
@@ -231,6 +245,7 @@ func (s *server) rotateToken(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
+	noStore(w)
 	writeJSON(w, 200, map[string]string{"token": tok})
 }
 
@@ -246,11 +261,12 @@ func (s *server) qr(w http.ResponseWriter, r *http.Request) {
 			s.writeErr(w, err)
 			return
 		}
+		noStore(w)
 		w.Header().Set("Content-Type", "image/png")
-		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(png)
 		return
 	}
+	noStore(w)
 	writeJSON(w, 200, map[string]string{"code": code})
 }
 
@@ -258,7 +274,7 @@ func (s *server) pairPhone(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Phone string `json:"phone"`
 	}
-	if err := decode(r, &req); err != nil {
+	if err := decode(w, r, &req); err != nil {
 		s.writeErr(w, err)
 		return
 	}
@@ -267,5 +283,6 @@ func (s *server) pairPhone(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
+	noStore(w)
 	writeJSON(w, 200, map[string]string{"code": code})
 }

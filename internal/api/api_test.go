@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -29,6 +30,12 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvWith(t, nil)
+}
+
+// newEnvWith lets a test adjust the API options (e.g. ProtectOps, Ready).
+func newEnvWith(t *testing.T, tweak func(*Options)) *env {
+	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "api.db"))
 	if err != nil {
@@ -37,16 +44,20 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(func() { st.Close() })
 	sp := workertest.NewSpawner()
 	sp.OnStart = func(f *workertest.Fake) { f.Emit("qr_pending"); f.EmitQR("QR-API") }
-	opt := manager.DefaultOptions()
-	opt.HeartbeatInterval = time.Hour
-	mgr := manager.New(st, sp, opt, slog.New(slog.DiscardHandler))
+	mopt := manager.DefaultOptions()
+	mopt.HeartbeatInterval = time.Hour
+	mgr := manager.New(st, sp, mopt, slog.New(slog.DiscardHandler))
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		mgr.Shutdown(ctx)
 	})
 	svc := &service.Instances{Store: st, Manager: mgr, DataDir: dir}
-	h := New(svc, Options{AdminToken: admin, Ready: st.Ping}, slog.New(slog.DiscardHandler))
+	opt := Options{AdminToken: admin, Ready: st.Ping}
+	if tweak != nil {
+		tweak(&opt)
+	}
+	h := New(svc, opt, slog.New(slog.DiscardHandler))
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return &env{t: t, srv: srv, sp: sp}
@@ -285,4 +296,83 @@ func TestDeleteRacingStartLeavesNoWorker(t *testing.T) {
 			t.Fatalf("iteration %d: %d live worker(s) after delete", i, n)
 		}
 	}
+}
+
+func TestProtectOps(t *testing.T) {
+	e := newEnvWith(t, func(o *Options) { o.ProtectOps = true })
+	_, tok := e.create("Ops")
+	for _, path := range []string{"/healthz", "/readyz"} {
+		if code, body := e.do("GET", path, "", ""); code != 401 || errCode(body) != "unauthorized" {
+			t.Fatalf("%s without token = %d %v", path, code, body)
+		}
+		if code, body := e.do("GET", path, tok, ""); code != 403 || errCode(body) != "forbidden" {
+			t.Fatalf("%s with instance token = %d %v", path, code, body)
+		}
+		if code, _ := e.do("GET", path, admin, ""); code != 200 {
+			t.Fatalf("%s with admin token = %d", path, code)
+		}
+	}
+}
+
+func TestReadyzUnavailable(t *testing.T) {
+	e := newEnvWith(t, func(o *Options) {
+		o.Ready = func(context.Context) error { return errors.New("db down") }
+	})
+	if code, body := e.do("GET", "/readyz", "", ""); code != 503 || body["status"] != "unavailable" {
+		t.Fatalf("readyz = %d %v", code, body)
+	}
+}
+
+func TestBearerSchemeIsCaseInsensitive(t *testing.T) {
+	e := newEnv(t)
+	for _, scheme := range []string{"bearer ", "BEARER ", "Bearer "} {
+		req, _ := http.NewRequest("GET", e.srv.URL+"/v1/instances", nil)
+		req.Header.Set("Authorization", scheme+admin)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("scheme %q = %d", scheme, resp.StatusCode)
+		}
+	}
+	for _, auth := range []string{"Bear", "Basic " + admin, "Bearer"} {
+		req, _ := http.NewRequest("GET", e.srv.URL+"/v1/instances", nil)
+		req.Header.Set("Authorization", auth)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 401 {
+			t.Fatalf("auth %q = %d", auth, resp.StatusCode)
+		}
+	}
+}
+
+func TestSecretsAreNotCached(t *testing.T) {
+	e := newEnv(t)
+	check := func(method, path, body string) {
+		t.Helper()
+		var rd io.Reader
+		if body != "" {
+			rd = strings.NewReader(body)
+		}
+		req, _ := http.NewRequest(method, e.srv.URL+path, rd)
+		req.Header.Set("Authorization", "Bearer "+admin)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode >= 300 || resp.Header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("%s %s = %d Cache-Control=%q", method, path, resp.StatusCode, resp.Header.Get("Cache-Control"))
+		}
+	}
+	check("POST", "/v1/instances", `{"name":"C"}`)
+	id, _ := e.create("C2")
+	e.waitState(id, "qr_pending")
+	check("POST", "/v1/instances/"+id+"/token/rotate", "")
+	check("GET", "/v1/instances/"+id+"/qr", "")
 }

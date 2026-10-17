@@ -232,7 +232,7 @@ func isWorkerProcess(pid int, id, dataDir string) bool {
 	if runtime.GOOS == "windows" {
 		return false
 	}
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	out, err := exec.Command("ps", "-ww", "-p", strconv.Itoa(pid), "-o", "command=").Output()
 	if err != nil {
 		return false
 	}
@@ -241,5 +241,6 @@ func isWorkerProcess(pid int, id, dataDir string) bool {
 		// The worker always gets --socket after the id, so the trailing space stops
 		// "inst_a" from matching a worker of "inst_ab".
 		strings.Contains(cmd, "--instance "+id+" ") &&
-		strings.Contains(cmd, "--data-dir "+dataDir)
+		// --data-dir is the last flag, so a suffix match stops "/x/ab" matching "/x/abc".
+		strings.HasSuffix(strings.TrimSpace(cmd), " --data-dir "+dataDir)
 }

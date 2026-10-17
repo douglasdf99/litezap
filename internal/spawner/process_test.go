@@ -163,4 +163,7 @@ func TestIsWorkerProcessMatchesExactInstanceID(t *testing.T) {
 	if isWorkerProcess(pid, "inst_a", dir) {
 		t.Fatal("instance id prefix must not match a longer id")
 	}
+	if isWorkerProcess(pid, "inst_ab", dir[:len(dir)-1]) {
+		t.Fatal("data dir prefix must not match a longer data dir")
+	}
 }

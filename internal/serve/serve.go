@@ -31,6 +31,13 @@ func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
 	if err := config.EnsureAdminToken(&cfg); err != nil {
 		return err
 	}
+	// Bind before touching workers: a second `serve` on the same data dir must fail here,
+	// not after CleanupOrphans has killed the running supervisor's workers.
+	ln, err := net.Listen("tcp", cfg.ListenAddr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", cfg.ListenAddr, err)
+	}
+	defer ln.Close()
 	st, err := store.Open(filepath.Join(cfg.DataDir, "litezap.db"))
 	if err != nil {
 		return err
@@ -41,6 +48,7 @@ func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
 	sp := &spawner.Process{DataDir: cfg.DataDir, MemoryLimitMB: cfg.WorkerMemoryMB, Log: log}
 	mgr := manager.New(st, sp, manager.DefaultOptions(), log)
 	if err := mgr.Boot(ctx); err != nil {
+		shutdownManager(mgr)
 		return err
 	}
 
@@ -50,13 +58,20 @@ func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
 		ProtectOps: !isLoopback(cfg.ListenAddr),
 		Ready:      st.Ping,
 	}, log)
-	srv := &http.Server{Addr: cfg.ListenAddr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// No WriteTimeout: Delete/Logout can take ~20s (worker stop), and SSE streams
+		// (later milestones) stay open indefinitely.
+	}
 
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("litezap listening", "addr", cfg.ListenAddr, "data_dir", cfg.DataDir,
 			"admin_token_file", filepath.Join(cfg.DataDir, "admin_token"))
-		errc <- srv.ListenAndServe()
+		errc <- srv.Serve(ln)
 	}()
 
 	var serveErr error
@@ -67,11 +82,19 @@ func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
 			serveErr = err
 		}
 	}
-	sctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(sctx)
-	mgr.Shutdown(sctx)
+	hctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_ = srv.Shutdown(hctx)
+	cancel()
+	shutdownManager(mgr)
 	return serveErr
+}
+
+// shutdownManager halts every worker with its own budget, so supervisor cleanups finish
+// their store writes before the deferred st.Close runs.
+func shutdownManager(mgr *manager.Manager) {
+	ctx, cancel := context.WithTimeout(context.Background(), manager.DefaultOptions().StopTimeout+5*time.Second)
+	defer cancel()
+	mgr.Shutdown(ctx)
 }
 
 func isLoopback(addr string) bool {

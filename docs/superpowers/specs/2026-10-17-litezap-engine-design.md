@@ -301,7 +301,7 @@ Toda transição é persistida e emitida como `instance.status`.
 
 ### 9.3 Erros na API
 
-Códigos estáveis: `unauthorized`, `forbidden`, `instance_not_found`, `instance_not_connected`, `rate_limited`, `invalid_number`, `media_too_large`, `media_unavailable`, `validation_failed`, `internal`. `retryable` indica se o cliente pode tentar de novo.
+Códigos estáveis: `unauthorized`, `forbidden`, `instance_not_found`, `instance_not_connected`, `instance_banned`, `instance_not_pairing`, `shutting_down`, `rate_limited`, `invalid_number`, `media_too_large`, `media_unavailable`, `validation_failed`, `internal`. `retryable` indica se o cliente pode tentar de novo.
 
 ### 9.4 Observabilidade
 

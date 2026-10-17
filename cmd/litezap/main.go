@@ -28,6 +28,10 @@ func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop() // restore default signal handling: a second Ctrl+C terminates immediately
+	}()
 
 	var err error
 	switch os.Args[1] {
