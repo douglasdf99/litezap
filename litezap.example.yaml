@@ -4,3 +4,26 @@ public_url: ""
 data_dir: data
 # admin_token: se vazio, é gerado em data/admin_token na primeira execução
 worker_memory_max_mb: 512
+
+# Proxy usado por toda instância sem settings.proxy_url própria (http://, https:// ou socks5://).
+default_proxy_url: ""
+# true libera media.url para IPs privados/loopback (uso local). Mantenha false em servidores.
+media_allow_private_urls: false
+
+# Padrões de envio por instância (cada instância pode sobrescrever via PUT /settings).
+# Pisos: min_interval_ms >= 1000 e max_per_minute <= 60, salvo unsafe_pacing: true.
+instance_defaults:
+  min_interval_ms: 3000
+  jitter_ms: 2000
+  max_per_minute: 20
+  typing_simulation: true
+  ramp:
+    enabled: true
+    start_per_day: 50
+    end_per_day: 150
+    days: 14
+  # Janela diária de envio no fuso abaixo; start e end vazios liberam qualquer horário.
+  send_window:
+    start: "08:00"
+    end: "20:00"
+  timezone: ""   # IANA, ex.: America/Sao_Paulo; vazio = fuso do servidor

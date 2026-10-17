@@ -134,3 +134,15 @@ func TestLoadRejectsBadProxy(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// The documented example must stay loadable.
+func TestExampleConfigLoads(t *testing.T) {
+	t.Setenv("LITEZAP_DATA_DIR", t.TempDir())
+	cfg, err := Load(filepath.Join("..", "..", "litezap.example.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.InstanceDefaults.SendWindow.Start != "08:00" || cfg.InstanceDefaults.MinIntervalMS != 3000 {
+		t.Fatalf("example defaults = %+v", cfg.InstanceDefaults)
+	}
+}
