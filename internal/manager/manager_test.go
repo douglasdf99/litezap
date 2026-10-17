@@ -153,12 +153,26 @@ func TestLogoutIsTerminal(t *testing.T) {
 	}
 	eventually(t, "logged_out", stateIs(t, st, "i1", instance.LoggedOut))
 	eventually(t, "not running", func() bool { return !m.Running("i1") })
+	if in, _ := st.GetInstance(context.Background(), "i1"); in.JID != "" {
+		t.Fatalf("JID must be cleared on logout, got %q", in.JID)
+	}
 	if !sp.Last("i1").Closed.Load() || sp.Starts("i1") != 1 {
 		t.Fatal("worker should be closed once and not restarted")
 	}
 	if err := m.Logout(context.Background(), "i1"); !errors.Is(err, ErrNotRunning) {
 		t.Fatalf("expected ErrNotRunning, got %v", err)
 	}
+}
+
+func TestLoggedOutFromPhoneClearsJID(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	sp.OnStart = func(f *workertest.Fake) { f.Emit("connected") }
+	m.Start(context.Background(), "i1")
+	eventually(t, "connected", stateIs(t, st, "i1", instance.Connected))
+	eventually(t, "jid saved", func() bool { in, _ := st.GetInstance(context.Background(), "i1"); return in.JID != "" })
+	sp.Last("i1").Emit("logged_out")
+	eventually(t, "logged_out", stateIs(t, st, "i1", instance.LoggedOut))
+	eventually(t, "jid cleared", func() bool { in, _ := st.GetInstance(context.Background(), "i1"); return in.JID == "" })
 }
 
 func TestStartRightAfterLogoutRestarts(t *testing.T) {
@@ -251,6 +265,9 @@ func TestLogoutWithMissedEventEndsSupervision(t *testing.T) {
 	}
 	if !stateIs(t, st, "i1", instance.LoggedOut)() {
 		t.Fatal("state must be logged_out when Logout returns")
+	}
+	if in, _ := st.GetInstance(context.Background(), "i1"); in.JID != "" {
+		t.Fatalf("JID must be cleared on logout, got %q", in.JID)
 	}
 	if m.Running("i1") {
 		t.Fatal("must not be running after logout")

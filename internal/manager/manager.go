@@ -463,7 +463,8 @@ func (m *Manager) runWorker(ctx context.Context, s *supervised, h spawner.Worker
 	}
 }
 
-// setState persists a transition if the state machine allows it.
+// setState persists a transition if the state machine allows it. Persisting logged_out
+// also clears the instance's JID.
 func (m *Manager) setState(id string, to instance.State, reason string) {
 	ctx := context.Background()
 	in, err := m.store.GetInstance(ctx, id)
@@ -481,6 +482,12 @@ func (m *Manager) setState(id string, to instance.State, reason string) {
 	if err := m.store.UpdateInstanceState(ctx, id, to, reason); err != nil {
 		m.log.Error("update state", "instance_id", id, "err", err)
 		return
+	}
+	if to == instance.LoggedOut {
+		// The number is no longer linked: drop it so the API stops showing a phone.
+		if err := m.store.SetInstanceJID(ctx, id, ""); err != nil {
+			m.log.Error("clear jid", "instance_id", id, "err", err)
+		}
 	}
 	m.log.Info("instance state", "instance_id", id, "from", in.State, "to", to, "reason", reason)
 }
