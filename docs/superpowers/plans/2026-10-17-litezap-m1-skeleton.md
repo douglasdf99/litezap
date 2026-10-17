@@ -52,7 +52,7 @@ Convenção de dependências: a partir da Task 2, rode `go mod tidy` antes de ca
 ### Task 1: Módulo, ferramentas e .gitignore
 
 **Files:**
-- Create: `go.mod`, `.gitignore`, `litezap.example.yaml`
+- Create: `go.mod`, `.gitignore`, `litezap.example.yaml`, `LICENSE`
 
 - [ ] **Step 1: Inicializar o módulo e as dependências**
 
@@ -88,10 +88,18 @@ data_dir: data
 worker_memory_max_mb: 512
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Adicionar a licença Apache-2.0 (texto oficial)**
 
 ```bash
-git add go.mod go.sum .gitignore litezap.example.yaml
+curl -fsSL https://www.apache.org/licenses/LICENSE-2.0.txt -o LICENSE && head -3 LICENSE
+```
+
+Expected: as primeiras linhas mostram "Apache License" e "Version 2.0, January 2004".
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add go.mod go.sum .gitignore litezap.example.yaml LICENSE
 git commit -m "chore: inicializa módulo Go e ferramentas de codegen"
 ```
 
@@ -4167,6 +4175,8 @@ Expected: estado `logged_out`; o aparelho some da lista no celular.
 
 API de WhatsApp (não oficial, baseada em [whatsmeow](https://github.com/tulir/whatsmeow)) que roda local ou na nuvem.
 Cada número roda em um processo worker isolado, supervisionado com heartbeat, restart automático e circuit breaker.
+
+Licença: Apache-2.0. Roda no seu PC, no seu servidor ou na nuvem gerenciada do LiteZap.
 
 > Status: marco 1 (conexão, pareamento e supervisão). Envio de mensagens, webhooks, MCP e hook de agente vêm nos próximos marcos.
 > Design: `docs/superpowers/specs/2026-10-17-litezap-engine-design.md`
