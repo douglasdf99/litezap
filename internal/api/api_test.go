@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -238,5 +239,50 @@ func TestListInstances(t *testing.T) {
 	list, _ := body["instances"].([]any)
 	if code != 200 || len(list) != 2 {
 		t.Fatalf("list = %d %v", code, body)
+	}
+}
+
+// A Start racing a Delete must not leave a worker behind for the deleted instance.
+func TestDeleteRacingStartLeavesNoWorker(t *testing.T) {
+	for i := 0; i < 5; i++ {
+		e := newEnv(t)
+		id, _ := e.create("Race")
+		e.waitState(id, "qr_pending")
+
+		done := make(chan struct{})
+		var wg sync.WaitGroup
+		for g := 0; g < 4; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					req, _ := http.NewRequest("POST", e.srv.URL+"/v1/instances/"+id+"/start", nil)
+					req.Header.Set("Authorization", "Bearer "+admin)
+					if resp, err := http.DefaultClient.Do(req); err == nil {
+						resp.Body.Close()
+					}
+					select {
+					case <-done:
+						return
+					default:
+					}
+				}
+			}()
+		}
+		time.Sleep(5 * time.Millisecond)
+		code, _ := e.do("DELETE", "/v1/instances/"+id, admin, "")
+		time.Sleep(20 * time.Millisecond) // let late Starts land after the delete
+		close(done)
+		wg.Wait()
+		if code != 204 {
+			t.Fatalf("delete = %d", code)
+		}
+		if code, _ := e.do("GET", "/v1/instances/"+id, admin, ""); code != 404 {
+			t.Fatalf("after delete = %d", code)
+		}
+		time.Sleep(20 * time.Millisecond)
+		if n := e.sp.Live(id); n != 0 {
+			t.Fatalf("iteration %d: %d live worker(s) after delete", i, n)
+		}
 	}
 }

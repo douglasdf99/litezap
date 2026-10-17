@@ -103,10 +103,13 @@ func (s *Instances) Delete(ctx context.Context, id string) error {
 	if _, err := s.Store.GetInstance(ctx, id); err != nil {
 		return mapErr(err)
 	}
+	// A client disconnect must not leave the teardown half-done.
+	ctx = context.WithoutCancel(ctx)
 	if s.Manager.Running(id) {
 		_ = s.Manager.Logout(ctx, id) // best effort: frees the linked-device slot on the phone
 	}
-	if err := s.Manager.Stop(ctx, id); err != nil {
+	// Retire (not Stop): a Start racing this Delete must not respawn the worker.
+	if err := s.Manager.Retire(ctx, id); err != nil {
 		return mapErr(err)
 	}
 	if err := os.RemoveAll(filepath.Join(s.DataDir, "instances", id)); err != nil {

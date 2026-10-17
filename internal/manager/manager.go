@@ -58,6 +58,9 @@ type Manager struct {
 	mu      sync.Mutex
 	running map[string]*supervised
 	closed  bool // set by Shutdown; Start refuses afterwards
+	// retired holds instances being deleted: Start refuses them (as not found), so a
+	// Start racing a Delete cannot spawn a worker for a row that is about to vanish.
+	retired map[string]bool
 }
 
 type supervised struct {
@@ -87,7 +90,7 @@ func (s *supervised) setQR(c string) { s.mu.Lock(); s.qr = c; s.mu.Unlock() }
 func (s *supervised) getQR() string  { s.mu.Lock(); defer s.mu.Unlock(); return s.qr }
 
 func New(st *store.Store, sp spawner.Spawner, opt Options, log *slog.Logger) *Manager {
-	return &Manager{store: st, spawner: sp, opt: opt, log: log, running: map[string]*supervised{}}
+	return &Manager{store: st, spawner: sp, opt: opt, log: log, running: map[string]*supervised{}, retired: map[string]bool{}}
 }
 
 // Start begins supervising an instance; it is a no-op if already running.
@@ -104,6 +107,9 @@ func (m *Manager) Start(ctx context.Context, id string) error {
 	for {
 		if m.closed {
 			return ErrShuttingDown
+		}
+		if m.retired[id] {
+			return store.ErrNotFound
 		}
 		old, ok := m.running[id]
 		if !ok {
@@ -173,6 +179,15 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 	s.exiting.Store(true)       // under m.mu, so a concurrent Start waits instead of no-op
 	m.mu.Unlock()
 	return m.end(ctx, s)
+}
+
+// Retire permanently stops an instance that is being deleted: after it returns, the
+// worker is gone and Start refuses the id with store.ErrNotFound.
+func (m *Manager) Retire(ctx context.Context, id string) error {
+	m.mu.Lock()
+	m.retired[id] = true
+	m.mu.Unlock()
+	return m.Stop(ctx, id)
 }
 
 func (m *Manager) Restart(ctx context.Context, id string) error {

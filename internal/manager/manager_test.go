@@ -365,3 +365,41 @@ func TestShutdownKeepsStateAndRefusesStart(t *testing.T) {
 		t.Fatalf("expected ErrShuttingDown, got %v", err)
 	}
 }
+
+func TestRetireStopsAndBlocksStart(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	sp.OnStart = func(f *workertest.Fake) { f.Emit("qr_pending") }
+	ctx := context.Background()
+	if err := m.Start(ctx, "i1"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "qr_pending", stateIs(t, st, "i1", instance.QRPending))
+	if err := m.Retire(ctx, "i1"); err != nil {
+		t.Fatal(err)
+	}
+	if sp.Live("i1") != 0 || m.Running("i1") {
+		t.Fatalf("worker still alive after Retire: live=%d", sp.Live("i1"))
+	}
+	starts := sp.Starts("i1")
+	if err := m.Start(ctx, "i1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Start after Retire = %v, want ErrNotFound", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if sp.Starts("i1") != starts || m.Running("i1") {
+		t.Fatal("Start after Retire spawned a worker")
+	}
+}
+
+func TestRetireWithoutWorkerBlocksStart(t *testing.T) {
+	m, _, sp := setup(t, "i1")
+	ctx := context.Background()
+	if err := m.Retire(ctx, "i1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(ctx, "i1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Start after Retire = %v, want ErrNotFound", err)
+	}
+	if sp.Starts("i1") != 0 {
+		t.Fatal("spawned after Retire")
+	}
+}
