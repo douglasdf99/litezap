@@ -238,6 +238,8 @@ func isWorkerProcess(pid int, id, dataDir string) bool {
 	}
 	cmd := string(out)
 	return strings.Contains(cmd, " worker ") &&
-		strings.Contains(cmd, "--instance "+id) &&
+		// The worker always gets --socket after the id, so the trailing space stops
+		// "inst_a" from matching a worker of "inst_ab".
+		strings.Contains(cmd, "--instance "+id+" ") &&
 		strings.Contains(cmd, "--data-dir "+dataDir)
 }

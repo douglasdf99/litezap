@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +55,9 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	case "exit":
 		os.Exit(1)
+	case "idle": // lives until its stdin closes
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
@@ -132,5 +136,31 @@ func TestProcessWorkerExitsWhenParentPipeCloses(t *testing.T) {
 	case <-h.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("worker did not exit after parent pipe closed")
+	}
+}
+
+func TestIsWorkerProcessMatchesExactInstanceID(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("orphan detection is not supported on Windows")
+	}
+	dir := t.TempDir()
+	cmd := exec.Command(os.Args[0], "-test.run=^$", "worker",
+		"--instance", "inst_ab", "--socket", "/tmp/x.sock", "--data-dir", dir)
+	cmd.Env = append(os.Environ(), "LITEZAP_TEST_WORKER=idle")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stdin.Close(); _ = cmd.Wait() })
+
+	pid := cmd.Process.Pid
+	if !isWorkerProcess(pid, "inst_ab", dir) {
+		t.Fatal("exact instance id not matched")
+	}
+	if isWorkerProcess(pid, "inst_a", dir) {
+		t.Fatal("instance id prefix must not match a longer id")
 	}
 }
