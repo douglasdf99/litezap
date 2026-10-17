@@ -66,6 +66,8 @@ Sem dependências externas no modo local.
 - **`manager`**: ciclo de vida das instâncias, máquina de estados (9.1), heartbeat, restart, circuit breaker.
 - **`spawner`**: interface `Start(ctx, instanceID) (WorkerHandle, error)`, `Stop(ctx, instanceID) error`, `Status(instanceID) WorkerStatus`. `WorkerHandle` expõe o cliente gRPC e o PID/ID.
 - **`queue`**: fila de envio persistente por instância (4.1).
+- **`lookup`**: resolução número → JID (`IsOnWhatsApp`) com cache e limite por instância, usada pela fila e por `check-numbers`.
+- **`ingest`**: grava os eventos de dados do worker no log (`messages`, `chats`, `media`).
 - **`events`**: barramento interno com o envelope da seção 5; consumidores: `webhook`, `agenthook`, SSE.
 - **`webhook`**: entrega assinada, retry e dead-letter (5.3).
 - **`agenthook`**: contrato de IA externa (4.3).
@@ -76,7 +78,10 @@ Sem dependências externas no modo local.
 
 - Envolve **um** cliente whatsmeow. Store de sessão do whatsmeow em `data/instances/X/session.db`.
 - gRPC sobre unix socket (AF_UNIX funciona no Windows 10+; não usamos named pipes). Caminho curto para respeitar o limite de ~104 bytes do macOS: `<tmpdir>/lz-<hash8>/<instance_hash8>.sock`, onde `hash8` deriva do `data_dir`.
-- RPCs: `Ping`, `GetQR`, `PairPhone(phone)`, `Send(payload) → wa_message_id`, `MarkRead`, `SendPresence`, `DownloadMedia(ref)`, `GetContacts`, `GetContact(jid)`, `CheckNumbers([]phone)`, `Logout`, e o stream `Events`.
+- RPCs: `Ping`, `PairPhone(phone)`, `Send(payload) → wa_message_id`, `MarkRead`, `SendPresence`, `DownloadMedia(ref, dest_path)`, `GetContacts`, `GetContact(jid)`, `CheckNumbers([]phone)`, `Logout`, e o stream `Events` (o QR vem pelo stream).
+- **Mídia por arquivo**: `Send` lê `media_path` só de `data_dir/outbox/<instância>/` e `DownloadMedia` escreve `dest_path` só em `data_dir/media/<instância>/` (o worker recusa qualquer outro caminho: outras instâncias, `litezap.db`, `media_key`, a própria sessão); o worker usa upload/download em streaming do whatsmeow. Nada de mídia trafega pelo gRPC (limite de mensagem: 32MB, para blocos de history sync). Um spawner em container precisará de volume compartilhado.
+- **Entrega de eventos** (`Events`): primeiro o snapshot (estado, QR), depois o backlog e os eventos ao vivo. Duas filas por worker: **ao vivo** (estado, QR, mensagens, recibos; até 10.000 por inscrito, e um backlog do mesmo tamanho enquanto não há inscrito) e **histórico** (até 8 blocos de *history sync*). Eventos ao vivo sempre saem antes de blocos de histórico. Quando a fila de histórico enche, o handler de history sync **bloqueia** (contrapressão) em vez de descartar. Quando a fila ao vivo enche, cai o evento mais antigo que não é estado de conexão (um `ConnState` nunca é descartado); todo descarte é logado e contado. Eventos não enviados por um stream que caiu voltam ao backlog, respeitando o mesmo limite. No supervisor, blocos de histórico são gravados numa goroutine própria, sem atrasar estados e heartbeats.
+- Códigos de erro dos RPCs de mensagens: `InvalidArgument`/`PermissionDenied` = permanente, `FailedPrecondition` = sessão deslogada, `Unavailable` = sem conexão agora, `DeadlineExceeded` = timeout, outros = retentável; a mensagem do status começa com um código estável (`invalid_number: ...`).
 - **Não existe `ListChats` no worker**: o whatsmeow não lista chats. Chats e histórico vêm do log de mensagens do supervisor (8), alimentado pelos eventos de mensagem e de *history sync*.
 - Normaliza eventos whatsmeow para o envelope LiteZap (seção 5).
 - Sem lógica de negócio. Se morrer, o supervisor reinicia e a sessão volta do disco.
@@ -85,16 +90,18 @@ Sem dependências externas no modo local.
 
 ### 4.1 Envio
 
-1. `POST /v1/instances/{id}/messages` com `{to, type, ..., client_message_id?}` → validação → grava em `outbound_queue` → `202 {id, status:"queued"}`. `client_message_id` repetido devolve o item existente (idempotência).
-2. Status do item: `queued → in_flight → sent | failed`. Despachante por instância (uma goroutine) retira itens em **ordem estrita** (um item em backoff segura os seguintes daquele destinatário; outros destinatários seguem). O despachante **fica pausado enquanto a instância não está `connected`**, sem consumir tentativas. Ritmo: respeitando o ritmo configurado: `min_interval` (padrão 3s) + `jitter` (padrão 0–2s), `max_per_minute` (padrão 20), `typing_simulation` (padrão ligado, ~50ms por caractere, máx. 5s).
-3. Chama `Send` no worker. Sucesso → `sent` + `wa_message_id` gravado (também usado na detecção de humano, 4.3).
-4. Falha retentável (timeout ou erro de rede do worker com a instância `connected`) → volta para a fila com backoff, até **5 tentativas**; depois `failed`. Falha não retentável (`invalid_number`, mídia inválida, `logged_out`, `banned`) → `failed` imediato.
+1. `POST /v1/instances/{id}/messages` com `{to, type, text?, caption?, media?{url|base64, mime?, file_name?, ptt?}, reaction?{message_id, emoji}, client_message_id?, expires_after?}` → validação → grava em `outbound_queue` → `202 {id, status:"queued"}`. `client_message_id` repetido devolve o item existente (idempotência); repetido com outro conteúdo responde `409 conflict`. O `wa_message_id` é escolhido no enfileiramento e reusado em todas as tentativas. `expires_after` (padrão 24h, de 1min a 7 dias): não enviada até lá, a mensagem falha com `expired`.
+2. Status do item: `queued → in_flight → sent | failed`. Despachante por instância (uma goroutine) retira itens em **ordem estrita** (um item em backoff segura os seguintes daquele destinatário; outros destinatários seguem). O despachante **fica pausado enquanto a instância não está `connected`**, sem consumir tentativas, e espera uma carência de 15–30s depois de cada `connected`. Ritmo: `min_interval` (padrão 3s, **mínimo 1s**) + `jitter` (padrão 0–2s), `max_per_minute` (padrão 20, **máximo 60**), `typing_simulation` (padrão ligado, ~50ms por caractere, máx. 5s). Os pisos só caem com `unsafe_pacing`, que só o admin liga.
+   **Janela de envio**: `send_window` (padrão 08:00–20:00) no `timezone` da instância (IANA; padrão: fuso do servidor; o binário embute a base de fusos). A janela vale para destinatários **sem mensagem recebida nas últimas 24h** (`chats.last_inbound_at`): fora dela esses itens são adiados até a abertura; respostas a conversas ativas saem a qualquer hora. O início de cada janela tem uma variação aleatória de alguns minutos. Janela vazia libera qualquer horário.
+   **Verificação de número**: antes do primeiro envio a um número sem chat, o despachante consulta `IsOnWhatsApp` (com cache por instância; cota de 30 consultas novas/min para a fila e 10/min, separada, para `check-numbers`). Número sem WhatsApp falha como `invalid_number` sem enviar nada; número que o WhatsApp conhece com outro JID de telefone (9º dígito no Brasil) tem os itens daquele destinatário redirecionados (uma resposta `@lid` nunca vira o chat). Falha na consulta adia só aquele item, com backoff de 1, 2, 5 e 15 min; na 5ª falha seguida o item vira `failed` (`worker_error`); o limite de cota adia o item 1 min sem contar como falha.
+3. Ao entrar em voo, o envio é gravado no log como `pending` (um recibo que chegue antes da confirmação não se perde). Chama `Send` no worker. Sucesso → `sent` + `wa_message_id` gravado (também usado na detecção de humano, 4.3).
+4. Falha retentável (timeout ou erro de rede do worker com a instância `connected`) → volta para a fila com backoff (5s, 10s, 20s, 40s), até **5 tentativas**; depois `failed`. Falha não retentável (`invalid_number`, mídia inválida, `logged_out`, `banned`, sem permissão no grupo) → `failed` imediato. O worker dizendo que não está conectado, ou o shutdown chegando antes de o envio começar, devolvem o item à fila sem gastar tentativa; um envio já iniciado ganha até 10s no shutdown. Se um recibo (`delivered`/`read`) já chegou para o item, uma resposta de erro do worker não o marca como falho: ele conta como `sent`.
 5. Status `delivered`/`read` chegam como eventos (receipts) → atualizam o store → evento `message.status`.
-6. **Modo síncrono** `?wait=true&timeout=30s`: a requisição aguarda o item sair de `queued`. Se ficar `sent` dentro do prazo → `200` com `wa_message_id`; se `failed` → erro; se o prazo estourar, a mensagem **continua na fila** e a resposta é `202 {id, status:"queued"}`.
+6. **Modo síncrono** `?wait=true&timeout=30s` (máximo 2min): a requisição aguarda o item terminar. Se ficar `sent` dentro do prazo → `200` com `wa_message_id`; se `failed` → erro; se o prazo estourar, a mensagem **continua na fila** e a resposta é `202 {id, status:"queued"}`.
 
-**Rampa por idade da instância** (padrão ligado, configurável por instância em `settings`): o limite diário de destinatários *novos* (chats sem mensagem recebida anteriormente) começa em 50/dia e sobe linearmente até 150/dia ao longo de 14 dias desde o primeiro `connected`. Acima do limite, os envios para destinatários novos ficam `queued` até o dia seguinte; respostas a chats que já falaram com a instância não contam. Mensagens idênticas para muitos destinatários novos em sequência são espaçadas com o dobro do `min_interval`.
+**Rampa por idade da instância** (padrão ligado, configurável por instância em `settings`): o limite diário de destinatários *novos* (chats — diretos ou grupos — sem nenhuma mensagem recebida, inclusive via history sync) começa em 50/dia e sobe linearmente até 150/dia ao longo de 14 dias desde o primeiro `connected`. Cada destinatário conta uma vez por dia; o "dia" é o do `timezone` da instância. Acima do limite, os envios para destinatários novos ficam `queued` até o **início da janela de envio do dia seguinte, mais a variação** (nunca à meia-noite), sem gastar tentativa; respostas a chats que já falaram com a instância não contam. Mensagens idênticas para muitos destinatários novos em sequência são espaçadas com o dobro do `min_interval`.
 
-Tipos de mensagem suportados (lista fechada nesta peça): `text`, `image`, `video`, `audio` (inclui voz/ptt), `document`, `sticker`, `location`, `contact`, `reaction`. Mídia entra por `media.url` (o supervisor baixa) ou `media.base64`; multipart fica fora. O download por URL tem proteção contra SSRF: timeout 30s, limite de tamanho do tipo, e bloqueio de IPs privados/loopback/link-local (desligável por config para uso local).
+Tipos de mensagem suportados (lista fechada nesta peça): `text`, `image`, `video`, `audio` (inclui voz/ptt), `document`, `sticker`, `location`, `contact`, `reaction` (o marco 2 entrega `text`, `image`, `video`, `audio`, `document` e `reaction`; os demais no marco 2b). Mídia entra por `media.url` (o supervisor baixa) ou `media.base64`; multipart fica fora; no máximo 3 corpos grandes e 3 downloads/decodificações de mídia ao mesmo tempo (os demais esperam vaga; o corpo é liberado assim que a mensagem entra na fila, antes da espera de `?wait=true`). O download por URL tem proteção contra SSRF: timeout 30s, limite de tamanho do tipo, sem proxy de ambiente, e só endereços unicast globais (bloqueia privados, loopback, link-local, `0.0.0.0/8`, `100.64.0.0/10`, `198.18.0.0/15`, `240.0.0.0/4`, `64:ff9b::/96`, `2002::/16`), checados depois da resolução DNS em toda conexão, inclusive redirecionamentos (desligável por config para uso local: `media_allow_private_urls`). Um `Content-Type` remoto que contradiz o tipo da mensagem é ignorado; conteúdo que não é imagem/vídeo/áudio de verdade é recusado (SVG nunca vale como imagem).
 
 O `id` devolvido no envio é o id do item da fila, e é ele que se consulta em `GET /messages/{msg_id}` (que também mostra o `wa_message_id` quando houver).
 
@@ -154,13 +161,13 @@ Exemplo de referência em `examples/agent-claude/`: servidor mínimo em Go que i
 
 ### 4.5 Mídia
 
-- Recebida: **download sob demanda**. O evento traz `media.id`; `GET /v1/instances/{id}/media/{media_id}` baixa via worker na primeira vez e guarda em `data/media/`. `GET .../media/{media_id}?signed=1` devolve `{url}` assinada (TTL 1h) que funciona sem token, para repassar a terceiros (ex.: IA). Arquivos expiram após 7 dias (configurável).
+- Recebida: **download sob demanda**. O evento traz `media.id`; `GET /v1/instances/{id}/media/{media_id}` baixa via worker na primeira vez (o worker escreve num arquivo temporário único, renomeado ao final; leituras simultâneas da primeira vez compartilham um único download) e guarda em `data/media/<instância>/`. `GET .../media/{media_id}?signed=1` devolve `{url, expires_at}` assinada (TTL 1h) que funciona sem token, para repassar a terceiros (ex.: IA): `GET /media/{instance_id}/{media_id}?exp=&sig=` (fora de `/v1`), HMAC-SHA256 com um segredo próprio em `data/media_key` (0600). Sem `public_url` e com bind fora de loopback, `?signed=1` é recusado (`409 conflict`). Toda mídia servida leva `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'` e `Content-Disposition: attachment`, salvo JPEG/PNG/WebP/GIF, áudio e vídeo (`inline`). Arquivos expiram após 7 dias (configurável; limpeza no marco 2b).
 - Enviada: limites de tamanho por tipo (padrão: imagem 16MB, vídeo/áudio 64MB, documento 100MB).
 
 ### 4.6 Rede: proxy por instância
 
-- Config por instância em `settings.proxy_url` (`http://`, `https://` ou `socks5://`, com usuário/senha opcionais), mais um `default_proxy_url` global na config.
-- O worker aplica o proxy antes de conectar (`whatsmeow.Client.SetProxyAddress`), tanto no websocket quanto em upload/download de mídia. Trocar o proxy reinicia o worker.
+- Config por instância em `settings.proxy_url` (`http://`, `https://` ou `socks5://`, com usuário/senha opcionais; **só o token admin altera**), mais um `default_proxy_url` global na config. `proxy_url` vazio herda o default.
+- O supervisor passa o proxy ao worker por variável de ambiente (não por flag, visível no `ps`) e remove `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`/`NO_PROXY` herdados. O worker sempre chama `whatsmeow.Client.SetProxyAddress` antes de conectar (vazio = transporte sem proxy de ambiente), valendo para websocket e upload/download de mídia. Trocar o proxy reinicia o worker.
 - **Fixo por sessão**: o motor nunca troca o IP de saída sozinho durante uma sessão. Mudar de IP com frequência é um sinal suspeito.
 - Falha de conexão pelo proxy entra como `reconnecting` com `reason: proxy_unreachable`; o motor não cai silenciosamente para conexão direta.
 - O motor não fornece IPs. Ele só aceita proxies. No modo local, o padrão é a conexão da própria máquina (IP residencial do usuário). Na nuvem, o control plane atribui proxies do pool gerenciado (peça #3).
@@ -221,7 +228,7 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 | `POST /instances/{id}/logout` | inst | desconecta o número |
 | `POST /instances/{id}/token/rotate` | admin | gera novo token de instância |
 | `GET /instances/{id}/qr` · `POST .../pair-phone` | inst | pareamento |
-| `GET/PUT /instances/{id}/settings` | inst | ritmo de envio e limites |
+| `GET/PUT /instances/{id}/settings` | inst (`proxy_url` e `unsafe_pacing`: admin) | ritmo, janela, fuso, rampa, proxy |
 | `POST /instances/{id}/messages` | inst | enviar (4.1) |
 | `GET /instances/{id}/messages/{msg_id}` | inst | status de uma mensagem |
 | `GET /instances/{id}/chats` | inst | chats do log, ordenados por última mensagem |
@@ -230,7 +237,8 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 | `POST /instances/{id}/chats/{jid}/read` | inst | marcar como lido |
 | `GET /instances/{id}/contacts` · `/contacts/{jid}` | inst | contatos |
 | `POST /instances/{id}/check-numbers` | inst | verifica se números têm WhatsApp |
-| `GET /instances/{id}/media/{media_id}` | inst | mídia recebida |
+| `GET /instances/{id}/media/{media_id}` | inst | mídia recebida (`?signed=1` → URL assinada) |
+| `GET /media/{id}/{media_id}?exp=&sig=` | assinatura | mídia recebida via URL assinada (4.5) |
 | `PUT /instances/{id}/agent-hook` · `PUT .../chats/{jid}/agent` | inst | hook de agente (4.3) |
 | `GET /instances/{id}/events` · `GET /events` | inst · admin | SSE |
 | `/webhooks...` | admin ou inst (só os da própria instância) | 5.3 |
@@ -253,14 +261,15 @@ Todas mapeiam casos de uso do `service`:
 
 Arquivo `data/litezap.db`, modo WAL, migrações versionadas embutidas no binário. Entidades:
 
-- `instances` (id, name, state, phone, jid, token_hash, settings_json, created_at, updated_at)
-- `chats` (instance_id, jid, name, is_group, last_message_at, unread_count, agent_enabled NULL|bool, agent_paused_until)
-- `messages` (instance_id, id, wa_message_id, chat_jid, from_me, source, type, text, media_json, status, timestamp) + tabela FTS5 sobre `text`
-- `outbound_queue` (id, instance_id, client_message_id, payload_json, status, attempts, next_attempt_at, last_error, created_at)
+- `instances` (id, name, state, state_reason, jid, token_hash, settings_json, first_connected_at, created_at, updated_at) — `settings_json` guarda só os overrides da instância; o efetivo soma os padrões da config
+- `chats` (instance_id, jid, name, is_group, last_message_at, unread_count, has_inbound, last_inbound_at, agent_enabled NULL|bool, agent_paused_until) — `is_group` e `has_inbound` nunca voltam a falso; `last_inbound_at` define conversa ativa para a janela de envio
+- `messages` (seq, instance_id, id, wa_message_id, chat_jid, sender_jid, from_me, source `contact|api|device|history`, type, text, media_json, reaction_to, status `received|pending|sent|delivered|read`, timestamp), única por (instance_id, chat_jid, wa_message_id) + tabela FTS5 sobre `text` (marco 2b)
+- `outbound_queue` (seq, id, instance_id, client_message_id, chat_jid, wa_message_id, payload_json, status, attempts, next_attempt_at, last_error, new_recipient, request_hash, expires_at, lookup_failures, created_at, updated_at, sent_at), com índice parcial dos itens ativos
+- `number_cache` (instance_id, phone, found, jid, checked_at) — resultado de `IsOnWhatsApp` (válido 30 dias se encontrado, 24h se não)
 - `webhooks` (id, instance_id?, url, secret, events_json, version, enabled)
 - `webhook_deliveries` (id, webhook_id, event_id, status, attempts, next_attempt_at, last_status_code, last_error)
 - `agent_hooks` (instance_id, config_json)
-- `media` (id, instance_id, message_id, mime, size, path, expires_at)
+- `media` (id, instance_id, message_id, kind, mime, size, file_name, ref, path, expires_at, created_at) — `ref` é a referência opaca de download vinda do worker
 
 Retenção do log de mensagens: ilimitada por padrão, com `message_retention_days` configurável. A interface `Store` expõe operações por agregado (Instances, Chats, Messages, Queue, Webhooks, Media) para permitir implementação Postgres na peça #3.
 
@@ -275,6 +284,8 @@ Retenção do log de mensagens: ilimitada por padrão, com `message_retention_da
 | `starting` | `connecting` | worker ativo, com sessão salva |
 | `starting` | `connected` · `reconnecting` | o snapshot do worker traz só o estado mais recente |
 | `qr_pending` | `connecting` | QR escaneado / código pareado |
+| `qr_pending` | `reconnecting` | worker pareando perdeu o acesso ao WhatsApp (ex.: proxy fora) |
+| `reconnecting` | `qr_pending` | worker pareando voltou a mostrar códigos |
 | `connecting` | `connected` | conexão estabelecida |
 | `connected` | `reconnecting` | queda de conexão ou watchdog |
 | `reconnecting` | `connected` | reconectou |
@@ -297,11 +308,11 @@ Toda transição é persistida e emitida como `instance.status`.
 - **Limite de memória** por worker: `GOMEMLIMIT` + kill acima de `worker_memory_max` (padrão 512MB).
 - **Erros terminais** (`logged_out`, `banned`): sem retry.
 - **Shutdown gracioso**: para despachantes, aguarda envios em voo (até 10s), desconecta workers e encerra.
-- **Boot**: cada worker grava `data/run/X.pid`. No boot, o supervisor mata PIDs órfãos que ainda sejam `litezap worker`, remove sockets antigos, devolve itens `in_flight` para `queued` (checando idempotência contra `messages`) e sobe as instâncias que não estavam `stopped`.
+- **Boot**: cada worker grava `data/run/X.pid`. No boot, o supervisor mata PIDs órfãos que ainda sejam `litezap worker`, remove sockets antigos, devolve itens `in_flight` para `queued` (exceto os cujo registro no log já foi promovido por um recibo; o reenvio usa o mesmo `wa_message_id`) e sobe as instâncias que não estavam `stopped`.
 
 ### 9.3 Erros na API
 
-Códigos estáveis: `unauthorized`, `forbidden`, `instance_not_found`, `instance_not_connected`, `instance_banned`, `instance_not_pairing`, `worker_error`, `worker_timeout`, `shutting_down`, `rate_limited`, `invalid_number`, `media_too_large`, `media_unavailable`, `validation_failed`, `internal`. `retryable` indica se o cliente pode tentar de novo. Erros gRPC do worker: `Unavailable`/`Canceled` viram `instance_not_connected`; `DeadlineExceeded` vira `worker_timeout` (HTTP 504, `retryable`); qualquer outro vira `worker_error` (HTTP 502, `retryable`, mensagem do worker sem números de telefone nem tokens).
+Códigos estáveis: `unauthorized`, `forbidden`, `instance_not_found`, `not_found` (404: mensagem, chat, contato ou mídia), `conflict` (409: `client_message_id` reusado com outro conteúdo; URLs assinadas desativadas), `instance_not_connected`, `instance_banned`, `instance_not_pairing`, `worker_error`, `worker_timeout`, `shutting_down`, `rate_limited` (429: cota de consultas de `check-numbers` esgotada; envios de mídia grandes esperam vaga em vez de falhar), `invalid_number` (400), `media_too_large` (413), `media_unavailable` (410: mídia recebida expirou no WhatsApp), `media_fetch_failed` (422, `retryable`: `media.url` não baixou), `message_expired` (410: não enviada antes de `expires_after`), `validation_failed`, `internal`. `retryable` indica se o cliente pode tentar de novo. Erros gRPC do worker: `Unavailable`/`Canceled` viram `instance_not_connected`; `DeadlineExceeded` vira `worker_timeout` (HTTP 504, `retryable`); qualquer outro vira `worker_error` (HTTP 502, `retryable`, mensagem do worker sem números de telefone nem tokens).
 
 ### 9.4 Observabilidade
 
@@ -311,7 +322,7 @@ Códigos estáveis: `unauthorized`, `forbidden`, `instance_not_found`, `instance
 
 ## 10. Configuração
 
-`litezap.yaml` + variáveis `LITEZAP_*` (env sobrescreve arquivo): `listen_addr` (padrão `127.0.0.1:8787`), `public_url`, `data_dir`, `admin_token`, padrões de ritmo (4.1), `worker_memory_max`, `zombie_timeout`, limites de mídia, `media_retention_days`, `message_retention_days`.
+`litezap.yaml` + variáveis `LITEZAP_*` (env sobrescreve arquivo): `listen_addr` (padrão `127.0.0.1:8787`), `public_url`, `data_dir`, `admin_token`, `default_proxy_url`, `media_allow_private_urls` (padrão `false`), `instance_defaults` (ritmo, janela, fuso, rampa e `unsafe_pacing`; só no arquivo), `worker_memory_max`, `zombie_timeout`, limites de mídia, `media_retention_days`, `message_retention_days`.
 
 ## 11. Testes
 
