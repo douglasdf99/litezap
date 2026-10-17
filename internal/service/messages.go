@@ -315,6 +315,10 @@ func (s *Messaging) Send(ctx context.Context, instanceID string, in SendInput, w
 		if err != nil {
 			return MessageView{}, err
 		}
+		if o.RequestHash != hash {
+			return MessageView{}, apierr.New(http.StatusConflict, "conflict",
+				"client_message_id was already used for a different message", false)
+		}
 	}
 	s.Queues.Wake(instanceID)
 	return s.finish(ctx, instanceID, o, wait)

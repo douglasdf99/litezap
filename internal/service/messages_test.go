@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -265,5 +268,53 @@ func TestSettingsProxyRestartsWorker(t *testing.T) {
 	bad := "ftp://x"
 	if _, err := e.svc.UpdateSettings(ctx, "i1", settings.Patch{ProxyURL: &bad}); apiCode(err) != "validation_failed" {
 		t.Fatalf("bad proxy = %v", err)
+	}
+}
+
+// Concurrent sends with the same client_message_id but different bodies: all pass the
+// idempotency check before any is queued (the media server releases them together), so
+// the losers learn about the winner from Enqueue and must get a conflict, never its view.
+func TestConcurrentClientIDWithDifferentBodies(t *testing.T) {
+	e := newMsgEnv(t)
+	ctx := context.Background()
+	const n = maxMediaJobs // every request downloads at the same time
+	var arrived sync.WaitGroup
+	arrived.Add(n)
+	release := make(chan struct{})
+	go func() { arrived.Wait(); close(release) }()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		arrived.Done()
+		select {
+		case <-release:
+		case <-time.After(3 * time.Second):
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Write([]byte("\x89PNG\r\n\x1a\n" + r.URL.Path))
+	}))
+	defer srv.Close()
+	type res struct {
+		v   MessageView
+		err error
+	}
+	out := make(chan res, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			v, err := e.svc.Send(ctx, "i1", SendInput{To: "5511988887777", Type: "image", ClientMessageID: "dup",
+				Media: &MediaInput{URL: fmt.Sprintf("%s/%d.png", srv.URL, i)}}, 0)
+			out <- res{v, err}
+		}()
+	}
+	ok := 0
+	for i := 0; i < n; i++ {
+		r := <-out
+		switch {
+		case r.err == nil:
+			ok++
+		case apiCode(r.err) != "conflict":
+			t.Errorf("unexpected error: %v", r.err)
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("%d requests got the message, want exactly 1 (the others: conflict)", ok)
 	}
 }
