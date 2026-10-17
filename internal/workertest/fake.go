@@ -4,6 +4,7 @@ package workertest
 import (
 	"context"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,13 +14,18 @@ import (
 	"github.com/douglasdf99/litezap/internal/wire"
 	"github.com/douglasdf99/litezap/internal/worker"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
 
 const testJID = "5511999999999:7@s.whatsapp.net"
 
-// FakeWA is a scriptable worker.WAClient.
+// The fake must satisfy the messaging interface, or Server would answer Unimplemented.
+var _ worker.Messenger = (*FakeWA)(nil)
+
+// FakeWA is a scriptable worker.WAClient and worker.Messenger.
 type FakeWA struct {
 	mu       sync.Mutex
 	sink     worker.Sink
@@ -27,6 +33,20 @@ type FakeWA struct {
 	Logouts  atomic.Int32
 	// SilentLogout makes Logout succeed without reporting logged_out (a missed event).
 	SilentLogout atomic.Bool
+
+	msgMu        sync.Mutex
+	sent         []*workerv1.SendRequest
+	sentMedia    map[string][]byte // message id -> attachment read at Send time
+	presences    []*workerv1.SendPresenceRequest
+	reads        []*workerv1.MarkReadRequest
+	sendFn       func(*workerv1.SendRequest) (*workerv1.SendResponse, error)
+	media        map[string][]byte
+	contacts     []*workerv1.Contact
+	registered   map[string]string // phone -> JID, overriding the default
+	unregistered map[string]bool
+	checks       int   // phones looked up by CheckNumbers
+	checkErr     error // returned by CheckNumbers when set
+	downloads    int
 }
 
 func (f *FakeWA) Run(ctx context.Context, sink worker.Sink) error {
@@ -54,6 +74,185 @@ func (f *FakeWA) Logout(context.Context) error {
 }
 
 func (f *FakeWA) Disconnect() {}
+
+// SetSendFunc scripts Send; fn sees every request (nil restores the default success).
+func (f *FakeWA) SetSendFunc(fn func(*workerv1.SendRequest) (*workerv1.SendResponse, error)) {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	f.sendFn = fn
+}
+
+func (f *FakeWA) Send(_ context.Context, req *workerv1.SendRequest) (*workerv1.SendResponse, error) {
+	var data []byte
+	if req.MediaPath != "" {
+		data, _ = os.ReadFile(req.MediaPath) // the queue deletes the file once the item is final
+	}
+	f.msgMu.Lock()
+	f.sent = append(f.sent, req)
+	if data != nil {
+		if f.sentMedia == nil {
+			f.sentMedia = map[string][]byte{}
+		}
+		f.sentMedia[req.MessageId] = data
+	}
+	fn := f.sendFn
+	f.msgMu.Unlock()
+	if fn != nil {
+		return fn(req)
+	}
+	return &workerv1.SendResponse{MessageId: req.MessageId, TimestampMs: time.Now().UnixMilli()}, nil
+}
+
+// Sent returns every Send request received so far (including failed ones).
+func (f *FakeWA) Sent() []*workerv1.SendRequest {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	return append([]*workerv1.SendRequest(nil), f.sent...)
+}
+
+// SentMedia returns the attachment of a sent message, as read from its media_path.
+func (f *FakeWA) SentMedia(messageID string) []byte {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	return f.sentMedia[messageID]
+}
+
+func (f *FakeWA) SendPresence(_ context.Context, req *workerv1.SendPresenceRequest) error {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	f.presences = append(f.presences, req)
+	return nil
+}
+
+func (f *FakeWA) Presences() []*workerv1.SendPresenceRequest {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	return append([]*workerv1.SendPresenceRequest(nil), f.presences...)
+}
+
+func (f *FakeWA) MarkRead(_ context.Context, req *workerv1.MarkReadRequest) error {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	f.reads = append(f.reads, req)
+	return nil
+}
+
+func (f *FakeWA) Reads() []*workerv1.MarkReadRequest {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	return append([]*workerv1.MarkReadRequest(nil), f.reads...)
+}
+
+// SetMedia makes DownloadMedia write data for ref.
+func (f *FakeWA) SetMedia(ref string, data []byte) {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	if f.media == nil {
+		f.media = map[string][]byte{}
+	}
+	f.media[ref] = data
+}
+
+// Downloads counts DownloadMedia calls.
+func (f *FakeWA) Downloads() int {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	return f.downloads
+}
+
+func (f *FakeWA) DownloadMedia(_ context.Context, _ string, ref []byte, dest string) (int64, error) {
+	time.Sleep(20 * time.Millisecond) // a download takes a while: concurrent callers overlap
+	f.msgMu.Lock()
+	f.downloads++
+	data, ok := f.media[string(ref)]
+	f.msgMu.Unlock()
+	if !ok {
+		return 0, status.Error(codes.NotFound, "media_unavailable: gone")
+	}
+	if err := os.WriteFile(dest, data, 0o600); err != nil {
+		return 0, status.Error(codes.Unknown, "worker_error: "+err.Error())
+	}
+	return int64(len(data)), nil
+}
+
+func (f *FakeWA) SetContacts(cs ...*workerv1.Contact) {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	f.contacts = cs
+}
+
+func (f *FakeWA) Contacts(context.Context) ([]*workerv1.Contact, error) {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	return append([]*workerv1.Contact(nil), f.contacts...), nil
+}
+
+func (f *FakeWA) Contact(_ context.Context, jid string) (*workerv1.Contact, bool, error) {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	for _, c := range f.contacts {
+		if c.Jid == jid {
+			return c, true, nil
+		}
+	}
+	return &workerv1.Contact{Jid: jid}, false, nil
+}
+
+// SetRegistered maps phone to a different JID (e.g. with the Brazilian 9th digit). By
+// default every number exists as <phone>@s.whatsapp.net.
+func (f *FakeWA) SetRegistered(phone, jid string) {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	if f.registered == nil {
+		f.registered = map[string]string{}
+	}
+	f.registered[phone] = jid
+}
+
+// SetUnregistered makes phone a number without WhatsApp.
+func (f *FakeWA) SetUnregistered(phone string) {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	if f.unregistered == nil {
+		f.unregistered = map[string]bool{}
+	}
+	f.unregistered[phone] = true
+}
+
+// SetCheckErr makes CheckNumbers fail with err (nil restores normal answers).
+func (f *FakeWA) SetCheckErr(err error) {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	f.checkErr = err
+}
+
+// Checks counts the phones looked up so far.
+func (f *FakeWA) Checks() int {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	return f.checks
+}
+
+func (f *FakeWA) CheckNumbers(_ context.Context, phones []string) ([]*workerv1.NumberStatus, error) {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	f.checks += len(phones)
+	if f.checkErr != nil {
+		return nil, f.checkErr
+	}
+	out := make([]*workerv1.NumberStatus, 0, len(phones))
+	for _, p := range phones {
+		ns := &workerv1.NumberStatus{Phone: p}
+		if !f.unregistered[p] {
+			ns.Exists, ns.Jid = true, p+"@s.whatsapp.net"
+			if jid, ok := f.registered[p]; ok {
+				ns.Jid = jid
+			}
+		}
+		out = append(out, ns)
+	}
+	return out, nil
+}
 
 // Fake is one in-memory worker; it implements spawner.WorkerHandle.
 type Fake struct {
@@ -111,6 +310,19 @@ func (f *Fake) Emit(state string) {
 }
 
 func (f *Fake) EmitQR(code string) { f.WA.getSink().QR(code, time.Minute) }
+
+// EmitMessage, EmitReceipt and EmitHistory simulate data events from WhatsApp.
+func (f *Fake) EmitMessage(m *workerv1.Message) {
+	f.WA.getSink().Data(&workerv1.Event{Kind: &workerv1.Event_Message{Message: m}})
+}
+
+func (f *Fake) EmitReceipt(r *workerv1.Receipt) {
+	f.WA.getSink().Data(&workerv1.Event{Kind: &workerv1.Event_Receipt{Receipt: r}})
+}
+
+func (f *Fake) EmitHistory(h *workerv1.HistoryChunk) {
+	f.WA.getSink().Data(&workerv1.Event{Kind: &workerv1.Event_History{History: h}})
+}
 
 // Crash simulates the worker process dying.
 func (f *Fake) Crash() {
