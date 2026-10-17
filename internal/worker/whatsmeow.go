@@ -32,6 +32,10 @@ type Whatsmeow struct {
 	// proxied is set when the client goes through a proxy (spec 4.6): connection errors
 	// are then reported as proxy_unreachable. There is never a fallback to direct.
 	proxied bool
+	// dataDir and instanceID bound the files Send reads (outbox/<instance>/) and
+	// DownloadMedia writes (media/<instance>/).
+	dataDir    string
+	instanceID string
 
 	// Signals to pairLoop; all are buffered (1) and sent to without blocking.
 	restart    chan struct{} // from PairPhone: end the current round now
@@ -384,6 +388,9 @@ func (w *Whatsmeow) reportTerminal(state, reason, jid string) {
 }
 
 func (w *Whatsmeow) handle(evt any) {
+	if w.onData(evt) {
+		return
+	}
 	loggedIn := w.cli.Store.ID != nil
 	switch e := evt.(type) {
 	case *events.QR:

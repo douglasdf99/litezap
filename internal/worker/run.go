@@ -77,6 +77,7 @@ func Run(ctx context.Context, opt Options, log *slog.Logger) error {
 	}
 	wa := NewWhatsmeow(cli, log)
 	wa.proxied = opt.ProxyURL != ""
+	wa.dataDir, wa.instanceID = opt.DataDir, opt.InstanceID
 	srv := NewServer(wa)
 	srv.SetLogger(log)
 

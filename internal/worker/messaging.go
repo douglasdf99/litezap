@@ -1,0 +1,488 @@
+package worker
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+)
+
+// historyChunkSize bounds the messages of one HistoryChunk event (and so the supervisor's
+// write transaction for it).
+const historyChunkSize = 250
+
+var _ Messenger = (*Whatsmeow)(nil)
+
+// grpcErr wraps a failure as a status whose message starts with a stable code.
+func grpcErr(c codes.Code, code, msg string) error {
+	return status.Error(c, code+": "+msg)
+}
+
+// sendErr maps whatsmeow send/upload errors onto the codes documented in worker.proto.
+func sendErr(err error) error {
+	switch {
+	case errors.Is(err, whatsmeow.ErrNotConnected):
+		return grpcErr(codes.Unavailable, "instance_not_connected", "websocket not connected")
+	case errors.Is(err, whatsmeow.ErrNotLoggedIn):
+		return grpcErr(codes.FailedPrecondition, "logged_out", "session is not logged in")
+	case errors.Is(err, whatsmeow.ErrMessageTimedOut), errors.Is(err, context.DeadlineExceeded):
+		return grpcErr(codes.DeadlineExceeded, "worker_timeout", err.Error())
+	case errors.Is(err, whatsmeow.ErrRecipientADJID), errors.Is(err, whatsmeow.ErrUnknownServer):
+		return grpcErr(codes.InvalidArgument, "invalid_number", err.Error())
+	case errors.Is(err, whatsmeow.ErrNoPermissionInGroup):
+		return grpcErr(codes.PermissionDenied, "forbidden", err.Error())
+	case strings.Contains(err.Error(), "no LID found"):
+		// whatsmeow cannot resolve a phone number that has no WhatsApp account.
+		return grpcErr(codes.InvalidArgument, "invalid_number", "recipient is not on WhatsApp")
+	}
+	return grpcErr(codes.Unknown, "worker_error", err.Error())
+}
+
+func mediaType(kind string) (whatsmeow.MediaType, bool) {
+	switch kind {
+	case "image":
+		return whatsmeow.MediaImage, true
+	case "video":
+		return whatsmeow.MediaVideo, true
+	case "audio":
+		return whatsmeow.MediaAudio, true
+	case "document":
+		return whatsmeow.MediaDocument, true
+	}
+	return "", false
+}
+
+// buildMedia builds the message for an uploaded attachment.
+func buildMedia(req *workerv1.SendRequest, up whatsmeow.UploadResponse) *waE2E.Message {
+	var caption *string
+	if req.Text != "" {
+		caption = proto.String(req.Text)
+	}
+	switch req.Type {
+	case "image":
+		return &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+			Caption: caption, Mimetype: proto.String(req.Mime),
+			URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+		}}
+	case "video":
+		return &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
+			Caption: caption, Mimetype: proto.String(req.Mime),
+			URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+		}}
+	case "audio":
+		return &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
+			Mimetype: proto.String(req.Mime), PTT: proto.Bool(req.Ptt),
+			URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+		}}
+	default: // document
+		name := req.FileName
+		if name == "" {
+			name = "file"
+		}
+		return &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
+			Caption: caption, Mimetype: proto.String(req.Mime), FileName: proto.String(name), Title: proto.String(name),
+			URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+		}}
+	}
+}
+
+// dataPath checks that p is a file directly inside <dataDir>/<area>/<instance>: Send only
+// reads from "outbox" and DownloadMedia only writes to "media", each for this instance.
+// The supervisor passes paths; the worker must not touch anything else (other instances,
+// litezap.db, media_key, its own session).
+func (w *Whatsmeow) dataPath(p, area string) (string, error) {
+	if w.dataDir == "" || w.instanceID == "" || p == "" || !filepath.IsAbs(p) {
+		return "", grpcErr(codes.InvalidArgument, "validation_failed", "media path must be absolute")
+	}
+	p = filepath.Clean(p)
+	if filepath.Dir(p) != filepath.Join(w.dataDir, area, w.instanceID) {
+		return "", grpcErr(codes.InvalidArgument, "validation_failed", "media path outside the instance's "+area+" directory")
+	}
+	return p, nil
+}
+
+func (w *Whatsmeow) Send(ctx context.Context, req *workerv1.SendRequest) (*workerv1.SendResponse, error) {
+	to, err := types.ParseJID(req.To)
+	if err != nil || to.User == "" {
+		return nil, grpcErr(codes.InvalidArgument, "invalid_number", "invalid recipient JID")
+	}
+	var msg *waE2E.Message
+	switch req.Type {
+	case "text":
+		msg = &waE2E.Message{Conversation: proto.String(req.Text)}
+	case "reaction":
+		sender := to // reacting to a message the contact sent in a direct chat
+		if req.ReactionFromMe {
+			sender = types.EmptyJID
+		} else if req.ReactionSender != "" {
+			if sender, err = types.ParseJID(req.ReactionSender); err != nil {
+				return nil, grpcErr(codes.InvalidArgument, "validation_failed", "invalid reaction sender")
+			}
+		}
+		msg = w.cli.BuildReaction(to, sender, types.MessageID(req.ReactionMessageId), req.Text)
+	default:
+		mt, ok := mediaType(req.Type)
+		if !ok {
+			return nil, grpcErr(codes.InvalidArgument, "validation_failed", "unsupported message type "+req.Type)
+		}
+		path, err := w.dataPath(req.MediaPath, "outbox")
+		if err != nil {
+			return nil, err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, grpcErr(codes.InvalidArgument, "validation_failed", "media file is missing")
+		}
+		// Streams the file (encrypted into a temporary file) instead of loading it in memory.
+		up, err := w.cli.UploadReader(ctx, f, nil, mt)
+		f.Close()
+		if err != nil {
+			return nil, grpcErr(codes.Unavailable, "media_upload_failed", err.Error())
+		}
+		msg = buildMedia(req, up)
+	}
+	resp, err := w.cli.SendMessage(ctx, to, msg, whatsmeow.SendRequestExtra{ID: types.MessageID(req.MessageId)})
+	if err != nil {
+		return nil, sendErr(err)
+	}
+	return &workerv1.SendResponse{MessageId: string(resp.ID), TimestampMs: resp.Timestamp.UnixMilli()}, nil
+}
+
+func (w *Whatsmeow) SendPresence(ctx context.Context, req *workerv1.SendPresenceRequest) error {
+	to, err := types.ParseJID(req.To)
+	if err != nil {
+		return grpcErr(codes.InvalidArgument, "validation_failed", "invalid JID")
+	}
+	state, media := types.ChatPresenceComposing, types.ChatPresenceMediaText
+	switch req.State {
+	case "recording":
+		media = types.ChatPresenceMediaAudio
+	case "paused":
+		state = types.ChatPresencePaused
+	}
+	if err := w.cli.SendChatPresence(ctx, to, state, media); err != nil {
+		return sendErr(err)
+	}
+	return nil
+}
+
+func (w *Whatsmeow) MarkRead(ctx context.Context, req *workerv1.MarkReadRequest) error {
+	chat, err := types.ParseJID(req.Chat)
+	if err != nil {
+		return grpcErr(codes.InvalidArgument, "validation_failed", "invalid chat JID")
+	}
+	sender := types.EmptyJID
+	if req.Sender != "" {
+		if sender, err = types.ParseJID(req.Sender); err != nil {
+			return grpcErr(codes.InvalidArgument, "validation_failed", "invalid sender JID")
+		}
+	}
+	ids := make([]types.MessageID, len(req.MessageIds))
+	for i, id := range req.MessageIds {
+		ids[i] = types.MessageID(id)
+	}
+	if err := w.cli.MarkRead(ctx, ids, time.Now(), chat, sender); err != nil {
+		return sendErr(err)
+	}
+	return nil
+}
+
+// mediaRef serializes the attachment sub-message: it carries everything needed to download it later.
+func mediaRef(m proto.Message) []byte {
+	b, _ := proto.Marshal(m)
+	return b
+}
+
+// downloadable rebuilds the attachment sub-message from a mediaRef.
+func downloadable(kind string, ref []byte) (whatsmeow.DownloadableMessage, error) {
+	var m interface {
+		proto.Message
+		whatsmeow.DownloadableMessage
+	}
+	switch kind {
+	case "image":
+		m = &waE2E.ImageMessage{}
+	case "video":
+		m = &waE2E.VideoMessage{}
+	case "audio":
+		m = &waE2E.AudioMessage{}
+	case "document":
+		m = &waE2E.DocumentMessage{}
+	case "sticker":
+		m = &waE2E.StickerMessage{}
+	default:
+		return nil, fmt.Errorf("unknown media kind %q", kind)
+	}
+	if err := proto.Unmarshal(ref, m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (w *Whatsmeow) DownloadMedia(ctx context.Context, kind string, ref []byte, dest string) (int64, error) {
+	msg, err := downloadable(kind, ref)
+	if err != nil {
+		return 0, grpcErr(codes.InvalidArgument, "validation_failed", err.Error())
+	}
+	path, err := w.dataPath(dest, "media")
+	if err != nil {
+		return 0, err
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return 0, grpcErr(codes.Unknown, "worker_error", "cannot create media file")
+	}
+	err = w.cli.DownloadToFile(ctx, msg, f)
+	var size int64
+	if fi, serr := f.Stat(); serr == nil {
+		size = fi.Size()
+	}
+	f.Close()
+	if err != nil {
+		os.Remove(path)
+		var httpErr whatsmeow.DownloadHTTPError
+		if errors.As(err, &httpErr) || errors.Is(err, whatsmeow.ErrNoURLPresent) {
+			return 0, grpcErr(codes.NotFound, "media_unavailable", err.Error())
+		}
+		return 0, grpcErr(codes.Unknown, "media_download_failed", err.Error())
+	}
+	return size, nil
+}
+
+func contactOf(jid types.JID, c types.ContactInfo) *workerv1.Contact {
+	name := c.FullName
+	if name == "" {
+		name = c.FirstName
+	}
+	return &workerv1.Contact{Jid: jid.String(), Name: name, PushName: c.PushName, BusinessName: c.BusinessName}
+}
+
+func (w *Whatsmeow) Contacts(ctx context.Context) ([]*workerv1.Contact, error) {
+	all, err := w.cli.Store.Contacts.GetAllContacts(ctx)
+	if err != nil {
+		return nil, grpcErr(codes.Unknown, "worker_error", err.Error())
+	}
+	out := make([]*workerv1.Contact, 0, len(all))
+	for jid, c := range all {
+		out = append(out, contactOf(jid, c))
+	}
+	return out, nil
+}
+
+func (w *Whatsmeow) Contact(ctx context.Context, raw string) (*workerv1.Contact, bool, error) {
+	jid, err := types.ParseJID(raw)
+	if err != nil {
+		return nil, false, grpcErr(codes.InvalidArgument, "validation_failed", "invalid JID")
+	}
+	c, err := w.cli.Store.Contacts.GetContact(ctx, jid)
+	if err != nil {
+		return nil, false, grpcErr(codes.Unknown, "worker_error", err.Error())
+	}
+	return contactOf(jid, c), c.Found, nil
+}
+
+func (w *Whatsmeow) CheckNumbers(ctx context.Context, phones []string) ([]*workerv1.NumberStatus, error) {
+	query := make([]string, len(phones))
+	for i, p := range phones {
+		query[i] = "+" + p // IsOnWhatsApp wants international format with "+"
+	}
+	res, err := w.cli.IsOnWhatsApp(ctx, query)
+	if err != nil {
+		return nil, sendErr(err)
+	}
+	byPhone := map[string]types.IsOnWhatsAppResponse{}
+	for _, r := range res {
+		byPhone[strings.TrimPrefix(r.Query, "+")] = r
+	}
+	out := make([]*workerv1.NumberStatus, 0, len(phones))
+	for _, p := range phones {
+		ns := &workerv1.NumberStatus{Phone: p}
+		if r, ok := byPhone[p]; ok && r.IsIn {
+			ns.Exists = true
+			jid := r.JID
+			if r.PhoneNumber.Server == types.DefaultUserServer {
+				jid = r.PhoneNumber // prefer the phone JID over a LID
+			}
+			ns.Jid = jid.ToNonAD().String()
+		}
+		out = append(out, ns)
+	}
+	return out, nil
+}
+
+// content extracts the LiteZap type, text, media and reaction target of a message.
+// ok=false means the message carries nothing to log (protocol messages, revokes, edits...).
+func content(m *waE2E.Message) (typ, text string, media *workerv1.Media, reactionTo string, ok bool) {
+	switch {
+	case m == nil:
+		return "", "", nil, "", false
+	case m.GetConversation() != "":
+		return "text", m.GetConversation(), nil, "", true
+	case m.GetExtendedTextMessage() != nil:
+		return "text", m.GetExtendedTextMessage().GetText(), nil, "", true
+	case m.GetImageMessage() != nil:
+		x := m.GetImageMessage()
+		return "image", x.GetCaption(), &workerv1.Media{Kind: "image", Mime: x.GetMimetype(), Size: x.GetFileLength(), Ref: mediaRef(x)}, "", true
+	case m.GetVideoMessage() != nil:
+		x := m.GetVideoMessage()
+		return "video", x.GetCaption(), &workerv1.Media{Kind: "video", Mime: x.GetMimetype(), Size: x.GetFileLength(), Seconds: x.GetSeconds(), Ref: mediaRef(x)}, "", true
+	case m.GetAudioMessage() != nil:
+		x := m.GetAudioMessage()
+		return "audio", "", &workerv1.Media{Kind: "audio", Mime: x.GetMimetype(), Size: x.GetFileLength(), Seconds: x.GetSeconds(), Ptt: x.GetPTT(), Ref: mediaRef(x)}, "", true
+	case m.GetDocumentMessage() != nil:
+		x := m.GetDocumentMessage()
+		return "document", x.GetCaption(), &workerv1.Media{Kind: "document", Mime: x.GetMimetype(), Size: x.GetFileLength(), FileName: x.GetFileName(), Ref: mediaRef(x)}, "", true
+	case m.GetStickerMessage() != nil:
+		x := m.GetStickerMessage()
+		return "sticker", "", &workerv1.Media{Kind: "sticker", Mime: x.GetMimetype(), Size: x.GetFileLength(), Ref: mediaRef(x)}, "", true
+	case m.GetLocationMessage() != nil:
+		x := m.GetLocationMessage()
+		return "location", strings.TrimSpace(fmt.Sprintf("%f,%f %s", x.GetDegreesLatitude(), x.GetDegreesLongitude(), x.GetName())), nil, "", true
+	case m.GetContactMessage() != nil:
+		return "contact", m.GetContactMessage().GetDisplayName(), nil, "", true
+	case m.GetReactionMessage() != nil:
+		x := m.GetReactionMessage()
+		return "reaction", x.GetText(), nil, x.GetKey().GetID(), true
+	case m.GetProtocolMessage() != nil, m.GetSenderKeyDistributionMessage() != nil:
+		return "", "", nil, "", false
+	}
+	return "unknown", "", nil, "", true
+}
+
+// phoneJID returns the phone-number JID for a LID when it is known (alt or the LID store),
+// so a contact keeps one chat whatever addressing WhatsApp uses.
+func (w *Whatsmeow) phoneJID(ctx context.Context, jid, alt types.JID) types.JID {
+	if jid.Server != types.HiddenUserServer {
+		return jid.ToNonAD()
+	}
+	if alt.Server == types.DefaultUserServer {
+		return alt.ToNonAD()
+	}
+	if w.cli.Store.LIDs != nil {
+		if pn, err := w.cli.Store.LIDs.GetPNForLID(ctx, jid); err == nil && !pn.IsEmpty() {
+			return pn.ToNonAD()
+		}
+	}
+	return jid.ToNonAD()
+}
+
+// toMessage normalizes a whatsmeow message; nil means it is not logged.
+func (w *Whatsmeow) toMessage(ctx context.Context, info types.MessageInfo, m *waE2E.Message) *workerv1.Message {
+	if info.Chat.Server == types.BroadcastServer || info.Chat.Server == types.NewsletterServer {
+		return nil // status updates, broadcast lists and channels are out of scope
+	}
+	typ, text, media, reactionTo, ok := content(m)
+	if !ok {
+		return nil
+	}
+	chat := info.Chat.ToNonAD()
+	if !info.IsGroup {
+		alt := info.SenderAlt
+		if info.IsFromMe {
+			alt = info.RecipientAlt
+		}
+		chat = w.phoneJID(ctx, info.Chat, alt)
+	}
+	return &workerv1.Message{
+		Id: string(info.ID), Chat: chat.String(), Sender: w.phoneJID(ctx, info.Sender, info.SenderAlt).String(),
+		FromMe: info.IsFromMe, IsGroup: info.IsGroup, TimestampMs: info.Timestamp.UnixMilli(),
+		PushName: info.PushName, Type: typ, Text: text, Media: media, ReactionTo: reactionTo,
+	}
+}
+
+func receiptType(t types.ReceiptType) (string, bool) {
+	switch t {
+	case types.ReceiptTypeDelivered:
+		return "delivered", true
+	case types.ReceiptTypeRead:
+		return "read", true
+	case types.ReceiptTypePlayed:
+		return "played", true
+	}
+	return "", false
+}
+
+// onData handles the message-related whatsmeow events; it reports whether evt was one.
+func (w *Whatsmeow) onData(evt any) bool {
+	switch evt.(type) {
+	case *events.Message, *events.Receipt, *events.HistorySync:
+	default:
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	switch e := evt.(type) {
+	case *events.Message:
+		if m := w.toMessage(ctx, e.Info, e.Message); m != nil {
+			w.sink.Data(&workerv1.Event{Kind: &workerv1.Event_Message{Message: m}})
+		}
+	case *events.Receipt:
+		typ, ok := receiptType(e.Type)
+		if !ok || e.IsFromMe { // our own devices' read receipts are not delivery reports
+			return true
+		}
+		ids := make([]string, len(e.MessageIDs))
+		for i, id := range e.MessageIDs {
+			ids[i] = string(id)
+		}
+		w.sink.Data(&workerv1.Event{Kind: &workerv1.Event_Receipt{Receipt: &workerv1.Receipt{
+			MessageIds: ids, Chat: e.Chat.ToNonAD().String(), Type: typ, TimestampMs: e.Timestamp.UnixMilli(),
+		}}})
+	case *events.HistorySync:
+		w.onHistory(ctx, e)
+	}
+	return true
+}
+
+func (w *Whatsmeow) onHistory(ctx context.Context, e *events.HistorySync) {
+	for _, conv := range e.Data.GetConversations() {
+		chatJID, err := types.ParseJID(conv.GetID())
+		if err != nil {
+			continue
+		}
+		name := conv.GetName()
+		if name == "" {
+			name = conv.GetDisplayName()
+		}
+		var msgs []*workerv1.Message
+		flush := func() {
+			if len(msgs) == 0 {
+				return
+			}
+			chat := msgs[0].Chat
+			w.sink.Data(&workerv1.Event{Kind: &workerv1.Event_History{History: &workerv1.HistoryChunk{
+				Chat: chat, Name: name, IsGroup: chatJID.Server == types.GroupServer, Messages: msgs,
+			}}})
+			msgs = nil
+		}
+		for _, hm := range conv.GetMessages() {
+			evt, err := w.cli.ParseWebMessage(chatJID, hm.GetMessage())
+			if err != nil {
+				continue
+			}
+			if m := w.toMessage(ctx, evt.Info, evt.Message); m != nil {
+				msgs = append(msgs, m)
+			}
+			if len(msgs) >= historyChunkSize {
+				flush()
+			}
+		}
+		flush()
+	}
+}
