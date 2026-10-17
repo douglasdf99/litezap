@@ -59,13 +59,26 @@ func mapErr(err error) error {
 	case errors.Is(err, manager.ErrShuttingDown):
 		return apierr.New(http.StatusServiceUnavailable, "shutting_down", "server is shutting down", true)
 	}
-	// Errors from worker RPCs carry a gRPC status (possibly wrapped).
+	// Errors from worker RPCs carry a gRPC status (possibly wrapped). Messaging RPCs prefix
+	// the message with a stable code ("invalid_number: ...", see worker.proto).
 	if st, ok := status.FromError(err); ok && st.Code() != codes.OK {
+		code, detail, _ := strings.Cut(st.Message(), ": ")
 		switch st.Code() {
 		case codes.Unavailable, codes.Canceled:
 			return apierr.NotConnected()
 		case codes.DeadlineExceeded:
 			return apierr.New(http.StatusGatewayTimeout, "worker_timeout", "instance worker did not answer in time", true)
+		case codes.InvalidArgument:
+			if code == "invalid_number" {
+				return apierr.New(http.StatusBadRequest, "invalid_number", redact(detail), false)
+			}
+			return apierr.Validation(redact(st.Message()))
+		case codes.NotFound:
+			if code == "media_unavailable" {
+				return apierr.New(http.StatusGone, "media_unavailable", "media is no longer available on WhatsApp", false)
+			}
+		case codes.FailedPrecondition:
+			return apierr.New(http.StatusConflict, "instance_not_connected", "instance is not logged in", false)
 		}
 		msg := "worker request failed"
 		if m := redact(st.Message()); m != "" {
@@ -144,9 +157,11 @@ func (s *Instances) Delete(ctx context.Context, id string) error {
 		return mapErr(err)
 	}
 	// The worker is stopped; if the rest fails, let the instance be started again.
-	if err := os.RemoveAll(filepath.Join(s.DataDir, "instances", id)); err != nil {
-		s.Manager.Unretire(id)
-		return err
+	for _, dir := range []string{"instances", "media", "outbox"} {
+		if err := os.RemoveAll(filepath.Join(s.DataDir, dir, id)); err != nil {
+			s.Manager.Unretire(id)
+			return err
+		}
 	}
 	if err := s.Store.DeleteInstance(ctx, id); err != nil {
 		s.Manager.Unretire(id)

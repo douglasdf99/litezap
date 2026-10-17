@@ -47,3 +47,25 @@ func TestMapErrPlainErrorPassesThrough(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestMapErrMessagingCodes(t *testing.T) {
+	cases := []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{status.Error(codes.InvalidArgument, "invalid_number: 5511987654321 is not on WhatsApp"), http.StatusBadRequest, "invalid_number"},
+		{status.Error(codes.InvalidArgument, "validation_failed: invalid JID"), http.StatusBadRequest, "validation_failed"},
+		{status.Error(codes.NotFound, "media_unavailable: 404"), http.StatusGone, "media_unavailable"},
+		{status.Error(codes.FailedPrecondition, "logged_out: session is not logged in"), http.StatusConflict, "instance_not_connected"},
+	}
+	for _, c := range cases {
+		var e *apierr.Error
+		if !errors.As(mapErr(c.err), &e) || e.Status != c.status || e.Code != c.code {
+			t.Errorf("%v -> %+v, want %d %s", c.err, e, c.status, c.code)
+		}
+		if e != nil && strings.Contains(e.Message, "5511987654321") {
+			t.Errorf("message leaks a phone number: %q", e.Message)
+		}
+	}
+}
