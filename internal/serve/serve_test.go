@@ -7,6 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/douglasdf99/litezap/internal/config"
+	"github.com/douglasdf99/litezap/internal/instance"
+	"github.com/douglasdf99/litezap/internal/store"
 )
 
 func TestIsLoopback(t *testing.T) {
@@ -49,5 +53,35 @@ func TestRunFailsToBindBeforeTouchingWorkers(t *testing.T) {
 	}
 	if _, err := os.Stat(pid); err != nil {
 		t.Fatalf("worker pid file touched before bind failed: %v", err)
+	}
+}
+
+func TestWorkerEnvPassesEffectiveProxy(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for id, js := range map[string]string{"own": `{"proxy_url":"http://own:3128"}`, "dflt": "{}"} {
+		if err := st.CreateInstance(ctx, store.Instance{ID: id, Name: id, State: instance.Created, TokenHash: id, SettingsJSON: js}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := config.Default()
+	cfg.DefaultProxyURL = "socks5://default:1080"
+	env := workerEnv(st, cfg)
+	for id, want := range map[string]string{"own": "http://own:3128", "dflt": "socks5://default:1080"} {
+		got, err := env(ctx, id)
+		if err != nil || len(got) != 1 || got[0] != "LITEZAP_WORKER_PROXY_URL="+want {
+			t.Errorf("%s: env = %v, %v", id, got, err)
+		}
+	}
+	cfg.DefaultProxyURL = ""
+	if got, _ := workerEnv(st, cfg)(ctx, "dflt"); got[0] != "LITEZAP_WORKER_PROXY_URL=" {
+		t.Errorf("no proxy: env = %v", got)
+	}
+	if _, err := env(ctx, "missing"); err == nil {
+		t.Error("expected error for unknown instance")
 	}
 }

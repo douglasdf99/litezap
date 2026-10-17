@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/douglasdf99/litezap/internal/apierr"
 	"github.com/douglasdf99/litezap/internal/secure"
 	"github.com/douglasdf99/litezap/internal/service"
+	"github.com/douglasdf99/litezap/internal/settings"
 	"github.com/go-chi/chi/v5"
 	qrcode "github.com/skip2/go-qrcode"
 )
@@ -32,6 +34,24 @@ type InstanceService interface {
 	Authenticate(ctx context.Context, token string) (string, error)
 }
 
+// MessagingService is the subset of service.Messaging used by the API.
+type MessagingService interface {
+	Send(ctx context.Context, instanceID string, in service.SendInput, wait time.Duration) (service.MessageView, error)
+	Wait(ctx context.Context, instanceID, id string, wait time.Duration) (service.MessageView, error)
+	GetMessage(ctx context.Context, instanceID, id string) (service.MessageView, error)
+	Chats(ctx context.Context, instanceID string, limit int, cursor string) (service.ChatPage, error)
+	ChatMessages(ctx context.Context, instanceID, chat string, limit int, cursor string) (service.MessagePage, error)
+	MarkRead(ctx context.Context, instanceID, chat string) error
+	Contacts(ctx context.Context, instanceID string) ([]service.ContactView, error)
+	Contact(ctx context.Context, instanceID, jid string) (service.ContactView, error)
+	CheckNumbers(ctx context.Context, instanceID string, phones []string) ([]service.NumberView, error)
+	Settings(ctx context.Context, instanceID string) (settings.Settings, error)
+	UpdateSettings(ctx context.Context, instanceID string, patch settings.Patch) (settings.Settings, error)
+	Media(ctx context.Context, instanceID, mediaID string) (service.MediaFile, error)
+	SignedMediaURL(ctx context.Context, instanceID, mediaID string) (string, time.Time, error)
+	VerifyMediaSignature(instanceID, mediaID, exp, sig string) bool
+}
+
 type Options struct {
 	AdminToken string
 	// ProtectOps requires the admin token on /healthz and /readyz (set when not bound to loopback).
@@ -41,8 +61,11 @@ type Options struct {
 
 type server struct {
 	svc InstanceService
+	msg MessagingService
 	opt Options
 	log *slog.Logger
+	// bodySlots bounds concurrent large send bodies (memory).
+	bodySlots chan struct{}
 }
 
 type principal struct {
@@ -52,8 +75,8 @@ type principal struct {
 
 type ctxKey struct{}
 
-func New(svc InstanceService, opt Options, log *slog.Logger) http.Handler {
-	s := &server{svc: svc, opt: opt, log: log}
+func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logger) http.Handler {
+	s := &server{svc: svc, msg: msg, opt: opt, log: log, bodySlots: make(chan struct{}, 3)}
 	r := chi.NewRouter()
 
 	r.Group(func(r chi.Router) {
@@ -63,6 +86,9 @@ func New(svc InstanceService, opt Options, log *slog.Logger) http.Handler {
 		r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 		r.Get("/readyz", s.readyz)
 	})
+
+	// Signed media URLs work without a token (spec 4.5); the signature is the credential.
+	r.Get("/media/{id}/{media_id}", s.signedMedia)
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(s.authenticate)
@@ -79,6 +105,18 @@ func New(svc InstanceService, opt Options, log *slog.Logger) http.Handler {
 			r.With(s.requireAdmin).Post("/token/rotate", s.rotateToken)
 			r.Get("/qr", s.qr)
 			r.Post("/pair-phone", s.pairPhone)
+
+			r.Get("/settings", s.getSettings)
+			r.Put("/settings", s.putSettings)
+			r.Post("/messages", s.sendMessage)
+			r.Get("/messages/{msg_id}", s.getMessage)
+			r.Get("/chats", s.listChats)
+			r.Get("/chats/{jid}/messages", s.chatMessages)
+			r.Post("/chats/{jid}/read", s.markRead)
+			r.Get("/contacts", s.listContacts)
+			r.Get("/contacts/{jid}", s.getContact)
+			r.Post("/check-numbers", s.checkNumbers)
+			r.Get("/media/{media_id}", s.getMedia)
 		})
 	})
 	return r
@@ -162,7 +200,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func noStore(w http.ResponseWriter) { w.Header().Set("Cache-Control", "no-store") }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	return decodeMax(w, r, v, 1<<20)
+}
+
+func decodeMax(w http.ResponseWriter, r *http.Request, v any, limit int64) error {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	if err := dec.Decode(v); err != nil {
 		return apierr.Validation("invalid JSON body")
 	}

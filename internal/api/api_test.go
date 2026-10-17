@@ -14,8 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasdf99/litezap/internal/ingest"
+	"github.com/douglasdf99/litezap/internal/lookup"
 	"github.com/douglasdf99/litezap/internal/manager"
+	"github.com/douglasdf99/litezap/internal/media"
+	"github.com/douglasdf99/litezap/internal/queue"
 	"github.com/douglasdf99/litezap/internal/service"
+	"github.com/douglasdf99/litezap/internal/settings"
 	"github.com/douglasdf99/litezap/internal/store"
 	"github.com/douglasdf99/litezap/internal/workertest"
 )
@@ -44,20 +49,31 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 	t.Cleanup(func() { st.Close() })
 	sp := workertest.NewSpawner()
 	sp.OnStart = func(f *workertest.Fake) { f.Emit("qr_pending"); f.EmitQR("QR-API") }
+	log := slog.New(slog.DiscardHandler)
 	mopt := manager.DefaultOptions()
 	mopt.HeartbeatInterval = time.Hour
-	mgr := manager.New(st, sp, mopt, slog.New(slog.DiscardHandler))
+	mgr := manager.New(st, sp, mopt, log)
+	defaults := settings.Defaults()
+	defaults.MinIntervalMS, defaults.JitterMS, defaults.TypingSimulation, defaults.Ramp.Enabled = 0, 0, false, false
+	defaults.SendWindow, defaults.UnsafePacing = settings.Window{}, true
+	resolver := &lookup.Resolver{Store: st, Workers: mgr}
+	q := queue.New(st, mgr, queue.Options{Defaults: defaults, Log: log, Resolver: resolver})
+	mgr.SetObserver(manager.Observers{&ingest.Ingestor{Store: st, Log: log}, q})
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
+		q.Shutdown(ctx)
 		mgr.Shutdown(ctx)
 	})
 	svc := &service.Instances{Store: st, Manager: mgr, DataDir: dir}
+	msg := &service.Messaging{Store: st, Manager: mgr, Queues: q, Fetcher: &media.Fetcher{AllowPrivate: true},
+		Signer:  media.NewSigner([]byte("0123456789abcdef0123456789abcdef"), "http://example.invalid"),
+		DataDir: dir, Defaults: defaults, Resolver: resolver, SignedURLs: true}
 	opt := Options{AdminToken: admin, Ready: st.Ping}
 	if tweak != nil {
 		tweak(&opt)
 	}
-	h := New(svc, opt, slog.New(slog.DiscardHandler))
+	h := New(svc, msg, opt, log)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return &env{t: t, srv: srv, sp: sp}
