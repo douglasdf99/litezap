@@ -106,16 +106,25 @@ func (s *Instances) Delete(ctx context.Context, id string) error {
 	// A client disconnect must not leave the teardown half-done.
 	ctx = context.WithoutCancel(ctx)
 	if s.Manager.Running(id) {
-		_ = s.Manager.Logout(ctx, id) // best effort: frees the linked-device slot on the phone
+		// Best effort: frees the linked-device slot on the phone. Bounded so a hung worker cannot block Delete.
+		lctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		_ = s.Manager.Logout(lctx, id)
+		cancel()
 	}
 	// Retire (not Stop): a Start racing this Delete must not respawn the worker.
 	if err := s.Manager.Retire(ctx, id); err != nil {
 		return mapErr(err)
 	}
+	// The worker is stopped; if the rest fails, let the instance be started again.
 	if err := os.RemoveAll(filepath.Join(s.DataDir, "instances", id)); err != nil {
+		s.Manager.Unretire(id)
 		return err
 	}
-	return mapErr(s.Store.DeleteInstance(ctx, id))
+	if err := s.Store.DeleteInstance(ctx, id); err != nil {
+		s.Manager.Unretire(id)
+		return mapErr(err)
+	}
+	return nil
 }
 
 func (s *Instances) Start(ctx context.Context, id string) error {

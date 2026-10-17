@@ -190,6 +190,13 @@ func (m *Manager) Retire(ctx context.Context, id string) error {
 	return m.Stop(ctx, id)
 }
 
+// Unretire undoes Retire, for a Delete that failed after the worker was stopped.
+func (m *Manager) Unretire(id string) {
+	m.mu.Lock()
+	delete(m.retired, id)
+	m.mu.Unlock()
+}
+
 func (m *Manager) Restart(ctx context.Context, id string) error {
 	if err := m.halt(ctx, id); err != nil {
 		return err

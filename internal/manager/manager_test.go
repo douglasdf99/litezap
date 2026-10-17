@@ -403,3 +403,19 @@ func TestRetireWithoutWorkerBlocksStart(t *testing.T) {
 		t.Fatal("spawned after Retire")
 	}
 }
+
+func TestUnretireAllowsStartAgain(t *testing.T) {
+	m, _, sp := setup(t, "i1")
+	ctx := context.Background()
+	if err := m.Retire(ctx, "i1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(ctx, "i1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("retired instance must not start, got %v", err)
+	}
+	m.Unretire("i1")
+	if err := m.Start(ctx, "i1"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "worker started", func() bool { return sp.Starts("i1") == 1 })
+}
