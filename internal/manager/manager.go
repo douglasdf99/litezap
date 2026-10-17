@@ -435,10 +435,19 @@ func (m *Manager) runWorker(ctx context.Context, s *supervised, h spawner.Worker
 	// sync never holds up state changes and heartbeats; live events wait at most for the
 	// chunk being written (the worker already sends live events before queued chunks).
 	hist := make(chan *workerv1.Event, 1)
+	var histDone sync.WaitGroup
+	histDone.Add(1)
 	go func() {
+		defer histDone.Done()
 		for ev := range hist {
 			m.observer.WorkerEvent(s.id, ev)
 		}
+	}()
+	// Once runWorker returns nothing more is written for this worker: cancel ends the
+	// reader, which closes hist, and we wait for the writer to finish its current chunk.
+	defer func() {
+		cancel()
+		histDone.Wait()
 	}()
 	go func() {
 		defer close(hist)
@@ -492,16 +501,18 @@ func (m *Manager) runWorker(ctx context.Context, s *supervised, h spawner.Worker
 			}
 			if st == instance.Connected {
 				healthy = true
-				if err := m.store.MarkFirstConnected(context.Background(), s.id, time.Now()); err != nil {
-					m.log.Error("save first connection", "instance_id", s.id, "err", err)
-				}
 				if c.Jid != "" {
 					if err := m.store.SetInstanceJID(context.Background(), s.id, c.Jid); err != nil {
 						m.log.Error("save jid", "instance_id", s.id, "err", err)
 					}
 				}
 			}
-			m.setState(s.id, st, c.Reason)
+			persisted := m.setState(s.id, st, c.Reason)
+			if persisted && st == instance.Connected {
+				if err := m.store.MarkFirstConnected(context.Background(), s.id, time.Now()); err != nil {
+					m.log.Error("save first connection", "instance_id", s.id, "err", err)
+				}
+			}
 			if st.Terminal() {
 				s.exiting.Store(true) // before the (possibly slow) close, so a concurrent Start waits
 				closeWorker()
@@ -525,25 +536,25 @@ func (m *Manager) runWorker(ctx context.Context, s *supervised, h spawner.Worker
 	}
 }
 
-// setState persists a transition if the state machine allows it. Persisting logged_out
-// also clears the instance's JID.
-func (m *Manager) setState(id string, to instance.State, reason string) {
+// setState persists a transition if the state machine allows it and reports whether it
+// wrote one. Persisting logged_out also clears the instance's JID.
+func (m *Manager) setState(id string, to instance.State, reason string) bool {
 	ctx := context.Background()
 	in, err := m.store.GetInstance(ctx, id)
 	if err != nil {
 		m.log.Error("load instance for state change", "instance_id", id, "err", err)
-		return
+		return false
 	}
 	if in.State == to && in.StateReason == reason {
-		return
+		return false
 	}
 	if !instance.CanTransition(in.State, to) {
 		m.log.Warn("invalid state transition ignored", "instance_id", id, "from", in.State, "to", to)
-		return
+		return false
 	}
 	if err := m.store.UpdateInstanceState(ctx, id, to, reason); err != nil {
 		m.log.Error("update state", "instance_id", id, "err", err)
-		return
+		return false
 	}
 	if to == instance.LoggedOut {
 		// The number is no longer linked: drop it so the API stops showing a phone.
@@ -553,4 +564,5 @@ func (m *Manager) setState(id string, to instance.State, reason string) {
 	}
 	m.log.Info("instance state", "instance_id", id, "from", in.State, "to", to, "reason", reason)
 	m.observer.StateChanged(id, to)
+	return true
 }

@@ -538,3 +538,74 @@ func TestHistoryDoesNotBlockStateAndLiveEvents(t *testing.T) {
 		return len(evs) == 1 && evs[0].GetMessage().GetId() == "LIVE"
 	})
 }
+
+// first_connected_at is only recorded when the connected state was actually persisted.
+func TestFirstConnectedNeedsPersistedConnected(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	obs := &recObserver{}
+	m.SetObserver(obs)
+	if err := m.Start(context.Background(), "i1"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "starting", stateIs(t, st, "i1", instance.Starting))
+	// stopped -> connected is not an allowed transition: setState will refuse it.
+	if err := st.UpdateInstanceState(context.Background(), "i1", instance.Stopped, ""); err != nil {
+		t.Fatal(err)
+	}
+	f := sp.Last("i1")
+	f.Emit("connected")
+	f.EmitMessage(&workerv1.Message{Id: "AFTER", Chat: "a@s.whatsapp.net", Type: "text"})
+	eventually(t, "message after connected", func() bool {
+		evs, _ := obs.snapshot()
+		return len(evs) == 1
+	})
+	in, _ := st.GetInstance(context.Background(), "i1")
+	if in.State != instance.Stopped || !in.FirstConnectedAt.IsZero() {
+		t.Fatalf("state=%s first=%v", in.State, in.FirstConnectedAt)
+	}
+}
+
+// After Stop returns, the history consumer is done: nothing more is written for the worker.
+func TestStopWaitsForHistoryWriter(t *testing.T) {
+	m, st, sp := setup(t, "i1")
+	obs := &slowHistory{}
+	m.SetObserver(obs)
+	sp.OnStart = func(f *workertest.Fake) { f.Emit("connected") }
+	if err := m.Start(context.Background(), "i1"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "connected", stateIs(t, st, "i1", instance.Connected))
+	f := sp.Last("i1")
+	for i := 0; i < 5; i++ {
+		f.EmitHistory(&workerv1.HistoryChunk{Chat: "a@s.whatsapp.net"})
+	}
+	eventually(t, "first chunk being written", func() bool { return obs.count() >= 1 })
+	if err := m.Stop(context.Background(), "i1"); err != nil {
+		t.Fatal(err)
+	}
+	n := obs.count()
+	time.Sleep(300 * time.Millisecond)
+	if got := obs.count(); got != n {
+		t.Fatalf("history written after Stop returned: %d -> %d", n, got)
+	}
+}
+
+type slowHistory struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (s *slowHistory) WorkerEvent(_ string, ev *workerv1.Event) {
+	if ev.GetHistory() != nil {
+		time.Sleep(100 * time.Millisecond)
+		s.mu.Lock()
+		s.n++
+		s.mu.Unlock()
+	}
+}
+func (s *slowHistory) StateChanged(string, instance.State) {}
+func (s *slowHistory) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.n
+}
