@@ -279,8 +279,8 @@ Retenção do log de mensagens: ilimitada por padrão, com `message_retention_da
 | `connected` | `reconnecting` | queda de conexão ou watchdog |
 | `reconnecting` | `connected` | reconectou |
 | qualquer ativo | `logged_out` | logout pelo celular ou pela API |
-| qualquer ativo | `banned` | erro de conta banida/bloqueada |
-| qualquer ativo | `failed` | circuit breaker aberto |
+| qualquer ativo | `banned` | erro de conta banida/bloqueada (permanente) |
+| qualquer ativo | `failed` | circuit breaker aberto; banimento temporário (`state_reason` `temp_banned:<duração>`, sessão preservada) |
 | `connecting` | `reconnecting` | falha ao conectar com sessão válida |
 | qualquer ativo | `starting` | crash do worker (restart automático com backoff) |
 | qualquer, exceto `banned` | `stopped` | `stop` |

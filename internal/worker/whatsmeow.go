@@ -24,6 +24,8 @@ type Whatsmeow struct {
 	cli  *whatsmeow.Client
 	log  *slog.Logger
 	sink Sink
+	// connect is cli.ConnectContext; replaced in tests.
+	connect func(context.Context) error
 
 	// Signals to pairLoop; all are buffered (1) and sent to without blocking.
 	restart    chan struct{} // from PairPhone: end the current round now
@@ -33,8 +35,9 @@ type Whatsmeow struct {
 	firstShown chan struct{} // the current round showed its first code
 	rotate     chan *events.RotateADVSecret
 
-	terminal  atomic.Bool // set before reporting logged_out/banned/failed
-	accepting atomic.Bool // pairLoop is connected and wants roundEnded signals
+	terminal   atomic.Bool // set before reporting logged_out/banned/failed
+	accepting  atomic.Bool // pairLoop is connected and wants roundEnded signals
+	connecting atomic.Bool // a connectLoop is running; at most one at a time
 
 	mu         sync.Mutex
 	loopCtx    context.Context
@@ -50,7 +53,7 @@ type Whatsmeow struct {
 
 func NewWhatsmeow(cli *whatsmeow.Client, log *slog.Logger) *Whatsmeow {
 	return &Whatsmeow{
-		cli: cli, log: log,
+		cli: cli, log: log, connect: cli.ConnectContext,
 		restart:    make(chan struct{}, 1),
 		roundEnded: make(chan struct{}, 1),
 		paired:     make(chan struct{}, 1),
@@ -83,7 +86,7 @@ func (w *Whatsmeow) Run(ctx context.Context, sink Sink) error {
 	w.mu.Unlock()
 	if w.cli.Store.ID != nil {
 		sink.ConnState("connecting", "", w.jid())
-		go w.connectLoop(loopCtx)
+		w.startConnectLoop(loopCtx, false)
 		return nil
 	}
 	w.mu.Lock()
@@ -120,6 +123,21 @@ func nextBackoff(d time.Duration) time.Duration {
 	return d
 }
 
+// startConnectLoop runs connectLoop in the background unless one is already running.
+// With dropFirst, the current (failed) socket is dropped first.
+func (w *Whatsmeow) startConnectLoop(ctx context.Context, dropFirst bool) {
+	if !w.connecting.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer w.connecting.Store(false)
+		if dropFirst {
+			w.cli.Disconnect()
+		}
+		w.connectLoop(ctx)
+	}()
+}
+
 // connectLoop retries the initial connection (e.g. no network at boot) instead of
 // exiting. With whatsmeow's InitialAutoReconnect enabled, Connect returns nil and
 // retries internally, so this loop simply ends. Without it, we retry here instead of
@@ -127,8 +145,8 @@ func nextBackoff(d time.Duration) time.Duration {
 // whatsmeow's own auto-reconnect takes over.
 func (w *Whatsmeow) connectLoop(ctx context.Context) {
 	delay := time.Second
-	for ctx.Err() == nil {
-		err := w.cli.ConnectContext(ctx)
+	for ctx.Err() == nil && !w.terminal.Load() {
+		err := w.connect(ctx)
 		if err == nil {
 			return
 		}
@@ -353,8 +371,25 @@ func (w *Whatsmeow) handle(evt any) {
 			notify(w.roundEnded)
 		}
 	case *events.ConnectFailure:
-		if !loggedIn && w.accepting.Load() {
-			notify(w.roundEnded)
+		if !loggedIn {
+			if w.accepting.Load() {
+				notify(w.roundEnded)
+			}
+			return
+		}
+		// whatsmeow only emits ConnectFailure for reasons it does not handle itself, and
+		// for those it disables auto-reconnect (expectDisconnect). Logouts and bans arrive
+		// as LoggedOut/TemporaryBan instead; anything else we must reconnect ourselves,
+		// or the worker would sit disconnected while its heartbeat still passes.
+		if e.Reason.IsLoggedOut() || e.Reason == events.ConnectFailureTempBanned || w.terminal.Load() {
+			return
+		}
+		w.sink.ConnState("reconnecting", "connect_failure_"+e.Reason.NumberString(), w.jid())
+		w.mu.Lock()
+		ctx := w.loopCtx
+		w.mu.Unlock()
+		if ctx != nil && ctx.Err() == nil {
+			w.startConnectLoop(ctx, true)
 		}
 	case *events.KeepAliveTimeout:
 		if loggedIn {
@@ -366,7 +401,9 @@ func (w *Whatsmeow) handle(evt any) {
 		// Another client took over this session; stop instead of fighting for it.
 		w.reportTerminal("logged_out", "stream_replaced", w.jid())
 	case *events.TemporaryBan:
-		w.reportTerminal("banned", e.String(), w.jid())
+		// A temporary ban expires and keeps the session: report a recoverable failure
+		// (start works again later), never "banned", which the supervisor treats as permanent.
+		w.reportTerminal("failed", fmt.Sprintf("temp_banned:%s", e.Expire), w.jid())
 	case *events.ClientOutdated:
 		w.reportTerminal("failed", "client_outdated", w.jid())
 	}
