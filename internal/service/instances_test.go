@@ -58,6 +58,8 @@ func TestMapErrMessagingCodes(t *testing.T) {
 		{status.Error(codes.InvalidArgument, "validation_failed: invalid JID"), http.StatusBadRequest, "validation_failed"},
 		{status.Error(codes.NotFound, "media_unavailable: 404"), http.StatusGone, "media_unavailable"},
 		{status.Error(codes.FailedPrecondition, "logged_out: session is not logged in"), http.StatusConflict, "instance_not_connected"},
+		// A media CDN failure is not a disconnected instance.
+		{status.Error(codes.Unavailable, "media_download_failed: dial tcp: i/o timeout"), http.StatusBadGateway, "worker_error"},
 	}
 	for _, c := range cases {
 		var e *apierr.Error

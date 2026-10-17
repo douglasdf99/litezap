@@ -68,7 +68,9 @@ func mapErr(err error) error {
 		code, detail, _ := strings.Cut(st.Message(), ": ")
 		switch st.Code() {
 		case codes.Unavailable, codes.Canceled:
-			return apierr.NotConnected()
+			if code != "media_download_failed" { // a CDN failure, not a disconnected instance
+				return apierr.NotConnected()
+			}
 		case codes.DeadlineExceeded:
 			return apierr.New(http.StatusGatewayTimeout, "worker_timeout", "instance worker did not answer in time", true)
 		case codes.InvalidArgument:
