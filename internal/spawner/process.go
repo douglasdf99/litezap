@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,7 +91,14 @@ func (p *Process) Start(ctx context.Context, id string) (WorkerHandle, error) {
 		_ = h.Kill()
 		return nil, err
 	}
-	conn, err := grpc.NewClient("unix://"+sock, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// A custom dialer instead of a "unix://" target: url.Parse rejects Windows paths
+	// such as C:\Users\..., while AF_UNIX itself works there.
+	conn, err := grpc.NewClient("passthrough:///worker",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, "unix", sock)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		_ = h.Kill()
 		return nil, fmt.Errorf("dial worker: %w", err)
