@@ -10,7 +10,9 @@ info:
     descritos na seção `webhooks` deste arquivo.
 
     Autenticação: `Authorization: Bearer <token>`. O token admin acessa tudo; o token de instância
-    (prefixo `lzi_`) só acessa as rotas da própria instância.
+    (prefixo `lzi_`) só acessa as rotas da própria instância; uma chave de API (prefixo `lzk_`, marco 11)
+    acessa só as rotas dos seus escopos (`read`, `send`) numa instância. Tokens e chaves podem ter
+    allowlist de IP.
 
     Erros seguem sempre o envelope `{"error":{"code","message","retryable"}}`.
   license:
@@ -183,6 +185,19 @@ tags:
       Rotas para monitoramento e orquestradores. São públicas quando o servidor escuta em loopback e
       exigem o token admin em qualquer outro endereço.
     x-concept: /docs/self-hosted/observabilidade/
+  - name: Plataforma
+    description: Recursos para parceiros e multi-instância — lote, chaves de API com escopo, links de pareamento e uso.
+    x-slug: plataforma
+    x-intro: |
+      Rotas para quem oferece WhatsApp a clientes (SaaS, revendas, agências) — marco 11. Etiquete as
+      instâncias para filtrá-las e operar em lote, crie chaves de API só de leitura ou só de envio para
+      entregar a terceiros, gere um link de pareamento hospedado (o cliente escaneia o QR numa página do
+      seu servidor, sem ver token nenhum) e consulte o uso de cada instância.
+
+      Renomear, etiquetar e restringir IPs fica em [Editar instância](/docs/api/instancias/editar-instancia/);
+      filtros e paginação em [Listar instâncias](/docs/api/instancias/listar-instancias/). O passo a passo
+      está no guia [Multi-instância e parceiros](/docs/guias/multi-instancia/).
+    x-concept: /docs/guias/multi-instancia/
 
 paths:
   /v1/instances:
@@ -232,9 +247,18 @@ paths:
       x-zapi: "Listar instâncias (parceiros)"
       summary: Listar instâncias
       x-litezap-scope: admin
+      description: |
+        Lista as instâncias em ordem de criação. Sem `limit`, devolve todas (como antes do marco 11). Com
+        `limit`, pagina: siga `next_cursor` até ele não vir mais. Os filtros (marco 11) se combinam.
+      parameters:
+        - { name: state, in: query, description: "Um ou mais estados separados por vírgula (`connected,qr_pending`).", schema: { type: string } }
+        - { name: tag, in: query, description: "Só instâncias com esta etiqueta.", schema: { type: string } }
+        - { name: q, in: query, description: "Trecho do nome ou do id (sem diferenciar maiúsculas).", schema: { type: string } }
+        - { name: limit, in: query, description: "Itens por página (1 a 500). Omitido: todas, sem paginação.", schema: { type: integer, minimum: 1, maximum: 500 } }
+        - { $ref: "#/components/parameters/Cursor" }
       responses:
         "200":
-          description: Todas as instâncias.
+          description: As instâncias (uma página, com `limit`).
           content:
             application/json:
               schema:
@@ -243,14 +267,19 @@ paths:
                   instances:
                     type: array
                     items: { $ref: "#/components/schemas/Instance" }
+                  next_cursor: { type: string, description: "Presente quando há próxima página (só com `limit`)." }
               example:
                 instances:
                   - id: inst_7f3a9c2e5b1d4086
                     name: atendimento
                     state: connected
                     phone: "5511999999999"
+                    tags: [vip]
+                    ip_allowlist: []
                     created_at: "2026-10-17T13:45:00Z"
                     updated_at: "2026-10-17T13:47:12Z"
+                next_cursor: MjAyNi0xMC0xN1QxMzo0NTowMC4wMDAwMDAwMDBafGluc3RfN2YzYTljMmU1YjFkNDA4Ng
+        "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
@@ -278,6 +307,52 @@ paths:
                 phone: "5511999999999"
                 created_at: "2026-10-17T13:45:00Z"
                 updated_at: "2026-10-17T13:47:12Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+    patch:
+      tags: [Instâncias]
+      operationId: updateInstance
+      x-litezap-milestone: M11
+      x-zapi: "Renomear instância"
+      summary: Editar instância
+      x-litezap-scope: instancia
+      description: |
+        Renomeia a instância e define etiquetas e a allowlist de IP do token dela. Só os campos enviados
+        mudam. `name` aceita o token da própria instância; `tags` e `ip_allowlist` exigem o token admin.
+
+        - `tags`: até 20, cada uma com 1 a 40 caracteres (letras minúsculas, dígitos e `_ . : -`); são
+          guardadas em minúsculas e sem repetição. Servem para filtrar `GET /instances` e para operações em lote.
+        - `ip_allowlist`: IPs ou CIDRs (até 100). Vazio (`[]`) libera qualquer endereço. Fora da lista, o
+          token da instância recebe `403 forbidden` em todas as rotas (inclusive `/mcp`). Atrás de proxy
+          reverso, configure `trusted_proxies` no servidor, senão o IP visto é o do proxy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 100 }
+                tags: { type: array, items: { type: string } }
+                ip_allowlist: { type: array, items: { type: string }, description: "IPs ou CIDRs." }
+            example: { name: "Loja Centro", tags: [vip, sp], ip_allowlist: ["203.0.113.7", "10.0.0.0/8"] }
+      responses:
+        "200":
+          description: A instância atualizada.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Instance" }
+              example:
+                id: inst_7f3a9c2e5b1d4086
+                name: Loja Centro
+                state: connected
+                phone: "5511999999999"
+                tags: [vip, sp]
+                ip_allowlist: ["203.0.113.7/32", "10.0.0.0/8"]
+                created_at: "2026-10-17T13:45:00Z"
+                updated_at: "2026-10-18T09:00:00Z"
+        "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/InstanceNotFound" }
@@ -2361,7 +2436,10 @@ paths:
                 type: object
                 properties:
                   admin: { type: boolean }
-                  instance_id: { type: string, description: Só com token de instância. }
+                  role: { type: string, enum: [operator, admin, instance] }
+                  instance_id: { type: string, description: Só com token de instância ou chave de API. }
+                  key_id: { type: string, description: "Só com chave de API (marco 11)." }
+                  scopes: { type: array, items: { type: string }, description: "Só com chave de API." }
               examples:
                 instancia:
                   summary: Token de instância
@@ -2412,6 +2490,273 @@ paths:
               example: { status: unavailable }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/instances/bulk:
+    post:
+      tags: [Plataforma]
+      operationId: bulkInstances
+      x-litezap-milestone: M11
+      x-zapi: "Apagar instâncias em lote (parceiros)"
+      x-litezap-events: [instance.status]
+      summary: Operação em lote
+      x-litezap-scope: admin
+      description: |
+        Aplica `start`, `stop`, `restart` ou `delete` a várias instâncias, dadas por `ids` ou por `tag`
+        (uma das duas), até 100 por requisição. Roda 4 por vez e devolve um resultado por instância: uma
+        falha não interrompe as outras. `delete` exige `"confirm": true` e pode levar ~20s por instância
+        conectada (logout + parada do worker). Exige o token admin (ou o do operador).
+      x-litezap-notes: "delete apaga sessão, mídia, fila e histórico de cada instância. Não há como desfazer."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [start, stop, restart, delete] }
+                ids: { type: array, items: { type: string }, maxItems: 100 }
+                tag: { type: string }
+                confirm: { type: boolean, description: "Obrigatório (`true`) para `delete`." }
+            examples:
+              porEtiqueta:
+                summary: Parar todas as instâncias de uma etiqueta
+                value: { action: stop, tag: cliente-acme }
+              apagar:
+                summary: Apagar por id
+                value: { action: delete, ids: [inst_7f3a9c2e5b1d4086, inst_2b9d4f6a8c0e1357], confirm: true }
+      responses:
+        "200":
+          description: Resultado por instância.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action: { type: string }
+                  succeeded: { type: integer }
+                  failed: { type: integer }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        ok: { type: boolean }
+                        error: { type: object, description: "Presente quando ok = false: { code, message, retryable }." }
+              example:
+                action: delete
+                succeeded: 1
+                failed: 1
+                results:
+                  - { id: inst_7f3a9c2e5b1d4086, ok: true }
+                  - { id: inst_nao_existe, ok: false, error: { code: instance_not_found, message: instance not found, retryable: false } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/instances/{id}/api-keys:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+    post:
+      tags: [Plataforma]
+      operationId: createAPIKey
+      x-litezap-milestone: M11
+      x-zapi: "(sem equivalente)"
+      summary: Criar chave de API
+      x-litezap-scope: instancia
+      description: |
+        Cria uma chave (`lzk_...`) presa a esta instância, com escopos:
+
+        - `read`: rotas `GET` de leitura — instância, mensagens, fila, chats, contatos, mídia, grupos,
+          comunidades, perfil, privacidade, bloqueados, eventos (SSE), uso, status, canais (e publicações),
+          etiquetas e perfil comercial. Nunca QR, configurações, hook de agente, convites de grupo nem
+          escritas de status, canal ou etiqueta.
+        - `send`: `POST /messages` e `GET /messages/{msg_id}` (status do envio).
+
+        Qualquer outra rota responde `403 forbidden`, inclusive `/mcp`, webhooks, ações de ciclo de vida e
+        a gestão de chaves. A chave aparece **uma única vez** nesta resposta (só o hash fica guardado).
+        Opcionais: `ip_allowlist` (IPs/CIDRs) e `expires_in_seconds`. Até 50 chaves por instância (as expiradas
+        são descartadas). Apagar a instância apaga as chaves.
+
+        Uma chave também respeita a `ip_allowlist` da instância; no stream SSE ela nunca recebe `instance.qr` nem `instance.pair_code`, e um stream aberto é encerrado em até um heartbeat (15s) quando a chave é revogada, expira ou sai da allowlist. Rotacionar o token da instância revoga as chaves criadas com ele (as criadas pelo admin continuam).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, scopes]
+              properties:
+                name: { type: string, maxLength: 100 }
+                scopes: { type: array, items: { type: string, enum: [read, send] } }
+                ip_allowlist: { type: array, items: { type: string } }
+                expires_in_seconds: { type: integer, minimum: 0, description: "0 ou ausente: não expira." }
+            example: { name: "painel do cliente", scopes: [read], ip_allowlist: ["203.0.113.0/24"], expires_in_seconds: 2592000 }
+      responses:
+        "201":
+          description: Chave criada.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_key: { $ref: "#/components/schemas/APIKey" }
+                  key: { type: string, description: "A chave (`lzk_...`). Mostrada só uma vez." }
+              example:
+                api_key: { id: key_5c1e9a7d3b2f4086, instance_id: inst_7f3a9c2e5b1d4086, name: painel do cliente, scopes: [read], ip_allowlist: ["203.0.113.0/24"], created_at: "2026-10-18T09:00:00Z", expires_at: "2026-11-17T09:00:00Z" }
+                key: lzk_RXhlbXBsby1uYW8tdXNlLWVzdGEtY2hhdmU
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+    get:
+      tags: [Plataforma]
+      operationId: listAPIKeys
+      x-litezap-milestone: M11
+      x-zapi: "(sem equivalente)"
+      summary: Listar chaves de API
+      x-litezap-scope: instancia
+      responses:
+        "200":
+          description: As chaves da instância (sem o segredo).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_keys: { type: array, items: { $ref: "#/components/schemas/APIKey" } }
+              example:
+                api_keys:
+                  - { id: key_5c1e9a7d3b2f4086, instance_id: inst_7f3a9c2e5b1d4086, name: painel do cliente, scopes: [read], ip_allowlist: [], created_at: "2026-10-18T09:00:00Z", last_used_at: "2026-10-18T09:12:00Z" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /v1/instances/{id}/api-keys/{key_id}:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - { name: key_id, in: path, required: true, description: "Id da chave (`key_...`).", schema: { type: string } }
+    delete:
+      tags: [Plataforma]
+      operationId: deleteAPIKey
+      x-litezap-milestone: M11
+      x-zapi: "(sem equivalente)"
+      summary: Revogar chave de API
+      x-litezap-scope: instancia
+      description: Apaga a chave; a próxima chamada com ela recebe `401 unauthorized`.
+      responses:
+        "204": { description: Revogada. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/instances/{id}/pairing-links:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+    post:
+      tags: [Plataforma]
+      operationId: createPairingLink
+      x-litezap-milestone: M11
+      x-zapi: "SDK de conexão / Gerar token do SDK"
+      x-litezap-events: [instance.paired]
+      summary: Gerar link de pareamento
+      x-litezap-scope: admin
+      description: |
+        Gera um link para uma página hospedada pelo próprio servidor (`/pair/`) que mostra o QR ao vivo e
+        permite parear pelo número de telefone — sem expor o token da instância. O link:
+
+        - é assinado (HMAC-SHA256 com a chave `data/pairing_key`) e registrado no banco;
+        - vale `ttl_seconds` (60 a 600; padrão 600) **ou** até o primeiro pareamento concluído;
+        - leva o token no fragmento (`#t=...`), que o navegador nunca envia ao servidor (não vai para logs
+          de acesso nem para `Referer`); a página o tira da barra de endereço ao abrir;
+        - pode ser embutido num iframe só nas origens de `pairing_frame_ancestors` (CSP `frame-ancestors`;
+          vazio = não pode ser embutido). Há um web component pronto: `<script src=".../pair/embed.js">` e
+          `<litezap-pair url="...">`.
+
+        A base do link é `public_url` (ou o `listen_addr`). Exige o token admin (ou o do operador); até 20
+        links vivos por instância. Quando o pareamento termina sai o evento `instance.paired` com `via_link: true`.
+      x-litezap-notes: "Quem tiver o link pode parear a instância com o próprio número enquanto ele valer. Envie só ao cliente e revogue se vazar."
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ttl_seconds: { type: integer, minimum: 60, maximum: 600, default: 600 }
+            example: { ttl_seconds: 600 }
+      responses:
+        "201":
+          description: Link gerado.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  url: { type: string, description: "Página de pareamento com o token no fragmento." }
+                  token: { type: string, description: "O token do link (o mesmo do fragmento)." }
+                  expires_at: { type: string, format: date-time }
+              example:
+                id: wEeHr7odSNU0pM_Rb4O5WQ
+                url: "https://zap.seu-dominio.com/pair/#t=pl1.wEeHr7odSNU0pM_Rb4O5WQ.1792342931.Yzlm6Nb6zRKq7pSI0XVQSA1OCyKl6le1r4ca4qL63wY"
+                token: pl1.wEeHr7odSNU0pM_Rb4O5WQ.1792342931.Yzlm6Nb6zRKq7pSI0XVQSA1OCyKl6le1r4ca4qL63wY
+                expires_at: "2026-10-18T17:02:11Z"
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+    delete:
+      tags: [Plataforma]
+      operationId: revokePairingLinks
+      x-litezap-milestone: M11
+      x-zapi: "(sem equivalente)"
+      summary: Revogar links de pareamento
+      x-litezap-scope: admin
+      description: Revoga todos os links ainda não usados da instância; a página aberta passa a mostrar "link expirado".
+      responses:
+        "200":
+          description: Quantos links foram revogados.
+          content:
+            application/json:
+              example: { revoked: 1 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /v1/instances/{id}/usage:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+    get:
+      tags: [Plataforma]
+      operationId: instanceUsage
+      x-litezap-milestone: M11
+      x-zapi: "(sem equivalente)"
+      summary: Uso da instância
+      x-litezap-scope: instancia
+      description: |
+        Contadores diários (dias UTC) da instância: mensagens enviadas pela API e recebidas, bytes de mídia,
+        segundos conectada e entregas de webhook. `from` e `to` (`YYYY-MM-DD`) padrão: últimos 31 dias;
+        intervalo máximo de 366 dias. Os números são os mesmos do `GET /v1/usage` do operador.
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: Uso por dia.
+          content:
+            application/json:
+              example:
+                instance_id: inst_7f3a9c2e5b1d4086
+                from: "2026-10-01"
+                to: "2026-10-18"
+                usage:
+                  - { instance_id: inst_7f3a9c2e5b1d4086, day: "2026-10-17", messages_sent: 120, messages_received: 340, media_bytes: 1048576, connected_seconds: 86400, webhook_deliveries: 460 }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
 
   /v1/instances/{id}/status:
     parameters: [{ $ref: "#/components/parameters/InstanceID" }]
@@ -2909,7 +3254,7 @@ components:
     bearer:
       type: http
       scheme: bearer
-      description: "Token admin (`lza_...`, de `data/admin_token` ou `LITEZAP_ADMIN_TOKEN`) ou token de instância (`lzi_...`)."
+      description: "Token admin (`lza_...`, de `data/admin_token` ou `LITEZAP_ADMIN_TOKEN`), token de instância (`lzi_...`) ou chave de API com escopo (`lzk_...`)."
   parameters:
     InstanceID:
       name: id
@@ -2988,8 +3333,21 @@ components:
         state: { $ref: "#/components/schemas/InstanceState" }
         state_reason: { type: string, description: "Ex.: `proxy_unreachable`, `temp_banned:<duração>`." }
         phone: { type: string, description: Número conectado (depois do pareamento). }
+        tags: { type: array, items: { type: string }, description: "Etiquetas (marco 11)." }
+        ip_allowlist: { type: array, items: { type: string }, description: "CIDRs de onde o token da instância é aceito; vazio = qualquer (marco 11)." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    APIKey:
+      type: object
+      properties:
+        id: { type: string, description: "Id da chave (`key_...`)." }
+        instance_id: { type: string }
+        name: { type: string }
+        scopes: { type: array, items: { type: string, enum: [read, send] } }
+        ip_allowlist: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time, description: "Ausente: não expira." }
+        last_used_at: { type: string, format: date-time, description: "Atualizado no máximo uma vez por minuto." }
     InstanceCreated:
       type: object
       properties:
@@ -4219,6 +4577,53 @@ webhooks:
           application/json:
             schema: { $ref: "#/components/schemas/Envelope" }
             example: { id: evt_1b7e5c3a9d2f4086, type: chat.updated, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T10:10:00.000Z", data: { chat: 5511999999999@s.whatsapp.net, changed: [archived], archived: true, pinned: false, muted: false, unread: false, source: device, timestamp: "2026-10-18T10:10:00Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  instance.proxy_failed:
+    post:
+      summary: Proxy da instância falhou
+      x-slug: instance-proxy-failed
+      x-litezap-milestone: M11
+      x-zapi: Webhook de falha de proxy
+      description: |
+        Emitido quando a instância passa a não alcançar o WhatsApp pelo proxy dela (estado `reconnecting`
+        com motivo `proxy_unreachable`) e repetido a cada 5 minutos enquanto a queda durar. A volta é o
+        próximo `instance.status`. `error` traz o último erro de conexão do worker, sem usuário/senha do
+        proxy, números de telefone nem tokens.
+      x-related: [instance.status]
+      x-fields:
+        - [reason, string, "Sempre proxy_unreachable."]
+        - [since, string, "Início da queda atual."]
+        - [duration_seconds, integer, "Duração até agora."]
+        - [outages_last_hour, integer, "Quedas iniciadas na última hora, contando esta."]
+        - [repeat, integer, "0 no primeiro aviso; cresce a cada lembrete."]
+        - [error, string, "Último erro de conexão (opcional, sem credenciais)."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_3d9a1f7c5e2b4068, type: instance.proxy_failed, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T15:12:44.020Z", data: { reason: proxy_unreachable, since: "2026-10-18T15:12:44Z", duration_seconds: 0, outages_last_hour: 1, repeat: 0, error: "socks connect tcp socks5://[redacted]@proxy.example:1080->web.whatsapp.com:443: connection refused" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  instance.paired:
+    post:
+      summary: Pareamento concluído
+      x-slug: instance-paired
+      x-litezap-milestone: M11
+      x-zapi: (sem equivalente; "Ao conectar" sem distinguir pareamento)
+      description: |
+        Emitido uma vez por pareamento: a instância estava esperando QR ou código e conectou. Reconexões não
+        disparam este evento (use `instance.status`). `via_link` é `true` quando havia um link de pareamento
+        válido — ele é consumido por este pareamento.
+      x-related: [instance.status, instance.qr, instance.pair_code]
+      x-fields:
+        - [phone, string, "Número pareado (só dígitos)."]
+        - [via_link, boolean, "Havia link de pareamento válido (agora consumido)."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_8c2f6a0d4e1b3957, type: instance.paired, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T16:58:03.120Z", data: { phone: "5511999999999", via_link: true } }
       responses:
         "2XX": { description: Qualquer 2xx confirma a entrega. }
   status.received:

@@ -11,8 +11,6 @@ catálogo, com payload e exemplos, quando o marco for entregue. Os nomes são a 
 | Tipo | Quando será emitido | Marco |
 |---|---|---|
 | `chat.updated` | Chat arquivado, fixado ou silenciado (inclusive pelo celular) | M9 |
-| `instance.proxy_failed` | Proxy da instância deixou de responder | M11 |
 | `agent.failed`, `agent.handoff` | Falha do hook de agente; agente transferiu para humano | M5 |
 
-Hoje, uma queda de proxy já aparece em [`instance.status`](/docs/eventos/instance-status/) com
-`reason: proxy_unreachable`.
+Quedas de proxy têm evento próprio desde o M11: [`instance.proxy_failed`](/docs/eventos/instance-proxy-failed/).

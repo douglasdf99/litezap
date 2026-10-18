@@ -257,11 +257,11 @@ func (s *server) putInstanceSending(w http.ResponseWriter, r *http.Request) {
 
 const dayLayout = "2006-01-02"
 
-// usage returns daily counters; from and to are UTC days (default: the last 31 days).
-func (s *server) usage(w http.ResponseWriter, r *http.Request) {
+// usageRange reads from and to (UTC days; default: the last 31 days).
+func usageRange(r *http.Request) (from, to string, err error) {
 	q := r.URL.Query()
 	today := time.Now().UTC()
-	from, to := q.Get("from"), q.Get("to")
+	from, to = q.Get("from"), q.Get("to")
 	if to == "" {
 		to = today.Format(dayLayout)
 	}
@@ -271,11 +271,20 @@ func (s *server) usage(w http.ResponseWriter, r *http.Request) {
 	f, err1 := time.Parse(dayLayout, from)
 	t, err2 := time.Parse(dayLayout, to)
 	if err1 != nil || err2 != nil || t.Before(f) {
-		s.writeErr(w, apierr.Validation("from and to must be days (YYYY-MM-DD) with from <= to"))
-		return
+		return "", "", apierr.Validation("from and to must be days (YYYY-MM-DD) with from <= to")
 	}
 	if t.Sub(f) > 366*24*time.Hour {
-		s.writeErr(w, apierr.Validation("the range is limited to 366 days"))
+		return "", "", apierr.Validation("the range is limited to 366 days")
+	}
+	return from, to, nil
+}
+
+// usage returns daily counters; from and to are UTC days (default: the last 31 days).
+func (s *server) usage(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	from, to, err := usageRange(r)
+	if err != nil {
+		s.writeErr(w, err)
 		return
 	}
 	rows, err := s.opt.Operator.Usage.Usage(r.Context(), from, to, strings.TrimSpace(q.Get("instance_id")))

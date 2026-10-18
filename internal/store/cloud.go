@@ -347,6 +347,9 @@ func (s *Store) ScrubForExport(ctx context.Context) error {
 		`UPDATE instances SET settings_json = json_remove(settings_json, '$.proxy_url')
 			WHERE json_valid(settings_json) AND json_type(settings_json, '$.proxy_url') IS NOT NULL`,
 		`UPDATE instances SET token_hash = 'exported:' || id`,
+		// API keys and pairing links are credentials too (marco 11).
+		`DELETE FROM api_keys`,
+		`DELETE FROM pairing_links`,
 		`VACUUM`,
 		`PRAGMA wal_checkpoint(TRUNCATE)`,
 	} {

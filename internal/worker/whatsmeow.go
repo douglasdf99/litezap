@@ -35,6 +35,8 @@ type Whatsmeow struct {
 	// proxied is set when the client goes through a proxy (spec 4.6): connection errors
 	// are then reported as proxy_unreachable. There is never a fallback to direct.
 	proxied bool
+	// proxySecrets are the proxy credentials, scrubbed from error details (marco 11).
+	proxySecrets []string
 	// dataDir and instanceID bound the files Send reads (outbox/<instance>/) and
 	// DownloadMedia writes (media/<instance>/).
 	dataDir    string
@@ -207,7 +209,7 @@ func (w *Whatsmeow) connectLoop(ctx context.Context) {
 			return
 		}
 		w.log.Warn("connect failed; retrying", "err", err, "in", delay)
-		w.sink.ConnState("reconnecting", w.connectFailReason(err), w.jid())
+		w.reportConnDetail("reconnecting", w.connectFailReason(err), w.jid(), err)
 		if !sleep(ctx, delay) {
 			return
 		}
@@ -259,7 +261,7 @@ func (w *Whatsmeow) pairLoop(ctx context.Context) {
 			}
 			w.log.Error("connect for pairing", "err", err, "in", backoff)
 			if reason := w.connectFailReason(err); reason == "proxy_unreachable" {
-				w.sink.ConnState("reconnecting", reason, "")
+				w.reportConnDetail("reconnecting", reason, "", err)
 			}
 			if !sleep(ctx, backoff) {
 				return

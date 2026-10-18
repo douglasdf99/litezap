@@ -138,7 +138,16 @@ func (s *Server) capLive(q []*workerv1.Event) []*workerv1.Event {
 }
 
 func (s *Server) ConnState(state, reason, jid string) {
-	c := &workerv1.ConnState{State: state, Reason: reason, Jid: jid}
+	s.connState(&workerv1.ConnState{State: state, Reason: reason, Jid: jid})
+}
+
+// ConnStateDetail is ConnState with the (sanitized) error behind the reason.
+func (s *Server) ConnStateDetail(state, reason, jid, detail string) {
+	s.connState(&workerv1.ConnState{State: state, Reason: reason, Jid: jid, Detail: detail})
+}
+
+func (s *Server) connState(c *workerv1.ConnState) {
+	state := c.State
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.conn = c

@@ -22,6 +22,10 @@ variáveis `LITEZAP_*`, que **têm precedência** sobre o arquivo. Arquivo ausen
 | `webhook_failed_retention_days` | só no arquivo | `30` | Dias que a dead-letter fica guardada. |
 | `disable_dashboard` | `LITEZAP_DISABLE_DASHBOARD` | `false` | `true` desliga o painel web em `/app/`; a API continua igual. |
 | `instance_defaults` | só no arquivo | veja abaixo | Padrões de envio de toda instância. |
+| `trusted_proxies` | `LITEZAP_TRUSTED_PROXIES` | vazio | IPs/CIDRs dos proxies reversos cujo `X-Forwarded-For` vale para as allowlists de IP (lista separada por vírgula na variável). Vazio: o cabeçalho é ignorado. |
+| `admin_allowed_ips` | `LITEZAP_ADMIN_ALLOWED_IPS` | vazio | IPs/CIDRs de onde o token admin é aceito. Vazio: qualquer. |
+| `operator_allowed_ips` | `LITEZAP_OPERATOR_ALLOWED_IPS` | vazio | Idem para o token do operador. |
+| `pairing_frame_ancestors` | `LITEZAP_PAIRING_FRAME_ANCESTORS` | vazio | Origens (`https://app.exemplo.com`, `https://*.exemplo.com`) que podem embutir a página de pareamento num iframe. Vazio: não pode ser embutida. |
 
 ## Exemplo completo
 
@@ -43,6 +47,11 @@ webhook_failed_retention_days: 30
 
 # Painel web em /app/ (pede o token admin). true desliga o painel; a API continua.
 disable_dashboard: false
+
+# Plataforma e parceiros (marco 11)
+trusted_proxies: ["127.0.0.1"]        # proxy reverso na mesma máquina
+admin_allowed_ips: []                 # vazio = qualquer IP
+pairing_frame_ancestors: []           # ex.: ["https://app.seu-produto.com"]
 
 # Padrões de envio por instância (cada instância pode sobrescrever via PUT /settings).
 # Pisos: min_interval_ms >= 1000 e max_per_minute <= 60, salvo unsafe_pacing: true.

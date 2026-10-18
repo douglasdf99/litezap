@@ -5,6 +5,23 @@ description: O que mudou em cada marco do LiteZap.
 
 As versões seguem os marcos do motor. Mudanças que quebram compatibilidade são marcadas com **Quebra**.
 
+## Marco 11: plataforma e parceiros
+
+**Novo**
+
+- Página de pareamento hospedada (`POST/DELETE /v1/instances/{id}/pairing-links`, página `/pair/`): link assinado,
+  até 10 minutos ou até o primeiro pareamento, sem expor o token; web component `<litezap-pair>`;
+  `pairing_frame_ancestors` para embutir.
+- Evento `instance.paired`; `instance.proxy_failed` ganha `error` (sem credenciais).
+- `PATCH /v1/instances/{id}` (nome, etiquetas, allowlist de IP); `GET /v1/instances` com `state`, `tag`, `q`,
+  `limit` e `cursor`; `POST /v1/instances/bulk`; `GET /v1/instances/{id}/usage`.
+- Chaves de API `lzk_` com escopo `read`/`send`; allowlist de IP por instância, por chave e para admin/operador
+  (`admin_allowed_ips`, `operator_allowed_ips`), com `trusted_proxies`.
+- Métricas `litezap_queue_send_latency_seconds` e `litezap_worker_memory_rss_bytes` (Linux).
+- Painel: editar instância (nome, etiquetas, IPs) e gerar/revogar links de pareamento.
+
+`GET /v1/instances` sem `limit` responde como antes; a resposta das instâncias ganha `tags` e `ip_allowlist`.
+
 ## App local v1
 
 **Novo**

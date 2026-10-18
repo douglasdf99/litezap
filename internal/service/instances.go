@@ -40,6 +40,8 @@ type InstanceView struct {
 	State       instance.State `json:"state"`
 	StateReason string         `json:"state_reason,omitempty"`
 	Phone       string         `json:"phone,omitempty"`
+	Tags        []string       `json:"tags"`
+	IPAllowlist []string       `json:"ip_allowlist"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
 }
@@ -49,7 +51,8 @@ func view(in store.Instance) InstanceView {
 	phone, _, _ := strings.Cut(user, ":") // drop device suffix
 	return InstanceView{
 		ID: in.ID, Name: in.Name, State: in.State, StateReason: in.StateReason,
-		Phone: phone, CreatedAt: in.CreatedAt, UpdatedAt: in.UpdatedAt,
+		Phone: phone, Tags: nonNil(in.Tags), IPAllowlist: nonNil(in.IPAllowlist),
+		CreatedAt: in.CreatedAt, UpdatedAt: in.UpdatedAt,
 	}
 }
 
@@ -227,6 +230,10 @@ func (s *Instances) RotateToken(ctx context.Context, id string) (string, error) 
 	tok := secure.NewInstanceToken()
 	if err := s.Store.SetInstanceTokenHash(ctx, id, secure.HashToken(tok)); err != nil {
 		return "", mapErr(err)
+	}
+	// API keys minted with the old token go with it (a leaked token must not leave keys behind).
+	if _, err := s.Store.DeleteInstanceCreatedAPIKeys(ctx, id); err != nil {
+		return "", err
 	}
 	return tok, nil
 }

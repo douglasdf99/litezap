@@ -21,4 +21,7 @@ type InstanceProxyFailed struct {
 	OutagesLastHour int `json:"outages_last_hour"`
 	// Repeat is 0 for the first notice of an outage and grows with each reminder.
 	Repeat int `json:"repeat"`
+	// Error is the last connect error reported by the worker (credentials, phone numbers
+	// and tokens removed; empty when the worker gave none).
+	Error string `json:"error,omitempty"`
 }

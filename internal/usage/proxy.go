@@ -26,6 +26,7 @@ type ProxyWatch struct {
 
 	mu      sync.Mutex
 	outages map[string]*outage
+	details map[string]string      // last connect error reported with proxy_unreachable
 	starts  map[string][]time.Time // outage starts in the last hour, per instance
 
 	failures atomic.Int64
@@ -46,7 +47,20 @@ func (p *ProxyWatch) now() time.Time {
 	return time.Now()
 }
 
-func (p *ProxyWatch) WorkerEvent(string, *workerv1.Event) {}
+// WorkerEvent keeps the error text the worker sends with a proxy_unreachable state (the
+// manager forwards connection states that carry a detail; StateChanged follows).
+func (p *ProxyWatch) WorkerEvent(id string, ev *workerv1.Event) {
+	c := ev.GetConn()
+	if c == nil || c.Reason != ProxyUnreachable || c.Detail == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.details == nil {
+		p.details = map[string]string{}
+	}
+	p.details[id] = c.Detail
+}
 
 func (p *ProxyWatch) StateChanged(id string, st instance.State, reason string) {
 	p.mu.Lock()
@@ -56,6 +70,7 @@ func (p *ProxyWatch) StateChanged(id string, st instance.State, reason string) {
 	}
 	if reason != ProxyUnreachable {
 		delete(p.outages, id)
+		delete(p.details, id)
 		return
 	}
 	if _, ok := p.outages[id]; ok {
@@ -82,7 +97,7 @@ func (p *ProxyWatch) publish(id string, o *outage, now time.Time) {
 	}
 	p.Bus.Publish(id, events.TypeInstanceProxyFailed, events.InstanceProxyFailed{
 		Reason: ProxyUnreachable, Since: o.since.UTC(), DurationSeconds: int64(now.Sub(o.since) / time.Second),
-		OutagesLastHour: len(p.starts[id]), Repeat: o.repeat,
+		OutagesLastHour: len(p.starts[id]), Repeat: o.repeat, Error: p.details[id],
 	})
 }
 

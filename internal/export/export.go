@@ -177,7 +177,8 @@ func (e *Exporter) manifest(ctx context.Context, includeMedia bool) (Manifest, e
 	}
 	m := Manifest{Format: Format, FormatVersion: FormatVersion, EngineVersion: e.Version, CreatedAt: time.Now().UTC(),
 		IncludesMedia: includeMedia, Instances: []InstanceEntry{},
-		Excluded: []string{"whatsapp_sessions", "admin_token", "operator_token", "instance_tokens", "media_key", "operator_webhooks"}}
+		Excluded: []string{"whatsapp_sessions", "admin_token", "operator_token", "instance_tokens", "media_key", "operator_webhooks",
+			"api_keys", "pairing_links", "pairing_key"}}
 	for _, in := range list {
 		user, _, _ := strings.Cut(in.JID, "@")
 		phone, _, _ := strings.Cut(user, ":")

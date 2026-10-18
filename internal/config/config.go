@@ -57,6 +57,9 @@ type Config struct {
 	ZombieTimeout time.Duration `yaml:"zombie_timeout"`
 	// ShutdownTimeout bounds the whole graceful shutdown (0: the default phase timeouts).
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
+
+	// Platform and partners (marco 11): IP allowlists and the hosted pairing page.
+	Platform `yaml:",inline"`
 }
 
 func Default() Config {
@@ -137,6 +140,10 @@ func LoadWith(path string, base Config) (Config, error) {
 		return cfg, err
 	}
 	if err := validateCloud(cfg); err != nil {
+		return cfg, err
+	}
+	applyPlatformEnv(&cfg)
+	if err := validatePlatform(&cfg); err != nil {
 		return cfg, err
 	}
 	if cfg.WebhookRetentionDays < 1 || cfg.WebhookFailedRetentionDays < 1 {

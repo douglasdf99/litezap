@@ -20,11 +20,13 @@ import (
 	"github.com/douglasdf99/litezap/internal/lookup"
 	"github.com/douglasdf99/litezap/internal/manager"
 	"github.com/douglasdf99/litezap/internal/media"
+	"github.com/douglasdf99/litezap/internal/pairing"
 	"github.com/douglasdf99/litezap/internal/queue"
 	"github.com/douglasdf99/litezap/internal/realtime"
 	"github.com/douglasdf99/litezap/internal/service"
 	"github.com/douglasdf99/litezap/internal/settings"
 	"github.com/douglasdf99/litezap/internal/store"
+	"github.com/douglasdf99/litezap/internal/usage"
 	"github.com/douglasdf99/litezap/internal/webhook"
 	"github.com/douglasdf99/litezap/internal/workertest"
 )
@@ -93,6 +95,12 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 	svc := &service.Instances{Store: st, Manager: mgr, DataDir: dir, Queues: q, Events: bus}
 	opt := Options{AdminToken: admin, Ready: st.Ping, Events: bus,
 		Webhooks: &service.Webhooks{Store: st, Dispatcher: disp}, AgentHook: &agenthook.Admin{Store: st}, Groups: groups, Account: acct, Social: social}
+	// Marco 11: platform service and pairing links.
+	links := &pairing.Links{Store: st, Key: []byte("pairing-key-0123456789abcdef0123"), BaseURL: "https://zap.example.com"}
+	opt.Platform = &service.Platform{Store: st, Instances: svc}
+	opt.Pairing = links
+	opt.PairingPage = pairing.Handler(pairing.PageOptions{Links: links, Instances: svc})
+	opt.Operator.Usage = &usage.Recorder{Store: st}
 	if tweak != nil {
 		tweak(&opt)
 	}

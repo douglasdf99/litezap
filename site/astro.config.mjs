@@ -151,7 +151,6 @@ export default defineConfig({
 								soonPage('docs/api/em-breve/chamadas', 'M7'),
 								soonPage('docs/api/em-breve/chats-e-contatos', 'M9'),
 								soonPage('docs/api/em-breve/perfil-e-privacidade', 'M9'),
-								soonPage('docs/api/em-breve/plataforma', 'M11'),
 							],
 						},
 						{ label: 'openapi.yaml', link: '/openapi.yaml', attrs: { target: '_blank' } },

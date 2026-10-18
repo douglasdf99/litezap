@@ -92,3 +92,44 @@ func chatJIDs(body map[string]any) []string {
 	}
 	return out
 }
+
+// Scoped API keys (marco 11) on the marco 10 routes: read keys read statuses, channels,
+// labels and the business profile; every write is refused for any key; the key's IP
+// allowlist applies to these routes too.
+func TestSocialRoutesWithAPIKeys(t *testing.T) {
+	e := newEnv(t)
+	id, tok := e.connected("SocialKeys")
+	base := "/v1/instances/" + id
+	e.sp.Last(id).WA.SetChannel(&workerv1.Channel{Jid: "120363000000000001@newsletter", Name: "Loja", Role: "owner"}, false)
+	_, out := e.do("POST", base+"/api-keys", tok, `{"name":"bi","scopes":["read","send"]}`)
+	key := out["key"].(string)
+	for _, p := range []string{"/status", "/status/privacy", "/channels", "/channels/120363000000000001@newsletter",
+		"/channels/120363000000000001@newsletter/messages", "/labels", "/business/profile"} {
+		if code, body := e.do("GET", base+p, key, ""); code == 401 || code == 403 {
+			t.Errorf("read %s = %d %v", p, code, body)
+		}
+	}
+	for _, d := range []struct{ method, path, body string }{
+		{"POST", "/status", `{"type":"text","text":"x"}`},
+		{"DELETE", "/status/msg_x", ""},
+		{"POST", "/status/msg_x/reply", `{"text":"x"}`},
+		{"POST", "/channels", `{"name":"x"}`},
+		{"POST", "/channels/preview", `{"invite":"ABC"}`},
+		{"POST", "/channels/120363000000000001/follow", ""},
+		{"POST", "/channels/120363000000000001/messages", `{"type":"text","text":"x"}`},
+		{"POST", "/channels/120363000000000001/reactions", `{"server_id":1,"emoji":"x"}`},
+		{"POST", "/labels", `{"name":"x"}`},
+		{"PATCH", "/labels/1", `{"name":"x"}`},
+		{"DELETE", "/labels/1", ""},
+		{"PUT", "/labels/1/chats/5511988887777", ""},
+		{"PUT", "/labels/1/messages/msg_x", ""},
+	} {
+		if code, body := e.do(d.method, base+d.path, key, d.body); code != 403 {
+			t.Errorf("key %s %s = %d %v", d.method, d.path, code, body)
+		}
+	}
+	_, out = e.do("POST", base+"/api-keys", tok, `{"name":"far","scopes":["read"],"ip_allowlist":["10.0.0.0/8"]}`)
+	if code, _ := e.do("GET", base+"/channels", out["key"].(string), ""); code != 403 {
+		t.Fatalf("key outside its allowlist = %d", code)
+	}
+}

@@ -85,6 +85,10 @@ type Source struct {
 	Health  *Health
 	Sending *service.Sending
 	Version string
+	// SendLatency is the queue latency histogram (enqueued to sent), fed by the queue.
+	SendLatency *Histogram
+	// WorkerMemory returns the resident memory of each worker by instance (nil: skipped).
+	WorkerMemory func() map[string]int64
 }
 
 var allStates = []instance.State{instance.Created, instance.Starting, instance.QRPending, instance.Connecting,
@@ -149,6 +153,22 @@ func Metrics(src Source) http.Handler {
 			if st, err := s.Status(ctx); err == nil {
 				m.gauge("litezap_sending_suspended", "1 while sending is suspended for every instance.", nil, b2f(st.Suspended))
 				m.gauge("litezap_sending_suspended_instances", "Instances whose sending is suspended.", nil, float64(len(st.Instances)))
+			}
+		}
+		if h := src.SendLatency; h != nil {
+			h.write(m, "litezap_queue_send_latency_seconds", "Seconds from enqueue to sent for API sends (includes pacing, scheduling and send windows).")
+		}
+		if src.WorkerMemory != nil {
+			if mem := src.WorkerMemory(); mem != nil {
+				ids := make([]string, 0, len(mem))
+				for id := range mem {
+					ids = append(ids, id)
+				}
+				sort.Strings(ids)
+				m.help("litezap_worker_memory_rss_bytes", "gauge", "Resident memory of each worker process (Linux only).")
+				for _, id := range ids {
+					m.sample("litezap_worker_memory_rss_bytes", map[string]string{"instance_id": id}, float64(mem[id]))
+				}
 			}
 		}
 		var ms runtime.MemStats

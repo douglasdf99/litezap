@@ -39,7 +39,7 @@ Legenda: <span class="lz-badge lz-badge--ok">Disponível</span> já funciona;
 | Reiniciar | [`POST /restart`](/docs/api/instancias/reiniciar-worker/) (também `start` e `stop`) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Desconectar | [`POST /logout`](/docs/api/instancias/desconectar-numero/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Dados do celular | parcial em `GET /v1/instances/{id}` (`phone`) | <span class="lz-badge lz-badge--soon">M9</span> |
-| Renomear instância | — | <span class="lz-badge lz-badge--soon">M11</span> |
+| Renomear instância | [`PATCH /v1/instances/{id}`](/docs/api/instancias/editar-instancia/) (também etiquetas e allowlist de IP) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Ler mensagens automaticamente | — (marcar como lido manual existe) | <span class="lz-badge lz-badge--soon">M9</span> |
 | Rejeitar chamadas / mensagem de rejeição | — | <span class="lz-badge lz-badge--soon">M7</span> |
 | Desafio de passkey no pareamento | — | <span class="lz-badge lz-badge--soon">M9</span> |
@@ -112,7 +112,7 @@ Legenda: <span class="lz-badge lz-badge--ok">Disponível</span> já funciona;
 | Atualizar webhooks | [`POST /v1/webhooks`](/docs/api/webhooks/criar-webhook/), [`PATCH`](/docs/api/webhooks/atualizar-webhook/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Status do chat (presença) | — | <span class="lz-badge lz-badge--soon">M7</span> |
 | Filtros por tipo de mensagem | — (filtro por tipo de evento já existe) | <span class="lz-badge lz-badge--soon">M7</span> |
-| Falha de proxy | estado `reconnecting` com `reason: proxy_unreachable`; evento dedicado no M11 | <span class="lz-badge lz-badge--soon">M11</span> |
+| Falha de proxy | [`instance.proxy_failed`](/docs/eventos/instance-proxy-failed/) (com o erro do worker, sem credenciais) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 
 ### Parceiros e IA
 
@@ -121,7 +121,9 @@ Legenda: <span class="lz-badge lz-badge--ok">Disponível</span> já funciona;
 | Criar, listar e apagar instâncias | [`POST`](/docs/api/instancias/criar-instancia/), [`GET`](/docs/api/instancias/listar-instancias/), [`DELETE /v1/instances`](/docs/api/instancias/apagar-instancia/) (token admin) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Configurar proxy | `proxy_url` em [`PUT /settings`](/docs/api/configuracoes/alterar-configuracoes/) (admin) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Assinaturas e cobrança | — (é da nuvem, não do motor) | <span class="lz-badge lz-badge--no">Fora</span> |
-| Componente de conexão embutível | — | <span class="lz-badge lz-badge--soon">M11</span> |
+| Componente de conexão embutível / token do SDK | [Link de pareamento hospedado](/docs/api/plataforma/gerar-link-de-pareamento/) + `<litezap-pair>` e evento [`instance.paired`](/docs/eventos/instance-paired/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
+| Apagar instâncias em lote | [`POST /v1/instances/bulk`](/docs/api/plataforma/operacao-em-lote/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
+| Restrição de chamadas por IP | `ip_allowlist` na instância e nas chaves; `admin_allowed_ips` e `trusted_proxies` no servidor | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | MCP Server | [`/mcp` e `litezap mcp`](/docs/mcp/), 13 ferramentas | <span class="lz-badge lz-badge--ok">Disponível</span> |
 
 ## Roteiro de migração

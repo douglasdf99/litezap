@@ -11,7 +11,15 @@ Defina `public_url` com o endereço público, para que as URLs assinadas de míd
 ```yaml
 listen_addr: 127.0.0.1:8787
 public_url: "https://api.seu-dominio.com"
+# Para allowlists de IP: o proxy na mesma máquina é confiável, então o X-Forwarded-For dele vale.
+trusted_proxies: ["127.0.0.1", "::1"]
 ```
+
+`public_url` também é a base dos [links de pareamento](/docs/api/plataforma/gerar-link-de-pareamento/). Sem
+`trusted_proxies`, o LiteZap ignora `X-Forwarded-For` e vê todo cliente com o IP do proxy — então uma allowlist de IP
+recusaria todo mundo (ou, se incluir o IP do proxy, aceitaria todo mundo). Liste só os proxies que você controla: o
+cabeçalho é lido da direita para a esquerda e para no primeiro endereço que não é de um deles. O proxy deve
+**acrescentar** o IP do cliente ao cabeçalho (Caddy faz isso por padrão; no Nginx, `proxy_add_x_forwarded_for`).
 
 ## Caddy
 
