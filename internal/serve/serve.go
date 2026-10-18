@@ -47,8 +47,10 @@ type Info struct {
 	URL        string
 	DataDir    string
 	AdminToken string
-	// Dashboard reports whether /app/ is served.
-	Dashboard bool
+	// Dashboard reports whether /app/ is served; OneClickLogin whether launch codes from
+	// Options.LaunchCodes are accepted (dashboard on and a loopback listen address).
+	Dashboard     bool
+	OneClickLogin bool
 }
 
 func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
@@ -171,7 +173,8 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	}()
 	if opt.OnListening != nil {
 		opt.OnListening(Info{URL: dashboardURL(ln.Addr().String()), DataDir: cfg.DataDir,
-			AdminToken: cfg.AdminToken, Dashboard: !cfg.DisableDashboard})
+			AdminToken: cfg.AdminToken, Dashboard: !cfg.DisableDashboard,
+			OneClickLogin: !cfg.DisableDashboard && codes != nil})
 	}
 
 	var serveErr error

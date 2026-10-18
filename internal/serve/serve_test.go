@@ -221,7 +221,7 @@ func startServe(t *testing.T, opt Options) Info {
 func TestDashboardMountedWithOneClickLogin(t *testing.T) {
 	codes := dashboard.NewLaunchCodes()
 	info := startServe(t, Options{LaunchCodes: codes})
-	if !strings.HasPrefix(info.URL, "http://127.0.0.1:") || !info.Dashboard || info.AdminToken == "" {
+	if !strings.HasPrefix(info.URL, "http://127.0.0.1:") || !info.Dashboard || !info.OneClickLogin || info.AdminToken == "" {
 		t.Fatalf("info = %+v", info)
 	}
 	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -268,7 +268,7 @@ func TestDashboardMountedWithOneClickLogin(t *testing.T) {
 func TestDashboardCanBeDisabled(t *testing.T) {
 	t.Setenv("LITEZAP_DISABLE_DASHBOARD", "true")
 	info := startServe(t, Options{LaunchCodes: dashboard.NewLaunchCodes()})
-	if info.Dashboard {
+	if info.Dashboard || info.OneClickLogin {
 		t.Fatal("dashboard reported as enabled")
 	}
 	for _, p := range []string{"/app/", "/app/api/info"} {

@@ -3,6 +3,7 @@ module github.com/douglasdf99/litezap
 go 1.26.7
 
 require (
+	fyne.io/systray v1.12.2
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	go.mau.fi/whatsmeow v0.0.0-20261016130820-0b0a1cdac3e2
@@ -54,6 +55,7 @@ require (
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/gofrs/flock v0.13.1 // indirect
 	github.com/google/go-containerregistry v0.22.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect

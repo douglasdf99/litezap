@@ -223,6 +223,7 @@ function parseRoute() {
 }
 
 async function route() {
+  await consumeLaunchCode();
   const parts = parseRoute();
   if (!api.getToken()) {
     if (teardown) { teardown(); teardown = null; }
@@ -244,19 +245,18 @@ async function route() {
   teardown = parts[0] === 'webhooks' ? globalWebhooksView() : instancesView();
 }
 
-async function boot() {
-  // One-click login from the tray app: #code=... (the fragment never reaches the server).
+// One-click login from the tray app: #code=... (the fragment never reaches the server).
+// Handled on load and on hashchange (the tray may reopen an already open tab).
+async function consumeLaunchCode() {
   const m = location.hash.match(/^#code=([A-Za-z0-9_-]{16,128})$/);
-  if (m) {
-    history.replaceState(null, '', location.pathname + '#/');
-    try {
-      api.setToken(await api.redeemLaunchCode(m[1]), false);
-    } catch (e) {
-      toast(`Login automático falhou: ${errMsg(e)}`, 'error');
-    }
+  if (!m) return;
+  history.replaceState(null, '', `${location.pathname}#/`);
+  try {
+    api.setToken(await api.redeemLaunchCode(m[1]), false);
+  } catch (e) {
+    toast(`Login automático falhou: ${errMsg(e)}. Use "Abrir painel" na bandeja de novo ou cole o token.`, 'error');
   }
-  window.addEventListener('hashchange', route);
-  route();
 }
 
-boot();
+window.addEventListener('hashchange', route);
+route();

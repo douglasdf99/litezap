@@ -1,0 +1,287 @@
+// Command litezap-app is the LiteZap tray launcher for non-technical users: double-click
+// it and it runs the engine in-process (data in the per-user app folder), shows a tray
+// icon with the status, and opens the dashboard in the browser with one-click login.
+//
+// It lives apart from cmd/litezap because the tray library needs CGO on macOS; the main
+// `litezap` binary stays CGO-free. The binary also answers `worker`, since the engine
+// re-executes its own executable for each instance.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"time"
+	_ "time/tzdata" // IANA zones for settings.timezone even where the OS has none
+
+	"fyne.io/systray"
+	"github.com/douglasdf99/litezap/internal/config"
+	"github.com/douglasdf99/litezap/internal/dashboard"
+	"github.com/douglasdf99/litezap/internal/desktop"
+	"github.com/douglasdf99/litezap/internal/serve"
+	"github.com/douglasdf99/litezap/internal/worker"
+)
+
+// version is set at build time: -ldflags "-X main.version=v0.1.0"
+var version = "dev"
+
+const maxLogBytes = 10 << 20
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "worker" {
+		os.Exit(runWorker(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println(version)
+		return
+	}
+	fs := flag.NewFlagSet("litezap-app", flag.ExitOnError)
+	noBrowser := fs.Bool("no-browser", false, "do not open the dashboard on start")
+	fs.Parse(os.Args[1:])
+
+	dir, err := desktop.AppDir()
+	if err == nil {
+		err = os.MkdirAll(dir, 0o700)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "litezap-app: app folder:", err)
+		os.Exit(1)
+	}
+	logPath := filepath.Join(dir, "litezap.log")
+	logFile, err := openLog(logPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "litezap-app: log:", err)
+		os.Exit(1)
+	}
+	defer logFile.Close()
+	log := slog.New(slog.NewTextHandler(io.MultiWriter(os.Stderr, logFile), nil))
+	log.Info("litezap-app starting", "version", version, "app_dir", dir)
+
+	a := &app{dir: dir, logPath: logPath, log: log, openOnStart: !*noBrowser,
+		codes: dashboard.NewLaunchCodes(), stopped: make(chan struct{}), infoc: make(chan serve.Info, 1)}
+	// systray.Run must own the main thread (Cocoa on macOS).
+	systray.Run(a.onReady, a.onExit)
+}
+
+// openLog appends to the log, starting over (keeping one old copy) past maxLogBytes.
+func openLog(p string) (*os.File, error) {
+	if fi, err := os.Stat(p); err == nil && fi.Size() > maxLogBytes {
+		_ = os.Rename(p, p+".1")
+	}
+	return os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+}
+
+func runWorker(args []string) int {
+	fs := flag.NewFlagSet("worker", flag.ExitOnError)
+	id := fs.String("instance", "", "instance id")
+	sock := fs.String("socket", "", "unix socket path")
+	dataDir := fs.String("data-dir", "", "data directory")
+	fs.Parse(args)
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	err := worker.Run(ctx, worker.Options{
+		InstanceID: *id, Socket: *sock, DataDir: *dataDir,
+		ProxyURL: os.Getenv("LITEZAP_WORKER_PROXY_URL"),
+		Parent:   os.Stdin,
+	}, log.With("instance_id", *id))
+	if err != nil {
+		log.Error("fatal", "err", err)
+		return 1
+	}
+	return 0
+}
+
+type app struct {
+	dir, logPath string
+	log          *slog.Logger
+	openOnStart  bool
+	codes        *dashboard.LaunchCodes
+	stopped      chan struct{} // closed when the engine returned; err holds its error
+	err          error
+	infoc        chan serve.Info
+	cancel       context.CancelFunc
+	info         serve.Info
+}
+
+func (a *app) onReady() {
+	if runtime.GOOS == "windows" {
+		systray.SetIcon(desktop.IconICO(64))
+	} else {
+		systray.SetIcon(desktop.IconPNG(64))
+	}
+	systray.SetTooltip("LiteZap")
+	status := systray.AddMenuItem("LiteZap: iniciando…", "")
+	status.Disable()
+	systray.AddSeparator()
+	open := systray.AddMenuItem("Abrir painel", "Abre o painel no navegador")
+	open.Disable()
+	folder := systray.AddMenuItem("Abrir pasta de dados", a.dir)
+	logs := systray.AddMenuItem("Ver log", a.logPath)
+	systray.AddSeparator()
+	quit := systray.AddMenuItem("Sair", "Encerra o LiteZap e todas as instâncias")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cancel = cancel
+	base := config.Default()
+	base.DataDir = filepath.Join(a.dir, "data")
+	go func() {
+		defer close(a.stopped)
+		a.err = serve.RunWith(ctx, serve.Options{
+			ConfigPath:  filepath.Join(a.dir, "litezap.yaml"),
+			Base:        &base,
+			LaunchCodes: a.codes,
+			OnListening: func(i serve.Info) { a.infoc <- i },
+		}, a.log)
+	}()
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		tick := time.NewTicker(3 * time.Second)
+		defer tick.Stop()
+		quitting := false
+		running := false
+		beginQuit := func() {
+			if quitting {
+				return
+			}
+			quitting = true
+			status.SetTitle("LiteZap: encerrando…")
+			open.Disable()
+			quit.Disable()
+			a.log.Info("quit requested")
+			cancel()
+		}
+		for {
+			select {
+			case info := <-a.infoc:
+				a.info = info
+				running = true
+				open.Enable()
+				a.updateStatus(status)
+				if a.openOnStart {
+					a.openDashboard()
+				}
+			case <-open.ClickedCh:
+				a.openDashboard()
+			case <-folder.ClickedCh:
+				a.openPath(a.dir)
+			case <-logs.ClickedCh:
+				a.openPath(a.logPath)
+			case <-quit.ClickedCh:
+				beginQuit()
+			case <-sigs:
+				beginQuit()
+			case <-tick.C:
+				if running && !quitting {
+					a.updateStatus(status)
+				}
+			case <-a.stopped:
+				err := a.err
+				if quitting || err == nil {
+					a.log.Info("litezap-app stopped")
+					systray.Quit()
+					return
+				}
+				// The engine could not start (e.g. port in use): keep the tray up with
+				// the reason so the user sees it; Quit still works.
+				a.log.Error("engine stopped", "err", err)
+				running = false
+				open.Disable()
+				status.SetTitle("Erro: " + shorten(err.Error(), 70))
+				systray.SetTooltip("LiteZap: " + err.Error())
+				go func() {
+					<-quit.ClickedCh
+					systray.Quit()
+				}()
+				return
+			}
+		}
+	}()
+}
+
+// onExit runs when the tray loop ends (Quit, or the OS ending the session): make sure the
+// engine stopped gracefully before the process exits.
+func (a *app) onExit() {
+	if a.cancel == nil {
+		return
+	}
+	a.cancel()
+	select {
+	case <-a.stopped:
+	case <-time.After(40 * time.Second):
+		a.log.Warn("engine did not stop in time")
+	}
+}
+
+func (a *app) openDashboard() {
+	if a.info.URL == "" {
+		return
+	}
+	if !a.info.Dashboard {
+		a.log.Warn("dashboard disabled (disable_dashboard); opening the API base URL")
+		a.openPath(a.info.URL + "/healthz")
+		return
+	}
+	u := a.info.URL + dashboard.Prefix
+	if a.info.OneClickLogin {
+		// Single-use, 2-minute code in the fragment: never sent to the server or logs.
+		u += "#code=" + a.codes.Mint()
+	}
+	a.openPath(u)
+}
+
+func (a *app) openPath(target string) {
+	if err := desktop.Open(target); err != nil {
+		a.log.Error("open failed", "err", err)
+	}
+}
+
+var statusClient = &http.Client{Timeout: 2 * time.Second}
+
+func (a *app) updateStatus(item *systray.MenuItem) {
+	title := "LiteZap: rodando"
+	req, _ := http.NewRequest(http.MethodGet, a.info.URL+"/v1/instances", nil)
+	req.Header.Set("Authorization", "Bearer "+a.info.AdminToken)
+	resp, err := statusClient.Do(req)
+	if err != nil {
+		title = "LiteZap: sem resposta"
+	} else {
+		var body struct {
+			Instances []struct {
+				State string `json:"state"`
+			} `json:"instances"`
+		}
+		if resp.StatusCode == http.StatusOK && json.NewDecoder(resp.Body).Decode(&body) == nil {
+			connected := 0
+			for _, in := range body.Instances {
+				if in.State == "connected" {
+					connected++
+				}
+			}
+			title = fmt.Sprintf("LiteZap: %d de %d conectada(s)", connected, len(body.Instances))
+		}
+		resp.Body.Close()
+	}
+	item.SetTitle(title)
+	systray.SetTooltip(title + " · " + a.info.URL + dashboard.Prefix)
+}
+
+func shorten(s string, n int) string {
+	r := []rune(strings.TrimSpace(s))
+	if len(r) <= n {
+		return string(r)
+	}
+	return string(r[:n-1]) + "…"
+}

@@ -56,7 +56,7 @@ func TestStaticAssetsAndHeaders(t *testing.T) {
 	h := Handler(Options{AdminToken: "adm"})
 	for path, want := range map[string]string{
 		"/app/":            "<title>LiteZap</title>",
-		"/app/app.js":      "boot()",
+		"/app/app.js":      "consumeLaunchCode",
 		"/app/api.js":      "subscribe",
 		"/app/style.css":   "--accent",
 		"/app/logo.svg":    "<svg",
