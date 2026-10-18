@@ -198,7 +198,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	msg.OnSettingsChanged = rt.SettingsChanged
 	handler := api.New(svc, guarded, api.Options{
 		// MCP streamable HTTP at /mcp, behind the same tokens (spec 3.1, 6.1).
-		MCP: mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Logger: log,
+		MCP: mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Logger: log, Account: acct,
 			PublicHost: publicHost(cfg.PublicURL)}),
 		AdminToken: cfg.AdminToken,
 		ProtectOps: !loopback,

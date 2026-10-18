@@ -41,15 +41,15 @@ Legenda:
 | INS-1 | QR code (string) | Pegar QRCode | Sim — `GetQRChannel` (qrchan.go) | Pronto — `GET /instances/{id}/qr` + evento `instance.qr` | — | | M1 |
 | INS-2 | QR como imagem / bytes | QRCode imagem e bytes | Sim (string → imagem é local) | Pronto — `GET .../qr?format=png` | — | Z-API devolve base64; LiteZap devolve PNG direto. Avaliar `?format=base64` | M1 |
 | INS-3 | Conectar por código no telefone | Conectar com telefone | Sim — `PairPhone` (pair-code.go) | Pronto — `POST .../pair-phone` + `instance.pair_code` | — | | M1 |
-| INS-4 | Desafio de passkey no pareamento (concluir / reiniciar) | Complete/Reset the Challenge | Sim — `SendPasskeyResponse`, `SendPasskeyConfirmation` (pair-passkey.go); eventos `PairPasskeyRequest/Error/Confirmation` | Falta | M | Fluxo novo do WhatsApp; se exigido, o pareamento hoje falha sem explicação. Expor estado `passkey_pending` + rota de resposta (incerto: frequência real) | M9 |
+| INS-4 | Desafio de passkey no pareamento (concluir / reiniciar) | Complete/Reset the Challenge | Sim — `SendPasskeyResponse`, `SendPasskeyConfirmation` (pair-passkey.go); eventos `PairPasskeyRequest/Error/Confirmation` | Fora — passkey exige asserção WebAuthn do site do WhatsApp (um servidor não produz); o worker só registra o pedido no log (M9) | M | Fluxo novo do WhatsApp; se exigido, o pareamento hoje falha sem explicação. Expor estado `passkey_pending` + rota de resposta (incerto: frequência real) | M9 |
 | INS-5 | Reiniciar instância | Reiniciar | N/A (Disconnect/Connect) | Pronto — `POST .../restart` (+ `start`/`stop`) | — | | M1 |
 | INS-6 | Desconectar (logout) | Desconectar | Sim — `Logout` (client.go) | Pronto — `POST .../logout` | — | | M1 |
 | INS-7 | Status da instância | Status da instância | Sim — `IsConnected`, `IsLoggedIn` (client.go) | Pronto — `GET /instances/{id}` (estado, motivo, jid) + `instance.status` | — | Máquina de estados mais rica que a da Z-API (banido, temp_banned, failed) | M1 |
-| INS-8 | Dados do celular (plataforma, nome, conta business) | Dados do celular | Parcial — `store.Device.Platform/PushName/BusinessName` (store/store.go); modelo do aparelho não exposto (incerto) | Parcial — só jid e estado | S | | M9 |
+| INS-8 | Dados do celular (plataforma, nome, conta business) | Dados do celular | Parcial — `store.Device.Platform/PushName/BusinessName` (store/store.go); modelo do aparelho não exposto (incerto) | Pronto — `GET /profile` (`platform`, `name`, `business_name`, `about`, foto) (M9) | S | | M9 |
 | INS-9 | Renomear instância | Renomear instância | N/A | Falta — nome só na criação | S | `PATCH /instances/{id}` | M11 |
-| INS-10 | Dados da instância (me) | Dados da instância | N/A | Parcial — `GET /instances/{id}` | S | Juntar com INS-8 | M9 |
+| INS-10 | Dados da instância (me) | Dados da instância | N/A | Pronto — `GET /instances/{id}` + `GET /profile` (M9) | S | Juntar com INS-8 | M9 |
 | INS-11 | Token de extensão (conector no navegador) | Gerar token de extensão | Não (produto próprio da Z-API) | Fora | — | O equivalente LiteZap é o app local (peça #2) | — |
-| INS-12 | Leitura automática de mensagens | Ler mensagens automaticamente | Sim — `MarkRead` (receipt.go) | Falta (marcar como lido manual existe) | S | Setting por instância; respeitar privacidade de confirmação de leitura | M9 |
+| INS-12 | Leitura automática de mensagens | Ler mensagens automaticamente | Sim — `MarkRead` (receipt.go) | Pronto — setting `auto_read {enabled, groups}`: lote por chat, 2–5s, 1 recibo/s; `read-self` com confirmação de leitura desligada (M9) | S | Setting por instância; respeitar privacidade de confirmação de leitura | M9 |
 | INS-13 | Leitura automática de status | Ler status automaticamente | Sim — `MarkRead` com chat `types.StatusBroadcastJID` | Falta | S | Depende de receber status (STA-5) | M10 |
 | INS-14 | Rejeitar chamadas automaticamente | Rejeitar chamadas | Sim — `RejectCall` (call.go) + evento `CallOffer` (types/events/call.go) | Pronto — setting `calls.auto_reject`; rejeição de chamadas individuais ao vivo pelo worker (só as que ele viu, pelo `CallCreator`) em < 3s, evento `call.received` com `rejected`; grupo só informado | S | | M7 |
 | INS-15 | Mensagem automática ao rejeitar chamada | Mensagem de rejeição | Sim — `SendMessage` | Pronto — `calls.reject_message` pela fila (ritmo/janela/rampa), 1 por contato a cada 10 min, expira em 1h; só chamadas 1:1 | S | Passa pela fila (ritmo/janela) | M7 |
@@ -107,8 +107,8 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 
 | ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
 |---|---|---|---|---|---|---|---|
-| PRV-1 | Visto por último, foto, recado, quem adiciona em grupos, online, confirmação de leitura | 6 páginas | Sim — `SetPrivacySetting`, `GetPrivacySettings`, `TryFetchPrivacySettings` (privacysettings.go); tipos `last`, `profile`, `status`, `groupadd`, `online`, `readreceipts`, `calladd`, `messages` (types/user.go) | Falta | S | | M9 |
-| PRV-2 | Duração padrão de mensagens temporárias | Mensagens temporárias | Sim — `SetDefaultDisappearingTimer` (privacysettings.go) | Falta | S | | M9 |
+| PRV-1 | Visto por último, foto, recado, quem adiciona em grupos, online, confirmação de leitura | 6 páginas | Sim — `SetPrivacySetting`, `GetPrivacySettings`, `TryFetchPrivacySettings` (privacysettings.go); tipos `last`, `profile`, `status`, `groupadd`, `online`, `readreceipts`, `calladd`, `messages` (types/user.go) | Pronto — `GET/PATCH /privacy` (`last_seen`, `online`, `profile_photo`, `about`, `groups_add`, `read_receipts`, `calls`, `messages`) (M9) | S | | M9 |
+| PRV-2 | Duração padrão de mensagens temporárias | Mensagens temporárias | Sim — `SetDefaultDisappearingTimer` (privacysettings.go) | Pronto — `PATCH /privacy {"default_disappearing_seconds"}` (M9) | S | | M9 |
 | PRV-3 | Listar contatos excluídos de uma regra ("meus contatos, exceto…") | Contatos não permitidos | Parcial — só `GetStatusPrivacy` (broadcast.go) para status; demais listas sem função (incerto) | Falta | M | | M9 |
 
 ### 2.6 Contatos (Z-API: Contacts)
@@ -117,11 +117,11 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 |---|---|---|---|---|---|---|---|
 | CON-1 | Listar contatos | Pegar contatos | Sim — `Store.Contacts.GetAllContacts` (store) | Pronto — `GET /contacts` | — | | M2 |
 | CON-2 | Adicionar / remover contato na agenda | Adicionar / remover contatos | Parcial — existe a ação de app state `contact` (evento `events.Contact`), sem builder em appstate/encode.go (incerto) | Falta | M | | M9 |
-| CON-3 | Metadados do contato (nome, recado, business) | Metadata do contato | Sim — `GetUserInfo`, `GetBusinessProfile` (user.go) | Parcial — `GET /contacts/{jid}` do store (nome, push name, business name) | S | Consultar a rede só sob demanda (`?refresh=1`) com cota | M9 |
-| CON-4 | Foto de perfil do contato | Pegar imagem do contato | Sim — `GetProfilePictureInfo` (user.go) | Falta | S | Cache + URL assinada como mídia | M9 |
+| CON-3 | Metadados do contato (nome, recado, business) | Metadata do contato | Sim — `GetUserInfo`, `GetBusinessProfile` (user.go) | Pronto — `GET /contacts/{jid}/profile` (recado, foto, nome verificado, perfil comercial) com cota (M9) | S | Consultar a rede só sob demanda (`?refresh=1`) com cota | M9 |
+| CON-4 | Foto de perfil do contato | Pegar imagem do contato | Sim — `GetProfilePictureInfo` (user.go) | Pronto — `GET /contacts/{jid}/picture[?download=1]` com cache; sem foto ou escondida = 404 (M9) | S | Cache + URL assinada como mídia | M9 |
 | CON-5 | Número tem WhatsApp? | Número com WhatsApp | Sim — `IsOnWhatsApp` (user.go) | Pronto — `POST /check-numbers` (cache 30d/24h, cota própria) | — | | M2 |
 | CON-6 | Verificação em lote | Validação em lote | Sim | Pronto — mesmo endpoint, com ritmo e limite diário | — | Raspagem de números é gatilho de banimento; LiteZap limita de propósito | M2 |
-| CON-7 | Bloquear / desbloquear | Bloquear contato | Sim — `UpdateBlocklist`, `GetBlocklist` (user.go) | Falta | S | | M9 |
+| CON-7 | Bloquear / desbloquear | Bloquear contato | Sim — `UpdateBlocklist`, `GetBlocklist` (user.go) | Pronto — `POST /contacts/{jid}/block\|unblock`, `GET /blocklist` (M9) | S | | M9 |
 | CON-8 | Denunciar contato | Denunciar contato | Não (sem função) | Fora | — | | — |
 
 ### 2.7 Chats (Z-API: Chats)
@@ -129,13 +129,13 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 | ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
 |---|---|---|---|---|---|---|---|
 | CHT-1 | Listar chats | Pegar chats | Parcial — não há lista de chats; vem do history sync e das mensagens | Pronto — `GET /chats` (do log, ordenado por última mensagem) | — | Chats sem mensagem no log não aparecem | M2 |
-| CHT-2 | Metadados do chat | Metadata do chat | Parcial | Parcial — campos na lista; sem `GET /chats/{jid}` | S | Incluir arquivado/fixado/silenciado (vindos do app state) | M9 |
-| CHT-3 | Ler / marcar como não lido | Ler chats | Sim — `MarkRead` e `appstate.BuildMarkChatAsRead` (appstate/encode.go) | Parcial — ler sim; não lido não | S | | M9 |
-| CHT-4 | Arquivar / desarquivar | Arquivar chat | Sim — `appstate.BuildArchive` + `SendAppState` (appstate.go) | Falta | S | | M9 |
-| CHT-5 | Fixar chat | Fixar chat | Sim — `appstate.BuildPin` | Falta | S | | M9 |
-| CHT-6 | Silenciar | Silenciar chat | Sim — `appstate.BuildMute`, `BuildMuteAbs` | Falta | S | | M9 |
+| CHT-2 | Metadados do chat | Metadata do chat | Parcial | Pronto — `GET /chats/{jid}` com arquivado/fixado/silenciado/não lido (reconciliado com o worker) (M9) | S | Incluir arquivado/fixado/silenciado (vindos do app state) | M9 |
+| CHT-3 | Ler / marcar como não lido | Ler chats | Sim — `MarkRead` e `appstate.BuildMarkChatAsRead` (appstate/encode.go) | Pronto — `PATCH /chats/{jid} {"unread"}` (lido também manda recibos) (M9) | S | | M9 |
+| CHT-4 | Arquivar / desarquivar | Arquivar chat | Sim — `appstate.BuildArchive` + `SendAppState` (appstate.go) | Pronto — `PATCH /chats/{jid} {"archived"}` + `chat.updated` (M9) | S | | M9 |
+| CHT-5 | Fixar chat | Fixar chat | Sim — `appstate.BuildPin` | Pronto — `PATCH /chats/{jid} {"pinned"}` (limite 3) (M9) | S | | M9 |
+| CHT-6 | Silenciar | Silenciar chat | Sim — `appstate.BuildMute`, `BuildMuteAbs` | Pronto — `PATCH /chats/{jid} {"muted","mute_seconds"}` (M9) | S | | M9 |
 | CHT-7 | Limpar conversa | Limpar chat | Parcial — índice `clearChat` (appstate/keys.go) e evento `ClearChat`, sem builder | Falta | M | Montar a mutação à mão (incerto) | M9 |
-| CHT-8 | Apagar chat | Deletar chat | Sim — `appstate.BuildDeleteChat` | Falta | S | Também apagar do log local? (decidir: só flag) | M9 |
+| CHT-8 | Apagar chat | Deletar chat | Sim — `appstate.BuildDeleteChat` | Pronto — `DELETE /chats/{jid}` (só marca no log; some da lista até mensagem nova) (M9) | S | Também apagar do log local? (decidir: só flag) | M9 |
 | CHT-9 | Mensagens temporárias do chat | Expiração do chat | Sim — `SetDisappearingTimer` (send.go) | Falta | S | | M9 |
 | CHT-10 | Histórico de mensagens do chat | (não há) | N/A | Pronto — `GET /chats/{jid}/messages` com cursor | — | Vantagem LiteZap | M2 |
 | CHT-11 | Busca full-text | (não há) | N/A | Falta — planejado | S | `GET /messages/search` (FTS5) | M2b |
@@ -241,9 +241,9 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 
 | ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
 |---|---|---|---|---|---|---|---|
-| PRF-1 | Nome do perfil | Atualizar nome do perfil | Sim — `appstate.BuildSettingPushName` + `SendAppState` | Falta | S | | M9 |
-| PRF-2 | Recado (About) | Atualizar descrição do perfil | Sim — `SetStatusMessage` (user.go) | Falta | S | | M9 |
-| PRF-3 | Foto do perfil | Atualizar foto do perfil | Parcial — `SetGroupPhoto` com o próprio JID como alvo (namespace `w:profile:picture`, group.go); uso comum na comunidade, sem helper dedicado (incerto) | Falta | S | JPEG; testar em E2E | M9 |
+| PRF-1 | Nome do perfil | Atualizar nome do perfil | Sim — `appstate.BuildSettingPushName` + `SendAppState` | Pronto — `PATCH /profile {"name"}` (M9) | S | | M9 |
+| PRF-2 | Recado (About) | Atualizar descrição do perfil | Sim — `SetStatusMessage` (user.go) | Pronto — `PATCH /profile {"about"}` (M9) | S | | M9 |
+| PRF-3 | Foto do perfil | Atualizar foto do perfil | Parcial — `SetGroupPhoto` com o próprio JID como alvo (namespace `w:profile:picture`, group.go); uso comum na comunidade, sem helper dedicado (incerto) | Pronto — `PUT/DELETE /profile/picture` (JPEG 640x640, `SetGroupPhoto` sem target) (M9; validar com celular) | S | JPEG; testar em E2E | M9 |
 
 ### 2.17 Webhooks e eventos (Z-API: Webhooks)
 
@@ -292,10 +292,10 @@ Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-AP
 | — whatsmeow `Parcial` | 10 |
 | — whatsmeow `Não` | 21 |
 | Recursos só da camada LiteZap (`N/A`) | 27 |
-| **LiteZap `Pronto`** | **39** |
-| LiteZap `Parcial` | 7 |
-| LiteZap `Falta` | 96 |
-| LiteZap `Fora` | 17 |
+| **LiteZap `Pronto`** | **56** |
+| LiteZap `Parcial` | 2 |
+| LiteZap `Falta` | 83 |
+| LiteZap `Fora` | 18 |
 
 Viáveis com whatsmeow (`Sim` + `Manual` + `Parcial`): **111 de 132** recursos de protocolo. Os 21 inviáveis hoje: INS-11 (extensão, produto próprio da Z-API), MOB-1…4 (registro como aparelho principal), CON-8 (denúncia), CAL-1/2 (chamadas de voz e SIP), COM-8 (desativar comunidade), CHN-2/5/7/9/10/11 (administração avançada de canais), BRD-1 (listas de transmissão), BUS-1/2/3/6/7 (catálogo, coleções, notas, perfil comercial editável).
 
@@ -364,6 +364,8 @@ Aceite:
 4. `group.updated` emitido para entradas/saídas feitas no celular.
 
 ### M9 — Chats, contatos, perfil, privacidade e conta
+
+Entregue em 2026-10-18 (branch `feat/m9-chats-profile`, plano `docs/superpowers/plans/2026-10-18-litezap-m9-chats-profile.md`). Diferenças em relação ao texto abaixo: rotas `GET/PATCH/DELETE /chats/{jid}` (ações num `PATCH` com campos `archived`, `pinned`, `muted`+`mute_seconds`, `unread`), `PUT /messages/{id}/star`, `GET /contacts/{jid}/picture|profile` (em vez de `?refresh=1`), `POST /contacts/{jid}/block|unblock`, `GET /blocklist`, `GET/PATCH /profile`, `GET/PUT/DELETE /profile/picture`, `GET/PATCH /privacy`; evento `chat.updated` (inclui estrela e limpeza feita no celular); cota própria de consultas de contato (30/min, 1000/dia), não a do `check-numbers`; a foto não usa URL assinada de mídia (URL do CDN do WhatsApp ou download autenticado pelo proxy da instância). Adiados: `clear` (CHT-7: sem builder no whatsmeow, índice 2 da mutação desconhecido), `disappearing` por chat (CHT-9: manda mensagem de protocolo ao contato, fica para quando passar pela fila), CON-2 (agenda), PRV-3 (listas de exceção) e INS-4 (passkey: exige asserção WebAuthn do site do WhatsApp; fica `Fora`). A confirmar com celular real: JID das ações em conversa direta (LID quando a conta migrou), foto do perfil sem `target`, eco do app state.
 
 Escopo: CHT-2…9, CON-2, 3, 4, 7, PRF-1…3, PRV-1…3, INS-4, 8, 10, 12.
 

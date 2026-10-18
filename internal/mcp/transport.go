@@ -21,6 +21,7 @@ type HTTPDeps struct {
 	Instances InstanceService
 	Messaging MessagingService
 	Events    *events.Bus
+	Account   AccountService // marco 9 tools
 	Version   string
 	Logger    *slog.Logger
 	// PublicHost is the host[:port] of public_url, if any. The SDK rejects requests that
@@ -49,7 +50,7 @@ func NewHTTPHandler(d HTTPDeps) http.Handler {
 		if s, ok := servers.Load(sc); ok {
 			return s.(*sdk.Server)
 		}
-		b := &Local{Instances: d.Instances, Messaging: d.Messaging, Events: d.Events, Caller: sc}
+		b := &Local{Instances: d.Instances, Messaging: d.Messaging, Events: d.Events, Caller: sc, Account: d.Account}
 		s, _ := servers.LoadOrStore(sc, NewServer(b, Options{Version: d.Version, Logger: d.Logger, SchemaCache: cache}))
 		return s.(*sdk.Server)
 	}, &sdk.StreamableHTTPOptions{Stateless: true, Logger: d.Logger, DisableLocalhostProtection: d.PublicHost != ""})

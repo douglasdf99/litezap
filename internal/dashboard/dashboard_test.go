@@ -61,13 +61,15 @@ func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
 func TestStaticAssetsAndHeaders(t *testing.T) {
 	h := Handler(Options{AdminToken: "adm"})
 	for path, want := range map[string]string{
-		"/app/":            "<title>LiteZap</title>",
-		"/app/app.js":      "consumeLaunchCode",
-		"/app/api.js":      "subscribe",
-		"/app/style.css":   "--accent",
-		"/app/logo.svg":    "<svg",
-		"/app/webhooks.js": "webhooksPanel",
-		"/app/agent.js":    "agentPanel",
+		"/app/":               "<title>LiteZap</title>",
+		"/app/app.js":         "consumeLaunchCode",
+		"/app/api.js":         "subscribe",
+		"/app/style.css":      "--accent",
+		"/app/logo.svg":       "<svg",
+		"/app/webhooks.js":    "webhooksPanel",
+		"/app/agent.js":       "agentPanel",
+		"/app/profile.js":     "profilePanel",
+		"/app/chatactions.js": "chatActions",
 	} {
 		rec := get(t, h, path)
 		if rec.Code != 200 {

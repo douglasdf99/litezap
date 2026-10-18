@@ -133,7 +133,8 @@ func pictureKey(instanceID, jid string, preview bool) string {
 	return k
 }
 
-// pictureInfo answers from the cache or asks WhatsApp (spending the quota).
+// pictureInfo answers from the cache or asks WhatsApp (spending the quota, except for the
+// account's own picture: jid "").
 func (a *Account) pictureInfo(ctx context.Context, instanceID, jid string, preview bool) (pictureEntry, error) {
 	k := pictureKey(instanceID, jid, preview)
 	if e, ok := a.pictures.get(k); ok {
@@ -149,8 +150,10 @@ func (a *Account) pictureInfo(ctx context.Context, instanceID, jid string, previ
 	if err != nil {
 		return pictureEntry{}, err
 	}
-	if err := a.lookupGuard(instanceID); err != nil {
-		return pictureEntry{}, err
+	if jid != "" {
+		if err := a.lookupGuard(instanceID); err != nil {
+			return pictureEntry{}, err
+		}
 	}
 	rctx, cancel := context.WithTimeout(ctx, rpcTimeout)
 	defer cancel()
@@ -203,6 +206,15 @@ func (a *Account) ContactPictureFile(ctx context.Context, instanceID, raw string
 	if err != nil {
 		return MediaFile{}, err
 	}
+	return a.pictureFile(ctx, instanceID, jid, preview)
+}
+
+// ProfilePictureFile downloads the account's own picture (no lookup quota).
+func (a *Account) ProfilePictureFile(ctx context.Context, instanceID string, preview bool) (MediaFile, error) {
+	return a.pictureFile(ctx, instanceID, "", preview)
+}
+
+func (a *Account) pictureFile(ctx context.Context, instanceID, jid string, preview bool) (MediaFile, error) {
 	k := pictureKey(instanceID, jid, preview)
 	if e, ok := a.pictures.get(k); ok && e.path != "" && time.Since(e.fileAt) < pictureFileTTL {
 		if _, err := os.Stat(e.path); err == nil {

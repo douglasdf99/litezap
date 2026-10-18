@@ -121,6 +121,14 @@ tags:
       mesmas proteções. O endpoint fala o protocolo MCP (JSON-RPC sobre streamable HTTP), não REST: use um
       cliente MCP. A lista de ferramentas e a configuração dos clientes estão em [MCP e IA](/docs/mcp/).
     x-concept: /docs/mcp/
+  - name: Perfil e privacidade
+    description: Nome, recado e foto da conta, configurações de privacidade e bloqueios.
+    x-slug: perfil-e-privacidade
+    x-intro: |
+      O perfil e a privacidade valem para a conta toda: o celular mostra o mesmo que a API. Nome e recado
+      seguem os limites do WhatsApp (25 e 139 caracteres); a foto é recortada no centro e reduzida a
+      640x640 (JPEG). Bloquear um contato vale também no celular.
+    x-concept: /docs/conceitos/instancias/
   - name: Operação
     description: Saúde do processo, prontidão e identidade do token.
     x-slug: operacao
@@ -802,6 +810,450 @@ paths:
         "502": { $ref: "#/components/responses/WorkerError" }
         "504": { $ref: "#/components/responses/WorkerTimeout" }
 
+  /v1/instances/{id}/chats/{jid}:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - $ref: "#/components/parameters/ChatJID"
+    get:
+      tags: [Chats]
+      operationId: getChat
+      x-litezap-milestone: M9
+      x-zapi: "Metadata do chat"
+      summary: Consultar chat
+      x-litezap-scope: instancia
+      description: |
+        Um chat do log com o estado do app state do WhatsApp (arquivado, fixado, silenciado, marcado como
+        não lido). Com o worker rodando, o estado é antes reconciliado com a cópia local do worker, que
+        inclui o sync inicial (sem eventos).
+      responses:
+        "200":
+          description: O chat.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Chat" }
+              example: { jid: 5511999999999@s.whatsapp.net, name: Maria, is_group: false, last_message_at: "2026-10-18T10:00:00Z", unread_count: 0, archived: false, pinned: true, muted: true, muted_until: "2026-10-18T18:00:00Z", unread: false }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+    patch:
+      tags: [Chats]
+      operationId: updateChat
+      x-litezap-milestone: M9
+      x-zapi: "Arquivar chat / Fixar chat / Silenciar chat / Ler chats"
+      summary: Arquivar, fixar, silenciar ou marcar como (não) lido
+      x-litezap-scope: instancia
+      x-litezap-events: [chat.updated]
+      description: |
+        Muda o chat pelo app state do WhatsApp: o celular e os outros aparelhos acompanham (nada é enviado
+        ao contato). Os campos são aplicados na ordem `unread`, `archived`, `pinned`, `muted`; uma falha
+        para ali. `unread: false` também manda os recibos de leitura. Só chats que estão no log. O WhatsApp
+        permite 3 chats fixados (`409 pin_limit`); arquivar desafixa. Logo depois de parear, até o celular
+        mandar as chaves, responde `409 app_state_not_synced`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatPatch" }
+            example: { muted: true, mute_seconds: 28800 }
+      responses:
+        "200":
+          description: O chat depois da mudança.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Chat" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ChatConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+    delete:
+      tags: [Chats]
+      operationId: deleteChat
+      x-litezap-milestone: M9
+      x-zapi: "Deletar chat"
+      summary: Apagar chat
+      x-litezap-scope: instancia
+      x-litezap-events: [chat.updated]
+      description: |
+        Apaga a conversa no WhatsApp (celular e aparelhos vinculados). O log do LiteZap mantém as mensagens:
+        o chat sai de `GET /chats` até chegar mensagem nova e `GET /chats/{jid}/messages` continua
+        funcionando.
+      parameters:
+        - name: delete_media
+          in: query
+          schema: { type: string, enum: ["1"] }
+          description: "`1` também apaga a mídia da conversa no celular."
+      responses:
+        "204": { description: Apagado. }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ChatConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+  /v1/instances/{id}/messages/{msg_id}/star:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - name: msg_id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Id da mensagem no LiteZap.
+    put:
+      tags: [Mensagens]
+      operationId: starMessage
+      x-litezap-milestone: M9
+      summary: Favoritar mensagem
+      x-litezap-scope: instancia
+      x-litezap-events: [chat.updated]
+      description: "Favorita (ou desfavorita) uma mensagem do log em todos os aparelhos da conta; a mensagem passa a ter `starred: true`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [starred]
+              properties:
+                starred: { type: boolean }
+            example: { starred: true }
+      responses:
+        "200":
+          description: A mensagem.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ChatConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+  /v1/instances/{id}/contacts/{jid}/picture:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - $ref: "#/components/parameters/ChatJID"
+    get:
+      tags: [Contatos]
+      operationId: getContactPicture
+      x-litezap-milestone: M9
+      x-zapi: "Pegar imagem do contato"
+      summary: Foto de perfil do contato
+      x-litezap-scope: instancia
+      description: |
+        URL da foto de perfil de um contato ou grupo (CDN do WhatsApp; expira depois de um tempo) e seu id.
+        Com `download=1` devolve o JPEG, baixado pelo worker (pelo proxy da instância) e guardado em cache
+        por 1h. Sem foto, ou foto escondida pela privacidade do contato: `404 not_found` (nunca 502).
+        Consulta o WhatsApp: gasta a cota de consultas de contato (30/min, 1000/dia); a URL fica em cache
+        por 10 min.
+      parameters:
+        - name: preview
+          in: query
+          schema: { type: string, enum: ["1"] }
+          description: Miniatura em vez da imagem inteira.
+        - name: download
+          in: query
+          schema: { type: string, enum: ["1"] }
+          description: Devolve o arquivo (image/jpeg) em vez do JSON.
+      responses:
+        "200":
+          description: A foto.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Picture" }
+              example: { jid: 5511999999999@s.whatsapp.net, id: "1729241234", url: "https://pps.whatsapp.net/v/t61.24694-24/...", type: image }
+            image/jpeg:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+        "429": { $ref: "#/components/responses/LookupRateLimited" }
+  /v1/instances/{id}/contacts/{jid}/profile:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - $ref: "#/components/parameters/ChatJID"
+    get:
+      tags: [Contatos]
+      operationId: getContactProfile
+      x-litezap-milestone: M9
+      x-zapi: "Metadata do contato"
+      summary: Recado e perfil comercial do contato
+      x-litezap-scope: instancia
+      description: Consulta o WhatsApp (gasta a cota de consultas de contato) e devolve o recado, o id da foto, o nome verificado e, em contas business, o perfil comercial.
+      responses:
+        "200":
+          description: O perfil do contato.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContactProfile" }
+              example: { jid: 5511999999999@s.whatsapp.net, about: "Disponível", picture_id: "1729241234", verified_name: Loja da Maria, business: { email: contato@loja.com, categories: [Varejo] } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+        "429": { $ref: "#/components/responses/LookupRateLimited" }
+  /v1/instances/{id}/contacts/{jid}/block:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - $ref: "#/components/parameters/ChatJID"
+    post:
+      tags: [Contatos]
+      operationId: blockContact
+      x-litezap-milestone: M9
+      x-zapi: "Bloquear contato"
+      summary: Bloquear contato
+      x-litezap-scope: instancia
+      description: Bloqueia o contato (vale também no celular). Devolve a lista de bloqueados.
+      responses:
+        "200":
+          description: Bloqueados depois da mudança.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Blocklist" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+  /v1/instances/{id}/contacts/{jid}/unblock:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - $ref: "#/components/parameters/ChatJID"
+    post:
+      tags: [Contatos]
+      operationId: unblockContact
+      x-litezap-milestone: M9
+      x-zapi: "Bloquear contato"
+      summary: Desbloquear contato
+      x-litezap-scope: instancia
+      responses:
+        "200":
+          description: Bloqueados depois da mudança.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Blocklist" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+  /v1/instances/{id}/blocklist:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Contatos]
+      operationId: getBlocklist
+      x-litezap-milestone: M9
+      summary: Listar bloqueados
+      x-litezap-scope: instancia
+      description: Contatos bloqueados (JID de telefone quando conhecido, senão o LID).
+      responses:
+        "200":
+          description: Bloqueados.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Blocklist" }
+              example: { blocked: [5511988887777@s.whatsapp.net] }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+  /v1/instances/{id}/profile:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Perfil e privacidade]
+      operationId: getProfile
+      x-litezap-milestone: M9
+      x-zapi: "Dados do celular / Dados da instância"
+      summary: Perfil da conta
+      x-litezap-scope: instancia
+      responses:
+        "200":
+          description: O perfil.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+              example: { jid: 5511999999999@s.whatsapp.net, name: Loja Exemplo, about: "Atendimento das 9h às 18h", platform: android, picture: { jid: 5511999999999@s.whatsapp.net, id: "1729241234", url: "https://pps.whatsapp.net/...", type: image } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+    patch:
+      tags: [Perfil e privacidade]
+      operationId: updateProfile
+      x-litezap-milestone: M9
+      x-zapi: "Atualizar nome do perfil / Atualizar descrição do perfil"
+      summary: Mudar nome e recado
+      x-litezap-scope: instancia
+      description: "`name` (1 a 25 caracteres) é o nome que aparece para quem não salvou o número; `about` (até 139) é o recado."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProfilePatch" }
+            example: { name: Loja Exemplo, about: "Atendimento das 9h às 18h" }
+      responses:
+        "200":
+          description: O perfil depois da mudança.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+  /v1/instances/{id}/profile/picture:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Perfil e privacidade]
+      operationId: getProfilePicture
+      x-litezap-milestone: M9
+      summary: Baixar a foto da conta
+      x-litezap-scope: instancia
+      description: "JPEG da foto da própria conta (pelo proxy da instância; não gasta a cota de consultas). `404 not_found` sem foto."
+      parameters:
+        - name: preview
+          in: query
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200":
+          description: A foto.
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+    put:
+      tags: [Perfil e privacidade]
+      operationId: setProfilePicture
+      x-litezap-milestone: M9
+      x-zapi: "Atualizar foto do perfil"
+      summary: Trocar a foto da conta
+      x-litezap-scope: instancia
+      description: JPEG ou PNG (até 10 MB) por URL pública ou base64; recortado no centro e reduzido a 640x640 JPEG.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PictureInput" }
+            example: { url: "https://exemplo.com/logo.png" }
+      responses:
+        "200":
+          description: O perfil com a foto nova.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+        "413": { description: "`media_too_large`: a imagem passa de 10 MB." }
+    delete:
+      tags: [Perfil e privacidade]
+      operationId: removeProfilePicture
+      x-litezap-milestone: M9
+      summary: Remover a foto da conta
+      x-litezap-scope: instancia
+      responses:
+        "204": { description: Removida. }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+  /v1/instances/{id}/privacy:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Perfil e privacidade]
+      operationId: getPrivacy
+      x-litezap-milestone: M9
+      x-zapi: "Privacidade"
+      summary: Configurações de privacidade
+      x-litezap-scope: instancia
+      responses:
+        "200":
+          description: As configurações, como o WhatsApp as tem.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Privacy" }
+              example: { last_seen: contacts, online: all, profile_photo: all, about: contacts, groups_add: contacts, read_receipts: all, calls: all, messages: all }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+    patch:
+      tags: [Perfil e privacidade]
+      operationId: updatePrivacy
+      x-litezap-milestone: M9
+      x-zapi: "Visto por último / Foto / Recado / Grupos / Online / Confirmação de leitura / Mensagens temporárias"
+      summary: Mudar a privacidade
+      x-litezap-scope: instancia
+      description: |
+        Cada campo é aplicado em seguida (uma falha para ali). Valores: `all`, `contacts`,
+        `contact_blacklist`, `none` (`last_seen`, `profile_photo`, `about`, `groups_add`); `all`/`none`
+        (`read_receipts`); `all`/`match_last_seen` (`online`); `all`/`known` (`calls`); `all`/`contacts`
+        (`messages`). `default_disappearing_seconds` (0, 86400, 604800 ou 7776000) vale para conversas
+        novas. As listas de exceção ("meus contatos, exceto…") só no celular.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrivacyPatch" }
+            example: { last_seen: contacts, read_receipts: none }
+      responses:
+        "200":
+          description: As configurações depois da mudança.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Privacy" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+
   /v1/instances/{id}/check-numbers:
     parameters: [{ $ref: "#/components/parameters/InstanceID" }]
     post:
@@ -1465,6 +1917,13 @@ components:
         proxy_url: { type: string, description: "http://, https:// ou socks5://; senha mascarada na leitura." }
         calls: { $ref: "#/components/schemas/CallSettings" }
         presence: { $ref: "#/components/schemas/PresenceSettings" }
+        auto_read: { $ref: "#/components/schemas/AutoReadSettings" }
+    AutoReadSettings:
+      type: object
+      description: Leitura automática (marco 9).
+      properties:
+        enabled: { type: boolean, default: false, description: "Marca as mensagens recebidas como lidas 2 a 5s depois, em lote por chat, no máximo uma confirmação por segundo. Com a confirmação de leitura desligada na privacidade, o contato não vê os tiques azuis." }
+        groups: { type: boolean, default: false, description: Também em grupos. }
     CallSettings:
       type: object
       description: Política de chamadas recebidas (marco 7).
@@ -1544,6 +2003,11 @@ components:
           type: object
           properties:
             online: { type: boolean }
+        auto_read:
+          type: object
+          properties:
+            enabled: { type: boolean }
+            groups: { type: boolean }
     MediaInput:
       type: object
       description: Informe `url` ou `base64`.
@@ -1609,6 +2073,103 @@ components:
         is_group: { type: boolean }
         last_message_at: { type: string, format: date-time }
         unread_count: { type: integer }
+        archived: { type: boolean }
+        pinned: { type: boolean }
+        muted: { type: boolean }
+        muted_until: { type: string, format: date-time, description: "Fim do silêncio; ausente com `muted: true` = até reativar." }
+        unread: { type: boolean, description: "Marcado como não lido à mão (`unread_count` conta as recebidas)." }
+        deleted_at: { type: string, format: date-time, description: Quando foi apagado (o chat volta à lista com uma mensagem nova). }
+    ChatPatch:
+      type: object
+      description: Campos ausentes não mudam; pelo menos um é obrigatório.
+      properties:
+        archived: { type: boolean }
+        pinned: { type: boolean }
+        muted: { type: boolean }
+        mute_seconds: { type: integer, minimum: 0, maximum: 31622400, description: "Com `muted: true`: duração; 0 ou ausente = até reativar." }
+        unread: { type: boolean, description: "true marca como não lido; false lê (e manda os recibos)." }
+    Picture:
+      type: object
+      properties:
+        jid: { type: string }
+        id: { type: string, description: Muda quando a foto muda. }
+        url: { type: string, description: CDN do WhatsApp; expira. }
+        type: { type: string, enum: [image, preview] }
+    ContactProfile:
+      type: object
+      properties:
+        jid: { type: string }
+        lid: { type: string }
+        about: { type: string }
+        picture_id: { type: string }
+        verified_name: { type: string, description: Contas business. }
+        business:
+          type: object
+          properties:
+            address: { type: string }
+            email: { type: string }
+            categories: { type: array, items: { type: string } }
+    Blocklist:
+      type: object
+      properties:
+        blocked: { type: array, items: { type: string } }
+    Profile:
+      type: object
+      properties:
+        jid: { type: string }
+        lid: { type: string }
+        name: { type: string, description: Nome de perfil (push name). }
+        about: { type: string }
+        business_name: { type: string }
+        platform: { type: string, description: Plataforma do celular pareado. }
+        picture: { $ref: "#/components/schemas/Picture" }
+    ProfilePatch:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 25 }
+        about: { type: string, maxLength: 139 }
+    PictureInput:
+      type: object
+      description: Exatamente um dos campos.
+      properties:
+        url: { type: string, format: uri }
+        base64: { type: string }
+    Privacy:
+      type: object
+      properties:
+        last_seen: { type: string, enum: [all, contacts, contact_blacklist, none] }
+        online: { type: string, enum: [all, match_last_seen] }
+        profile_photo: { type: string, enum: [all, contacts, contact_blacklist, none] }
+        about: { type: string, enum: [all, contacts, contact_blacklist, none] }
+        groups_add: { type: string, enum: [all, contacts, contact_blacklist, none] }
+        read_receipts: { type: string, enum: [all, none] }
+        calls: { type: string, enum: [all, known] }
+        messages: { type: string, enum: [all, contacts] }
+    PrivacyPatch:
+      allOf:
+        - $ref: "#/components/schemas/Privacy"
+        - type: object
+          properties:
+            default_disappearing_seconds: { type: integer, enum: [0, 86400, 604800, 7776000] }
+    ChatUpdatedEvent:
+      type: object
+      description: Dados de `chat.updated`.
+      properties:
+        chat: { type: string }
+        is_group: { type: boolean }
+        changed: { type: array, items: { type: string, enum: [archived, pinned, muted, unread, deleted, cleared, starred] } }
+        archived: { type: boolean }
+        pinned: { type: boolean }
+        muted: { type: boolean }
+        muted_until: { type: string, format: date-time }
+        unread: { type: boolean }
+        deleted: { type: boolean }
+        cleared: { type: boolean }
+        message_id: { type: string }
+        wa_message_id: { type: string }
+        starred: { type: boolean }
+        source: { type: string, enum: [api, device] }
+        timestamp: { type: string, format: date-time }
     ChatPage:
       type: object
       properties:
@@ -1777,6 +2338,18 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: { code: not_found, message: "message not found", retryable: false } }
+    ChatConflict:
+      description: "`app_state_not_synced` (o celular ainda não mandou as chaves do app state; tente de novo), `pin_limit` (já há 3 fixados), `instance_not_connected` ou `instance_banned`."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: app_state_not_synced, message: "chat state keys not synced from the phone yet; keep the phone online and try again shortly", retryable: true } }
+    LookupRateLimited:
+      description: "`rate_limited`: cota de consultas de contato esgotada (30/min, 1000/dia por instância)."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: rate_limited, message: "too many contact lookups; at most 30 per minute and 1000 per day per instance", retryable: true } }
     InstanceConflict:
       description: "`instance_not_connected` (worker parado ou número deslogado) ou `instance_banned`."
       content:
@@ -2201,5 +2774,33 @@ webhooks:
           application/json:
             schema: { $ref: "#/components/schemas/Envelope" }
             example: { id: evt_9c4f2a8e6b1d3075, type: call.ended, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T10:09:00.000Z", data: { call_id: 7D1A3F9B2E5C, chat: 5511999999999@s.whatsapp.net, caller: 5511999999999@s.whatsapp.net, media: audio, reason: timeout, missed: true, timestamp: "2026-10-18T10:09:00Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  chat.updated:
+    post:
+      summary: Chat alterado
+      x-slug: chat-updated
+      x-litezap-milestone: M9
+      x-zapi: Webhook de chats
+      description: |
+        Um chat foi arquivado/desarquivado, fixado, silenciado, marcado como (não) lido, apagado ou limpo,
+        ou uma mensagem foi favoritada, pela API (`source: "api"`) ou em qualquer aparelho da conta
+        (`source: "device"`). Sai uma vez por mudança: o eco que o WhatsApp devolve das ações da API não
+        duplica. `changed` diz o que mudou; os demais campos são o estado do chat depois da mudança.
+      x-fields:
+        - [chat, string, "JID do chat."]
+        - [changed, array, "archived, pinned, muted, unread, deleted, cleared ou starred."]
+        - [archived, boolean, "Arquivado."]
+        - [pinned, boolean, "Fixado."]
+        - [muted, boolean, "Silenciado."]
+        - [muted_until, string, "Fim do silêncio (opcional; ausente = até reativar)."]
+        - [unread, boolean, "Marcado como não lido."]
+        - [starred, boolean, "starred: estado novo da mensagem (opcional)."]
+        - [source, string, "api ou device."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_1b7e5c3a9d2f4086, type: chat.updated, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T10:10:00.000Z", data: { chat: 5511999999999@s.whatsapp.net, changed: [archived], archived: true, pinned: false, muted: false, unread: false, source: device, timestamp: "2026-10-18T10:10:00Z" } }
       responses:
         "2XX": { description: Qualquer 2xx confirma a entrega. }

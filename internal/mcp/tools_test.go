@@ -36,9 +36,10 @@ func TestToolList(t *testing.T) {
 			t.Errorf("%s lacks a description or annotations", tl.Name)
 		}
 	}
-	want := []string{"check_numbers", "delete_message", "edit_message", "get_contact", "get_instance_status", "get_message_status", "get_messages",
-		"get_qr", "list_chats", "list_contacts", "list_instances", "mark_read", "send_contact", "send_location", "send_media",
-		"send_message", "send_reaction", "wait_for_events"}
+	want := []string{"block_contact", "check_numbers", "delete_message", "edit_message", "get_contact", "get_contact_about",
+		"get_instance_status", "get_message_status", "get_messages", "get_profile_picture",
+		"get_qr", "list_blocked", "list_chats", "list_contacts", "list_instances", "mark_read", "send_contact", "send_location", "send_media",
+		"send_message", "send_reaction", "unblock_contact", "update_chat", "wait_for_events"}
 	slices.Sort(names)
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v", names)
@@ -60,7 +61,7 @@ func TestToolList(t *testing.T) {
 	if byName["send_message"].Annotations.ReadOnlyHint || !byName["list_chats"].Annotations.ReadOnlyHint {
 		t.Error("read-only hints are wrong")
 	}
-	for _, name := range []string{"edit_message", "delete_message"} {
+	for _, name := range []string{"edit_message", "delete_message", "block_contact"} {
 		if a := byName[name].Annotations; a.DestructiveHint == nil || !*a.DestructiveHint {
 			t.Errorf("%s must be marked destructive", name)
 		}

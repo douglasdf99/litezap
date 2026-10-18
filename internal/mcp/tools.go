@@ -545,6 +545,7 @@ func (t *tools) register(s *sdk.Server) {
 		}),
 		Annotations: readOnly,
 	}, t.waitForEvents)
+	t.registerAccount(s) // marco 9 (account.go)
 }
 
 // ---- handlers ----

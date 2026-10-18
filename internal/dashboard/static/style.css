@@ -262,3 +262,12 @@ textarea { resize: vertical; width: 100%; }
   .table-card .table .actions { justify-content: flex-start; min-width: 0; }
 }
 .agent > .card { margin-bottom: 1rem; }
+
+/* marco 9: chat actions and profile */
+.chat-actions { margin-left: auto; gap: .35rem; }
+.avatar-big { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; background: var(--surface-2); display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: .8rem; }
+.profile-head { display: flex; gap: 1rem; align-items: center; margin: .5rem 0 1rem; }
+.profile > .card { margin-bottom: 1rem; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: .75rem; }
+ul.plain { list-style: none; padding: 0; margin: 0 0 .75rem; }
+ul.plain li { padding: .25rem 0; }

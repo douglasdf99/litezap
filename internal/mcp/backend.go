@@ -64,6 +64,7 @@ type Local struct {
 	Messaging MessagingService
 	Events    *events.Bus // nil: wait_for_events is unavailable
 	Caller    service.Scope
+	Account   AccountService // marco 9 tools (nil: they answer not_implemented)
 }
 
 var _ Backend = (*Local)(nil)

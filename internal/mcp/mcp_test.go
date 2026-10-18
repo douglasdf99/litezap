@@ -31,12 +31,13 @@ const admin = "lza_admin"
 // lets a test connect an MCP client in three ways: in memory over Local, over the HTTP
 // endpoint, and over the REST backend (what `litezap mcp` uses).
 type env struct {
-	t   *testing.T
-	sp  *workertest.Spawner
-	svc *service.Instances
-	msg *service.Messaging
-	bus *events.Bus
-	srv *httptest.Server
+	t    *testing.T
+	sp   *workertest.Spawner
+	svc  *service.Instances
+	msg  *service.Messaging
+	bus  *events.Bus
+	srv  *httptest.Server
+	acct *service.Account
 }
 
 func newEnv(t *testing.T, tweak func(*settings.Settings)) *env {
@@ -73,11 +74,12 @@ func newEnv(t *testing.T, tweak func(*settings.Settings)) *env {
 	msg := &service.Messaging{Store: st, Manager: mgr, Queues: q, Fetcher: &media.Fetcher{AllowPrivate: true},
 		Signer:  media.NewSigner([]byte("0123456789abcdef0123456789abcdef"), "http://example.invalid"),
 		DataDir: dir, Defaults: defaults, Resolver: resolver, SignedURLs: true}
-	h := api.New(svc, msg, api.Options{AdminToken: admin, Events: bus,
-		MCP: NewHTTPHandler(HTTPDeps{Instances: svc, Messaging: msg, Events: bus, Logger: log})}, log)
+	acct := &service.Account{Messaging: msg, Events: bus}
+	h := api.New(svc, msg, api.Options{AdminToken: admin, Events: bus, Account: acct,
+		MCP: NewHTTPHandler(HTTPDeps{Instances: svc, Messaging: msg, Events: bus, Logger: log, Account: acct})}, log)
 	srv := httptest.NewServer(h)
 	t.Cleanup(func() { bus.CloseSubscribers(); srv.Close() })
-	return &env{t: t, sp: sp, svc: svc, msg: msg, bus: bus, srv: srv}
+	return &env{t: t, sp: sp, svc: svc, msg: msg, bus: bus, srv: srv, acct: acct}
 }
 
 func (e *env) create(name string) (id, token string) {
@@ -165,7 +167,7 @@ func (e *env) client(m mode, token string) *sdk.ClientSession {
 				}
 				sc.InstanceID = id
 			}
-			b = &Local{Instances: e.svc, Messaging: e.msg, Events: e.bus, Caller: sc}
+			b = &Local{Instances: e.svc, Messaging: e.msg, Events: e.bus, Caller: sc, Account: e.acct}
 		}
 		st, ct := sdk.NewInMemoryTransports()
 		ss, err := NewServer(b, Options{}).Connect(ctx, st, nil)

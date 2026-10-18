@@ -320,6 +320,22 @@ func TestOwnProfile(t *testing.T) {
 	if code, _ := e.do("PUT", base+"/picture", tok, `{"base64":"bm90IGFuIGltYWdl"}`); code != 400 {
 		t.Fatalf("not an image = %d", code)
 	}
+	// The own picture downloads through the API without spending the contact quota.
+	if code, v := e.do("GET", base+"/picture", tok, ""); code != 404 || errCode(v) != "not_found" {
+		t.Fatalf("own picture missing = %d %v", code, v)
+	}
+	f.WA.SetPicture("", workertest.FakePicture{ID: "ME", URL: "https://pps.whatsapp.net/me.jpg", Data: []byte("MYJPEG")})
+	req, _ := http.NewRequest("GET", e.srv.URL+base+"/picture?preview=1", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || string(b) != "MYJPEG" {
+		t.Fatalf("own picture = %d %q", resp.StatusCode, b)
+	}
 	if code, _ := e.do("DELETE", base+"/picture", tok, ""); code != 204 {
 		t.Fatalf("remove = %d", code)
 	}

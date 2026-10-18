@@ -4,6 +4,8 @@ import * as api from './api.js';
 import { h, mount, clear, toast, errMsg, stateBadge, field, fmtTime, phoneOf, confirmDanger } from './ui.js';
 import { webhooksPanel } from './webhooks.js';
 import { agentPanel } from './agent.js';
+import { profilePanel } from './profile.js';
+import { chatActions, chatMarks } from './chatactions.js';
 
 const ACTIONS = { start: 'Iniciar', stop: 'Parar', restart: 'Reiniciar', logout: 'Deslogar' };
 
@@ -24,7 +26,7 @@ export function availableActions(state) {
 
 const TABS = [
   ['chats', 'Conversas'], ['pair', 'Parear'], ['settings', 'Configurações'],
-  ['agent', 'Atendente IA'], ['webhooks', 'Webhooks'], ['events', 'Eventos ao vivo'],
+  ['agent', 'Atendente IA'], ['profile', 'Perfil'], ['webhooks', 'Webhooks'], ['events', 'Eventos ao vivo'],
 ];
 
 export function instanceView(id, { root, shell, setLive }) {
@@ -96,7 +98,7 @@ export function instanceView(id, { root, shell, setLive }) {
       mount(tabs, TABS.map(([t, label]) => h('a', { href: ctx.href(t), class: t === tab ? 'active' : '' }, label)));
       if (current && current.name === tab && current.update) { current.update(rest); return; }
       if (current && current.cleanup) current.cleanup();
-      const make = { chats: chatsTab, pair: pairTab, settings: settingsTab, webhooks: webhooksTab, events: eventsTab, agent: agentPanel }[tab];
+      const make = { chats: chatsTab, pair: pairTab, settings: settingsTab, webhooks: webhooksTab, events: eventsTab, agent: agentPanel, profile: profilePanel }[tab];
       current = { name: tab, ...make(ctx, rest) };
       mount(body, current.el);
     },
@@ -275,7 +277,7 @@ function chatsTab(ctx, rest) {
     href: ctx.href('chats', c.jid),
     class: current && current.jid === c.jid ? 'active' : '',
   },
-  h('span', { class: 'chat-name' }, c.name || phoneOf(c.jid), c.is_group ? h('span', { class: 'tag' }, 'grupo') : null),
+  h('span', { class: 'chat-name' }, c.name || phoneOf(c.jid), c.is_group ? h('span', { class: 'tag' }, 'grupo') : null, chatMarks(c)),
   h('span', { class: 'chat-meta' }, fmtTime(c.last_message_at),
     c.unread_count ? h('span', { class: 'unread' }, String(c.unread_count)) : null)));
 
@@ -371,10 +373,17 @@ function chatsTab(ctx, rest) {
     };
     text.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) send(e); });
 
+    // Archive, pin, mute, unread, delete, contact info (marco 9).
+    const actions = jid.includes('@') ? chatActions(ctx, jid, {
+      onChange: () => reloadChats(),
+      onDeleted: () => { location.hash = ctx.href('chats'); reloadChats(); },
+    }) : null;
+    current.actions = actions;
     mount(pane,
       h('div', { class: 'conv-head' },
         h('b', null, chat && chat.name ? chat.name : phoneOf(jid)),
-        h('span', { class: 'mono muted small' }, jid)),
+        h('span', { class: 'mono muted small' }, jid),
+        actions ? actions.el : null),
       box, notice,
       h('form', { class: 'composer', onsubmit: send }, text, sendBtn));
 
@@ -419,6 +428,9 @@ function chatsTab(ctx, rest) {
     if (type === 'message.received' || type === 'message.sent' || type === 'message.reaction') {
       reloadChats();
       if (current && (d.chat === current.jid || current.bubbles.has(d.id))) upsert(d);
+    } else if (type === 'chat.updated') {
+      reloadChats();
+      if (current && current.actions && d.chat === current.jid) current.actions.reload();
     } else if (type === 'message.status') {
       if (current && (current.bubbles.has(d.id) || (d.wa_message_id && current.bubbles.has(d.wa_message_id)))) {
         upsert({ id: d.id, wa_message_id: d.wa_message_id, status: d.status, error: d.error });
@@ -589,6 +601,7 @@ function summary(ev) {
     case 'call.received': return `${d.is_group ? 'chamada em grupo' : 'chamada'} de ${phoneOf(d.caller)}${d.media === 'video' ? ' (vídeo)' : ''}${d.rejected ? ' — rejeitada' : ''}`;
     case 'call.accepted': return `chamada de ${phoneOf(d.caller)} atendida`;
     case 'call.ended': return `chamada de ${phoneOf(d.caller)} encerrada${d.missed ? ' (perdida)' : d.reason ? ` (${d.reason})` : ''}`;
+    case 'chat.updated': return `${phoneOf(d.chat)}: ${(d.changed || []).join(', ')} (${d.source === 'api' ? 'API' : 'celular'})`;
     case 'history.synced': return `${d.messages} mensagens em ${d.chats} blocos (${d.new_messages} novas)`;
     default: return '';
   }

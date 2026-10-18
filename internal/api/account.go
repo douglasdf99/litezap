@@ -21,6 +21,7 @@ type AccountService interface {
 	StarMessage(ctx context.Context, instanceID, id string, starred bool) (service.MessageView, error)
 	ContactPicture(ctx context.Context, instanceID, jid string, preview bool) (service.PictureView, error)
 	ContactPictureFile(ctx context.Context, instanceID, jid string, preview bool) (service.MediaFile, error)
+	ProfilePictureFile(ctx context.Context, instanceID string, preview bool) (service.MediaFile, error)
 	ContactProfile(ctx context.Context, instanceID, jid string) (service.ContactProfileView, error)
 	Blocklist(ctx context.Context, instanceID string) ([]string, error)
 	SetBlocked(ctx context.Context, instanceID, jid string, block bool) ([]string, error)
@@ -48,6 +49,7 @@ func (s *server) accountRoutes(r chi.Router) {
 	r.Get("/blocklist", s.blocklist)
 	r.Get("/profile", s.getProfile)
 	r.Patch("/profile", s.patchProfile)
+	r.Get("/profile/picture", s.getProfilePicture)
 	r.Put("/profile/picture", s.putProfilePicture)
 	r.Delete("/profile/picture", s.deleteProfilePicture)
 	r.Get("/privacy", s.getPrivacy)
@@ -122,20 +124,7 @@ func (s *server) contactPicture(w http.ResponseWriter, r *http.Request) {
 	preview := r.URL.Query().Get("preview") == "1"
 	if r.URL.Query().Get("download") == "1" {
 		mf, err := s.opt.Account.ContactPictureFile(r.Context(), id, jid, preview)
-		if err != nil {
-			s.writeErr(w, err)
-			return
-		}
-		f, err := os.Open(mf.Path)
-		if err != nil {
-			s.writeErr(w, err)
-			return
-		}
-		defer f.Close()
-		w.Header().Set("Content-Type", mf.Mime)
-		w.Header().Set("Cache-Control", "private, max-age=600")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		http.ServeContent(w, r, "", time.Time{}, f)
+		s.servePicture(w, r, mf, err)
 		return
 	}
 	v, err := s.opt.Account.ContactPicture(r.Context(), id, jid, preview)
@@ -144,6 +133,30 @@ func (s *server) contactPicture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, v)
+}
+
+// servePicture writes a downloaded profile picture (JPEG).
+func (s *server) servePicture(w http.ResponseWriter, r *http.Request, mf service.MediaFile, err error) {
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	f, err := os.Open(mf.Path)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", mf.Mime)
+	w.Header().Set("Cache-Control", "private, max-age=600")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(w, r, "", time.Time{}, f)
+}
+
+// getProfilePicture downloads the account's own picture (404 not_found without one).
+func (s *server) getProfilePicture(w http.ResponseWriter, r *http.Request) {
+	mf, err := s.opt.Account.ProfilePictureFile(r.Context(), chi.URLParam(r, "id"), r.URL.Query().Get("preview") == "1")
+	s.servePicture(w, r, mf, err)
 }
 
 func (s *server) contactProfile(w http.ResponseWriter, r *http.Request) {

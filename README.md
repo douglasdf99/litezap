@@ -76,6 +76,12 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `GET /v1/instances/{id}/media/{media_id}[?signed=1]` | instância ou admin (`?signed=1` exige `public_url` se o `listen_addr` não for loopback) |
 | `GET /media/{id}/{media_id}?exp=&sig=` (URL assinada, vale 1h) | nenhum |
 | `POST /v1/instances/{id}/presence/subscribe` `{"to"}` (presença online/offline de um contato; exige `presence.online`) | instância ou admin |
+| `GET\|PATCH\|DELETE /v1/instances/{id}/chats/{jid}` (estado do chat; arquivar, fixar, silenciar, não lida; apagar — seção "Chats, contatos, perfil e privacidade") | instância ou admin |
+| `PUT /v1/instances/{id}/messages/{msg_id}/star` `{"starred"}` | instância ou admin |
+| `GET /v1/instances/{id}/contacts/{jid}/picture[?preview=1&download=1]` · `/contacts/{jid}/profile` | instância ou admin (cota de consultas) |
+| `POST /v1/instances/{id}/contacts/{jid}/block\|unblock` · `GET /v1/instances/{id}/blocklist` | instância ou admin |
+| `GET\|PATCH /v1/instances/{id}/profile` · `GET\|PUT\|DELETE /v1/instances/{id}/profile/picture` | instância ou admin |
+| `GET\|PATCH /v1/instances/{id}/privacy` | instância ou admin |
 | `GET /v1/instances/{id}/events[?types=]` (SSE) | instância ou admin |
 | `GET /v1/events[?types=]` (SSE, todas as instâncias) | admin |
 | `POST /v1/webhooks` · `GET /v1/webhooks[?instance_id=]` | admin (global ou de uma instância) ou instância (só a própria) |
@@ -166,6 +172,8 @@ Campos ausentes mantêm o valor atual. `GET /settings` esconde a senha do `proxy
 
 **Chamadas** (`calls`): com `auto_reject` toda chamada individual recebida é rejeitada assim que toca (em menos de 3s) e gera `call.received` com `rejected: true`. `reject_message` (até 1000 bytes) é mandada ao autor pela fila normal (ritmo, janela, rampa e suspensão do operador valem), no máximo uma vez por contato a cada 10 min; se não sair em 1h (janela fechada, fila longa) falha como `expired` em vez de chegar horas depois. Chamadas em grupo e ofertas com mais de 1 min (entregues depois de uma reconexão) só geram eventos: não são rejeitadas nem respondidas.
 
+**Leitura automática** (`auto_read: {enabled, groups}`, desligada por padrão): mensagens recebidas são marcadas como lidas sozinhas, 2 a 5s depois de chegar, em lote por conversa (e por remetente, em grupos), no máximo uma confirmação por segundo por instância; grupos só com `groups: true`. O contato vê os tiques azuis, a menos que a confirmação de leitura esteja desligada na privacidade (aí o WhatsApp só limpa o "não lida" nos aparelhos da conta).
+
 **Presença** (`presence.online`, desligado por padrão): marca a conta como "disponível" a cada conexão. Só assim o WhatsApp manda "digitando…/gravando" (`chat.presence`) e aceita `POST /presence/subscribe` (online/visto por último de um contato; até 20 assinaturas por minuto e 200 por dia por instância, recusadas enquanto o operador suspende envios; valem até a conexão cair). Presença que ainda chegue com a setting desligada é descartada. **Contrapartida**: enquanto a conta está disponível num aparelho conectado, o WhatsApp trata esse aparelho como ativo e o celular deixa de mostrar notificações. Ligue só em números atendidos pela API, não no celular de quem atende pessoalmente.
 
 Erros: `{"error":{"code","message","retryable"}}`. Códigos:
@@ -194,6 +202,41 @@ Erros: `{"error":{"code","message","retryable"}}`. Códigos:
 | `worker_timeout` | 504 | o worker da instância não respondeu a tempo (`retryable`) |
 | `shutting_down` | 503 | servidor encerrando |
 | `internal` | 500 | erro interno |
+
+### Chats, contatos, perfil e privacidade
+
+```bash
+# estado do chat (arquivado, fixado, silenciado, marcado como não lido), reconciliado com o celular
+curl -s localhost:8787/v1/instances/$ID/chats/5511988887777@s.whatsapp.net -H "Authorization: Bearer $TOK"
+# arquivar; fixar; silenciar por 8h (sem mute_seconds = até reativar); marcar como não lida / lida
+curl -s -X PATCH localhost:8787/v1/instances/$ID/chats/5511988887777@s.whatsapp.net -H "Authorization: Bearer $TOK" -d '{"archived":true}'
+curl -s -X PATCH .../chats/$JID -d '{"pinned":true}'
+curl -s -X PATCH .../chats/$JID -d '{"muted":true,"mute_seconds":28800}'
+curl -s -X PATCH .../chats/$JID -d '{"unread":true}'
+# apagar a conversa no WhatsApp (o log do LiteZap continua); ?delete_media=1 apaga a mídia no celular
+curl -s -X DELETE .../chats/$JID
+# favoritar uma mensagem do log
+curl -s -X PUT .../messages/$MSG_ID/star -d '{"starred":true}'
+# foto (URL do CDN do WhatsApp, expira; ?download=1 baixa o JPEG pelo proxy da instância) e recado/empresa do contato
+curl -s .../contacts/5511988887777/picture
+curl -s .../contacts/5511988887777/profile
+# bloquear, desbloquear, lista de bloqueados
+curl -s -X POST .../contacts/5511988887777/block
+curl -s .../blocklist
+# perfil da própria conta: nome, recado e foto (JPEG ou PNG por URL ou base64; recortada e reduzida a 640x640)
+curl -s -X PATCH .../profile -d '{"name":"Loja Exemplo","about":"Atendimento das 9h às 18h"}'
+curl -s -X PUT .../profile/picture -d '{"url":"https://exemplo.com/logo.png"}'
+curl -s -X DELETE .../profile/picture
+# privacidade (nomes: last_seen, online, profile_photo, about, groups_add, read_receipts, calls, messages)
+curl -s .../privacy
+curl -s -X PATCH .../privacy -d '{"last_seen":"contacts","read_receipts":"none","default_disappearing_seconds":86400}'
+```
+
+- As ações de chat vão pelo *app state* do WhatsApp: o celular e os outros aparelhos acompanham, e mudanças feitas no celular chegam como `chat.updated` (`source: "device"`) e atualizam `GET /chats`. Logo depois de parear, até o celular mandar as chaves, as ações respondem `409 app_state_not_synced` (tente de novo em instantes). Só chats que estão no log (`404` nos demais). O WhatsApp permite 3 chats fixados (`409 pin_limit`); arquivar desafixa.
+- Apagar só marca o chat no log: ele sai de `GET /chats` até chegar mensagem nova, e `GET /chats/{jid}/messages` continua funcionando. "Limpar conversa" não existe (o WhatsApp não documenta a mutação e o whatsmeow não a monta); limpezas feitas no celular só geram `chat.updated` com `cleared: true`.
+- `GET /chats/{jid}` também adota o estado que o worker guardou do sync inicial do app state (que não gera eventos).
+- Foto e perfil de contato consultam o WhatsApp: até 30 consultas por minuto e 1000 por dia por instância (`429 rate_limited`), recusadas enquanto o operador suspende envios; respostas ficam em cache (URL 10 min, arquivo 1h, "sem foto" 10 min). Foto inexistente ou escondida pela privacidade responde `404 not_found`, nunca `502`. A foto da própria conta (`GET /profile/picture`) não gasta a cota.
+- Nome do perfil: 1 a 25 caracteres; recado: até 139. Privacidade: valores `all`, `contacts`, `contact_blacklist`, `none` (`last_seen`, `profile_photo`, `about`, `groups_add`), `all`/`none` (`read_receipts`), `all`/`match_last_seen` (`online`), `all`/`known` (`calls`), `all`/`contacts` (`messages`); as listas de exceção ("meus contatos, exceto…") só no celular.
 
 ### Fila de envio
 
@@ -241,6 +284,7 @@ Adicionar campos em `data` não muda a versão; remover ou mudar o sentido de um
 | `call.received` | chamada tocando (individual ou em grupo) | `{call_id, chat, caller, is_group?, media?: audio\|video, rejected?, timestamp}` (`rejected: true` = rejeitada por `calls.auto_reject`; só chamadas individuais ao vivo) |
 | `call.accepted` | chamada atendida num aparelho da conta | mesmos campos |
 | `call.ended` | chamada encerrada (uma vez por chamada) | mesmos campos + `reason` e `missed`. `reason`: `caller_hangup` (tocou sem atender até quem ligou desistir; `missed: true`), `accepted_elsewhere` (atendida no celular ou outro aparelho da conta; vem logo depois de `call.accepted`, no momento do atendimento, porque o aparelho vinculado não é avisado do fim da conversa), `ended` (encerrada depois de atendida), `rejected` (por `calls.auto_reject`), `rejected_by_peer` (o outro lado rejeitou e nenhum fim chegou em 5s), `timeout` (nenhum sinal em 2 min; `missed` se ninguém atendeu) ou outro motivo enviado pelo WhatsApp. O "reject" que um aparelho hospedado do WhatsApp (`hosted.lid`) manda logo após toda oferta é ignorado |
+| `chat.updated` | chat arquivado/desarquivado, fixado, silenciado, marcado como (não) lido, apagado ou limpo, ou mensagem favoritada, pela API (`source: "api"`) ou em qualquer aparelho da conta (`source: "device"`); uma vez por mudança (o eco do WhatsApp para ações da API não duplica) | `{chat, is_group?, changed: [archived\|pinned\|muted\|unread\|deleted\|cleared\|starred], archived, pinned, muted, muted_until?, unread, deleted?, cleared?, message_id?, wa_message_id?, starred?, source, timestamp}` (`muted` sem `muted_until` = até reativar) |
 | `history.synced` | fim da ingestão de um history sync (um evento por sync, 15s depois do último bloco) | `{chats, messages, new_messages}` |
 | `agent.failed` | uma chamada do hook de agente falhou (nada foi enviado) ou o limite de respostas pausou o chat | `{chat, message_id, wa_message_id, reason, error?, http_status?}`; `reason`: `timeout`, `http_error`, `network_error`, `invalid_response`, `send_failed`, `loop_guard`, `internal` |
 | `agent.handoff` | o agente passou o chat para um humano (ação `handoff`) | `{chat, message_id, wa_message_id, note?}` |
@@ -417,6 +461,9 @@ O LiteZap expõe as mesmas operações como ferramentas do [Model Context Protoc
 | `list_contacts` / `get_contact` | contatos da sessão (filtro `query`, `limit`) |
 | `check_numbers` | até 10 números por chamada; respeita o cache e a cota de consultas da instância |
 | `wait_for_events` | espera até 55s por eventos novos da instância (ex.: `message.received`), sem replay |
+| `get_profile_picture` · `get_contact_about` | foto (URL) e recado/empresa de um contato; gastam a cota de consultas (30/min) |
+| `list_blocked` · `block_contact` · `unblock_contact` | bloqueados; bloquear (marcada como destrutiva, só a pedido do usuário) e desbloquear |
+| `update_chat` | arquivar, fixar ou silenciar (`mute_hours`) um chat; nada é enviado ao contato |
 
 `instance_id` é opcional com token de instância (é sempre a dela) e com token admin quando só existe uma instância. A busca de mensagens fica para o marco 2b.
 
@@ -531,6 +578,18 @@ Com a instância conectada (passos acima):
    - Ligue `{"presence":{"online":true}}` (o celular conectado para de mostrar notificações enquanto estiver ligado) e comece a digitar ou gravar áudio no chat do contato: `chat.presence` com `composing`/`recording`/`paused`. `POST /presence/subscribe {"to":"<número>"}` passa a mandar `online`/`offline` (com `last_seen` quando o contato mostra).
    - Mande um áudio de voz pela API e ouça no celular do contato: `message.status` com `played`.
 
+### Testar chats, contatos, perfil e privacidade (marco 9)
+
+Com o SSE aberto em `?types=chat.updated` e o celular à mão (`JID` = um chat de `GET /chats`):
+
+1. `PATCH /chats/$JID {"archived":true}`: em até 10s a conversa aparece arquivada no celular; um único `chat.updated` com `source: "api"`. Repita com `{"pinned":true}`, `{"muted":true,"mute_seconds":28800}` e `{"unread":true}`. Se responder `app_state_not_synced`, espere o celular sincronizar (logo após parear) e tente de novo.
+2. No celular, desarquive, fixe e silencie a mesma conversa: chega `chat.updated` com `source: "device"` e `GET /chats/$JID` mostra o novo estado.
+3. `GET /contacts/<número>/picture` de um contato com foto devolve a URL; de um sem foto (ou que esconde a foto), `404 not_found`. `?download=1` baixa o JPEG. `GET /contacts/<número>/profile` mostra o recado.
+4. `POST /contacts/<número>/block`: o contato aparece bloqueado no celular; `unblock` desfaz.
+5. `PATCH /profile {"about":"teste"}` e `PUT /profile/picture {"url":"..."}`: o celular mostra o novo recado e a nova foto; `PATCH /profile {"name":"..."}` muda o nome que aparece para quem não salvou o número.
+6. `PATCH /privacy {"last_seen":"contacts"}`: em Configurações > Privacidade do celular o visto por último muda.
+7. Ligue `{"auto_read":{"enabled":true}}` e mande uma mensagem do celular do contato: 2–5s depois ela aparece lida (tiques azuis se a confirmação de leitura estiver ligada).
+
 ### Testar o atendente IA
 
 1. Libere destinos locais (`webhook_allow_private_urls: true`) e reinicie o `serve`.
@@ -558,6 +617,8 @@ Com a instância conectada (passos acima):
 - **Instâncias**: lista com estado ao vivo (SSE), criar (o token da instância aparece uma vez), iniciar/parar/reiniciar/deslogar, excluir.
 - **Parear**: QR que se atualiza sozinho (evento `instance.qr`) e pareamento por código (número de telefone).
 - **Conversas**: lista de chats, histórico, envio de texto com status ao vivo (`na fila` → `enviada` → `entregue` → `lida`). Quando o envio fica na fila, o painel explica por quê: carência de 15–30s após conectar, ritmo, rampa e janela de envio (com o horário atual no fuso da instância).
+- **Conversas — ações** (marco 9): arquivar, fixar, silenciar (8h, 1 semana, sempre), marcar como (não) lida, apagar; ver foto, recado e empresa do contato (gasta a cota de consultas) e bloquear/desbloquear. A lista marca chats fixados, arquivados, silenciados e não lidos e se atualiza com `chat.updated`.
+- **Perfil**: nome, recado e foto da conta, leitura automática, privacidade (visto por último, online, foto, recado, grupos, confirmação de leitura, chamadas, mensagens, temporárias em conversas novas) e lista de bloqueados.
 - **Configurações**: ritmo, rampa, janela, fuso, proxy e ritmo inseguro (só são enviados os campos alterados; a senha mascarada do proxy nunca é reenviada).
 - **Atendente IA**: configurar o hook de agente (URL, segredo, timeout, contexto, pausa por humano, limite de respostas, ignorados), ligar/desligar por conversa, reativar chats pausados e ver as chamadas recentes com motivo das falhas.
 - **Webhooks**: criar (o segredo aparece uma vez), ligar/desligar, excluir, ver entregas por status e reenviar as da dead-letter. Há também a página de webhooks globais.
@@ -639,6 +700,7 @@ Com Docker, o mesmo arquivo vai em `docker run --env-file /etc/litezap/env --sto
 - Streams SSE checam o token só na conexão: um stream aberto continua depois de o token ser rotacionado (reconecte para aplicar).
 - Se um recibo chegar antes da confirmação do envio, sai `message.status: delivered` (ou `read`) antes de `message.sent`, e o `message.status: sent` é omitido.
 - Sem busca full-text (marco 2b).
+- Marco 9: "limpar conversa" e mensagens temporárias por chat não existem; pareamento por passkey não é suportado (o WhatsApp exige uma asserção WebAuthn do site dele; use QR ou código); as listas de exceção da privacidade só no celular; o JID usado nas ações de chat em conversas diretas (LID quando a conta já migrou) ainda precisa de validação com celular real.
 - Botões, listas e carrossel não são enviados (instáveis no WhatsApp); respostas a eles chegam como `unknown`.
 - Votos em enquetes criadas antes do pareamento não são decifrados (a sessão não tem o segredo). Votos não ficam no log, só no evento `message.poll_vote`.
 - Fixar mensagem não emite evento, e fixações feitas pelo celular não são registradas.
