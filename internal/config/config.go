@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/douglasdf99/litezap/internal/settings"
 	"gopkg.in/yaml.v3"
@@ -35,6 +36,27 @@ type Config struct {
 	InstanceDefaults settings.Settings `yaml:"instance_defaults"`
 	// DisableDashboard turns off the embedded web dashboard at /app/ (the API is unaffected).
 	DisableDashboard bool `yaml:"disable_dashboard"`
+
+	// Managed hosting (all off by default; see cloud.go and the README).
+	// OperatorToken (one or two comma-separated values) is above the admin token: only it
+	// changes LockedSettings, bypasses MaxInstances and calls /v1/operator/*.
+	OperatorToken  string   `yaml:"operator_token"`
+	LockedSettings []string `yaml:"locked_settings"`
+	// RequireProxy refuses to start a worker without a proxy (never a direct connection).
+	RequireProxy bool `yaml:"require_proxy"`
+	// MaxInstances caps instances created with the admin token (0: no limit).
+	MaxInstances int `yaml:"max_instances"`
+	// OpsListenAddr serves /healthz, /readyz and /metrics without a token ("" = off).
+	OpsListenAddr string `yaml:"ops_listen_addr"`
+	// MessageRetentionDays and MediaRetentionDays prune old messages and local media
+	// copies (0: keep forever).
+	MessageRetentionDays int `yaml:"message_retention_days"`
+	MediaRetentionDays   int `yaml:"media_retention_days"`
+	// ZombieTimeout forces a reconnect of a worker stuck "connected" without a working
+	// socket (0: off).
+	ZombieTimeout time.Duration `yaml:"zombie_timeout"`
+	// ShutdownTimeout bounds the whole graceful shutdown (0: the default phase timeouts).
+	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
 }
 
 func Default() Config {
@@ -64,6 +86,9 @@ func LoadWith(path string, base Config) (Config, error) {
 				return cfg, fmt.Errorf("parse config: %w", err)
 			}
 		}
+	}
+	if err := applyConfigJSON(&cfg); err != nil {
+		return cfg, err
 	}
 	if v := os.Getenv("LITEZAP_LISTEN_ADDR"); v != "" {
 		cfg.ListenAddr = v
@@ -107,6 +132,12 @@ func LoadWith(path string, base Config) (Config, error) {
 			return cfg, fmt.Errorf("LITEZAP_DISABLE_DASHBOARD: %w", err)
 		}
 		cfg.DisableDashboard = b
+	}
+	if err := applyCloudEnv(&cfg); err != nil {
+		return cfg, err
+	}
+	if err := validateCloud(cfg); err != nil {
+		return cfg, err
 	}
 	if cfg.WebhookRetentionDays < 1 || cfg.WebhookFailedRetentionDays < 1 {
 		return cfg, errors.New("webhook_retention_days and webhook_failed_retention_days must be at least 1")

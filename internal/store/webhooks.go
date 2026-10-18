@@ -20,14 +20,19 @@ type Webhook struct {
 	Enabled    bool
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+	// Owner is "" or OwnerOperator (registered with the operator token).
+	Owner string
 }
 
-const webhookCols = `id, COALESCE(instance_id, ''), url, secret, events_json, version, enabled, created_at, updated_at`
+// OwnerOperator marks a webhook registered by the operator token.
+const OwnerOperator = "operator"
+
+const webhookCols = `id, COALESCE(instance_id, ''), url, secret, events_json, version, enabled, created_at, updated_at, owner`
 
 func scanWebhook(row scanner) (Webhook, error) {
 	var w Webhook
 	var evs, created, updated string
-	err := row.Scan(&w.ID, &w.InstanceID, &w.URL, &w.Secret, &evs, &w.Version, &w.Enabled, &created, &updated)
+	err := row.Scan(&w.ID, &w.InstanceID, &w.URL, &w.Secret, &evs, &w.Version, &w.Enabled, &created, &updated, &w.Owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return w, ErrNotFound
 	}
@@ -49,8 +54,8 @@ func nullable(s string) any {
 func (s *Store) CreateWebhook(ctx context.Context, w Webhook) error {
 	evs, _ := json.Marshal(w.Events)
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO webhooks (id, instance_id, url, secret, events_json, version, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, w.ID, nullable(w.InstanceID), w.URL, w.Secret, string(evs), w.Version, w.Enabled, ts, ts)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO webhooks (id, instance_id, url, secret, events_json, version, enabled, created_at, updated_at, owner)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, w.ID, nullable(w.InstanceID), w.URL, w.Secret, string(evs), w.Version, w.Enabled, ts, ts, w.Owner)
 	return err
 }
 
