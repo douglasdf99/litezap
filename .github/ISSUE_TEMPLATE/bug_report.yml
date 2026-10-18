@@ -1,0 +1,50 @@
+name: Bug report
+description: Algo não funciona como deveria
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Falha de segurança? Não abra issue: veja SECURITY.md. Nunca cole tokens, chaves ou números de telefone reais.
+  - type: textarea
+    id: what
+    attributes:
+      label: O que aconteceu
+      description: E o que você esperava que acontecesse.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Como reproduzir
+      placeholder: |
+        1. litezap serve com ...
+        2. POST /v1/instances/{id}/...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Versão
+      description: Saída de `litezap version` (ou commit, se compilou do código).
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Como roda
+      options: [Binário da release, Docker, go install / código-fonte, App de bandeja]
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Sistema operacional e arquitetura
+      placeholder: ex.: Ubuntu 24.04 amd64, macOS 15 arm64
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Trechos relevantes (remova tokens e números).
+      render: text

@@ -23,6 +23,8 @@ ENV LITEZAP_LISTEN_ADDR=0.0.0.0:8787 \
 VOLUME ["/data"]
 EXPOSE 8787
 USER nonroot:nonroot
+# Sem HEALTHCHECK: a imagem não tem cliente HTTP e, fora do loopback, /healthz exige o token
+# admin. Use o probe do orquestrador em /healthz (com o token) ou LITEZAP_OPS_LISTEN_ADDR.
 ENTRYPOINT ["/usr/local/bin/litezap"]
 # Arquivo de config opcional: se não existir, valem os padrões + variáveis LITEZAP_*.
 CMD ["serve", "--config", "/etc/litezap/litezap.yaml"]

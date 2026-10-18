@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1
+# Imagem de release montada pelo GoReleaser (dockers_v2) a partir do binário já compilado.
+# Para compilar a partir do código, use o Dockerfile principal.
+
+# distroless não tem shell: o diretório de dados (dono nonroot) é criado num estágio à parte.
+FROM busybox:1.37 AS data
+RUN mkdir -p /data
+
+# distroless/static: certificados CA, /tmp e usuário nonroot (65532), sem shell.
+FROM gcr.io/distroless/static-debian12:nonroot
+ARG TARGETPLATFORM
+COPY ${TARGETPLATFORM}/litezap /usr/local/bin/litezap
+COPY --from=data --chown=65532:65532 /data /data
+ENV LITEZAP_LISTEN_ADDR=0.0.0.0:8787 \
+    LITEZAP_DATA_DIR=/data
+VOLUME ["/data"]
+EXPOSE 8787
+USER nonroot:nonroot
+# Sem HEALTHCHECK: a imagem não tem cliente HTTP e, fora do loopback, /healthz exige o token
+# admin. Use o probe do orquestrador em /healthz (com o token) ou LITEZAP_OPS_LISTEN_ADDR.
+ENTRYPOINT ["/usr/local/bin/litezap"]
+CMD ["serve", "--config", "/etc/litezap/litezap.yaml"]
