@@ -963,7 +963,9 @@ func logType(p Payload) string {
 }
 
 // hasMedia reports whether the message carries an attachment (staged, or forwarded as is).
-func hasMedia(p Payload) bool { return p.MediaFile != "" || (p.Type == "forward" && p.ForwardKind != "") }
+func hasMedia(p Payload) bool {
+	return p.MediaFile != "" || (p.Type == "forward" && p.ForwardKind != "")
+}
 
 // fail finishes an item for good. If the write fails the item keeps its status (queued,
 // or in_flight when it fails after a send attempt) and its staged media.

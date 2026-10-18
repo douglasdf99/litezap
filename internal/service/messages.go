@@ -169,15 +169,15 @@ type ReactionInput struct {
 
 // SendInput is the body of POST /messages.
 type SendInput struct {
-	To              string         `json:"to"`
-	Type            string         `json:"type"`
-	Text            string         `json:"text,omitempty"`    // text; new text of an edit
-	Caption         string         `json:"caption,omitempty"` // image, video, gif, document
-	Media           *MediaInput    `json:"media,omitempty"`
-	Reaction        *ReactionInput `json:"reaction,omitempty"`
-	Location        *LocationInput `json:"location,omitempty"`
-	Contacts        []ContactInput `json:"contacts,omitempty"`
-	Poll            *PollInput     `json:"poll,omitempty"`
+	To       string         `json:"to"`
+	Type     string         `json:"type"`
+	Text     string         `json:"text,omitempty"`    // text; new text of an edit
+	Caption  string         `json:"caption,omitempty"` // image, video, gif, document
+	Media    *MediaInput    `json:"media,omitempty"`
+	Reaction *ReactionInput `json:"reaction,omitempty"`
+	Location *LocationInput `json:"location,omitempty"`
+	Contacts []ContactInput `json:"contacts,omitempty"`
+	Poll     *PollInput     `json:"poll,omitempty"`
 	// MessageID is the logged message an edit, revoke or pin changes (LiteZap or WhatsApp id).
 	MessageID string        `json:"message_id,omitempty"`
 	Pin       *PinInput     `json:"pin,omitempty"`

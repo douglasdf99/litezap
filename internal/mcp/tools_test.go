@@ -36,8 +36,9 @@ func TestToolList(t *testing.T) {
 			t.Errorf("%s lacks a description or annotations", tl.Name)
 		}
 	}
-	want := []string{"check_numbers", "get_contact", "get_instance_status", "get_message_status", "get_messages",
-		"get_qr", "list_chats", "list_contacts", "list_instances", "mark_read", "send_media", "send_message", "wait_for_events"}
+	want := []string{"check_numbers", "delete_message", "edit_message", "get_contact", "get_instance_status", "get_message_status", "get_messages",
+		"get_qr", "list_chats", "list_contacts", "list_instances", "mark_read", "send_contact", "send_location", "send_media",
+		"send_message", "send_reaction", "wait_for_events"}
 	slices.Sort(names)
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v", names)
@@ -49,7 +50,7 @@ func TestToolList(t *testing.T) {
 		}
 	}
 	b, _ = json.Marshal(byName["send_media"].InputSchema)
-	if !strings.Contains(string(b), `"enum":["image","video","audio","document"]`) {
+	if !strings.Contains(string(b), `"enum":["image","video","audio","document","sticker","gif","ptv"]`) {
 		t.Errorf("send_media schema %s lacks the type enum", b)
 	}
 	b, _ = json.Marshal(byName["check_numbers"].InputSchema)
@@ -58,6 +59,11 @@ func TestToolList(t *testing.T) {
 	}
 	if byName["send_message"].Annotations.ReadOnlyHint || !byName["list_chats"].Annotations.ReadOnlyHint {
 		t.Error("read-only hints are wrong")
+	}
+	for _, name := range []string{"edit_message", "delete_message"} {
+		if a := byName[name].Annotations; a.DestructiveHint == nil || !*a.DestructiveHint {
+			t.Errorf("%s must be marked destructive", name)
+		}
 	}
 }
 
@@ -462,4 +468,47 @@ func newHTTPServer(t *testing.T, h http.Handler) string {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return srv.URL
+}
+
+func TestMessageActionTools(t *testing.T) {
+	for _, m := range allModes {
+		t.Run(string(m), func(t *testing.T) {
+			e := newEnv(t, nil)
+			id, tok := e.connected("Actions")
+			cs := e.client(m, tok)
+			peer := "5511988887777@s.whatsapp.net"
+			e.sp.Last(id).EmitMessage(&workerv1.Message{Id: "IN1", Chat: peer, Sender: peer, TimestampMs: time.Now().UnixMilli(), Type: "text", Text: "oi?"})
+			var page service.MessagePage
+			deadline := time.Now().Add(3 * time.Second)
+			for len(page.Messages) == 0 && time.Now().Before(deadline) {
+				ok(t, cs, "get_messages", map[string]any{"chat": peer}, &page)
+				time.Sleep(10 * time.Millisecond)
+			}
+			if len(page.Messages) == 0 {
+				t.Fatal("received message not logged")
+			}
+			var out sendOutput
+			ok(t, cs, "send_message", map[string]any{"to": peer, "text": "@5511977776666 sim", "reply_to": page.Messages[0].ID,
+				"mentions": []string{"5511977776666"}}, &out)
+			if !out.Sent || out.Message.ReplyTo != "IN1" {
+				t.Fatalf("reply = %+v", out)
+			}
+			sent := out.Message.ID
+			ok(t, cs, "send_reaction", map[string]any{"to": peer, "message_id": "IN1", "emoji": "👍"}, &out)
+			ok(t, cs, "send_location", map[string]any{"to": peer, "latitude": -23.5, "longitude": -46.6, "name": "SP"}, &out)
+			ok(t, cs, "send_contact", map[string]any{"to": peer, "contacts": []map[string]any{{"name": "Ana", "phone": "5511977776666"}}}, &out)
+			ok(t, cs, "edit_message", map[string]any{"message_id": sent, "text": "sim!"}, &out)
+			ok(t, cs, "delete_message", map[string]any{"message_id": sent}, &out)
+			var types []string
+			for _, r := range e.sp.Last(id).WA.Sent() {
+				types = append(types, r.Type)
+			}
+			if fmt.Sprint(types) != "[text reaction location contact edit revoke]" {
+				t.Fatalf("worker requests = %v", types)
+			}
+			fails(t, cs, "edit_message", map[string]any{"message_id": "IN1", "text": "x"}, "validation_failed")
+			fails(t, cs, "delete_message", map[string]any{"message_id": ""}, "validation_failed")
+			fails(t, cs, "send_location", map[string]any{"to": peer, "latitude": 100, "longitude": 0}, "validation_failed")
+		})
+	}
 }
