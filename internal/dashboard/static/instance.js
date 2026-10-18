@@ -7,6 +7,7 @@ import { agentPanel } from './agent.js';
 import { groupsPanel } from './groups.js';
 import { profilePanel } from './profile.js';
 import { chatActions, chatMarks } from './chatactions.js';
+import { editInstance, tagChips, pairingLinkCard } from './platform.js';
 
 const ACTIONS = { start: 'Iniciar', stop: 'Parar', restart: 'Reiniciar', logout: 'Deslogar' };
 
@@ -60,12 +61,17 @@ export function instanceView(id, { root, shell, setLive }) {
       }, ACTIONS[a]);
       return b;
     });
+    acts.push(h('button', {
+      class: 'btn small ghost',
+      onclick: () => editInstance(inst, (v) => { ctx.inst = v; renderHeader(); }),
+    }, 'Editar'));
     mount(header,
       h('div', { class: 'inst-title' },
         h('a', { href: '#/', class: 'back', 'aria-label': 'Voltar' }, '←'),
         h('h1', null, inst.name || inst.id),
         stateBadge(inst.state, inst.state_reason),
-        inst.phone ? h('span', { class: 'phone' }, phoneOf(inst.phone)) : null),
+        inst.phone ? h('span', { class: 'phone' }, phoneOf(inst.phone)) : null,
+        tagChips(inst)),
       h('div', { class: 'inst-sub' }, h('span', { class: 'mono muted small' }, inst.id), h('div', { class: 'actions' }, acts)));
   };
 
@@ -114,7 +120,10 @@ export function instanceView(id, { root, shell, setLive }) {
 // ---------- pairing ----------
 
 function pairTab(ctx) {
-  const el = h('div', { class: 'card pair' });
+  const main = h('div', { class: 'card pair' });
+  const linkCard = pairingLinkCard(ctx);
+  const wrap = h('div', { class: 'pair-wrap' }, main, linkCard);
+  const el = main;
   const qrImg = h('img', { class: 'qr', alt: 'QR de pareamento', width: 280, height: 280 });
   const qrNote = h('p', { class: 'muted small' });
   let objectURL = null;
@@ -156,6 +165,7 @@ function pairTab(ctx) {
     const st = ctx.inst ? ctx.inst.state : null;
     if (st === lastState) return;
     lastState = st;
+    linkCard.hidden = st === 'connected' || st === 'banned';
     if (!st) { mount(el, h('p', { class: 'muted' }, 'Carregando…')); return; }
     if (st === 'connected') {
       mount(el, h('div', { class: 'pair-done' },
@@ -213,7 +223,7 @@ function pairTab(ctx) {
   const qrTimer = setInterval(() => { if (lastState === 'qr_pending') loadQR(); }, 20000);
   render();
   return {
-    el,
+    el: wrap,
     cleanup() { off(); clearInterval(tick); clearInterval(qrTimer); if (objectURL) URL.revokeObjectURL(objectURL); },
   };
 }

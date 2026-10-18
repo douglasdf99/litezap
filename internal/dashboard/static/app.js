@@ -1,6 +1,7 @@
 // LiteZap dashboard: boot, login, routing and the instances list.
 import * as api from './api.js';
 import { h, mount, toast, errMsg, modal, secretBox, stateBadge, field, confirmDanger, phoneOf } from './ui.js';
+import { tagChips } from './platform.js';
 import { instanceView, instanceAction, availableActions } from './instance.js';
 import { webhooksPanel } from './webhooks.js';
 
@@ -116,6 +117,7 @@ function instancesView() {
   const row = (inst) => {
     const tr = h('tr', null,
       h('td', null, h('a', { href: `#/i/${encodeURIComponent(inst.id)}` }, inst.name || inst.id),
+        tagChips(inst),
         h('div', { class: 'mono muted small' }, inst.id)),
       h('td', { class: 'state' }, stateBadge(inst.state, inst.state_reason)),
       h('td', null, inst.phone ? phoneOf(inst.phone) : h('span', { class: 'muted' }, '—')),
