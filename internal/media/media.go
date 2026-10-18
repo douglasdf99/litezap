@@ -161,34 +161,73 @@ func (f *Fetcher) initClient() {
 	}
 }
 
-// Fetch downloads rawURL, refusing bodies larger than max. It returns the data and the
-// content type (from the response, or sniffed).
-func (f *Fetcher) Fetch(ctx context.Context, rawURL string, max int64) ([]byte, string, error) {
+// get starts a GET of rawURL; the caller closes the body and calls cancel.
+func (f *Fetcher) get(ctx context.Context, rawURL string, header http.Header) (*http.Response, context.CancelFunc, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, "", ErrInvalidURL
+		return nil, nil, ErrInvalidURL
 	}
 	timeout := f.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, "", fmt.Errorf("%w: %v", ErrFetch, err)
+		cancel()
+		return nil, nil, fmt.Errorf("%w: %v", ErrFetch, err)
+	}
+	for k, v := range header {
+		req.Header[k] = v
 	}
 	resp, err := f.httpClient().Do(req)
 	if err != nil {
+		cancel()
 		if errors.Is(err, ErrBlocked) {
-			return nil, "", ErrBlocked
+			return nil, nil, ErrBlocked
 		}
-		return nil, "", fmt.Errorf("%w: %v", ErrFetch, err)
+		return nil, nil, fmt.Errorf("%w: %v", ErrFetch, err)
 	}
-	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return nil, "", fmt.Errorf("%w: HTTP %d", ErrFetch, resp.StatusCode)
+		resp.Body.Close()
+		cancel()
+		return nil, nil, fmt.Errorf("%w: HTTP %d", ErrFetch, resp.StatusCode)
 	}
+	return resp, cancel, nil
+}
+
+// PageUserAgent identifies LiteZap when it reads a page for a link preview.
+const PageUserAgent = "Mozilla/5.0 (compatible; LiteZap link preview; +https://github.com/douglasdf99/litezap)"
+
+// FetchPage reads at most max bytes of an HTML page (a longer page is truncated, not an
+// error) and returns them with the final URL after redirects. Anything that is not
+// text/html fails with ErrFetch before its body is read. Same address checks as Fetch.
+func (f *Fetcher) FetchPage(ctx context.Context, rawURL string, max int64) ([]byte, *url.URL, error) {
+	resp, cancel, err := f.get(ctx, rawURL, http.Header{"User-Agent": {PageUserAgent}, "Accept": {"text/html"}})
+	if err != nil {
+		return nil, nil, err
+	}
+	defer cancel()
+	defer resp.Body.Close()
+	if ct := baseType(resp.Header.Get("Content-Type")); ct != "text/html" && ct != "application/xhtml+xml" {
+		return nil, nil, fmt.Errorf("%w: not an HTML page (%s)", ErrFetch, ct)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, max))
+	if err != nil && len(data) == 0 {
+		return nil, nil, fmt.Errorf("%w: %v", ErrFetch, err)
+	}
+	return data, resp.Request.URL, nil
+}
+
+// Fetch downloads rawURL, refusing bodies larger than max. It returns the data and the
+// content type (from the response, or sniffed).
+func (f *Fetcher) Fetch(ctx context.Context, rawURL string, max int64) ([]byte, string, error) {
+	resp, cancel, err := f.get(ctx, rawURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	defer cancel()
+	defer resp.Body.Close()
 	if resp.ContentLength > max {
 		return nil, "", ErrTooLarge
 	}

@@ -77,9 +77,23 @@ func buildMedia(req *workerv1.SendRequest, up whatsmeow.UploadResponse) *waE2E.M
 			URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 		}}
-	case "video":
-		return &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
+	case "video", "gif", "ptv":
+		v := &waE2E.VideoMessage{
 			Caption: caption, Mimetype: proto.String(req.Mime),
+			URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey,
+			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
+		}
+		switch req.Type {
+		case "gif":
+			v.GifPlayback = proto.Bool(true)
+		case "ptv":
+			v.Caption = nil // round videos have no caption
+			return &waE2E.Message{PtvMessage: v}
+		}
+		return &waE2E.Message{VideoMessage: v}
+	case "sticker":
+		return &waE2E.Message{StickerMessage: &waE2E.StickerMessage{
+			Mimetype: proto.String("image/webp"), IsAnimated: proto.Bool(req.Animated),
 			URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 		}}
@@ -122,44 +136,9 @@ func (w *Whatsmeow) Send(ctx context.Context, req *workerv1.SendRequest) (*worke
 	if err != nil || to.User == "" {
 		return nil, grpcErr(codes.InvalidArgument, "invalid_number", "invalid recipient JID")
 	}
-	var msg *waE2E.Message
-	switch req.Type {
-	case "text":
-		msg = &waE2E.Message{Conversation: proto.String(req.Text)}
-	case "reaction":
-		sender := to // reacting to a message the contact sent in a direct chat
-		if req.ReactionFromMe {
-			sender = types.EmptyJID
-		} else if req.ReactionSender != "" {
-			if sender, err = types.ParseJID(req.ReactionSender); err != nil {
-				return nil, grpcErr(codes.InvalidArgument, "validation_failed", "invalid reaction sender")
-			}
-		} else if to.Server == types.GroupServer {
-			// The key of a group reaction names the author of the target message.
-			return nil, grpcErr(codes.InvalidArgument, "validation_failed", "reaction_sender is required in groups")
-		}
-		sender = w.groupParticipant(ctx, to, sender)
-		msg = w.cli.BuildReaction(to, sender, types.MessageID(req.ReactionMessageId), req.Text)
-	default:
-		mt, ok := mediaType(req.Type)
-		if !ok {
-			return nil, grpcErr(codes.InvalidArgument, "validation_failed", "unsupported message type "+req.Type)
-		}
-		path, err := w.dataPath(req.MediaPath, "outbox")
-		if err != nil {
-			return nil, err
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, grpcErr(codes.InvalidArgument, "validation_failed", "media file is missing")
-		}
-		// Streams the file (encrypted into a temporary file) instead of loading it in memory.
-		up, err := w.cli.UploadReader(ctx, f, nil, mt)
-		f.Close()
-		if err != nil {
-			return nil, grpcErr(codes.Unavailable, "media_upload_failed", err.Error())
-		}
-		msg = buildMedia(req, up)
+	msg, err := w.build(ctx, to, req)
+	if err != nil {
+		return nil, err
 	}
 	resp, err := w.cli.SendMessage(ctx, to, msg, whatsmeow.SendRequestExtra{ID: types.MessageID(req.MessageId)})
 	if err != nil {
@@ -396,6 +375,17 @@ func (w *Whatsmeow) CheckNumbers(ctx context.Context, phones []string) ([]*worke
 	return out, nil
 }
 
+// pollCreation returns the poll of any poll creation version.
+func pollCreation(m *waE2E.Message) *waE2E.PollCreationMessage {
+	for _, p := range []*waE2E.PollCreationMessage{m.GetPollCreationMessage(), m.GetPollCreationMessageV2(),
+		m.GetPollCreationMessageV3(), m.GetPollCreationMessageV5(), m.GetPollCreationMessageV6()} {
+		if p != nil {
+			return p
+		}
+	}
+	return nil
+}
+
 // content extracts the LiteZap type, text, media and reaction target of a message.
 // ok=false means the message carries nothing to log (protocol messages, revokes, edits...).
 func content(m *waE2E.Message) (typ, text string, media *workerv1.Media, reactionTo string, ok bool) {
@@ -408,13 +398,20 @@ func content(m *waE2E.Message) (typ, text string, media *workerv1.Media, reactio
 		return "text", m.GetExtendedTextMessage().GetText(), nil, "", true
 	case m.GetImageMessage() != nil:
 		x := m.GetImageMessage()
-		return "image", x.GetCaption(), &workerv1.Media{Kind: "image", Mime: x.GetMimetype(), Size: x.GetFileLength(), Ref: mediaRef(x)}, "", true
+		return "image", x.GetCaption(), &workerv1.Media{Kind: "image", Mime: x.GetMimetype(), Size: x.GetFileLength(), Ref: mediaRef(x), ViewOnce: x.GetViewOnce()}, "", true
+	case m.GetPtvMessage() != nil:
+		x := m.GetPtvMessage()
+		return "ptv", "", &workerv1.Media{Kind: "video", Mime: x.GetMimetype(), Size: x.GetFileLength(), Seconds: x.GetSeconds(), Ref: mediaRef(x)}, "", true
 	case m.GetVideoMessage() != nil:
 		x := m.GetVideoMessage()
-		return "video", x.GetCaption(), &workerv1.Media{Kind: "video", Mime: x.GetMimetype(), Size: x.GetFileLength(), Seconds: x.GetSeconds(), Ref: mediaRef(x)}, "", true
+		typ := "video"
+		if x.GetGifPlayback() {
+			typ = "gif"
+		}
+		return typ, x.GetCaption(), &workerv1.Media{Kind: "video", Mime: x.GetMimetype(), Size: x.GetFileLength(), Seconds: x.GetSeconds(), Ref: mediaRef(x), ViewOnce: x.GetViewOnce()}, "", true
 	case m.GetAudioMessage() != nil:
 		x := m.GetAudioMessage()
-		return "audio", "", &workerv1.Media{Kind: "audio", Mime: x.GetMimetype(), Size: x.GetFileLength(), Seconds: x.GetSeconds(), Ptt: x.GetPTT(), Ref: mediaRef(x)}, "", true
+		return "audio", "", &workerv1.Media{Kind: "audio", Mime: x.GetMimetype(), Size: x.GetFileLength(), Seconds: x.GetSeconds(), Ptt: x.GetPTT(), Ref: mediaRef(x), ViewOnce: x.GetViewOnce()}, "", true
 	case m.GetDocumentMessage() != nil:
 		x := m.GetDocumentMessage()
 		return "document", x.GetCaption(), &workerv1.Media{Kind: "document", Mime: x.GetMimetype(), Size: x.GetFileLength(), FileName: x.GetFileName(), Ref: mediaRef(x)}, "", true
@@ -426,13 +423,77 @@ func content(m *waE2E.Message) (typ, text string, media *workerv1.Media, reactio
 		return "location", strings.TrimSpace(fmt.Sprintf("%f,%f %s", x.GetDegreesLatitude(), x.GetDegreesLongitude(), x.GetName())), nil, "", true
 	case m.GetContactMessage() != nil:
 		return "contact", m.GetContactMessage().GetDisplayName(), nil, "", true
+	case m.GetContactsArrayMessage() != nil:
+		return "contact", m.GetContactsArrayMessage().GetDisplayName(), nil, "", true
+	case pollCreation(m) != nil:
+		return "poll", pollCreation(m).GetName(), nil, "", true
 	case m.GetReactionMessage() != nil:
 		x := m.GetReactionMessage()
 		return "reaction", x.GetText(), nil, x.GetKey().GetID(), true
-	case m.GetProtocolMessage() != nil, m.GetSenderKeyDistributionMessage() != nil:
+	case m.GetProtocolMessage() != nil, m.GetSenderKeyDistributionMessage() != nil,
+		m.GetPollUpdateMessage() != nil, m.GetPinInChatMessage() != nil, m.GetKeepInChatMessage() != nil,
+		m.GetSecretEncryptedMessage() != nil:
+		// Updates of other messages (edits, revokes and votes are reported by toUpdate).
 		return "", "", nil, "", false
 	}
 	return "unknown", "", nil, "", true
+}
+
+// contextOf returns the ContextInfo of a message's content, if any.
+func contextOf(m *waE2E.Message) *waE2E.ContextInfo {
+	switch {
+	case m.GetExtendedTextMessage() != nil:
+		return m.GetExtendedTextMessage().GetContextInfo()
+	case m.GetImageMessage() != nil:
+		return m.GetImageMessage().GetContextInfo()
+	case m.GetPtvMessage() != nil:
+		return m.GetPtvMessage().GetContextInfo()
+	case m.GetVideoMessage() != nil:
+		return m.GetVideoMessage().GetContextInfo()
+	case m.GetAudioMessage() != nil:
+		return m.GetAudioMessage().GetContextInfo()
+	case m.GetDocumentMessage() != nil:
+		return m.GetDocumentMessage().GetContextInfo()
+	case m.GetStickerMessage() != nil:
+		return m.GetStickerMessage().GetContextInfo()
+	case m.GetLocationMessage() != nil:
+		return m.GetLocationMessage().GetContextInfo()
+	case m.GetContactMessage() != nil:
+		return m.GetContactMessage().GetContextInfo()
+	case m.GetContactsArrayMessage() != nil:
+		return m.GetContactsArrayMessage().GetContextInfo()
+	case pollCreation(m) != nil:
+		return pollCreation(m).GetContextInfo()
+	}
+	return nil
+}
+
+// details fills the structured parts of a message: reply, mentions, location, contacts, poll.
+func details(m *waE2E.Message, out *workerv1.Message) {
+	if ci := contextOf(m); ci != nil {
+		out.QuotedId = ci.GetStanzaID()
+		out.Mentions = ci.GetMentionedJID()
+		out.Forwarded = ci.GetIsForwarded()
+	}
+	if x := m.GetLocationMessage(); x != nil {
+		out.Location = &workerv1.Location{Latitude: x.GetDegreesLatitude(), Longitude: x.GetDegreesLongitude(),
+			Name: x.GetName(), Address: x.GetAddress(), Url: x.GetURL()}
+	}
+	if x := m.GetContactMessage(); x != nil {
+		out.Contacts = []*workerv1.ContactCard{{DisplayName: x.GetDisplayName(), Vcard: x.GetVcard()}}
+	}
+	if x := m.GetContactsArrayMessage(); x != nil {
+		for _, c := range x.GetContacts() {
+			out.Contacts = append(out.Contacts, &workerv1.ContactCard{DisplayName: c.GetDisplayName(), Vcard: c.GetVcard()})
+		}
+	}
+	if p := pollCreation(m); p != nil {
+		poll := &workerv1.Poll{Name: p.GetName(), Selectable: p.GetSelectableOptionsCount()}
+		for _, o := range p.GetOptions() {
+			poll.Options = append(poll.Options, o.GetOptionName())
+		}
+		out.Poll = poll
+	}
 }
 
 // lidLookupTimeout bounds each LID store lookup. History sync can block for a long time on
@@ -484,16 +545,9 @@ func (w *Whatsmeow) phoneJID(jid, alt types.JID, known lidMap) types.JID {
 	return jid.ToNonAD()
 }
 
-// toMessage normalizes a whatsmeow message; nil means it is not logged.
-func (w *Whatsmeow) toMessage(info types.MessageInfo, m *waE2E.Message, known lidMap) *workerv1.Message {
-	if info.Chat.Server == types.BroadcastServer || info.Chat.Server == types.NewsletterServer {
-		return nil // status updates, broadcast lists and channels are out of scope
-	}
-	typ, text, media, reactionTo, ok := content(m)
-	if !ok {
-		return nil
-	}
-	chat := info.Chat.ToNonAD()
+// addressing returns the chat and sender of a message, as phone-number JIDs when known.
+func (w *Whatsmeow) addressing(info types.MessageInfo, known lidMap) (chat, sender types.JID) {
+	chat = info.Chat.ToNonAD()
 	if !info.IsGroup {
 		alt := info.SenderAlt
 		if info.IsFromMe {
@@ -501,11 +555,109 @@ func (w *Whatsmeow) toMessage(info types.MessageInfo, m *waE2E.Message, known li
 		}
 		chat = w.phoneJID(info.Chat, alt, known)
 	}
-	return &workerv1.Message{
-		Id: string(info.ID), Chat: chat.String(), Sender: w.phoneJID(info.Sender, info.SenderAlt, known).String(),
+	return chat, w.phoneJID(info.Sender, info.SenderAlt, known)
+}
+
+// outOfScope: status updates, broadcast lists and channels are not handled.
+func outOfScope(info types.MessageInfo) bool {
+	return info.Chat.Server == types.BroadcastServer || info.Chat.Server == types.NewsletterServer
+}
+
+// toMessage normalizes a whatsmeow message; nil means it is not logged.
+func (w *Whatsmeow) toMessage(info types.MessageInfo, m *waE2E.Message, known lidMap) *workerv1.Message {
+	if outOfScope(info) {
+		return nil
+	}
+	typ, text, media, reactionTo, ok := content(m)
+	if !ok {
+		return nil
+	}
+	chat, sender := w.addressing(info, known)
+	out := &workerv1.Message{
+		Id: string(info.ID), Chat: chat.String(), Sender: sender.String(),
 		FromMe: info.IsFromMe, IsGroup: info.IsGroup, TimestampMs: info.Timestamp.UnixMilli(),
 		PushName: info.PushName, Type: typ, Text: text, Media: media, ReactionTo: reactionTo,
 	}
+	details(m, out)
+	return out
+}
+
+// editText is the new text carried by an edit (false: not an edit we can show).
+func editText(m *waE2E.Message) (string, bool) {
+	if pm := m.GetProtocolMessage(); pm != nil && pm.GetEditedMessage() != nil {
+		m = pm.GetEditedMessage()
+	}
+	typ, t, _, _, ok := content(m)
+	return t, ok && typ != "unknown"
+}
+
+// toUpdate reports an edit, revoke or poll vote of the message target (nil: not one).
+func (w *Whatsmeow) toUpdate(e *events.Message) *workerv1.Message {
+	m := e.Message
+	if outOfScope(e.Info) || m == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), lidLookupTimeout)
+	defer cancel()
+	u := &workerv1.Message{}
+	switch {
+	case m.GetProtocolMessage() != nil:
+		pm := m.GetProtocolMessage()
+		switch pm.GetType() {
+		case waE2E.ProtocolMessage_REVOKE:
+			u.Type, u.TargetId = "revoke", pm.GetKey().GetID()
+			u.AdminRevoke = e.Info.Edit == types.EditAttributeAdminRevoke
+		case waE2E.ProtocolMessage_MESSAGE_EDIT:
+			t, ok := editText(pm.GetEditedMessage())
+			if !ok {
+				return nil
+			}
+			u.Type, u.TargetId, u.Text = "edit", pm.GetKey().GetID(), t
+		default:
+			return nil
+		}
+	case m.GetSecretEncryptedMessage() != nil:
+		sm := m.GetSecretEncryptedMessage()
+		if sm.GetSecretEncType() != waE2E.SecretEncryptedMessage_MESSAGE_EDIT {
+			return nil
+		}
+		decrypt := w.decryptSecret
+		if decrypt == nil {
+			decrypt = w.cli.DecryptSecretEncryptedMessage
+		}
+		dm, err := decrypt(ctx, e)
+		if err != nil {
+			w.log.Warn("cannot decrypt message edit", "id", e.Info.ID, "err", err)
+			return nil
+		}
+		t, ok := editText(dm)
+		if !ok {
+			return nil
+		}
+		u.Type, u.TargetId, u.Text = "edit", sm.GetTargetMessageKey().GetID(), t
+	case m.GetPollUpdateMessage() != nil:
+		decrypt := w.decryptPoll
+		if decrypt == nil {
+			decrypt = w.cli.DecryptPollVote
+		}
+		vote, err := decrypt(ctx, e)
+		if err != nil {
+			// Votes on polls created before pairing cannot be decrypted (no secret).
+			w.log.Warn("cannot decrypt poll vote", "id", e.Info.ID, "err", err)
+			return nil
+		}
+		u.Type, u.TargetId = "poll_vote", m.GetPollUpdateMessage().GetPollCreationMessageKey().GetID()
+		u.PollHashes = vote.GetSelectedOptions() // empty: the voter removed their vote
+	default:
+		return nil
+	}
+	if u.TargetId == "" {
+		return nil
+	}
+	chat, sender := w.addressing(e.Info, nil)
+	u.Id, u.Chat, u.Sender, u.FromMe, u.IsGroup = string(e.Info.ID), chat.String(), sender.String(), e.Info.IsFromMe, e.Info.IsGroup
+	u.TimestampMs, u.PushName = e.Info.Timestamp.UnixMilli(), e.Info.PushName
+	return u
 }
 
 func receiptType(t types.ReceiptType) (string, bool) {
@@ -524,7 +676,9 @@ func receiptType(t types.ReceiptType) (string, bool) {
 func (w *Whatsmeow) onData(evt any) bool {
 	switch e := evt.(type) {
 	case *events.Message:
-		if m := w.toMessage(e.Info, e.Message, nil); m != nil {
+		if u := w.toUpdate(e); u != nil {
+			w.sink.Data(&workerv1.Event{Kind: &workerv1.Event_Message{Message: u}})
+		} else if m := w.toMessage(e.Info, e.Message, nil); m != nil {
 			w.sink.Data(&workerv1.Event{Kind: &workerv1.Event_Message{Message: m}})
 		}
 	case *events.Receipt:

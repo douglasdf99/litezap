@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -45,6 +46,11 @@ type Messaging struct {
 	// SignedURLs enables ?signed=1; off when the API is exposed without a public_url
 	// (the URLs would point at an address third parties cannot use).
 	SignedURLs bool
+
+	// PreviewFetcher fetches link previews (default: a fetcher that never reaches private
+	// addresses). Tests replace it.
+	PreviewFetcher *media.Fetcher
+	previewOnce    sync.Once
 
 	mediaOnce  sync.Once
 	mediaSlots chan struct{}
@@ -168,13 +174,30 @@ type ReactionInput struct {
 
 // SendInput is the body of POST /messages.
 type SendInput struct {
-	To              string         `json:"to"`
-	Type            string         `json:"type"`
-	Text            string         `json:"text,omitempty"`    // type text
-	Caption         string         `json:"caption,omitempty"` // image, video, document
-	Media           *MediaInput    `json:"media,omitempty"`
-	Reaction        *ReactionInput `json:"reaction,omitempty"`
-	ClientMessageID string         `json:"client_message_id,omitempty"`
+	To       string         `json:"to"`
+	Type     string         `json:"type"`
+	Text     string         `json:"text,omitempty"`    // text; new text of an edit
+	Caption  string         `json:"caption,omitempty"` // image, video, gif, document
+	Media    *MediaInput    `json:"media,omitempty"`
+	Reaction *ReactionInput `json:"reaction,omitempty"`
+	Location *LocationInput `json:"location,omitempty"`
+	Contacts []ContactInput `json:"contacts,omitempty"`
+	Poll     *PollInput     `json:"poll,omitempty"`
+	// MessageID is the logged message an edit, revoke or pin changes (LiteZap or WhatsApp id).
+	MessageID string        `json:"message_id,omitempty"`
+	Pin       *PinInput     `json:"pin,omitempty"`
+	Forward   *ForwardInput `json:"forward,omitempty"`
+	// ReplyTo quotes a message of the chat (LiteZap or WhatsApp id).
+	ReplyTo string `json:"reply_to,omitempty"`
+	// Mentions are phone numbers or user JIDs (the text should contain "@<number>"), or
+	// ["all"] in a group.
+	Mentions    []string          `json:"mentions,omitempty"`
+	LinkPreview *LinkPreviewInput `json:"link_preview,omitempty"`
+	// DelayMS waits before sending and TypingMS shows "typing..." for that long (0-15000).
+	// They never shorten the anti-ban pacing.
+	DelayMS         int    `json:"delay_ms,omitempty"`
+	TypingMS        int    `json:"typing_ms,omitempty"`
+	ClientMessageID string `json:"client_message_id,omitempty"`
 	// ExpiresAfter is how long the message may wait in the queue ("90m"; default 24h, max
 	// 7 days); not sent by then, it fails with "expired".
 	ExpiresAfter string `json:"expires_after,omitempty"`
@@ -211,12 +234,24 @@ type MessageView struct {
 	Attempts        int        `json:"attempts,omitempty"`
 	Error           string     `json:"error,omitempty"`
 	Timestamp       time.Time  `json:"timestamp"`
+	// Target is the WhatsApp id of the message an edit, revoke or pin changes.
+	Target    string     `json:"target,omitempty"`
+	EditedAt  *time.Time `json:"edited_at,omitempty"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+	store.MessageMeta
 }
 
 func messageView(instanceID string, m store.Message) MessageView {
 	v := MessageView{
 		ID: m.ID, WAMessageID: m.WAMessageID, Chat: m.ChatJID, Sender: m.SenderJID, FromMe: m.FromMe,
 		Source: m.Source, Type: m.Type, Text: m.Text, ReactionTo: m.ReactionTo, Status: m.Status, Timestamp: m.Timestamp,
+		MessageMeta: store.ParseMeta(m.MetaJSON),
+	}
+	if !m.EditedAt.IsZero() {
+		v.EditedAt = &m.EditedAt
+	}
+	if !m.RevokedAt.IsZero() {
+		v.RevokedAt = &m.RevokedAt
 	}
 	if m.MediaJSON != "" {
 		var info store.MediaInfo
@@ -240,8 +275,21 @@ func outboundView(o store.Outbound, logged *store.Message) MessageView {
 	if p.Reaction != nil {
 		v.ReactionTo = p.Reaction.WAMessageID
 	}
+	if p.Type == "forward" && p.ForwardKind != "" {
+		v.Type = p.ForwardKind
+	}
 	if p.Mime != "" {
-		v.Media = &MediaView{MediaInfo: store.MediaInfo{Kind: p.Type, Mime: p.Mime, Size: p.Size, FileName: p.FileName, PTT: p.PTT}}
+		kind := v.Type
+		if kind == "gif" || kind == "ptv" {
+			kind = "video"
+		}
+		v.Media = &MediaView{MediaInfo: store.MediaInfo{Kind: kind, Mime: p.Mime, Size: p.Size, FileName: p.FileName, PTT: p.PTT}}
+	}
+	if p.Meta != nil {
+		v.MessageMeta = *p.Meta
+	}
+	if p.Target != nil {
+		v.Target = p.Target.WAMessageID
 	}
 	if o.Status != store.OutSent {
 		v.Error = o.LastError
@@ -250,6 +298,13 @@ func outboundView(o store.Outbound, logged *store.Message) MessageView {
 		v.WAMessageID, v.Timestamp = o.WAMessageID, o.SentAt
 		if logged != nil {
 			v.Status = logged.Status // delivered / read from receipts
+			v.Text = logged.Text     // edits and revokes change the logged text
+			if !logged.EditedAt.IsZero() {
+				v.EditedAt = &logged.EditedAt
+			}
+			if !logged.RevokedAt.IsZero() {
+				v.RevokedAt = &logged.RevokedAt
+			}
 		}
 	}
 	return v
@@ -271,6 +326,10 @@ func failedErr(lastErr string) error {
 		return apierr.New(http.StatusGatewayTimeout, "worker_timeout", msg, true)
 	case "expired":
 		return apierr.New(http.StatusGone, "message_expired", "message not sent before expires_after", false)
+	case "canceled":
+		return apierr.New(http.StatusConflict, "message_canceled", "message was removed from the queue before it was sent", false)
+	case "edit_window_expired", "revoke_window_expired":
+		return apierr.New(http.StatusConflict, code, msg, false)
 	}
 	return apierr.New(http.StatusBadGateway, "worker_error", "send failed: "+redact(lastErr), true)
 }
@@ -312,7 +371,7 @@ func (s *Messaging) Send(ctx context.Context, instanceID string, in SendInput, w
 		}
 		expires = d
 	}
-	chat, err := ChatJID(in.To)
+	chat, err := s.resolveChat(ctx, instanceID, in)
 	if err != nil {
 		return MessageView{}, err
 	}
@@ -381,56 +440,94 @@ func (s *Messaging) finish(ctx context.Context, instanceID string, o store.Outbo
 // payload validates the input and stages its attachment under data/outbox.
 func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in SendInput) (queue.Payload, error) {
 	p := queue.Payload{Type: in.Type}
+	if lp := in.LinkPreview; lp != nil && lp.Mode != "off" && in.Type != "text" {
+		return p, apierr.Validation("link_preview only applies to type text")
+	}
+	if err := s.common(ctx, instanceID, chat, in, &p); err != nil {
+		return p, err
+	}
+	var err error
 	switch in.Type {
 	case "text":
-		if strings.TrimSpace(in.Text) == "" || len(in.Text) > maxTextBytes {
-			return p, apierr.Validation("text is required (up to 64KB)")
-		}
-		p.Text = in.Text
-		return p, nil
+		err = s.composeText(ctx, in, &p)
 	case "reaction":
-		if in.Reaction == nil || in.Reaction.MessageID == "" {
-			return p, apierr.Validation("reaction.message_id is required")
+		err = s.composeReaction(ctx, instanceID, chat, in, &p)
+	case "location":
+		err = composeLocation(in, &p)
+	case "contact":
+		err = composeContacts(in, &p)
+	case "poll":
+		err = composePoll(in, &p)
+	case "edit", "revoke", "pin":
+		err = s.composeTarget(ctx, instanceID, chat, in, &p)
+	case "forward":
+		meta := p.Meta
+		err = s.composeForward(ctx, instanceID, in, &p)
+		if err == nil && meta != nil { // keep reply_to and mentions
+			p.Meta.ReplyTo, p.Meta.Mentions = meta.ReplyTo, meta.Mentions
 		}
-		if len(in.Reaction.Emoji) > maxEmojiBytes {
-			return p, apierr.Validation("reaction.emoji is limited to 64 bytes")
-		}
-		target, err := s.Store.GetMessage(ctx, instanceID, in.Reaction.MessageID)
-		if errors.Is(err, store.ErrNotFound) || (err == nil && target.ChatJID != chat) {
-			target, err = s.Store.MessageByWAID(ctx, instanceID, chat, in.Reaction.MessageID)
-		}
-		if errors.Is(err, store.ErrNotFound) {
-			return p, apierr.Validation("reaction.message_id is not a message of this chat")
-		}
-		if err != nil {
-			return p, err
-		}
-		p.Text = in.Reaction.Emoji
-		p.Reaction = &queue.ReactionTarget{WAMessageID: target.WAMessageID, FromMe: target.FromMe}
-		if strings.HasSuffix(chat, "@g.us") {
-			p.Reaction.Sender = target.SenderJID
-		}
-		return p, nil
-	case "image", "video", "audio", "document":
+	case "image", "video", "audio", "document", "sticker", "gif", "ptv":
+		err = s.composeMedia(ctx, instanceID, id, in, &p)
 	default:
-		return p, apierr.Validation("type must be text, image, video, audio, document or reaction")
+		return p, apierr.Validation("type must be text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, edit, revoke, pin or forward")
 	}
+	return p, err
+}
+
+func (s *Messaging) composeReaction(ctx context.Context, instanceID, chat string, in SendInput, p *queue.Payload) error {
+	if in.Reaction == nil || in.Reaction.MessageID == "" {
+		return apierr.Validation("reaction.message_id is required")
+	}
+	if len(in.Reaction.Emoji) > maxEmojiBytes {
+		return apierr.Validation("reaction.emoji is limited to 64 bytes")
+	}
+	target, err := s.findInChat(ctx, instanceID, chat, in.Reaction.MessageID)
+	if errors.Is(err, store.ErrNotFound) {
+		return apierr.Validation("reaction.message_id is not a message of this chat")
+	}
+	if err != nil {
+		return err
+	}
+	p.Text = in.Reaction.Emoji
+	p.Reaction = &queue.ReactionTarget{WAMessageID: target.WAMessageID, FromMe: target.FromMe}
+	if strings.HasSuffix(chat, "@g.us") {
+		p.Reaction.Sender = target.SenderJID
+	}
+	return nil
+}
+
+// composeMedia downloads or decodes the attachment and stages it under data/outbox.
+func (s *Messaging) composeMedia(ctx context.Context, instanceID, id string, in SendInput, p *queue.Payload) error {
 	m := in.Media
 	if m == nil || (m.URL == "") == (m.Base64 == "") {
-		return p, apierr.Validation("media needs exactly one of url or base64")
+		return apierr.Validation("media needs exactly one of url or base64")
 	}
 	if len(in.Caption) > maxTextBytes {
-		return p, apierr.Validation("caption is limited to 64KB")
+		return apierr.Validation("caption is limited to 64KB")
+	}
+	if in.Caption != "" && (in.Type == "sticker" || in.Type == "ptv" || in.Type == "audio") {
+		return apierr.Validation(in.Type + " messages have no caption")
 	}
 	if len(m.FileName) > maxFileNameBytes {
-		return p, apierr.Validation("media.file_name is limited to 255 bytes")
+		return apierr.Validation("media.file_name is limited to 255 bytes")
 	}
 	release, err := s.acquireMedia(ctx)
 	if err != nil {
-		return p, err
+		return err
 	}
 	defer release()
-	limit := media.MaxSize(in.Type)
+	// kind is the attachment check: gif and ptv are videos, a sticker is a WebP image.
+	kind := in.Type
+	switch kind {
+	case "gif", "ptv":
+		kind = "video"
+	case "sticker":
+		kind = "image"
+	}
+	limit := media.MaxSize(kind)
+	if in.Type == "sticker" {
+		limit = maxStickerBytes
+	}
 	var data []byte
 	var remote string
 	if m.URL != "" {
@@ -440,19 +537,28 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 	}
 	switch {
 	case errors.Is(err, media.ErrTooLarge):
-		return p, apierr.New(http.StatusRequestEntityTooLarge, "media_too_large", in.Type+" exceeds the size limit", false)
+		return apierr.New(http.StatusRequestEntityTooLarge, "media_too_large", in.Type+" exceeds the size limit", false)
 	case errors.Is(err, media.ErrBlocked):
-		return p, apierr.Validation("media.url points to a private or local address")
+		return apierr.Validation("media.url points to a private or local address")
 	case errors.Is(err, media.ErrInvalidURL):
-		return p, apierr.Validation(err.Error())
+		return apierr.Validation(err.Error())
 	case errors.Is(err, media.ErrFetch):
-		return p, apierr.New(http.StatusUnprocessableEntity, "media_fetch_failed", "media.url could not be downloaded", true)
+		return apierr.New(http.StatusUnprocessableEntity, "media_fetch_failed", "media.url could not be downloaded", true)
 	case err != nil:
-		return p, apierr.Validation(err.Error())
+		return apierr.Validation(err.Error())
 	}
-	mime, err := media.ResolveMime(in.Type, m.Mime, remote, data)
+	mime, err := media.ResolveMime(kind, m.Mime, remote, data)
 	if err != nil {
-		return p, apierr.Validation(err.Error())
+		return apierr.Validation(err.Error())
+	}
+	switch {
+	case in.Type == "sticker" && mime != "image/webp":
+		return apierr.Validation("a sticker must be a WebP image")
+	case in.Type == "gif" && mime != "video/mp4":
+		return apierr.Validation("a gif must be an MP4 video (WhatsApp plays it in a loop)")
+	}
+	if in.Type == "sticker" {
+		p.Animated = animatedWebP(data)
 	}
 	name := m.FileName
 	if name == "" && in.Type == "document" && m.URL != "" {
@@ -464,14 +570,21 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 	}
 	dir := filepath.Join(s.DataDir, "outbox", instanceID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return p, err
+		return err
 	}
 	file := filepath.Join(dir, id)
 	if err := os.WriteFile(file, data, 0o600); err != nil {
-		return p, err
+		return err
 	}
 	p.Text, p.MediaFile, p.Mime, p.FileName, p.Size, p.PTT = in.Caption, file, mime, name, int64(len(data)), m.PTT
-	return p, nil
+	return nil
+}
+
+// animatedWebP reports whether a WebP has an animation chunk (in the first 64KB: it comes
+// right after the VP8X header and an optional color profile).
+func animatedWebP(data []byte) bool {
+	head := data[:min(len(data), 64<<10)]
+	return len(head) > 30 && string(head[12:16]) == "VP8X" && head[20]&0x02 != 0 && bytes.Contains(head, []byte("ANIM"))
 }
 
 // GetMessage returns a queued/sent item (by the id returned on send) or a logged message.

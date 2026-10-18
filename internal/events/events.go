@@ -18,8 +18,8 @@ import (
 // Version is the current envelope version.
 const Version = 1
 
-// Event types of catalog v1 (spec 5.2). message.revoked, chat.presence and group.updated
-// are not produced yet: the worker does not report them.
+// Event types of catalog v1 (spec 5.2). chat.presence and group.updated are not produced
+// yet: the worker does not report them.
 const (
 	TypeInstanceStatus   = "instance.status"
 	TypeInstanceQR       = "instance.qr"
@@ -28,13 +28,17 @@ const (
 	TypeMessageSent      = "message.sent"
 	TypeMessageStatus    = "message.status"
 	TypeMessageReaction  = "message.reaction"
+	TypeMessageEdited    = "message.edited"
+	TypeMessageRevoked   = "message.revoked"
+	TypeMessagePollVote  = "message.poll_vote"
 	TypeHistorySynced    = "history.synced"
 )
 
 // Types lists every type a filter may name.
 var Types = []string{
 	TypeInstanceStatus, TypeInstanceQR, TypeInstancePairCode, TypeMessageReceived,
-	TypeMessageSent, TypeMessageStatus, TypeMessageReaction, TypeHistorySynced,
+	TypeMessageSent, TypeMessageStatus, TypeMessageReaction, TypeMessageEdited, TypeMessageRevoked,
+	TypeMessagePollVote, TypeHistorySynced,
 }
 
 // Envelope is a published event. JSON is its encoding (spec 5.1), shared by every

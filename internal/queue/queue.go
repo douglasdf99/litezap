@@ -27,7 +27,9 @@ import (
 
 // Payload is what the service stores in outbound_queue.payload_json.
 type Payload struct {
-	Type string `json:"type"` // text | image | video | audio | document | reaction
+	// text | image | video | gif | ptv | audio | document | sticker | location | contact |
+	// poll | reaction | edit | revoke | pin | forward
+	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
 	// MediaFile is the staged attachment; it is deleted once the item is final.
 	MediaFile string          `json:"media_file,omitempty"`
@@ -35,7 +37,77 @@ type Payload struct {
 	FileName  string          `json:"file_name,omitempty"`
 	Size      int64           `json:"size,omitempty"`
 	PTT       bool            `json:"ptt,omitempty"`
+	Animated  bool            `json:"animated,omitempty"` // sticker
 	Reaction  *ReactionTarget `json:"reaction,omitempty"`
+	// Meta is the structured content (location, contacts, poll, reply, mentions...), sent
+	// and logged with the message.
+	Meta        *store.MessageMeta `json:"meta,omitempty"`
+	Quote       *QuoteTarget       `json:"quote,omitempty"`
+	MentionAll  bool               `json:"mention_all,omitempty"`
+	LinkPreview *LinkPreview       `json:"link_preview,omitempty"`
+	// Target is the message an edit, revoke or pin changes.
+	Target     *Target `json:"target,omitempty"`
+	Unpin      bool    `json:"unpin,omitempty"`
+	PinSeconds uint32  `json:"pin_seconds,omitempty"`
+	// ForwardKind/ForwardRef: a received attachment forwarded as is (no new upload).
+	ForwardKind string `json:"forward_kind,omitempty"`
+	ForwardRef  []byte `json:"forward_ref,omitempty"`
+	// DelayMS waits before the send and TypingMS shows "typing..." for that long (both
+	// bounded by the service). They only add time: the pacing floors still apply.
+	DelayMS  int `json:"delay_ms,omitempty"`
+	TypingMS int `json:"typing_ms,omitempty"`
+}
+
+// QuoteTarget is the message a reply quotes.
+type QuoteTarget struct {
+	WAMessageID string `json:"wa_message_id"`
+	FromMe      bool   `json:"from_me"`
+	Sender      string `json:"sender,omitempty"`
+	Text        string `json:"text,omitempty"`
+}
+
+// LinkPreview is the preview card of a text (thumbnail: small JPEG).
+type LinkPreview struct {
+	URL         string `json:"url"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Thumbnail   []byte `json:"thumbnail,omitempty"`
+}
+
+// Target is the logged message an edit, revoke or pin refers to.
+type Target struct {
+	MessageID   string    `json:"message_id"` // LiteZap id
+	WAMessageID string    `json:"wa_message_id"`
+	FromMe      bool      `json:"from_me"`
+	Sender      string    `json:"sender,omitempty"`
+	SentAt      time.Time `json:"sent_at"`
+}
+
+// Edit and revoke windows: WhatsApp documents 15 minutes for edits (whatsmeow.EditWindow
+// says 20; later edits may be ignored by recipients) and about two days to delete for
+// everyone. Checked again when the item is dispatched: a queued edit may have waited too long.
+const (
+	EditWindow   = 15 * time.Minute
+	RevokeWindow = 48 * time.Hour
+)
+
+// Updates reports whether a type changes another message instead of sending a new one
+// (not logged as a message of its own).
+func Updates(typ string) bool { return typ == "edit" || typ == "revoke" || typ == "pin" }
+
+// windowError is the last_error of an edit or revoke whose window closed (empty: still open).
+func windowError(p Payload, now time.Time) string {
+	if p.Target == nil || p.Target.SentAt.IsZero() {
+		return ""
+	}
+	age := now.Sub(p.Target.SentAt)
+	switch {
+	case p.Type == "edit" && age > EditWindow:
+		return "edit_window_expired: messages can only be edited for 15 minutes"
+	case p.Type == "revoke" && age > RevokeWindow:
+		return "revoke_window_expired: messages can only be deleted for everyone for 48 hours"
+	}
+	return ""
 }
 
 // ReactionTarget identifies the message a reaction refers to.
@@ -377,6 +449,9 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 	if err := json.Unmarshal([]byte(item.Payload), &p); err != nil {
 		return pauseOn(d.fail(item, item.Attempts, "validation_failed: unreadable payload")), true
 	}
+	if msg := windowError(p, now); msg != "" {
+		return pauseOn(d.fail(item, item.Attempts, msg)), true
+	}
 	// A reply typed with the other 9th-digit form joins its conversation before the window
 	// decides whether it is cold.
 	if next, done := d.cachedTarget(ctx, item); done {
@@ -426,11 +501,13 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 	if err != nil {
 		return pauseOn(d.fail(item, item.Attempts, "validation_failed: "+err.Error())), true
 	}
-	if err := st.MarkInFlight(ctx, item.ID, isNew, pendingMessage(item, p, now)); err != nil {
+	if err := st.MarkInFlight(ctx, item.ID, isNew, pendingMessage(item, p, now)); errors.Is(err, store.ErrNotFound) {
+		return 0, true // canceled meanwhile
+	} else if err != nil {
 		d.log().Error("queue: mark in flight", "err", err)
 		return errPause, true
 	}
-	d.typing(ctx, cli, item.ChatJID, p, set)
+	d.presend(ctx, cli, item.ChatJID, p, set)
 	if ctx.Err() != nil {
 		// Shutting down before the send started: back to the queue, no attempt spent.
 		if err := st.Requeue(context.Background(), item.ID, now, item.Attempts, item.LastError); err != nil {
@@ -684,32 +761,71 @@ func buildRequest(item store.Outbound, p Payload) (*workerv1.SendRequest, error)
 	if r := p.Reaction; r != nil {
 		req.ReactionMessageId, req.ReactionFromMe, req.ReactionSender = r.WAMessageID, r.FromMe, r.Sender
 	}
+	req.Animated, req.MentionAll, req.Unpin, req.PinSeconds = p.Animated, p.MentionAll, p.Unpin, p.PinSeconds
+	req.ForwardKind, req.ForwardRef = p.ForwardKind, p.ForwardRef
+	if m := p.Meta; m != nil {
+		req.Mentions, req.Forwarded = m.Mentions, m.Forwarded
+		if l := m.Location; l != nil {
+			req.Location = &workerv1.Location{Latitude: l.Latitude, Longitude: l.Longitude, Name: l.Name, Address: l.Address, Url: l.URL}
+		}
+		for _, c := range m.Contacts {
+			req.Contacts = append(req.Contacts, &workerv1.ContactCard{DisplayName: c.DisplayName, Vcard: c.VCard})
+		}
+		if pl := m.Poll; pl != nil {
+			req.Poll = &workerv1.Poll{Name: pl.Name, Options: pl.Options, Selectable: uint32(pl.Selectable)}
+		}
+	}
+	if q := p.Quote; q != nil {
+		req.Quote = &workerv1.Quote{MessageId: q.WAMessageID, FromMe: q.FromMe, Sender: q.Sender, Text: q.Text}
+	}
+	if lp := p.LinkPreview; lp != nil {
+		req.LinkPreview = &workerv1.LinkPreview{Url: lp.URL, Title: lp.Title, Description: lp.Description, Thumbnail: lp.Thumbnail}
+	}
+	if t := p.Target; t != nil {
+		req.TargetId, req.TargetFromMe, req.TargetSender = t.WAMessageID, t.FromMe, t.Sender
+	}
 	return req, nil
 }
 
-// typing shows "typing..." (or "recording..." for voice notes) before a send.
-func (d *dispatcher) typing(ctx context.Context, cli workerv1.WorkerClient, chat string, p Payload, set settings.Settings) {
-	if !set.TypingSimulation {
+// presend waits the message's delay_ms, then shows "typing..." (or "recording..." for
+// voice notes) before a send: for typing_ms when the message asks for it, else as the
+// typing simulation setting says. Both only add time after the pacing check.
+func (d *dispatcher) presend(ctx context.Context, cli workerv1.WorkerClient, chat string, p Payload, set settings.Settings) {
+	if p.DelayMS > 0 && !d.pause(ctx, time.Duration(p.DelayMS)*time.Millisecond) {
 		return
 	}
-	var state string
-	var delay time.Duration
+	state, delay := "", time.Duration(0)
 	switch {
-	case p.Type == "text":
-		state, delay = "composing", typingDelay(p.Text)
 	case p.Type == "audio" && p.PTT:
 		state, delay = "recording", 2*time.Second
-	default:
+	case p.Type == "text":
+		state, delay = "composing", typingDelay(p.Text)
+	case p.TypingMS > 0 && !Updates(p.Type) && p.Type != "reaction":
+		state = "composing"
+	}
+	if p.TypingMS > 0 && state != "" {
+		delay = time.Duration(p.TypingMS) * time.Millisecond
+	} else if !set.TypingSimulation {
+		return
+	}
+	if state == "" {
 		return
 	}
 	pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	_, _ = cli.SendPresence(pctx, &workerv1.SendPresenceRequest{To: chat, State: state})
 	cancel()
-	t := d.q.opt.Clock.NewTimer(delay)
+	d.pause(ctx, delay)
+}
+
+// pause sleeps on the queue clock; false when ctx ended first.
+func (d *dispatcher) pause(ctx context.Context, dur time.Duration) bool {
+	t := d.q.opt.Clock.NewTimer(dur)
 	defer t.Stop()
 	select {
 	case <-t.C():
+		return true
 	case <-ctx.Done():
+		return false
 	}
 }
 
@@ -773,16 +889,22 @@ func (d *dispatcher) sent(item store.Outbound, p Payload, at time.Time) error {
 		d.log().Error("queue: mark sent", "err", err)
 		return err
 	}
+	d.applyUpdate(item, p, at)
 	if pub := d.q.opt.Events; pub != nil {
-		m := events.Message{ID: item.ID, WAMessageID: item.WAMessageID, Chat: item.ChatJID, FromMe: true,
-			Source: "api", Type: p.Type, Text: p.Text, Timestamp: at.UTC()}
-		if p.Reaction != nil {
-			m.ReactionTo = p.Reaction.WAMessageID
+		if !Updates(p.Type) {
+			m := events.Message{ID: item.ID, WAMessageID: item.WAMessageID, Chat: item.ChatJID, FromMe: true,
+				Source: "api", Type: logType(p), Text: p.Text, Timestamp: at.UTC()}
+			if p.Reaction != nil {
+				m.ReactionTo = p.Reaction.WAMessageID
+			}
+			if hasMedia(p) {
+				m.Media = &events.Media{Kind: mediaKind(logType(p)), Mime: p.Mime, Size: p.Size, FileName: p.FileName, PTT: p.PTT}
+			}
+			if p.Meta != nil {
+				m.MessageMeta = *p.Meta
+			}
+			pub.Publish(d.id, events.TypeMessageSent, m)
 		}
-		if p.MediaFile != "" {
-			m.Media = &events.Media{Kind: p.Type, Mime: p.Mime, Size: p.Size, FileName: p.FileName, PTT: p.PTT}
-		}
-		pub.Publish(d.id, events.TypeMessageSent, m)
 		// A receipt that beat this confirmation already published delivered/read: a later
 		// "sent" would move the status backwards for consumers.
 		if logged, err := d.q.store.GetMessage(context.Background(), d.id, item.ID); err != nil ||
@@ -793,6 +915,56 @@ func (d *dispatcher) sent(item store.Outbound, p Payload, at time.Time) error {
 	}
 	d.done(item, p)
 	return nil
+}
+
+// applyUpdate applies a sent edit or revoke to the target message in the log and
+// publishes message.edited / message.revoked.
+func (d *dispatcher) applyUpdate(item store.Outbound, p Payload, at time.Time) {
+	if p.Target == nil || (p.Type != "edit" && p.Type != "revoke") {
+		return
+	}
+	ctx := context.Background()
+	var m store.Message
+	var err error
+	typ := events.TypeMessageEdited
+	if p.Type == "edit" {
+		m, err = d.q.store.EditMessage(ctx, d.id, item.ChatJID, p.Target.WAMessageID, p.Text, at)
+	} else {
+		typ = events.TypeMessageRevoked
+		m, err = d.q.store.RevokeMessage(ctx, d.id, item.ChatJID, p.Target.WAMessageID, at)
+	}
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		d.log().Error("queue: apply "+p.Type, "err", err)
+	}
+	if pub := d.q.opt.Events; pub != nil {
+		u := events.MessageUpdate{ID: m.ID, WAMessageID: p.Target.WAMessageID, Chat: item.ChatJID, FromMe: true,
+			Source: "api", Timestamp: at.UTC()}
+		if p.Type == "edit" {
+			u.Text = p.Text
+		}
+		pub.Publish(d.id, typ, u)
+	}
+}
+
+// mediaKind is the attachment kind of a send type (gif and ptv are videos).
+func mediaKind(typ string) string {
+	if typ == "gif" || typ == "ptv" {
+		return "video"
+	}
+	return typ
+}
+
+// logType is the type a sent message is logged with: a forward takes its content's type.
+func logType(p Payload) string {
+	if p.Type == "forward" && p.ForwardKind != "" {
+		return p.ForwardKind
+	}
+	return p.Type
+}
+
+// hasMedia reports whether the message carries an attachment (staged, or forwarded as is).
+func hasMedia(p Payload) bool {
+	return p.MediaFile != "" || (p.Type == "forward" && p.ForwardKind != "")
 }
 
 // fail finishes an item for good. If the write fails the item keeps its status (queued,
@@ -820,18 +992,25 @@ func (d *dispatcher) done(item store.Outbound, p Payload) {
 	d.q.notify(d.id, item.ID)
 }
 
-// pendingMessage is the log row written when the item goes in flight.
-func pendingMessage(item store.Outbound, p Payload, at time.Time) store.Message {
-	m := store.Message{
+// pendingMessage is the log row written when the item goes in flight (nil for edits,
+// revokes and pins: they change another message).
+func pendingMessage(item store.Outbound, p Payload, at time.Time) *store.Message {
+	if Updates(p.Type) {
+		return nil
+	}
+	m := &store.Message{
 		ID: item.ID, WAMessageID: item.WAMessageID, ChatJID: item.ChatJID, FromMe: true, Source: "api",
-		Type: p.Type, Text: p.Text, Status: "pending", Timestamp: at,
+		Type: logType(p), Text: p.Text, Status: "pending", Timestamp: at,
 	}
 	if p.Reaction != nil {
 		m.ReactionTo = p.Reaction.WAMessageID
 	}
-	if p.MediaFile != "" {
-		b, _ := json.Marshal(store.MediaInfo{Kind: p.Type, Mime: p.Mime, Size: p.Size, FileName: p.FileName, PTT: p.PTT})
+	if hasMedia(p) {
+		b, _ := json.Marshal(store.MediaInfo{Kind: mediaKind(logType(p)), Mime: p.Mime, Size: p.Size, FileName: p.FileName, PTT: p.PTT})
 		m.MediaJSON = string(b)
+	}
+	if p.Meta != nil {
+		m.MetaJSON = p.Meta.JSON()
 	}
 	return m
 }

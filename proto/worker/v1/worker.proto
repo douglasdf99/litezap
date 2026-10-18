@@ -81,11 +81,56 @@ message Message {
   bool is_group = 5;
   int64 timestamp_ms = 6;
   string push_name = 7;
-  // text | image | video | audio | document | sticker | location | contact | reaction | unknown
+  // text | image | video | gif | ptv | audio | document | sticker | location | contact |
+  // poll | reaction | unknown, and the updates edit | revoke | poll_vote (not new messages:
+  // target_id names the message they change).
   string type = 8;
-  string text = 9;      // body, caption, reaction emoji, or a short description
-  Media media = 10;     // set for image | video | audio | document | sticker
+  string text = 9;      // body, caption, reaction emoji, poll name, new text of an edit
+  Media media = 10;     // set for image | video | gif | ptv | audio | document | sticker
   string reaction_to = 11; // WhatsApp id of the message a reaction refers to
+  string quoted_id = 12;   // WhatsApp id of the message this one replies to
+  repeated string mentions = 13; // mentioned JIDs
+  Location location = 14;
+  repeated ContactCard contacts = 15;
+  Poll poll = 16;
+  string target_id = 17; // edit | revoke | poll_vote: WhatsApp id of the changed message
+  repeated bytes poll_hashes = 18; // poll_vote: SHA-256 of each selected option name
+  bool forwarded = 19;
+  // revoke: WhatsApp marked it as an admin deleting another member's message (groups)
+  bool admin_revoke = 20;
+}
+
+message Location {
+  double latitude = 1;
+  double longitude = 2;
+  string name = 3;
+  string address = 4;
+  string url = 5;
+}
+
+message ContactCard {
+  string display_name = 1;
+  string vcard = 2;
+}
+
+message Poll {
+  string name = 1;
+  repeated string options = 2;
+  uint32 selectable = 3; // 0: any number of options
+}
+
+message Quote {
+  string message_id = 1; // WhatsApp id of the quoted message
+  bool from_me = 2;
+  string sender = 3;     // author JID (received messages)
+  string text = 4;       // shown in the quote preview
+}
+
+message LinkPreview {
+  string url = 1; // the URL as it appears in the text
+  string title = 2;
+  string description = 3;
+  bytes thumbnail = 4; // small JPEG
 }
 
 message Media {
@@ -96,6 +141,7 @@ message Media {
   uint32 seconds = 5;
   bool ptt = 6;
   bytes ref = 7; // opaque: pass back to DownloadMedia
+  bool view_once = 8;
 }
 
 message Receipt {
@@ -116,8 +162,11 @@ message HistoryChunk {
 message SendRequest {
   string to = 1;         // chat JID
   string message_id = 2; // WhatsApp message id chosen by the supervisor (same on every retry)
-  string type = 3;       // text | image | video | audio | document | reaction
-  string text = 4;       // body, caption, or reaction emoji ("" removes a reaction)
+  // text | image | video | gif | ptv | audio | document | sticker | location | contact |
+  // poll | reaction | edit | revoke | pin | forward
+  string type = 3;
+  // body, caption, reaction emoji ("" removes a reaction), poll name or new text of an edit
+  string text = 4;
   string media_path = 5; // file with the attachment, inside the data directory
   string mime = 6;
   string file_name = 7;
@@ -125,6 +174,25 @@ message SendRequest {
   string reaction_message_id = 9;
   bool reaction_from_me = 10;
   string reaction_sender = 11; // sender JID of the reacted message (groups)
+  Quote quote = 12;            // reply to this message
+  repeated string mentions = 13; // JIDs mentioned (the text should contain "@<number>")
+  bool mention_all = 14;       // groups: mention every participant
+  LinkPreview link_preview = 15;
+  Location location = 16;
+  repeated ContactCard contacts = 17;
+  Poll poll = 18;
+  // edit | revoke | pin: the target message (id, whether it is ours, its author in groups)
+  string target_id = 19;
+  bool target_from_me = 20;
+  string target_sender = 21;
+  bool unpin = 22;
+  uint32 pin_seconds = 23;
+  bool animated = 24; // sticker
+  // forward of received media: kind (image | video | audio | document | sticker) and the
+  // opaque ref from Media.ref; forwarded marks any type as forwarded.
+  string forward_kind = 25;
+  bytes forward_ref = 26;
+  bool forwarded = 27;
 }
 message SendResponse {
   string message_id = 1;
