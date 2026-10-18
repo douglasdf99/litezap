@@ -309,8 +309,9 @@ Com a instância conectada (passos acima):
 ## Limitações conhecidas
 
 - Eventos ainda não emitidos: `message.revoked`, `chat.presence` e `group.updated` (o worker não os reporta). SSE não tem replay (`Last-Event-ID` é ignorado).
-- Um evento passa por um buffer em memória (até 10.000) antes de ser gravado no outbox dos webhooks: um crash do supervisor nesse intervalo, ou um buffer cheio (logado), perde o evento para os webhooks. Um shutdown normal grava o buffer antes de sair.
-- Se um recibo `delivered` chegar antes da confirmação do envio, `message.status: delivered` pode sair antes de `sent`.
+- A garantia "pelo menos uma vez" vale a partir do outbox. Antes dele o evento passa por um buffer em memória (até 10.000): um crash do supervisor entre gravar a mensagem no log e gravar a entrega, ou um buffer cheio (logado), perde o evento para os webhooks. Um shutdown normal grava o buffer antes de sair.
+- Streams SSE checam o token só na conexão: um stream aberto continua depois de o token ser rotacionado (reconecte para aplicar).
+- Se um recibo chegar antes da confirmação do envio, sai `message.status: delivered` (ou `read`) antes de `message.sent`, e o `message.status: sent` é omitido.
 - Sem busca full-text e sem envio de `sticker`, `location` e `contact` (marco 2b); essas mensagens são recebidas e registradas.
 - Mídia recebida baixada fica em `data/media/` sem limpeza automática ainda (o prazo de 7 dias é gravado, a limpeza vem no marco 2b).
 - Mídia passa entre supervisor e worker por arquivos em `data/` (mesma máquina). Um spawner em container (nuvem) vai precisar de um volume compartilhado.

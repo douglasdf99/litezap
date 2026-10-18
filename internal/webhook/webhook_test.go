@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -433,5 +434,58 @@ func TestRetentionAndExpirySweep(t *testing.T) {
 	}
 	if n := len(e.deliveries("wh", "")); n != 0 {
 		t.Fatalf("%d deliveries survived retention", n)
+	}
+}
+
+// One webhook's backlog must not hold back another webhook's due delivery.
+func TestBusyWebhookDoesNotStarveOthers(t *testing.T) {
+	e := newEnv(t, func(o *Options) { o.PerWebhook, o.Concurrency = 1, 2 })
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer slow.Close()
+	defer close(release) // runs first: Close waits for the blocked handler
+	fast := newReceiver(t, func(int) int { return 200 })
+	e.hook("wh_slow", "", slow.URL, "*")
+	e.hook("wh_fast", "", fast.srv.URL, "*")
+	var ds []store.Delivery
+	for _, ev := range []string{"e1", "e2", "e3", "e4", "e5"} {
+		ds = append(ds, store.Delivery{ID: "s" + ev, WebhookID: "wh_slow", EventID: ev, EventType: "x", Payload: []byte("{}"),
+			NextAttemptAt: t0, ExpiresAt: t0.Add(time.Hour)})
+	}
+	ds = append(ds, store.Delivery{ID: "f1", WebhookID: "wh_fast", EventID: "e1", EventType: "x", Payload: []byte("{}"),
+		NextAttemptAt: t0, ExpiresAt: t0.Add(time.Hour)})
+	if _, err := e.st.InsertDeliveries(context.Background(), ds, t0); err != nil {
+		t.Fatal(err)
+	}
+	e.start()
+	eventually(t, "fast webhook delivered while the slow one is busy", func() bool {
+		return len(e.deliveries("wh_fast", store.DeliveryDelivered)) == 1
+	})
+}
+
+// Concurrent reloads end with the latest webhook list.
+func TestConcurrentReloadsKeepLatestList(t *testing.T) {
+	e := newEnv(t, nil)
+	e.start()
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.hook("wh_"+strconv.Itoa(i), "", "https://example.invalid/", "*")
+			_ = e.d.Reload(context.Background())
+		}()
+	}
+	wg.Wait()
+	e.d.hooksMu.RLock()
+	n := len(e.d.hooks)
+	e.d.hooksMu.RUnlock()
+	if n != 20 {
+		t.Fatalf("dispatcher knows %d of 20 webhooks", n)
 	}
 }

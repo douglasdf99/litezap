@@ -206,15 +206,17 @@ func (s *Store) NextDeliveryAt(ctx context.Context, exclude []string) (time.Time
 }
 
 // FinishDelivery records an attempt of a pending delivery: status pending (retry at next),
-// delivered or failed. ErrNotFound means it is no longer pending (retried, expired, deleted).
+// delivered or failed. ErrNotFound means it is no longer pending (expired, deleted). A
+// success is recorded even over a failed row: the expiry sweep may have dead-lettered the
+// delivery while its last attempt was in flight, and the receiver did get it.
 func (s *Store) FinishDelivery(ctx context.Context, id, status string, attempts int, next time.Time, code int, lastErr string, at time.Time) error {
 	ts := fmtTS(at)
-	delivered := ""
+	delivered, from := "", "'pending'"
 	if status == DeliveryDelivered {
-		delivered = ts
+		delivered, from = ts, "'pending', 'failed'"
 	}
 	return s.exec1(ctx, `UPDATE webhook_deliveries SET status = ?, attempts = ?, next_attempt_at = ?, last_status_code = ?,
-		last_error = ?, updated_at = ?, delivered_at = ? WHERE id = ? AND status = 'pending'`,
+		last_error = ?, updated_at = ?, delivered_at = ? WHERE id = ? AND status IN (`+from+`)`,
 		status, attempts, fmtTS(next), code, lastErr, ts, delivered, id)
 }
 

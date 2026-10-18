@@ -1,8 +1,10 @@
 package queue
 
 import (
+	"context"
 	"sync"
 	"testing"
+	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"github.com/douglasdf99/litezap/internal/events"
@@ -30,6 +32,25 @@ func (r *recPub) Publish(_, typ string, data any) {
 }
 
 func (r *recPub) len() int { r.mu.Lock(); defer r.mu.Unlock(); return len(r.evs) }
+
+// A receipt that arrives before the send confirmation already moved the status past
+// "sent": no message.status sent is published after it.
+func TestNoSentStatusAfterEarlyReceipt(t *testing.T) {
+	pub := &recPub{}
+	e := newEnvAt(t, t0, fastSettings(), instance.Connected, func(o *Options) { o.Events = pub; o.Resolver = nil })
+	e.fake.WA.SetSendFunc(func(req *workerv1.SendRequest) (*workerv1.SendResponse, error) {
+		_, _ = e.st.ApplyReceipt(context.Background(), "i1", []string{req.MessageId}, "delivered")
+		return &workerv1.SendResponse{MessageId: req.MessageId}, nil
+	})
+	id := e.enqueue(chatA, Payload{Type: "text", Text: "oi"})
+	e.eventually("sent", func() bool { return e.status(id).Status == store.OutSent })
+	time.Sleep(20 * time.Millisecond)
+	pub.mu.Lock()
+	defer pub.mu.Unlock()
+	if len(pub.evs) != 1 || pub.evs[0].typ != events.TypeMessageSent {
+		t.Fatalf("events = %+v", pub.evs)
+	}
+}
 
 func TestSentAndFailedPublishEvents(t *testing.T) {
 	pub := &recPub{}

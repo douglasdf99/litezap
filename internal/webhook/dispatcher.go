@@ -106,6 +106,8 @@ type Dispatcher struct {
 
 	hooksMu sync.RWMutex
 	hooks   map[string]store.Webhook
+	loadMu  sync.Mutex  // serializes LoadWebhooks
+	stale   atomic.Bool // the last LoadWebhooks failed
 
 	wake chan struct{}
 
@@ -159,9 +161,15 @@ func (d *Dispatcher) Dropped() int64 { return d.dropped.Load() }
 
 // LoadWebhooks refreshes the in-memory webhook list used to match events. Call it after
 // every change to the webhooks table.
+// A failed load marks the list stale: the writer and the scheduler retry it before using it.
 func (d *Dispatcher) LoadWebhooks(ctx context.Context) error {
+	// Serialized from list to swap: two concurrent reloads must not leave the older
+	// snapshot in place (a webhook created meanwhile would never match).
+	d.loadMu.Lock()
+	defer d.loadMu.Unlock()
 	list, err := d.st.ListWebhooks(ctx)
 	if err != nil {
+		d.stale.Store(true)
 		return err
 	}
 	m := make(map[string]store.Webhook, len(list))
@@ -171,16 +179,35 @@ func (d *Dispatcher) LoadWebhooks(ctx context.Context) error {
 	d.hooksMu.Lock()
 	d.hooks = m
 	d.hooksMu.Unlock()
+	d.stale.Store(false)
+	d.mu.Lock()
+	for id := range d.endpoint {
+		if _, ok := m[id]; !ok {
+			delete(d.endpoint, id) // deleted webhook
+		}
+	}
+	d.mu.Unlock()
 	return nil
 }
 
 // Reload is LoadWebhooks plus a scheduler wake-up (an enabled webhook may have work).
+// On failure the list stays stale and is retried by the writer and the scheduler.
 func (d *Dispatcher) Reload(ctx context.Context) error {
-	if err := d.LoadWebhooks(ctx); err != nil {
-		return err
+	err := d.LoadWebhooks(ctx)
+	if err != nil {
+		d.log.Error("webhook: reload webhooks; will retry", "err", err)
 	}
 	d.Wake()
-	return nil
+	return err
+}
+
+// refreshIfStale retries a failed LoadWebhooks.
+func (d *Dispatcher) refreshIfStale() {
+	if d.stale.Load() {
+		if err := d.LoadWebhooks(context.Background()); err != nil {
+			d.log.Error("webhook: reload webhooks", "err", err)
+		}
+	}
 }
 
 func (d *Dispatcher) Wake() {
@@ -288,6 +315,7 @@ func (d *Dispatcher) drain() {
 }
 
 func (d *Dispatcher) write(batch []events.Envelope) {
+	d.refreshIfStale()
 	now := d.opt.Clock.Now()
 	d.hooksMu.RLock()
 	var ds []store.Delivery
@@ -331,6 +359,7 @@ func (d *Dispatcher) loop(ctx context.Context) {
 			d.sweep(ctx, now)
 			nextSweep = now.Add(d.opt.SweepInterval)
 		}
+		d.refreshIfStale()
 		wakeAt := d.schedule(ctx, now)
 		if wakeAt.IsZero() || nextSweep.Before(wakeAt) {
 			wakeAt = nextSweep
@@ -387,23 +416,43 @@ func (d *Dispatcher) schedule(ctx context.Context, now time.Time) time.Time {
 			exclude = append(exclude, id) // a completion wakes us
 		}
 	}
-	total := len(d.busy)
 	d.mu.Unlock()
 
-	if free := d.opt.Concurrency - total; free > 0 {
-		due, err := d.st.DueDeliveries(ctx, now, exclude, free+total)
+	// A webhook that reaches its cap is excluded and the query repeated, so one busy
+	// webhook's backlog cannot hold back the others' due deliveries.
+	excluded := map[string]bool{}
+	for round := 0; round < 32; round++ {
+		d.mu.Lock()
+		total := len(d.busy)
+		d.mu.Unlock()
+		free := d.opt.Concurrency - total
+		if free <= 0 {
+			break
+		}
+		limit := free + total // rows in flight are still pending: look past them
+		due, err := d.st.DueDeliveries(ctx, now, exclude, limit)
 		if err != nil {
 			if ctx.Err() == nil {
 				d.log.Error("webhook: load due deliveries", "err", err)
 			}
 			return now.Add(5 * time.Second)
 		}
+		capped := false
 		for _, dl := range due {
-			if !d.begin(dl) {
-				continue
+			switch d.begin(dl) {
+			case started:
+				d.sends.Add(1)
+				go d.attempt(dl)
+			case webhookFull:
+				if !excluded[dl.WebhookID] {
+					excluded[dl.WebhookID] = true
+					exclude = append(exclude, dl.WebhookID) // a completion wakes us
+					capped = true
+				}
 			}
-			d.sends.Add(1)
-			go d.attempt(dl)
+		}
+		if !capped || len(due) < limit {
+			break
 		}
 	}
 	next, ok, err := d.st.NextDeliveryAt(ctx, exclude)
@@ -419,16 +468,27 @@ func (d *Dispatcher) schedule(ctx context.Context, now time.Time) time.Time {
 	return wakeAt
 }
 
-// begin reserves a slot for a delivery; false when it is already in flight or no slot is free.
-func (d *Dispatcher) begin(dl store.Delivery) bool {
+type beginResult int
+
+const (
+	started     beginResult = iota
+	skipped                 // already in flight, or no global slot left
+	webhookFull             // the webhook has PerWebhook deliveries in flight
+)
+
+// begin reserves a slot for a delivery.
+func (d *Dispatcher) begin(dl store.Delivery) beginResult {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.busy[dl.ID] || len(d.busy) >= d.opt.Concurrency || d.inflight[dl.WebhookID] >= d.opt.PerWebhook {
-		return false
+	switch {
+	case d.busy[dl.ID] || len(d.busy) >= d.opt.Concurrency:
+		return skipped
+	case d.inflight[dl.WebhookID] >= d.opt.PerWebhook:
+		return webhookFull
 	}
 	d.busy[dl.ID] = true
 	d.inflight[dl.WebhookID]++
-	return true
+	return started
 }
 
 func (d *Dispatcher) end(dl store.Delivery) {
@@ -463,6 +523,7 @@ func (d *Dispatcher) attempt(dl store.Delivery) {
 		if err := d.st.FinishDelivery(context.Background(), dl.ID, store.DeliveryDelivered, attempts, now, code, "", now); err != nil &&
 			!errors.Is(err, store.ErrNotFound) {
 			d.log.Error("webhook: record delivery", "webhook_id", w.ID, "delivery_id", dl.ID, "err", err)
+			d.hold(w.ID, now.Add(recordErrPause)) // still pending: do not resend in a tight loop
 		}
 		return
 	}
@@ -476,8 +537,11 @@ func (d *Dispatcher) attempt(dl store.Delivery) {
 		ep = &endpoint{}
 		d.endpoint[w.ID] = ep
 	}
-	ep.fails++
-	ep.until = now.Add(Backoff(ep.fails, d.opt.BackoffBase, d.opt.BackoffMax))
+	// Concurrent failures within one backoff period count once.
+	if !ep.until.After(now) {
+		ep.fails++
+		ep.until = now.Add(Backoff(ep.fails, d.opt.BackoffBase, d.opt.BackoffMax))
+	}
 	d.mu.Unlock()
 
 	status, next := store.DeliveryPending, now.Add(Backoff(attempts, d.opt.BackoffBase, d.opt.BackoffMax))
@@ -489,6 +553,23 @@ func (d *Dispatcher) attempt(dl store.Delivery) {
 	if err := d.st.FinishDelivery(context.Background(), dl.ID, status, attempts, next, code, msg, now); err != nil &&
 		!errors.Is(err, store.ErrNotFound) {
 		d.log.Error("webhook: record attempt", "webhook_id", w.ID, "delivery_id", dl.ID, "err", err)
+		d.hold(w.ID, now.Add(recordErrPause))
+	}
+}
+
+const recordErrPause = 5 * time.Second
+
+// hold keeps a webhook's deliveries back until at least until.
+func (d *Dispatcher) hold(webhookID string, until time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	ep := d.endpoint[webhookID]
+	if ep == nil {
+		ep = &endpoint{}
+		d.endpoint[webhookID] = ep
+	}
+	if until.After(ep.until) {
+		ep.until = until
 	}
 }
 

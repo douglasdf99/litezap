@@ -26,3 +26,8 @@ Spec: `docs/superpowers/specs/2026-10-17-litezap-engine-design.md` seções 4.2,
 7. Revisão independente (concorrência, garantias de entrega, segurança) e correções.
 
 Cada commit: `gofmt`, `go vet ./...`, `go test -p 2 -race ./...`.
+
+## Revisão independente (feita)
+
+Corrigido: recarga concorrente da lista de webhooks podia deixar um snapshot antigo (agora serializada; falha marca a lista como velha e o writer/scheduler tentam de novo); um webhook com fila cheia não segura mais as entregas vencidas dos outros (o scheduler exclui o webhook no limite e consulta de novo); sucesso registrado mesmo sobre uma entrega que a varredura acabou de expirar; erro ao gravar uma tentativa segura o endpoint por 5s (sem reenvio em loop); falhas simultâneas contam uma vez no backoff do endpoint; `message.status: sent` omitido quando um recibo já chegou.
+Aceito/documentado: perda antes do outbox (buffer em memória, crash entre log e outbox), SSE autenticado só na conexão, PATCH concorrente de webhook com última escrita vencendo, códigos de QR/pareamento guardados no outbox (mesmo escopo que já lê `GET /qr`).

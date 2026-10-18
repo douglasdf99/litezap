@@ -783,8 +783,13 @@ func (d *dispatcher) sent(item store.Outbound, p Payload, at time.Time) error {
 			m.Media = &events.Media{Kind: p.Type, Mime: p.Mime, Size: p.Size, FileName: p.FileName, PTT: p.PTT}
 		}
 		pub.Publish(d.id, events.TypeMessageSent, m)
-		pub.Publish(d.id, events.TypeMessageStatus, events.MessageStatus{ID: item.ID, WAMessageID: item.WAMessageID,
-			Chat: item.ChatJID, Status: store.OutSent})
+		// A receipt that beat this confirmation already published delivered/read: a later
+		// "sent" would move the status backwards for consumers.
+		if logged, err := d.q.store.GetMessage(context.Background(), d.id, item.ID); err != nil ||
+			(logged.Status != "delivered" && logged.Status != "read") {
+			pub.Publish(d.id, events.TypeMessageStatus, events.MessageStatus{ID: item.ID, WAMessageID: item.WAMessageID,
+				Chat: item.ChatJID, Status: store.OutSent})
+		}
 	}
 	d.done(item, p)
 	return nil

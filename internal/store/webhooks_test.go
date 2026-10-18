@@ -92,9 +92,9 @@ func TestDeliveriesLifecycle(t *testing.T) {
 	if err := s.FinishDelivery(ctx, "d2", DeliveryFailed, 2, t0, 0, "timeout", t0.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	// A finished delivery is not touched again.
-	if err := s.FinishDelivery(ctx, "d2", DeliveryDelivered, 3, t0, 200, "", t0); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("finish of a failed delivery: %v", err)
+	// A failed delivery takes no more retries or failures...
+	if err := s.FinishDelivery(ctx, "d2", DeliveryPending, 3, t0, 500, "x", t0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("retry recorded over a failed delivery: %v", err)
 	}
 
 	failed, cursor, err := s.ListDeliveries(ctx, "wh_b", DeliveryFailed, 10, 0)
@@ -142,6 +142,13 @@ func TestDeliveriesLifecycle(t *testing.T) {
 	}
 	if _, err := s.GetDelivery(ctx, "wh_a", "d1"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("purged delivery: %v", err)
+	}
+	// ...but a success is recorded over one (expired while its last attempt was in flight).
+	if err := s.FinishDelivery(ctx, "d3", DeliveryDelivered, 1, t0, 200, "", t0.Add(26*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if d3, _ := s.GetDelivery(ctx, "wh_a", "d3"); d3.Status != DeliveryDelivered || d3.LastError != "" {
+		t.Fatalf("d3 = %+v", d3)
 	}
 	// Deleting a webhook removes its deliveries.
 	if err := s.DeleteWebhook(ctx, "wh_b"); err != nil {
