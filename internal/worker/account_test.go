@@ -226,7 +226,11 @@ func TestUpdateProfile(t *testing.T) {
 	var photoTarget types.JID
 	var photo []byte
 	w.acct.sendAppState = func(_ context.Context, p appstate.PatchInfo) error { patches = append(patches, p); return nil }
-	w.acct.setStatus = func(_ context.Context, in types.SetStatusInput) error { about = *in.Text; return nil }
+	w.acct.setAboutIQ = func(_ context.Context, text string) error { about = text; return nil }
+	w.acct.setStatus = func(context.Context, types.SetStatusInput) error {
+		t.Fatal("MEX used although the IQ worked")
+		return nil
+	}
 	w.acct.setPhoto = func(_ context.Context, j types.JID, b []byte) (string, error) {
 		photoTarget, photo = j, b
 		return "PIC1", nil
@@ -322,5 +326,29 @@ func TestAccountNeedsLogin(t *testing.T) {
 	}
 	if _, err := w.ProfilePicture(context.Background(), "5511888887777@s.whatsapp.net", false); err == nil {
 		t.Fatal("picture without session must fail fast")
+	}
+}
+
+// The about text goes by the classic "status" IQ; whatsmeow's MEX mutation (rejected with
+// "graphql error: 400 Bad Request" on a real account) is only a fallback.
+func TestSetAboutFallback(t *testing.T) {
+	var iq, mex []string
+	h := accountHooks{
+		setAboutIQ: func(_ context.Context, s string) error { iq = append(iq, s); return errors.New("iq refused") },
+		setStatus:  func(_ context.Context, in types.SetStatusInput) error { mex = append(mex, *in.Text); return nil },
+	}
+	if err := setAbout(context.Background(), h, "Teste"); err != nil || len(iq) != 1 || len(mex) != 1 || mex[0] != "Teste" {
+		t.Fatalf("fallback: %v iq=%v mex=%v", err, iq, mex)
+	}
+	h.setStatus = func(context.Context, types.SetStatusInput) error { return errors.New("graphql error: 400 Bad Request") }
+	if err := setAbout(context.Background(), h, "x"); err == nil || !strings.Contains(err.Error(), "iq refused") {
+		t.Fatalf("both failing = %v", err)
+	}
+	// Not connected: no fallback (the MEX call would fail the same way).
+	mex = nil
+	h.setAboutIQ = func(context.Context, string) error { return whatsmeow.ErrNotConnected }
+	h.setStatus = func(_ context.Context, in types.SetStatusInput) error { mex = append(mex, *in.Text); return nil }
+	if err := setAbout(context.Background(), h, "x"); !errors.Is(err, whatsmeow.ErrNotConnected) || len(mex) != 0 {
+		t.Fatalf("not connected = %v mex=%v", err, mex)
 	}
 }

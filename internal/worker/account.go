@@ -15,6 +15,7 @@ import (
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
@@ -173,6 +174,8 @@ type accountHooks struct {
 	businessProfile func(context.Context, types.JID) (*types.BusinessProfile, error)
 	getBlocklist    func(context.Context, string) (*types.Blocklist, error)
 	updateBlocklist func(context.Context, types.JID, events.BlocklistChangeAction, string) (*types.Blocklist, error)
+	// The about text: the classic "status" IQ first, whatsmeow's MEX mutation as fallback.
+	setAboutIQ      func(context.Context, string) error
 	setStatus       func(context.Context, types.SetStatusInput) error
 	setPhoto        func(context.Context, types.JID, []byte) (string, error)
 	privacy         func(context.Context, bool) (*types.PrivacySettings, error)
@@ -211,6 +214,18 @@ func (w *Whatsmeow) hooks() accountHooks {
 	}
 	if h.setStatus == nil {
 		h.setStatus = w.cli.SetStatusMessage
+	}
+	if h.setAboutIQ == nil {
+		h.setAboutIQ = func(ctx context.Context, text string) error {
+			// <iq xmlns="status" type="set" to="s.whatsapp.net"><status>text</status></iq>, as
+			// WhatsApp Web and Baileys send it. whatsmeow's SetStatusMessage moved to a MEX
+			// (GraphQL) mutation that WhatsApp answered with "400 Bad Request" on a real account.
+			_, err := w.cli.DangerousInternals().SendIQ(ctx, whatsmeow.DangerousInfoQuery{
+				Namespace: "status", Type: "set", To: types.ServerJID,
+				Content: []waBinary.Node{{Tag: "status", Content: []byte(text)}},
+			})
+			return err
+		}
 	}
 	if h.setPhoto == nil {
 		h.setPhoto = w.cli.SetGroupPhoto
@@ -670,8 +685,7 @@ func (w *Whatsmeow) UpdateProfile(ctx context.Context, req *workerv1.UpdateProfi
 		if len([]rune(req.About)) > maxAbout {
 			return nil, grpcErr(codes.InvalidArgument, "validation_failed", fmt.Sprintf("about is limited to %d characters", maxAbout))
 		}
-		text := req.About
-		if err := h.setStatus(ctx, types.SetStatusInput{Text: &text}); err != nil {
+		if err := setAbout(ctx, h, req.About); err != nil {
 			return nil, accountErr(err)
 		}
 	}
@@ -697,6 +711,24 @@ func (w *Whatsmeow) UpdateProfile(ctx context.Context, req *workerv1.UpdateProfi
 		out.PictureId = id
 	}
 	return out, nil
+}
+
+// setAbout sets the about text with the classic IQ and falls back to whatsmeow's MEX
+// mutation only when WhatsApp refused the IQ (connection errors are returned as they are).
+func setAbout(ctx context.Context, h accountHooks, text string) error {
+	err := h.setAboutIQ(ctx, text)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, whatsmeow.ErrNotConnected) || errors.Is(err, whatsmeow.ErrNotLoggedIn) ||
+		errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return err
+	}
+	t := text
+	if mexErr := h.setStatus(ctx, types.SetStatusInput{Text: &t}); mexErr != nil {
+		return fmt.Errorf("status iq: %w; mex: %v", err, mexErr)
+	}
+	return nil
 }
 
 // privacyNames maps whatsmeow's privacy setting types onto the settings map.
