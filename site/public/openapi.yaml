@@ -596,7 +596,7 @@ paths:
       summary: Consultar mensagem
       x-litezap-scope: instancia
       description: |
-        Status de um envio: `queued`, `in_flight`, `sent`, `delivered`, `read` ou `failed` (com `error`
+        Status de um envio: `queued`, `in_flight`, `sent`, `delivered`, `read`, `played` ou `failed` (com `error`
         no formato `codigo: detalhe` e `attempts`). Também aceita o id de uma mensagem recebida do log.
       responses:
         "200":
@@ -1153,6 +1153,41 @@ paths:
         "409": { $ref: "#/components/responses/RetryConflict" }
         "503": { $ref: "#/components/responses/ShuttingDown" }
 
+  /v1/instances/{id}/presence/subscribe:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Eventos em tempo real]
+      operationId: subscribePresence
+      x-litezap-milestone: M7
+      x-zapi: "Status do chat (presença)"
+      x-litezap-notes: "Exige presence.online, que silencia as notificações do celular."
+      summary: Assinar presença de um contato
+      x-litezap-scope: instancia
+      description: |
+        Pede ao WhatsApp as mudanças de online/offline (e visto por último, se o contato mostra) de um
+        contato; chegam como `chat.presence` com `state` `online`/`offline`. Exige
+        `presence.online` nas settings (`409 presence_offline`). Até 20 assinaturas por minuto por
+        instância (`429 rate_limited`); valem até a conexão cair.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string, description: "Número com DDI ou JID de contato (grupos não têm presença)." }
+            example: { to: "5511999999999" }
+      responses:
+        "204": { description: Assinado. }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
   /v1/instances/{id}/events:
     parameters: [{ $ref: "#/components/parameters/InstanceID" }]
     get:
@@ -1369,7 +1404,7 @@ components:
     EventTypes:
       name: types
       in: query
-      description: "Filtro separado por vírgulas: tipos exatos (`instance.status`), famílias (`message.*`) ou `*`. Omitido: todos."
+      description: "Filtro separado por vírgulas: tipos exatos (`instance.status`), famílias (`message.*`) ou `*`. Omitido: todos. `chat.presence` é opt-in: nem `*` nem a omissão o incluem (use `*,chat.presence`)."
       schema: { type: string, example: "message.*,instance.status" }
 
   schemas:
@@ -1427,6 +1462,59 @@ components:
         timezone: { type: string, description: "Fuso IANA (ex.: America/Sao_Paulo); vazio = fuso do servidor." }
         unsafe_pacing: { type: boolean, default: false, description: Remove os pisos de ritmo. Só admin. }
         proxy_url: { type: string, description: "http://, https:// ou socks5://; senha mascarada na leitura." }
+        calls: { $ref: "#/components/schemas/CallSettings" }
+        presence: { $ref: "#/components/schemas/PresenceSettings" }
+    CallSettings:
+      type: object
+      description: Política de chamadas recebidas (marco 7).
+      properties:
+        auto_reject: { type: boolean, default: false, description: "Rejeita toda chamada assim que toca (< 3s); `call.received` sai com `rejected: true`." }
+        reject_message:
+          type: string
+          maxLength: 1000
+          description: "Mandada ao autor de chamadas individuais rejeitadas, pela fila (ritmo, janela, rampa); no máximo uma por contato a cada 10 min; expira em 1h. Vazio: sem mensagem."
+    PresenceSettings:
+      type: object
+      description: Presença da própria conta (marco 7).
+      properties:
+        online:
+          type: boolean
+          default: false
+          description: "Marca a conta como disponível a cada conexão: necessário para `chat.presence` e `presence/subscribe`. Enquanto ligado, o celular deixa de mostrar notificações."
+    WebhookFilters:
+      type: object
+      description: "Restringem os eventos do webhook (marco 7). Cada filtro só vale para eventos que têm o campo: `instance.*` sempre passam."
+      properties:
+        chat: { type: string, enum: [direct, group] }
+        chats: { type: array, maxItems: 500, items: { type: string }, description: "Só estes chats (número com DDI ou JID)." }
+        exclude_chats: { type: array, items: { type: string }, description: Todos menos estes chats. }
+        message_types:
+          type: array
+          items: { type: string, enum: [text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, button_reply, unknown] }
+          description: "Só eventos de mensagem destes tipos (received, sent, reaction, button_reply)."
+        from_me: { type: boolean, description: "true: só mensagens nossas; false: exclui as nossas. Omitido: ambas." }
+    ChatPresenceEvent:
+      type: object
+      description: Dados de `chat.presence`.
+      properties:
+        chat: { type: string }
+        sender: { type: string, description: Quem digita (o participante, em grupos). }
+        is_group: { type: boolean }
+        state: { type: string, enum: [composing, recording, paused, online, offline] }
+        last_seen: { type: string, format: date-time, description: "Em `offline`, quando o contato mostra o visto por último." }
+    CallEvent:
+      type: object
+      description: Dados de `call.received`, `call.accepted` e `call.ended`.
+      properties:
+        call_id: { type: string }
+        chat: { type: string, description: Chat de quem ligou, ou o grupo em chamadas de grupo. }
+        caller: { type: string }
+        is_group: { type: boolean }
+        media: { type: string, enum: [audio, video] }
+        rejected: { type: boolean, description: "call.received: rejeitada por `calls.auto_reject`." }
+        reason: { type: string, description: "call.ended: motivo do WhatsApp, `rejected` ou `rejected_by_device`." }
+        missed: { type: boolean, description: "call.ended: tocou sem ninguém atender." }
+        timestamp: { type: string, format: date-time }
     SettingsPatch:
       type: object
       description: Todos os campos são opcionais; ausentes mantêm o valor atual.
@@ -1446,6 +1534,15 @@ components:
         timezone: { type: string }
         unsafe_pacing: { type: boolean, description: Só admin. }
         proxy_url: { type: string, description: "Só admin. Vazio volta ao default_proxy_url." }
+        calls:
+          type: object
+          properties:
+            auto_reject: { type: boolean }
+            reject_message: { type: string, maxLength: 1000 }
+        presence:
+          type: object
+          properties:
+            online: { type: boolean }
     MediaInput:
       type: object
       description: Informe `url` ou `base64`.
@@ -1499,7 +1596,7 @@ components:
         reaction_to: { type: string }
         status:
           type: string
-          enum: [queued, in_flight, sent, delivered, read, failed, received, pending]
+          enum: [queued, in_flight, sent, delivered, read, played, failed, received, pending]
         attempts: { type: integer }
         error: { type: string, description: "Último erro (`codigo: detalhe`) de item não enviado." }
         timestamp: { type: string, format: date-time }
@@ -1552,6 +1649,7 @@ components:
         instance_id: { type: string, description: "Só na criação. Admin: instância do webhook (omitido = global). Token de instância: só a própria." }
         enabled: { type: boolean, default: true }
         version: { type: integer, enum: [1], description: Versão do envelope. Só 1 por enquanto. }
+        filters: { $ref: "#/components/schemas/WebhookFilters" }
     Webhook:
       type: object
       properties:
@@ -1561,6 +1659,7 @@ components:
         events: { type: array, items: { type: string } }
         version: { type: integer }
         enabled: { type: boolean }
+        filters: { $ref: "#/components/schemas/WebhookFilters" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         secret: { type: string, description: Só na criação e quando trocado por PATCH. }
@@ -1599,7 +1698,7 @@ components:
         data: { type: object, description: Varia por tipo de evento. }
     EventMessage:
       type: object
-      description: Mensagem em `message.received`, `message.sent` e `message.reaction`.
+      description: Mensagem em `message.received`, `message.sent`, `message.reaction` e `message.button_reply`.
       properties:
         id: { type: string, description: "Id LiteZap (em envios pela API, o id do item da fila)." }
         wa_message_id: { type: string }
@@ -1613,6 +1712,14 @@ components:
         text: { type: string, description: "Texto, legenda ou emoji da reação." }
         media: { $ref: "#/components/schemas/MediaInfo" }
         reaction_to: { type: string }
+        button_reply:
+          type: object
+          description: "Só em `message.button_reply`."
+          properties:
+            kind: { type: string, enum: [button, list, template, interactive] }
+            id: { type: string }
+            title: { type: string }
+            description: { type: string }
         timestamp: { type: string, format: date-time }
 
   responses:
@@ -1901,14 +2008,15 @@ webhooks:
       description: |
         Acompanha as mensagens enviadas pela API: `sent`, `delivered`, `read` ou `failed` (com `error` no
         formato `codigo: detalhe`). Se um recibo chegar antes da confirmação do envio, `delivered` (ou
-        `read`) pode chegar antes de `message.sent`, e o `sent` é omitido. Ainda não emite `played`
-        (áudio ouvido) nem `revoked` (M7).
+        `read`) pode chegar antes de `message.sent`, e o `sent` é omitido. `played` (M7) sai quando o
+        contato reproduz um áudio de voz, vídeo ou mídia de visualização única; é o status mais alto
+        (um `read` atrasado não o rebaixa). Mensagem apagada sai em `message.revoked`.
       x-related: [message.sent]
       x-fields:
         - [id, string, "Id devolvido por POST /messages."]
         - [wa_message_id, string, "Id no WhatsApp (opcional)."]
         - [chat, string, "JID do chat."]
-        - [status, string, "sent, delivered, read ou failed."]
+        - [status, string, "sent, delivered, read, played ou failed."]
         - [error, string, "Motivo, em failed (opcional)."]
       requestBody:
         content:
@@ -1964,5 +2072,127 @@ webhooks:
           application/json:
             schema: { $ref: "#/components/schemas/Envelope" }
             example: { id: evt_5c1e8a4d0b7f2396, type: history.synced, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:41:30.902Z", data: { chats: 48, messages: 3120, new_messages: 3120 } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  message.button_reply:
+    post:
+      summary: Resposta de botão ou lista
+      x-slug: message-button-reply
+      x-litezap-milestone: M7
+      x-zapi: Responder botão / lista (recebimento)
+      description: |
+        Um contato respondeu a uma mensagem de botões, lista, template ou interativa (enviada por outra
+        ferramenta: o LiteZap só recebe). A resposta fica no log com `type: button_reply`. `text` é o texto
+        escolhido e `reply_to` a mensagem dos botões, quando o WhatsApp informa.
+      x-related: [message.received]
+      x-fields:
+        - [button_reply.kind, string, "button, list, template ou interactive."]
+        - [button_reply.id, string, "Id do botão ou da linha escolhida (interactive: nome do fluxo)."]
+        - [button_reply.title, string, "Texto mostrado na escolha."]
+        - [button_reply.description, string, "Descrição da linha (lista) ou parâmetros JSON (interactive) (opcional)."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_3d9a1f7c5e2b8046, type: message.button_reply, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T10:05:00.000Z", data: { id: msg_4b8e2d0a6c1f3957, wa_message_id: 3A9C2E5B1D4F7A0C3E6B, chat: 5511999999999@s.whatsapp.net, sender: 5511999999999@s.whatsapp.net, from_me: false, source: contact, type: button_reply, text: "Plano mensal", reply_to: 3EB0C4D5E6F7A8B9C0D1E2, button_reply: { kind: list, id: plano_mensal, title: "Plano mensal" }, timestamp: "2026-10-18T10:05:00Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  chat.presence:
+    post:
+      summary: Presença no chat
+      x-slug: chat-presence
+      x-litezap-milestone: M7
+      x-zapi: Status do chat
+      description: |
+        Contato digitando (`composing`), gravando áudio (`recording`) ou parando (`paused`) num chat, e
+        contatos assinados com `POST /presence/subscribe` ficando `online`/`offline`. **Opt-in**: só chega
+        com `presence.online` ligado nas settings (o WhatsApp só manda presença para contas online, e com
+        isso o celular para de mostrar notificações) e só para webhooks/streams que pedem o tipo pelo nome
+        (`chat.presence` ou `chat.*`; `*` não inclui). Repetições do mesmo estado em menos de 5 segundos
+        são descartadas.
+      x-related: [message.received]
+      x-fields:
+        - [chat, string, "JID do chat (ou do contato, em online/offline)."]
+        - [sender, string, "Quem digita (o participante, em grupos)."]
+        - [is_group, boolean, "Chat de grupo (opcional)."]
+        - [state, string, "composing, recording, paused, online ou offline."]
+        - [last_seen, string, "Em offline: visto por último, se o contato mostra (opcional)."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_7e1b4d8a2c6f0935, type: chat.presence, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T10:06:00.000Z", data: { chat: 5511999999999@s.whatsapp.net, sender: 5511999999999@s.whatsapp.net, state: composing } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  call.received:
+    post:
+      summary: Chamada recebida
+      x-slug: call-received
+      x-litezap-milestone: M7
+      x-zapi: Webhook de chamadas
+      description: |
+        Uma chamada de voz ou vídeo está tocando (individual, ou em grupo com `is_group`). Com
+        `calls.auto_reject` a chamada é rejeitada antes do evento (em menos de 3 segundos) e sai com
+        `rejected: true`; `calls.reject_message` vai ao autor pela fila. Atender chamadas pela API não é
+        possível.
+      x-related: [call.accepted, call.ended]
+      x-fields:
+        - [call_id, string, "Id da chamada."]
+        - [chat, string, "Chat de quem ligou, ou o grupo."]
+        - [caller, string, "JID de quem ligou."]
+        - [is_group, boolean, "Chamada de grupo (opcional)."]
+        - [media, string, "audio ou video (opcional)."]
+        - [rejected, boolean, "Rejeitada automaticamente (opcional)."]
+        - [timestamp, string, "Quando tocou."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_1f6c9a3e7b0d2584, type: call.received, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T10:07:00.000Z", data: { call_id: 4B2E9D1F7A3C, chat: 5511999999999@s.whatsapp.net, caller: 5511999999999@s.whatsapp.net, media: audio, rejected: true, timestamp: "2026-10-18T10:07:00Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  call.accepted:
+    post:
+      summary: Chamada atendida
+      x-slug: call-accepted
+      x-litezap-milestone: M7
+      x-zapi: Webhook de chamadas
+      description: A chamada foi atendida num aparelho da conta (o celular, por exemplo).
+      x-related: [call.received, call.ended]
+      x-fields:
+        - [call_id, string, "Id da chamada."]
+        - [chat, string, "Chat de quem ligou, ou o grupo."]
+        - [caller, string, "JID de quem ligou."]
+        - [timestamp, string, "Quando foi atendida."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_5a0e3c7f1d9b4628, type: call.accepted, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T10:08:00.000Z", data: { call_id: 4B2E9D1F7A3C, chat: 5511999999999@s.whatsapp.net, caller: 5511999999999@s.whatsapp.net, media: video, timestamp: "2026-10-18T10:08:00Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  call.ended:
+    post:
+      summary: Chamada encerrada
+      x-slug: call-ended
+      x-litezap-milestone: M7
+      x-zapi: Webhook de chamadas
+      description: |
+        A chamada terminou; sai uma vez por chamada. `missed: true` quando tocou sem ninguém atender e
+        não foi rejeitada. `reason` traz o motivo do WhatsApp, `rejected` (rejeitada por esta instância)
+        ou `rejected_by_device` (rejeitada num aparelho da conta).
+      x-related: [call.received, call.accepted]
+      x-fields:
+        - [call_id, string, "Id da chamada."]
+        - [chat, string, "Chat de quem ligou, ou o grupo."]
+        - [caller, string, "JID de quem ligou."]
+        - [reason, string, "Motivo do fim (opcional)."]
+        - [missed, boolean, "Chamada perdida (opcional)."]
+        - [timestamp, string, "Quando terminou."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_9c4f2a8e6b1d3075, type: call.ended, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T10:09:00.000Z", data: { call_id: 7D1A3F9B2E5C, chat: 5511999999999@s.whatsapp.net, caller: 5511999999999@s.whatsapp.net, media: audio, reason: timeout, missed: true, timestamp: "2026-10-18T10:09:00Z" } }
       responses:
         "2XX": { description: Qualquer 2xx confirma a entrega. }

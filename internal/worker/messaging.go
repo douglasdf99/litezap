@@ -430,6 +430,8 @@ func content(m *waE2E.Message) (typ, text string, media *workerv1.Media, reactio
 	case m.GetReactionMessage() != nil:
 		x := m.GetReactionMessage()
 		return "reaction", x.GetText(), nil, x.GetKey().GetID(), true
+	case buttonReply(m) != nil:
+		return "button_reply", buttonReply(m).Title, nil, "", true
 	case m.GetProtocolMessage() != nil, m.GetSenderKeyDistributionMessage() != nil,
 		m.GetPollUpdateMessage() != nil, m.GetPinInChatMessage() != nil, m.GetKeepInChatMessage() != nil,
 		m.GetSecretEncryptedMessage() != nil:
@@ -464,6 +466,37 @@ func contextOf(m *waE2E.Message) *waE2E.ContextInfo {
 		return m.GetContactsArrayMessage().GetContextInfo()
 	case pollCreation(m) != nil:
 		return pollCreation(m).GetContextInfo()
+	case m.GetButtonsResponseMessage() != nil:
+		return m.GetButtonsResponseMessage().GetContextInfo()
+	case m.GetListResponseMessage() != nil:
+		return m.GetListResponseMessage().GetContextInfo()
+	case m.GetTemplateButtonReplyMessage() != nil:
+		return m.GetTemplateButtonReplyMessage().GetContextInfo()
+	case m.GetInteractiveResponseMessage() != nil:
+		return m.GetInteractiveResponseMessage().GetContextInfo()
+	}
+	return nil
+}
+
+// buttonReply extracts the answer to a button, list, template or interactive message
+// (receive only: LiteZap does not send those). nil when m is none of them.
+func buttonReply(m *waE2E.Message) *workerv1.ButtonReply {
+	switch {
+	case m.GetButtonsResponseMessage() != nil:
+		x := m.GetButtonsResponseMessage()
+		return &workerv1.ButtonReply{Kind: "button", Id: x.GetSelectedButtonID(), Title: x.GetSelectedDisplayText()}
+	case m.GetListResponseMessage() != nil:
+		x := m.GetListResponseMessage()
+		return &workerv1.ButtonReply{Kind: "list", Id: x.GetSingleSelectReply().GetSelectedRowID(), Title: x.GetTitle(),
+			Description: x.GetDescription()}
+	case m.GetTemplateButtonReplyMessage() != nil:
+		x := m.GetTemplateButtonReplyMessage()
+		return &workerv1.ButtonReply{Kind: "template", Id: x.GetSelectedID(), Title: x.GetSelectedDisplayText()}
+	case m.GetInteractiveResponseMessage() != nil:
+		x := m.GetInteractiveResponseMessage()
+		nf := x.GetNativeFlowResponseMessage()
+		return &workerv1.ButtonReply{Kind: "interactive", Id: nf.GetName(), Title: x.GetBody().GetText(),
+			Description: nf.GetParamsJSON()}
 	}
 	return nil
 }
@@ -487,6 +520,7 @@ func details(m *waE2E.Message, out *workerv1.Message) {
 			out.Contacts = append(out.Contacts, &workerv1.ContactCard{DisplayName: c.GetDisplayName(), Vcard: c.GetVcard()})
 		}
 	}
+	out.ButtonReply = buttonReply(m)
 	if p := pollCreation(m); p != nil {
 		poll := &workerv1.Poll{Name: p.GetName(), Selectable: p.GetSelectableOptionsCount()}
 		for _, o := range p.GetOptions() {

@@ -23,6 +23,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/mcp"
 	"github.com/douglasdf99/litezap/internal/media"
 	"github.com/douglasdf99/litezap/internal/queue"
+	"github.com/douglasdf99/litezap/internal/realtime"
 	"github.com/douglasdf99/litezap/internal/service"
 	"github.com/douglasdf99/litezap/internal/settings"
 	"github.com/douglasdf99/litezap/internal/spawner"
@@ -113,8 +114,17 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	q := queue.New(st, mgr, queue.Options{Defaults: cfg.InstanceDefaults, Log: log, Resolver: resolver,
 		ConnectGrace: 15 * time.Second, Events: bus, Hold: cl.sending.Held})
 	cl.sending.Wake = q.Wake
+	// Calls and presence (marco 7); its sender is set below, once messaging exists.
+	rt := &realtime.Handler{Workers: mgr, Events: bus, Log: log,
+		Settings: func(ctx context.Context, id string) (settings.Settings, error) {
+			in, err := st.GetInstance(ctx, id)
+			if err != nil {
+				return settings.Settings{}, err
+			}
+			return settings.Effective(cfg.InstanceDefaults, cfg.DefaultProxyURL, in.SettingsJSON)
+		}}
 	mgr.SetObserver(manager.Observers{
-		&ingest.Ingestor{Store: st, Log: log, Events: bus, History: history}, q, events.Observer{Bus: bus}, cl.proxy,
+		&ingest.Ingestor{Store: st, Log: log, Events: bus, History: history}, q, events.Observer{Bus: bus}, cl.proxy, rt,
 	})
 	stopAll := func() {
 		shutdownAll(q, mgr, history, hooks, scale)
@@ -165,6 +175,8 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	loopback := isLoopback(cfg.ListenAddr)
 	// New sends (REST and MCP) are refused while the operator suspends sending.
 	guarded := service.GuardedMessaging{Messaging: msg, Sending: cl.sending}
+	rt.SetSender(guarded)
+	msg.OnSettingsChanged = rt.SettingsChanged
 	handler := api.New(svc, guarded, api.Options{
 		// MCP streamable HTTP at /mcp, behind the same tokens (spec 3.1, 6.1).
 		MCP: mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Logger: log,

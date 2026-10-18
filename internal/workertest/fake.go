@@ -24,6 +24,7 @@ const testJID = "5511999999999:7@s.whatsapp.net"
 
 // The fake must satisfy the messaging interface, or Server would answer Unimplemented.
 var _ worker.Messenger = (*FakeWA)(nil)
+var _ worker.Realtime = (*FakeWA)(nil)
 
 // FakeWA is a scriptable worker.WAClient and worker.Messenger.
 type FakeWA struct {
@@ -47,6 +48,12 @@ type FakeWA struct {
 	checks       int   // phones looked up by CheckNumbers
 	checkErr     error // returned by CheckNumbers when set
 	downloads    int
+	// Calls and presence (marco 7).
+	offers     map[string]bool // call ids offered and not finished
+	rejected   []string
+	presence   []bool // SetPresence calls (true: available)
+	subscribed []string
+	rtErr      error // returned by the Realtime methods when set
 }
 
 func (f *FakeWA) Run(ctx context.Context, sink worker.Sink) error {
@@ -254,6 +261,68 @@ func (f *FakeWA) CheckNumbers(_ context.Context, phones []string) ([]*workerv1.N
 	return out, nil
 }
 
+// SetRealtimeErr makes RejectCall, SetPresence and SubscribePresence fail with err.
+func (f *FakeWA) SetRealtimeErr(err error) {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	f.rtErr = err
+}
+
+func (f *FakeWA) RejectCall(_ context.Context, callID string) error {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	if f.rtErr != nil {
+		return f.rtErr
+	}
+	if !f.offers[callID] {
+		return status.Error(codes.NotFound, "not_found: unknown or finished call")
+	}
+	delete(f.offers, callID)
+	f.rejected = append(f.rejected, callID)
+	return nil
+}
+
+// Rejected returns the call ids rejected so far.
+func (f *FakeWA) Rejected() []string {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	return append([]string(nil), f.rejected...)
+}
+
+func (f *FakeWA) SetPresence(_ context.Context, available bool) error {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	if f.rtErr != nil {
+		return f.rtErr
+	}
+	f.presence = append(f.presence, available)
+	return nil
+}
+
+// PresenceStates returns every SetPresence call (true: available).
+func (f *FakeWA) PresenceStates() []bool {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	return append([]bool(nil), f.presence...)
+}
+
+func (f *FakeWA) SubscribePresence(_ context.Context, jid string) error {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	if f.rtErr != nil {
+		return f.rtErr
+	}
+	f.subscribed = append(f.subscribed, jid)
+	return nil
+}
+
+// Subscriptions returns the JIDs passed to SubscribePresence.
+func (f *FakeWA) Subscriptions() []string {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	return append([]string(nil), f.subscribed...)
+}
+
 // Fake is one in-memory worker; it implements spawner.WorkerHandle.
 type Fake struct {
 	ID        string
@@ -325,6 +394,31 @@ func (f *Fake) EmitReceipt(r *workerv1.Receipt) {
 
 func (f *Fake) EmitHistory(h *workerv1.HistoryChunk) {
 	f.WA.getSink().Data(&workerv1.Event{Kind: &workerv1.Event_History{History: h}})
+}
+
+// EmitCall simulates a call signal; offers become rejectable until they end.
+func (f *Fake) EmitCall(c *workerv1.Call) {
+	f.WA.msgMu.Lock()
+	switch c.Kind {
+	case "offer", "offer_notice":
+		if f.WA.offers == nil {
+			f.WA.offers = map[string]bool{}
+		}
+		f.WA.offers[c.CallId] = true
+	case "terminate", "reject":
+		delete(f.WA.offers, c.CallId)
+	}
+	f.WA.msgMu.Unlock()
+	f.WA.getSink().Data(&workerv1.Event{Kind: &workerv1.Event_Call{Call: c}})
+}
+
+// EmitChatPresence and EmitPresence simulate typing and online/offline updates.
+func (f *Fake) EmitChatPresence(p *workerv1.ChatPresence) {
+	f.WA.getSink().Data(&workerv1.Event{Kind: &workerv1.Event_ChatPresence{ChatPresence: p}})
+}
+
+func (f *Fake) EmitPresence(p *workerv1.Presence) {
+	f.WA.getSink().Data(&workerv1.Event{Kind: &workerv1.Event_Presence{Presence: p}})
 }
 
 // Crash simulates the worker process dying.

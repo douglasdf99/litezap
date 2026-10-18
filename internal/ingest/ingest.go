@@ -21,8 +21,8 @@ import (
 type Ingestor struct {
 	Store *store.Store
 	Log   *slog.Logger
-	// Events, when set, receives message.received/sent/reaction for new messages and
-	// message.status for receipts that raised a status.
+	// Events, when set, receives message.received/sent/reaction/button_reply for new
+	// messages and message.status for receipts that raised a status.
 	Events events.Publisher
 	// History, when set, aggregates history chunks into one history.synced per sync.
 	History *events.HistoryTracker
@@ -38,10 +38,7 @@ func (in *Ingestor) WorkerEvent(instanceID string, ev *workerv1.Event) {
 		err = in.message(ctx, instanceID, ev.GetMessage())
 	case ev.GetReceipt() != nil:
 		r := ev.GetReceipt()
-		st := r.Type
-		if st == "played" {
-			st = "read"
-		}
+		st := r.Type // delivered | read | played (voice notes and videos)
 		var changed []store.ReceiptChange
 		changed, err = in.Store.ApplyReceipt(ctx, instanceID, r.MessageIds, st)
 		if in.Events != nil {
@@ -90,6 +87,9 @@ func meta(m *workerv1.Message) store.MessageMeta {
 	}
 	if p := m.Poll; p != nil {
 		mm.Poll = &store.Poll{Name: p.Name, Options: p.Options, Selectable: int(p.Selectable)}
+	}
+	if b := m.ButtonReply; b != nil {
+		mm.ButtonReply = &store.ButtonReply{Kind: b.Kind, ID: b.Id, Title: b.Title, Description: b.Description}
 	}
 	return mm
 }
@@ -143,6 +143,8 @@ func (in *Ingestor) message(ctx context.Context, instanceID string, m *workerv1.
 		typ = events.TypeMessageSent
 	case m.Type == "reaction":
 		typ = events.TypeMessageReaction
+	case m.Type == "button_reply":
+		typ = events.TypeMessageButton
 	}
 	in.Events.Publish(instanceID, typ, eventMessage(instanceID, m, rec))
 	return nil

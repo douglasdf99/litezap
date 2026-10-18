@@ -345,7 +345,7 @@ type checkNumbersOutput struct {
 
 type waitEventsInput struct {
 	InstanceID     string   `json:"instance_id,omitempty" jsonschema:"Instance whose events to wait for"`
-	Types          []string `json:"types,omitempty" jsonschema:"Event types to wait for, e.g. [\"message.received\"]; \"message.*\" matches a family. Omit for every type. Known types: instance.status, instance.qr, instance.pair_code, message.received, message.sent, message.status, message.reaction, message.edited, message.revoked, message.poll_vote, history.synced."`
+	Types          []string `json:"types,omitempty" jsonschema:"Event types to wait for, e.g. [\"message.received\"]; \"message.*\" matches a family. Omit for every type. Known types: instance.status, instance.qr, instance.pair_code, message.received, message.sent, message.status, message.reaction, message.edited, message.revoked, message.poll_vote, message.button_reply, chat.presence, call.received, call.accepted, call.ended, history.synced. chat.presence (typing, online) only arrives when named explicitly and the instance has presence.online on."`
 	TimeoutSeconds int      `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for the first event, in seconds (default 20, max 55)."`
 	MaxEvents      int      `json:"max_events,omitempty" jsonschema:"Maximum events returned (default 20, max 100)."`
 }
@@ -470,7 +470,7 @@ func (t *tools) register(s *sdk.Server) {
 	add(t, s, &sdk.Tool{
 		Name:        "get_message_status",
 		Title:       "Get message status",
-		Description: "Returns a message's status: queued, in_flight, sent, delivered, read or failed (with the error). Use it to follow a message that send_message left queued.",
+		Description: "Returns a message's status: queued, in_flight, sent, delivered, read, played (voice note or video played) or failed (with the error). Use it to follow a message that send_message left queued.",
 		InputSchema: schema[messageStatusInput](map[string]func(*jsonschema.Schema){"instance_id": instID}),
 		Annotations: readOnly,
 	}, t.getMessageStatus)
@@ -651,7 +651,7 @@ func (t *tools) send(ctx context.Context, instanceID string, in service.SendInpu
 	}
 	out := sendOutput{Message: v}
 	switch v.Status {
-	case "sent", "delivered", "read":
+	case "sent", "delivered", "read", "played":
 		out.Sent = true
 		out.Note = "Message sent (status " + v.Status + "). Do not send it again."
 	default:

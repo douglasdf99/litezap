@@ -22,17 +22,19 @@ type Webhook struct {
 	UpdatedAt  time.Time
 	// Owner is "" or OwnerOperator (registered with the operator token).
 	Owner string
+	// FiltersJSON holds the webhook's events.Filters ("" = none).
+	FiltersJSON string
 }
 
 // OwnerOperator marks a webhook registered by the operator token.
 const OwnerOperator = "operator"
 
-const webhookCols = `id, COALESCE(instance_id, ''), url, secret, events_json, version, enabled, created_at, updated_at, owner`
+const webhookCols = `id, COALESCE(instance_id, ''), url, secret, events_json, version, enabled, created_at, updated_at, owner, filters_json`
 
 func scanWebhook(row scanner) (Webhook, error) {
 	var w Webhook
 	var evs, created, updated string
-	err := row.Scan(&w.ID, &w.InstanceID, &w.URL, &w.Secret, &evs, &w.Version, &w.Enabled, &created, &updated, &w.Owner)
+	err := row.Scan(&w.ID, &w.InstanceID, &w.URL, &w.Secret, &evs, &w.Version, &w.Enabled, &created, &updated, &w.Owner, &w.FiltersJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return w, ErrNotFound
 	}
@@ -54,8 +56,8 @@ func nullable(s string) any {
 func (s *Store) CreateWebhook(ctx context.Context, w Webhook) error {
 	evs, _ := json.Marshal(w.Events)
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO webhooks (id, instance_id, url, secret, events_json, version, enabled, created_at, updated_at, owner)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, w.ID, nullable(w.InstanceID), w.URL, w.Secret, string(evs), w.Version, w.Enabled, ts, ts, w.Owner)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO webhooks (id, instance_id, url, secret, events_json, version, enabled, created_at, updated_at, owner, filters_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, w.ID, nullable(w.InstanceID), w.URL, w.Secret, string(evs), w.Version, w.Enabled, ts, ts, w.Owner, w.FiltersJSON)
 	return err
 }
 
@@ -81,11 +83,11 @@ func (s *Store) ListWebhooks(ctx context.Context) ([]Webhook, error) {
 	return out, rows.Err()
 }
 
-// UpdateWebhook saves url, secret, events and enabled.
+// UpdateWebhook saves url, secret, events, filters and enabled.
 func (s *Store) UpdateWebhook(ctx context.Context, w Webhook) error {
 	evs, _ := json.Marshal(w.Events)
-	return s.exec1(ctx, `UPDATE webhooks SET url = ?, secret = ?, events_json = ?, enabled = ?, updated_at = ? WHERE id = ?`,
-		w.URL, w.Secret, string(evs), w.Enabled, now(), w.ID)
+	return s.exec1(ctx, `UPDATE webhooks SET url = ?, secret = ?, events_json = ?, enabled = ?, filters_json = ?, updated_at = ? WHERE id = ?`,
+		w.URL, w.Secret, string(evs), w.Enabled, w.FiltersJSON, now(), w.ID)
 }
 
 // DeleteWebhook removes a webhook and its deliveries.

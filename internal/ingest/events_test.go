@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"github.com/douglasdf99/litezap/internal/clock"
 	"github.com/douglasdf99/litezap/internal/events"
+	"github.com/douglasdf99/litezap/internal/store"
 )
 
 type recPub struct {
@@ -75,7 +77,7 @@ func TestEventsForNewMessagesOnly(t *testing.T) {
 	}
 	d := sts[0].data.(events.MessageStatus)
 	r := sts[1].data.(events.MessageStatus)
-	if d.Status != "delivered" || d.WAMessageID != "P1" || d.Chat != chat || d.ID == "" || r.Status != "read" {
+	if d.Status != "delivered" || d.WAMessageID != "P1" || d.Chat != chat || d.ID == "" || r.Status != "played" {
 		t.Fatalf("status data = %+v, %+v", d, r)
 	}
 }
@@ -99,5 +101,26 @@ func TestHistoryFeedsTrackerWithoutMessageEvents(t *testing.T) {
 	}
 	if h := evs[0].data.(events.HistorySynced); h != (events.HistorySynced{Chats: 2, Messages: 4, NewMessages: 2}) {
 		t.Fatalf("history = %+v", h)
+	}
+}
+
+func TestButtonReplyEvent(t *testing.T) {
+	in, st := setup(t)
+	pub := &recPub{}
+	in.Events = pub
+	in.WorkerEvent("i1", msgEv(&workerv1.Message{Id: "B1", Chat: chat, Sender: chat, TimestampMs: ts, Type: "button_reply",
+		Text: "Sim", QuotedId: "ORIG", ButtonReply: &workerv1.ButtonReply{Kind: "button", Id: "yes", Title: "Sim"}}))
+	evs := pub.snapshot()
+	if len(evs) != 1 || evs[0].typ != events.TypeMessageButton {
+		t.Fatalf("events = %+v", evs)
+	}
+	m := evs[0].data.(events.Message)
+	if m.Type != "button_reply" || m.Text != "Sim" || m.ReplyTo != "ORIG" || m.ButtonReply == nil ||
+		m.ButtonReply.ID != "yes" || m.ButtonReply.Kind != "button" {
+		t.Fatalf("data = %+v", m)
+	}
+	logged, err := st.MessageByWAID(context.Background(), "i1", chat, "B1")
+	if err != nil || store.ParseMeta(logged.MetaJSON).ButtonReply == nil {
+		t.Fatalf("logged = %+v, %v", logged, err)
 	}
 }

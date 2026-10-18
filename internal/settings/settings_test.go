@@ -144,3 +144,20 @@ func TestRampDailyCap(t *testing.T) {
 		t.Errorf("disabled ramp cap = %d", got)
 	}
 }
+
+func TestCallsAndPresencePatch(t *testing.T) {
+	msg := "Não atendemos ligações; mande uma mensagem."
+	p := Patch{}.Merge(Patch{Calls: &CallsPatch{AutoReject: ptr(true)}})
+	p = p.Merge(Patch{Calls: &CallsPatch{RejectMessage: &msg}, Presence: &PresencePatch{Online: ptr(true)}})
+	s := Defaults().Apply(p)
+	if !s.Calls.AutoReject || s.Calls.RejectMessage != msg || !s.Presence.Online {
+		t.Fatalf("settings = %+v", s)
+	}
+	if d := Defaults(); d.Calls.AutoReject || d.Presence.Online {
+		t.Fatal("calls and presence must be off by default")
+	}
+	s.Calls.RejectMessage = strings.Repeat("x", MaxRejectMessage+1)
+	if s.Validate() == nil {
+		t.Fatal("long reject_message accepted")
+	}
+}

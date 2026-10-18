@@ -81,8 +81,14 @@ func TestFromMeSourceAndReceipts(t *testing.T) {
 	}
 	in.WorkerEvent("i1", &workerv1.Event{Kind: &workerv1.Event_Receipt{Receipt: &workerv1.Receipt{
 		MessageIds: []string{"PHONE1"}, Chat: chat, Type: "played"}}})
-	if m, _ := st.MessageByWAID(ctx, "i1", chat, "PHONE1"); m.Status != "read" {
+	if m, _ := st.MessageByWAID(ctx, "i1", chat, "PHONE1"); m.Status != "played" {
 		t.Fatalf("status = %q", m.Status)
+	}
+	// played is the top status: a late read receipt never lowers it.
+	in.WorkerEvent("i1", &workerv1.Event{Kind: &workerv1.Event_Receipt{Receipt: &workerv1.Receipt{
+		MessageIds: []string{"PHONE1"}, Chat: chat, Type: "read"}}})
+	if m, _ := st.MessageByWAID(ctx, "i1", chat, "PHONE1"); m.Status != "played" {
+		t.Fatalf("status after late read = %q", m.Status)
 	}
 }
 

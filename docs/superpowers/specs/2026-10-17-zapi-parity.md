@@ -51,8 +51,8 @@ Legenda:
 | INS-11 | Token de extensão (conector no navegador) | Gerar token de extensão | Não (produto próprio da Z-API) | Fora | — | O equivalente LiteZap é o app local (peça #2) | — |
 | INS-12 | Leitura automática de mensagens | Ler mensagens automaticamente | Sim — `MarkRead` (receipt.go) | Falta (marcar como lido manual existe) | S | Setting por instância; respeitar privacidade de confirmação de leitura | M9 |
 | INS-13 | Leitura automática de status | Ler status automaticamente | Sim — `MarkRead` com chat `types.StatusBroadcastJID` | Falta | S | Depende de receber status (STA-5) | M10 |
-| INS-14 | Rejeitar chamadas automaticamente | Rejeitar chamadas | Sim — `RejectCall` (call.go) + evento `CallOffer` (types/events/call.go) | Falta | S | | M7 |
-| INS-15 | Mensagem automática ao rejeitar chamada | Mensagem de rejeição | Sim — `SendMessage` | Falta | S | Passa pela fila (ritmo/janela) | M7 |
+| INS-14 | Rejeitar chamadas automaticamente | Rejeitar chamadas | Sim — `RejectCall` (call.go) + evento `CallOffer` (types/events/call.go) | Pronto — setting `calls.auto_reject`; rejeição pelo worker (só chamadas que ele viu) em < 3s, evento `call.received` com `rejected` | S | | M7 |
+| INS-15 | Mensagem automática ao rejeitar chamada | Mensagem de rejeição | Sim — `SendMessage` | Pronto — `calls.reject_message` pela fila (ritmo/janela/rampa), 1 por contato a cada 10 min, expira em 1h; só chamadas 1:1 | S | Passa pela fila (ritmo/janela) | M7 |
 
 ### 2.3 Registro como aparelho principal (Z-API: Mobile)
 
@@ -97,7 +97,7 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 | MSG-26 | Lista de opções | Enviar lista de opções | Manual — `ListMessage` (nó `biz` com `v=2` e tipo, send.go `getButtonAttributes`) | Falta | M | Mesma instabilidade; é o tipo interativo menos instável | Exp |
 | MSG-27 | Botão OTP (copiar código) e botão PIX | 2 páginas | Manual — `InteractiveMessage` com native flow (incerto) | Falta | M | Instável; PIX é específico do Brasil | Exp |
 | MSG-28 | Carrossel | Enviar carrossel | Manual — `InteractiveMessage` carrossel (incerto) | Falta | L | Instável | Exp |
-| MSG-29 | Receber respostas de botões/listas | Responder botão / ação / lista | Sim — chegam em `events.Message` (`ButtonsResponseMessage`, `ListResponseMessage`, `InteractiveResponseMessage`) | Falta — registradas como `unknown` | S | Útil mesmo sem enviar botões (clientes de outras ferramentas respondem) | M7 |
+| MSG-29 | Receber respostas de botões/listas | Responder botão / ação / lista | Sim — chegam em `events.Message` (`ButtonsResponseMessage`, `ListResponseMessage`, `InteractiveResponseMessage`) | Pronto — tipo `button_reply` no log e evento `message.button_reply` (botão, lista, template, interativa) | S | Útil mesmo sem enviar botões (clientes de outras ferramentas respondem) | M7 |
 | MSG-30 | Produto e catálogo como mensagem | Enviar produto / catálogo | Manual — `ProductMessage` (exige catálogo existente na conta business) | Falta | M | Sem API de catálogo no whatsmeow (BUS-1); só reencaminhar produto existente (incerto) | M10 |
 | MSG-31 | Pedido + atualizar status/pagamento do pedido | 3 páginas | Parcial — `OrderMessage` (proto) e `GetOrderDetails` (business.go) só leitura | Falta | L | Fluxo de pagamentos do WhatsApp Business no Brasil; incerto | Avaliar |
 | MSG-32 | Convite de admin de canal | Enviar convite de admin de canal | Manual — `NewsletterAdminInviteMessage` (waE2E) | Falta | M | Aceitar/revogar não têm função (CHN-11) | Avaliar |
@@ -146,7 +146,7 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 |---|---|---|---|---|---|---|---|
 | CAL-1 | Fazer chamada, "chamada de atenção", áudio na chamada | Fazer ligação | Não — whatsmeow não implementa VoIP/mídia de chamada | Fora | — | A Z-API vende instância com chamadas como plano à parte | — |
 | CAL-2 | Token de chamada / SIP | 3 páginas | Não | Fora | — | | — |
-| CAL-3 | Eventos de chamada (oferta, aceite, término, rejeição) | via webhooks de mensagem | Sim — `CallOffer`, `CallAccept`, `CallTerminate`, `CallReject`, `CallOfferNotice` (types/events/call.go) | Falta | S | Evento `call.received` / `call.ended` | M7 |
+| CAL-3 | Eventos de chamada (oferta, aceite, término, rejeição) | via webhooks de mensagem | Sim — `CallOffer`, `CallAccept`, `CallTerminate`, `CallReject`, `CallOfferNotice` (types/events/call.go) | Pronto — `call.received`, `call.accepted`, `call.ended` (`reason`, `missed`); `CallRelayLatency`/`Transport`/`PreAccept` ignorados | S | Evento `call.received` / `call.ended` | M7 |
 
 ### 2.9 Grupos (Z-API: Groups)
 
@@ -251,12 +251,12 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 |---|---|---|---|---|---|---|---|
 | WHK-1 | Mensagem recebida | Ao receber | Sim — `events.Message` | Pronto — `message.received` (+ `message.reaction`) | — | | M3 |
 | WHK-2 | Mensagem enviada (API e celular, "enviadas por mim") | Ao enviar; Notificar enviadas por mim | Sim | Pronto — `message.sent` com `source: api\|device` | — | | M3 |
-| WHK-3 | Status da mensagem (enviada, entregue, lida, tocada, apagada) | Status da mensagem | Sim — `events.Receipt` (inclui `played`) | Parcial — `sent`/`delivered`/`read`/`failed`; falta `played` (o worker já recebe) e `revoked` | S | | M7 |
+| WHK-3 | Status da mensagem (enviada, entregue, lida, tocada, apagada) | Status da mensagem | Sim — `events.Receipt` (inclui `played`) | Pronto — `played` é status próprio (`read` < `played`); `revoked` via `message.revoked` (M6) | S | | M7 |
 | WHK-4 | Conectou / desconectou | Ao conectar; Ao desconectar | Sim — `Connected`, `Disconnected`, `LoggedOut`, `TemporaryBan`… | Pronto — `instance.status` para toda transição | — | | M3 |
-| WHK-5 | Presença do chat (digitando, gravando, online, visto por último) | Status do chat | Sim — `events.ChatPresence`, `events.Presence` + `SubscribePresence` (presence.go) | Falta — `chat.presence` adiado no M3 | M | Presença exige assinatura por contato e a própria instância "online" (`SendPresence`); volume alto | M7 |
-| WHK-6 | Mensagem apagada / editada | (no recebimento) | Sim — `ProtocolMessage` REVOKE/EDIT em `events.Message` | Falta — `message.revoked` adiado; log não atualiza | S | Base em M2b item 5 | M7 |
+| WHK-5 | Presença do chat (digitando, gravando, online, visto por último) | Status do chat | Sim — `events.ChatPresence`, `events.Presence` + `SubscribePresence` (presence.go) | Pronto — `chat.presence` (composing/recording/paused, online/offline); opt-in: `presence.online` + tipo nomeado; `POST /presence/subscribe` (20/min) | M | Presença exige assinatura por contato e a própria instância "online" (`SendPresence`); volume alto | M7 |
+| WHK-6 | Mensagem apagada / editada | (no recebimento) | Sim — `ProtocolMessage` REVOKE/EDIT em `events.Message` | Pronto — `message.edited`/`message.revoked` (M6), log atualizado; só do autor ou admin | S | Base em M2b item 5 | M7 |
 | WHK-7 | URLs por tipo e "atualizar todos" | Atualizar todos os webhooks | N/A | Pronto — vários webhooks, globais ou por instância, com filtro de tipos (`message.*`) | — | Superconjunto | M3 |
-| WHK-8 | Filtros por tipo de mensagem (grupo, privado, texto, imagem…) | Filtros de webhook | N/A | Falta — só filtro por tipo de evento | S | Campo `filters` no webhook (`chat: group\|direct`, `message_types`) | M7 |
+| WHK-8 | Filtros por tipo de mensagem (grupo, privado, texto, imagem…) | Filtros de webhook | N/A | Pronto — `filters {chat, chats, exclude_chats, message_types, from_me}` no webhook | S | Campo `filters` no webhook (`chat: group\|direct`, `message_types`) | M7 |
 | WHK-9 | Webhook de falha de proxy | Webhook de falha de proxy | N/A | Falta | S | Evento `instance.proxy_failed` (o estado `reconnecting` com motivo já aparece) | M11 |
 | WHK-10 | Assinatura HMAC, anti-replay, retry 24h, dead-letter, SSE | (não há) | N/A | Pronto | — | Vantagem LiteZap | M3 |
 
@@ -292,9 +292,9 @@ Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-AP
 | — whatsmeow `Parcial` | 10 |
 | — whatsmeow `Não` | 21 |
 | Recursos só da camada LiteZap (`N/A`) | 27 |
-| **LiteZap `Pronto`** | **31** |
-| LiteZap `Parcial` | 8 |
-| LiteZap `Falta` | 103 |
+| **LiteZap `Pronto`** | **39** |
+| LiteZap `Parcial` | 7 |
+| LiteZap `Falta` | 96 |
 | LiteZap `Fora` | 17 |
 
 Viáveis com whatsmeow (`Sim` + `Manual` + `Parcial`): **111 de 132** recursos de protocolo. Os 21 inviáveis hoje: INS-11 (extensão, produto próprio da Z-API), MOB-1…4 (registro como aparelho principal), CON-8 (denúncia), CAL-1/2 (chamadas de voz e SIP), COM-8 (desativar comunidade), CHN-2/5/7/9/10/11 (administração avançada de canais), BRD-1 (listas de transmissão), BUS-1/2/3/6/7 (catálogo, coleções, notas, perfil comercial editável).
@@ -330,6 +330,8 @@ Aceite:
 6. Pisos de ritmo continuam valendo com `delay_ms` (teste com relógio falso).
 
 ### M7 — Eventos completos e chamadas
+
+Entregue em 2026-10-18 (branch `feat/m7-events`, plano `docs/superpowers/plans/2026-10-18-litezap-m7-events.md`). Diferenças em relação ao texto abaixo: além de `call.received`/`call.ended` há `call.accepted`; `message.revoked`/`message.edited` já tinham saído no M6; presença por rota explícita (`POST /presence/subscribe`), sem assinatura automática; `chat.presence` é opt-in (setting `presence.online` + tipo nomeado no webhook/SSE). Fora: `group.updated` (M8).
 
 Escopo: WHK-3 (`played`, `revoked`), WHK-5, WHK-6, WHK-8, MSG-29, CAL-3, INS-14, INS-15. Fecha os eventos adiados do M3 (`message.revoked`, `chat.presence`) — `group.updated` fica no M8, junto dos grupos.
 

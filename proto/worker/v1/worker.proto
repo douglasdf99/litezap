@@ -30,6 +30,14 @@ service Worker {
   rpc GetContacts(GetContactsRequest) returns (GetContactsResponse);
   rpc GetContact(GetContactRequest) returns (GetContactResponse);
   rpc CheckNumbers(CheckNumbersRequest) returns (CheckNumbersResponse);
+
+  // Calls and presence (marco 7). RejectCall only rejects a call this worker reported
+  // (unknown or finished call ids answer NotFound). SetPresence marks the account
+  // available/unavailable: while available the phone stops showing notifications.
+  // SubscribePresence asks for a contact's online/last seen updates.
+  rpc RejectCall(RejectCallRequest) returns (RejectCallResponse);
+  rpc SetPresence(SetPresenceRequest) returns (SetPresenceResponse);
+  rpc SubscribePresence(SubscribePresenceRequest) returns (SubscribePresenceResponse);
 }
 
 message PingRequest {}
@@ -56,7 +64,38 @@ message Event {
     Message message = 3;
     Receipt receipt = 4;
     HistoryChunk history = 5;
+    ChatPresence chat_presence = 6;
+    Presence presence = 7;
+    Call call = 8;
   }
+}
+
+// ChatPresence is a typing notification (only received while the account is available).
+message ChatPresence {
+  string chat = 1;   // chat JID (phone-number JID when known)
+  string sender = 2; // who is typing (in groups, the participant)
+  bool is_group = 3;
+  string state = 4;  // composing | recording | paused
+}
+
+// Presence is a subscribed contact going online or offline.
+message Presence {
+  string jid = 1; // phone-number JID when known
+  bool online = 2;
+  int64 last_seen_ms = 3; // 0: unknown or hidden by the contact
+}
+
+// Call is a call signal. kind: offer (1:1 call ringing) | offer_notice (group call) |
+// accept (answered on one of the account's devices) | terminate (ended) | reject
+// (rejected by a device of the account or by the other side).
+message Call {
+  string call_id = 1;
+  string kind = 2;
+  string caller = 3; // call creator, phone-number JID when known
+  string group = 4;  // group JID for group calls
+  string media = 5;  // audio | video ("" when unknown)
+  int64 timestamp_ms = 6;
+  string reason = 7; // terminate reason as sent by WhatsApp
 }
 
 // ConnState.state uses the instance.State strings:
@@ -82,7 +121,7 @@ message Message {
   int64 timestamp_ms = 6;
   string push_name = 7;
   // text | image | video | gif | ptv | audio | document | sticker | location | contact |
-  // poll | reaction | unknown, and the updates edit | revoke | poll_vote (not new messages:
+  // poll | reaction | button_reply | unknown, and the updates edit | revoke | poll_vote (not new messages:
   // target_id names the message they change).
   string type = 8;
   string text = 9;      // body, caption, reaction emoji, poll name, new text of an edit
@@ -98,6 +137,15 @@ message Message {
   bool forwarded = 19;
   // revoke: WhatsApp marked it as an admin deleting another member's message (groups)
   bool admin_revoke = 20;
+  ButtonReply button_reply = 21; // type button_reply
+}
+
+// ButtonReply is the answer to a button, list, template or interactive message.
+message ButtonReply {
+  string kind = 1; // button | list | template | interactive
+  string id = 2;   // selected button/row id (interactive: the flow name)
+  string title = 3; // text shown for the selection
+  string description = 4; // list row description; interactive: params JSON
 }
 
 message Location {
@@ -250,3 +298,18 @@ message NumberStatus {
 message CheckNumbersResponse {
   repeated NumberStatus results = 1;
 }
+
+message RejectCallRequest {
+  string call_id = 1;
+}
+message RejectCallResponse {}
+
+message SetPresenceRequest {
+  bool available = 1;
+}
+message SetPresenceResponse {}
+
+message SubscribePresenceRequest {
+  string jid = 1;
+}
+message SubscribePresenceResponse {}

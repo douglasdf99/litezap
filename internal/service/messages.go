@@ -60,6 +60,11 @@ type Messaging struct {
 
 	settingsMu    sync.Mutex
 	settingsLocks map[string]*sync.Mutex // per instance: read-merge-write of the overrides
+
+	// OnSettingsChanged, when set, is called after a settings update is saved (marco 7:
+	// presence.online applies right away). It must not block.
+	OnSettingsChanged func(instanceID string, before, after settings.Settings)
+	presenceQuota     presenceQuota // presence subscriptions (presence.go)
 }
 
 // settingsLock serializes UpdateSettings per instance so concurrent patches never lose
@@ -666,6 +671,9 @@ func (s *Messaging) UpdateSettings(ctx context.Context, instanceID string, patch
 		if err := s.Manager.Restart(context.WithoutCancel(ctx), instanceID); err != nil {
 			return settings.Settings{}, mapErr(err)
 		}
+	}
+	if s.OnSettingsChanged != nil {
+		s.OnSettingsChanged(instanceID, before, after)
 	}
 	s.Queues.Wake(instanceID)
 	return redacted(after), nil

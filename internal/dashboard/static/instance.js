@@ -74,7 +74,8 @@ export function instanceView(id, { root, shell, setLive }) {
     }
   };
 
-  const stop = api.subscribe(`${base}/events`, (type, ev) => {
+  // chat.presence is opt-in (not part of "*"): ask for it so the live feed shows typing.
+  const stop = api.subscribe(`${base}/events?types=*,chat.presence`, (type, ev) => {
     ctx.events.unshift(ev);
     if (ctx.events.length > 300) ctx.events.length = 300;
     if (type === 'instance.status') {
@@ -217,10 +218,10 @@ function pairTab(ctx) {
 
 const STATUS = {
   queued: ['⏱', 'na fila'], in_flight: ['…', 'enviando'], pending: ['…', 'enviando'],
-  sent: ['✓', 'enviada'], delivered: ['✓✓', 'entregue'], read: ['✓✓', 'lida'], failed: ['✗', 'falhou'],
+  sent: ['✓', 'enviada'], delivered: ['✓✓', 'entregue'], read: ['✓✓', 'lida'], played: ['✓✓', 'reproduzida'], failed: ['✗', 'falhou'],
 };
 
-const RANK = { queued: 1, in_flight: 2, pending: 2, sent: 3, delivered: 4, read: 5, failed: 6 };
+const RANK = { queued: 1, in_flight: 2, pending: 2, sent: 3, delivered: 4, read: 5, played: 6, failed: 7 };
 const rank = (st) => RANK[st] || 0;
 
 function statusMark(m) {
@@ -231,7 +232,7 @@ function statusMark(m) {
 
 const TYPE_LABEL = {
   image: 'imagem', video: 'vídeo', audio: 'áudio', document: 'documento', sticker: 'figurinha',
-  location: 'localização', contact: 'contato', reaction: 'reação',
+  location: 'localização', contact: 'contato', reaction: 'reação', button_reply: 'resposta de botão',
 };
 
 function clockIn(tz) {
@@ -476,6 +477,10 @@ function settingsTab(ctx) {
     const tzList = h('datalist', { id: 'tz-list' });
     try { for (const z of Intl.supportedValuesOf('timeZone')) tzList.appendChild(h('option', { value: z })); } catch { /* old browser */ }
     const tz = h('input', { value: s.timezone, list: 'tz-list', placeholder: 'vazio = fuso do servidor (ex.: America/Sao_Paulo)' });
+    const calls = s.calls || {};
+    const autoReject = h('input', { type: 'checkbox', checked: !!calls.auto_reject });
+    const rejectMsg = h('textarea', { rows: 2, maxlength: 1000, placeholder: 'vazio = rejeitar sem mandar mensagem' }, calls.reject_message || '');
+    const online = h('input', { type: 'checkbox', checked: !!(s.presence && s.presence.online) });
     const unsafe = h('input', { type: 'checkbox', checked: s.unsafe_pacing });
     const proxy = h('input', { class: 'mono', value: s.proxy_url, placeholder: 'vazio = proxy padrão do servidor (ou conexão direta)', autocomplete: 'off' });
     // Settings the server's operator manages (hosted plans) are read-only here.
@@ -503,6 +508,11 @@ function settingsTab(ctx) {
         const win = noWin.checked ? { start: '', end: '' } : { start: winStart.value, end: winEnd.value };
         if (win.start !== s.send_window.start || win.end !== s.send_window.end) p.send_window = win;
         if (tz.value.trim() !== s.timezone) p.timezone = tz.value.trim();
+        const cp = {};
+        if (autoReject.checked !== !!calls.auto_reject) cp.auto_reject = autoReject.checked;
+        if (rejectMsg.value.trim() !== (calls.reject_message || '')) cp.reject_message = rejectMsg.value.trim();
+        if (Object.keys(cp).length) p.calls = cp;
+        if (online.checked !== !!(s.presence && s.presence.online)) p.presence = { online: online.checked };
         if (!unsafe.disabled && unsafe.checked !== s.unsafe_pacing) p.unsafe_pacing = unsafe.checked;
         // The server masks the proxy password: send it only when the user changed it.
         if (!proxy.disabled && proxy.value.trim() !== s.proxy_url) {
@@ -537,6 +547,11 @@ function settingsTab(ctx) {
       h('p', { class: 'small muted' }, 'Mensagens para quem não te mandou nada nas últimas 24h só saem dentro da janela; respostas a conversas ativas saem a qualquer hora.'),
       h('label', { class: 'check' }, noWin, ' Sem janela (enviar a qualquer hora)'),
       h('div', { class: 'grid3' }, field('Início', winStart), field('Fim', winEnd), field('Fuso horário', tz)), tzList),
+    h('fieldset', null, h('legend', null, 'Chamadas e presença'),
+      h('label', { class: 'check' }, autoReject, ' Rejeitar chamadas automaticamente'),
+      field('Mensagem ao rejeitar', rejectMsg, 'Vai pela fila (ritmo e janela valem), no máximo uma por contato a cada 10 min; só em chamadas individuais.'),
+      h('label', { class: 'check' }, online, ' Ficar online (recebe "digitando…" e presença dos contatos)'),
+      h('p', { class: 'small muted' }, 'Atenção: com a conta online o WhatsApp para de mostrar notificações no celular. Deixe desligado se alguém usa o celular para atender.')),
     h('fieldset', null, h('legend', null, 'Somente admin'),
       locked.size ? h('p', { class: 'small muted' }, 'Campos bloqueados são gerenciados pelo provedor deste servidor.') : null,
       field('Proxy (socks5:// ou http://)', proxy, 'A senha aparece mascarada; só é enviada se você alterar o campo. Vazio volta ao proxy padrão. Trocar reinicia o worker; se o proxy não responder, a instância fica "reconectando" (nunca cai para conexão direta).'),
@@ -564,13 +579,21 @@ function summary(ev) {
     case 'instance.status': return `${d.state}${d.reason ? ` (${d.reason})` : ''}`;
     case 'instance.qr': return 'novo QR de pareamento';
     case 'instance.pair_code': return 'código de pareamento gerado';
-    case 'message.received': case 'message.sent': case 'message.reaction':
+    case 'message.received': case 'message.sent': case 'message.reaction': case 'message.button_reply':
       return `${phoneOf(d.chat)}: ${d.type === 'text' ? (d.text || '').slice(0, 80) : `[${TYPE_LABEL[d.type] || d.type}] ${(d.text || '').slice(0, 60)}`}`;
     case 'message.status': return `${d.id || ''} → ${d.status}${d.error ? ` (${d.error})` : ''}`;
+    case 'message.edited': return `${phoneOf(d.chat)}: editada → ${(d.text || '').slice(0, 60)}`;
+    case 'message.revoked': return `${phoneOf(d.chat)}: apagada`;
+    case 'chat.presence': return `${phoneOf(d.sender || d.chat)}: ${PRESENCE_LABEL[d.state] || d.state}`;
+    case 'call.received': return `${d.is_group ? 'chamada em grupo' : 'chamada'} de ${phoneOf(d.caller)}${d.media === 'video' ? ' (vídeo)' : ''}${d.rejected ? ' — rejeitada' : ''}`;
+    case 'call.accepted': return `chamada de ${phoneOf(d.caller)} atendida`;
+    case 'call.ended': return `chamada de ${phoneOf(d.caller)} encerrada${d.missed ? ' (perdida)' : d.reason ? ` (${d.reason})` : ''}`;
     case 'history.synced': return `${d.messages} mensagens em ${d.chats} blocos (${d.new_messages} novas)`;
     default: return '';
   }
 }
+
+const PRESENCE_LABEL = { composing: 'digitando…', recording: 'gravando áudio…', paused: 'parou de digitar', online: 'online', offline: 'offline' };
 
 function eventsTab(ctx) {
   const list = h('ul', { class: 'events' });

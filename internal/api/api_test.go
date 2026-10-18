@@ -20,6 +20,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/manager"
 	"github.com/douglasdf99/litezap/internal/media"
 	"github.com/douglasdf99/litezap/internal/queue"
+	"github.com/douglasdf99/litezap/internal/realtime"
 	"github.com/douglasdf99/litezap/internal/service"
 	"github.com/douglasdf99/litezap/internal/settings"
 	"github.com/douglasdf99/litezap/internal/store"
@@ -35,6 +36,7 @@ type env struct {
 	sp  *workertest.Spawner
 	bus *events.Bus
 	st  *store.Store
+	rt  *realtime.Handler
 }
 
 func newEnv(t *testing.T) *env {
@@ -64,7 +66,14 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 	disp := webhook.New(st, webhook.Options{AllowPrivate: true, Log: log})
 	bus := events.NewBus(nil, disp)
 	q := queue.New(st, mgr, queue.Options{Defaults: defaults, Log: log, Resolver: resolver, Events: bus})
-	mgr.SetObserver(manager.Observers{&ingest.Ingestor{Store: st, Log: log, Events: bus}, q, events.Observer{Bus: bus}})
+	msg := &service.Messaging{Store: st, Manager: mgr, Queues: q, Fetcher: &media.Fetcher{AllowPrivate: true},
+		Signer:  media.NewSigner([]byte("0123456789abcdef0123456789abcdef"), "http://example.invalid"),
+		DataDir: dir, Defaults: defaults, Resolver: resolver, SignedURLs: true}
+	rt := &realtime.Handler{Workers: mgr, Events: bus, Log: log,
+		Settings: func(ctx context.Context, id string) (settings.Settings, error) { return msg.Settings(ctx, id) }}
+	rt.SetSender(msg)
+	msg.OnSettingsChanged = rt.SettingsChanged
+	mgr.SetObserver(manager.Observers{&ingest.Ingestor{Store: st, Log: log, Events: bus}, q, events.Observer{Bus: bus}, rt})
 	if err := disp.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -73,12 +82,10 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 		defer cancel()
 		q.Shutdown(ctx)
 		mgr.Shutdown(ctx)
+		rt.Wait()
 		disp.Close(ctx)
 	})
 	svc := &service.Instances{Store: st, Manager: mgr, DataDir: dir, Queues: q, Events: bus}
-	msg := &service.Messaging{Store: st, Manager: mgr, Queues: q, Fetcher: &media.Fetcher{AllowPrivate: true},
-		Signer:  media.NewSigner([]byte("0123456789abcdef0123456789abcdef"), "http://example.invalid"),
-		DataDir: dir, Defaults: defaults, Resolver: resolver, SignedURLs: true}
 	opt := Options{AdminToken: admin, Ready: st.Ping, Events: bus,
 		Webhooks: &service.Webhooks{Store: st, Dispatcher: disp}}
 	if tweak != nil {
@@ -87,7 +94,7 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 	h := New(svc, msg, opt, log)
 	srv := httptest.NewServer(h)
 	t.Cleanup(func() { bus.CloseSubscribers(); srv.Close() })
-	return &env{t: t, srv: srv, sp: sp, bus: bus, st: st}
+	return &env{t: t, srv: srv, sp: sp, bus: bus, st: st, rt: rt}
 }
 
 func (e *env) do(method, path, token, body string) (int, map[string]any) {

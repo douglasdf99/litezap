@@ -55,6 +55,7 @@ type MessagingService interface {
 	Queue(ctx context.Context, instanceID, status string, limit int, cursor string) (service.QueuePage, error)
 	CancelQueued(ctx context.Context, instanceID, id string) (service.MessageView, error)
 	ClearQueue(ctx context.Context, instanceID string) (int, error)
+	SubscribePresence(ctx context.Context, instanceID, to string) error
 }
 
 type Options struct {
@@ -164,6 +165,7 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 			r.Get("/contacts/{jid}", s.getContact)
 			r.Post("/check-numbers", s.checkNumbers)
 			r.Get("/media/{media_id}", s.getMedia)
+			r.Post("/presence/subscribe", s.subscribePresence)
 			if opt.Events != nil {
 				r.Get("/events", s.instanceEvents)
 			}

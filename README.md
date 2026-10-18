@@ -5,7 +5,7 @@ Cada número roda em um processo worker isolado, supervisionado com heartbeat, r
 
 Licença: Apache-2.0. Roda no seu PC, no seu servidor ou na nuvem gerenciada do LiteZap.
 
-> Status: marco 4 (envio com fila persistente, recebimento, chats, histórico, mídia, proxy por instância, eventos com webhooks assinados e SSE, servidor MCP em `/mcp` e `litezap mcp`) + app local v1 (painel web embutido e lançador de bandeja). O hook de agente vem no próximo marco.
+> Status: marco 4 (envio com fila persistente, recebimento, chats, histórico, mídia, proxy por instância, eventos com webhooks assinados e SSE, servidor MCP em `/mcp` e `litezap mcp`) + app local v1 (painel web embutido e lançador de bandeja) + marcos 6 (mensagens completas) e 7 (eventos de chamada, presença, `played`, respostas de botão, filtros de webhook). O hook de agente vem no próximo marco.
 > Design: `docs/superpowers/specs/2026-10-17-litezap-engine-design.md`
 
 ## Rodar
@@ -74,6 +74,7 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `POST /v1/instances/{id}/check-numbers` `{"phones":[...]}` | instância ou admin |
 | `GET /v1/instances/{id}/media/{media_id}[?signed=1]` | instância ou admin (`?signed=1` exige `public_url` se o `listen_addr` não for loopback) |
 | `GET /media/{id}/{media_id}?exp=&sig=` (URL assinada, vale 1h) | nenhum |
+| `POST /v1/instances/{id}/presence/subscribe` `{"to"}` (presença online/offline de um contato; exige `presence.online`) | instância ou admin |
 | `GET /v1/instances/{id}/events[?types=]` (SSE) | instância ou admin |
 | `GET /v1/events[?types=]` (SSE, todas as instâncias) | admin |
 | `POST /v1/webhooks` · `GET /v1/webhooks[?instance_id=]` | admin (global ou de uma instância) ou instância (só a própria) |
@@ -143,7 +144,7 @@ Campos que valem para mensagens novas (não para `reaction`, `edit`, `revoke`, `
 
 `to` aceita número com DDI ou JID (`...@s.whatsapp.net`, `...@g.us`, `...@lid`). `?wait=true` espera o resultado por `timeout` (padrão `30s`, no máximo 2 minutos); se o tempo acabar a resposta é `202` com o status atual (`queued`/`in_flight`) e o envio continua na fila. Limites: imagem 16MB, vídeo/áudio 64MB, documento 100MB. `expires_after` (padrão `24h`, máximo `168h`): não enviada até lá, a mensagem falha com `message_expired`.
 
-A fila é persistente e por instância: ordem estrita por destinatário, pausa enquanto a instância não está `connected` (e por 15–30s depois de conectar), janela de envio para quem não mandou nada nas últimas 24h, ritmo e rampa conforme `settings`, até 5 tentativas em falhas temporárias. Antes do primeiro envio a um número, o LiteZap confere se ele tem WhatsApp (e usa o JID que o WhatsApp devolve, com ou sem o 9º dígito); número sem WhatsApp falha com `invalid_number` sem enviar nada. Envios de mídia grande esperam vaga (no máximo 3 ao mesmo tempo) em vez de falhar; só se o cliente desistir da requisição antes de abrir vaga a resposta é `503 rate_limited`. `client_message_id` repetido devolve a mesma mensagem (idempotência); repetido com outro conteúdo responde `409 conflict`. O status (`queued`, `in_flight`, `sent`, `delivered`, `read`, `failed`) fica em `GET /messages/{id}`. No log de mensagens (`GET /chats/{jid}/messages`) o `status` é `received` para mensagens recebidas e `pending` → `sent` → `delivered` → `read` para as enviadas (`pending` = em envio, ainda sem confirmação do WhatsApp). Consultas de número também têm ritmo: cada uma que vai ao WhatsApp conta como um envio para `min_interval_ms`/`max_per_minute`, e por dia a instância faz no máximo o limite diário da rampa (quando ligada); acima disso o item espera a janela do dia seguinte. `check-numbers` tem limite próprio de 200 números não cacheados por dia (UTC), além de 10 por minuto (`429 rate_limited`).
+A fila é persistente e por instância: ordem estrita por destinatário, pausa enquanto a instância não está `connected` (e por 15–30s depois de conectar), janela de envio para quem não mandou nada nas últimas 24h, ritmo e rampa conforme `settings`, até 5 tentativas em falhas temporárias. Antes do primeiro envio a um número, o LiteZap confere se ele tem WhatsApp (e usa o JID que o WhatsApp devolve, com ou sem o 9º dígito); número sem WhatsApp falha com `invalid_number` sem enviar nada. Envios de mídia grande esperam vaga (no máximo 3 ao mesmo tempo) em vez de falhar; só se o cliente desistir da requisição antes de abrir vaga a resposta é `503 rate_limited`. `client_message_id` repetido devolve a mesma mensagem (idempotência); repetido com outro conteúdo responde `409 conflict`. O status (`queued`, `in_flight`, `sent`, `delivered`, `read`, `played`, `failed`) fica em `GET /messages/{id}`. No log de mensagens (`GET /chats/{jid}/messages`) o `status` é `received` para mensagens recebidas e `pending` → `sent` → `delivered` → `read` → `played` para as enviadas (`played` = áudio de voz, vídeo ou visualização única reproduzidos) (`pending` = em envio, ainda sem confirmação do WhatsApp). Consultas de número também têm ritmo: cada uma que vai ao WhatsApp conta como um envio para `min_interval_ms`/`max_per_minute`, e por dia a instância faz no máximo o limite diário da rampa (quando ligada); acima disso o item espera a janela do dia seguinte. `check-numbers` tem limite próprio de 200 números não cacheados por dia (UTC), além de 10 por minuto (`429 rate_limited`).
 
 ### Settings
 
@@ -154,7 +155,17 @@ curl -s -X PUT localhost:8787/v1/instances/$ID/settings -H "Authorization: Beare
   -d '{"proxy_url":"socks5://user:senha@host:1080"}'
 ```
 
+```bash
+# chamadas: rejeitar sozinho e responder (marco 7); presença: ficar online (opt-in)
+curl -s -X PUT localhost:8787/v1/instances/$ID/settings -H "Authorization: Bearer $TOK" \
+  -d '{"calls":{"auto_reject":true,"reject_message":"Não atendo ligações por aqui, me mande uma mensagem."},"presence":{"online":false}}'
+```
+
 Campos ausentes mantêm o valor atual. `GET /settings` esconde a senha do `proxy_url`. Pisos: `min_interval_ms` ≥ 1000 e `max_per_minute` ≤ 60, a menos que o admin ligue `unsafe_pacing`. `send_window` vazio (`{"start":"","end":""}`) libera qualquer horário; fora da janela, mensagens para quem não mandou nada nas últimas 24h esperam o início da próxima (com alguns minutos de variação), enquanto respostas a conversas ativas saem a qualquer hora; itens adiados pela rampa vão para a janela do dia seguinte (nunca à meia-noite). Falhas na verificação do número adiam só aquele item (1, 2, 5, 15 min; na 5ª falha, `failed`). `"proxy_url":""` volta ao `default_proxy_url`. Trocar o proxy reinicia o worker; se o proxy não responde, a instância fica `reconnecting` com `state_reason: proxy_unreachable` (nunca cai para conexão direta, e variáveis `HTTP(S)_PROXY` do ambiente não são herdadas pelos workers).
+
+**Chamadas** (`calls`): com `auto_reject` toda chamada recebida é rejeitada assim que toca (em menos de 3s) e gera `call.received` com `rejected: true`. `reject_message` (até 1000 bytes) é mandada ao autor de chamadas individuais pela fila normal (ritmo, janela, rampa e suspensão do operador valem), no máximo uma vez por contato a cada 10 min; se não sair em 1h (janela fechada, fila longa) falha como `expired` em vez de chegar horas depois. Chamadas em grupo são rejeitadas sem mensagem.
+
+**Presença** (`presence.online`, desligado por padrão): marca a conta como "disponível" a cada conexão. Só assim o WhatsApp manda "digitando…/gravando" (`chat.presence`) e aceita `POST /presence/subscribe` (online/visto por último de um contato; até 20 assinaturas por minuto por instância, valem até a conexão cair). **Contrapartida**: enquanto a conta está disponível num aparelho conectado, o WhatsApp trata esse aparelho como ativo e o celular deixa de mostrar notificações. Ligue só em números atendidos pela API, não no celular de quem atende pessoalmente.
 
 Erros: `{"error":{"code","message","retryable"}}`. Códigos:
 
@@ -219,17 +230,22 @@ Adicionar campos em `data` não muda a versão; remover ou mudar o sentido de um
 | `instance.pair_code` | código gerado por `POST /pair-phone` | `{code}` |
 | `message.received` | mensagem nova de outra pessoa | mensagem (abaixo), `source: "contact"` |
 | `message.sent` | envio pela API concluído (`source: "api"`) ou mensagem enviada pelo celular (`source: "device"`) | mensagem |
-| `message.status` | `sent`, `delivered`, `read` ou `failed` de uma mensagem nossa | `{id, wa_message_id?, chat, status, error?}` |
+| `message.status` | `sent`, `delivered`, `read`, `played` (áudio de voz, vídeo ou visualização única reproduzidos) ou `failed` de uma mensagem nossa | `{id, wa_message_id?, chat, status, error?}` |
 | `message.reaction` | reação recebida | mensagem com `type: "reaction"`, `text` = emoji (vazio = reação removida), `reaction_to` |
 | `message.edited` | mensagem editada (pela API, pelo celular ou pelo contato; edições recebidas só valem do próprio autor, as demais são ignoradas) | `{id?, wa_message_id, chat, sender?, from_me, source, text, timestamp}` (`text` = texto novo; `id` vazio se a mensagem não está no log) |
 | `message.revoked` | mensagem apagada para todos (pelo autor, ou por admin do grupo) | `{id?, wa_message_id, chat, sender?, from_me, source, timestamp}` |
 | `message.poll_vote` | voto em enquete (o voto atual da pessoa; lista vazia = voto retirado) | `{poll_id?, poll_wa_message_id, chat, voter, push_name?, from_me, selected_options, unknown_options?, timestamp}` |
+| `message.button_reply` | resposta a botão, lista, template ou mensagem interativa (só recebimento; o LiteZap não envia botões) | mensagem com `type: "button_reply"`, `text` = texto escolhido, `reply_to` = mensagem dos botões e `button_reply {kind: button\|list\|template\|interactive, id, title, description?}` |
+| `chat.presence` | contato digitando, gravando áudio ou parando; contato assinado ficando online/offline. **Opt-in**: só com `presence.online` ligado e só para quem pede o tipo explicitamente (`chat.presence` ou `chat.*`; `*` não inclui). Repetições do mesmo estado em menos de 5s são descartadas | `{chat, sender, is_group?, state: composing\|recording\|paused\|online\|offline, last_seen?}` |
+| `call.received` | chamada tocando (individual ou em grupo) | `{call_id, chat, caller, is_group?, media?: audio\|video, rejected?, timestamp}` (`rejected: true` = rejeitada por `calls.auto_reject`) |
+| `call.accepted` | chamada atendida num aparelho da conta | mesmos campos |
+| `call.ended` | chamada encerrada (uma vez por chamada) | mesmos campos + `reason` (motivo do WhatsApp, `rejected` ou `rejected_by_device`) e `missed: true` quando tocou sem ninguém atender |
 | `history.synced` | fim da ingestão de um history sync (um evento por sync, 15s depois do último bloco) | `{chats, messages, new_messages}` |
 | `instance.proxy_failed` | a instância não alcança o WhatsApp pelo proxy (entra em `reconnecting`/`proxy_unreachable`), repetido a cada 5 min enquanto durar; a volta é o próximo `instance.status` | `{reason, since, duration_seconds, outages_last_hour, repeat}` |
 
 Mensagem: `{id, wa_message_id, chat, sender, from_me, is_group, push_name, source, type, text, media?, reaction_to?, timestamp}` mais o conteúdo estruturado quando houver: `reply_to` (wa id citado), `mentions`, `forwarded`, `location {latitude, longitude, name, address, url}`, `contacts [{display_name, vcard}]`, `poll {name, options, selectable}` e `link_preview {url, title, description}`; os mesmos campos de `GET /messages/{id}`. Tipos recebidos: os de envio, mais `unknown`. Votos chegam cifrados e só são decifrados para enquetes cujo segredo a sessão conhece (criadas ou recebidas depois do pareamento); as opções são casadas pelo SHA-256 contra as opções guardadas no log (`unknown_options` conta as que não casaram). `media` traz `{id, kind, mime, size, file_name, seconds, ptt, url}`; `url` é a rota autenticada de download (`GET /v1/instances/{id}/media/{media_id}`). Mensagens de history sync não geram eventos individuais (só o `history.synced`); uma mensagem que chega duas vezes (reconexão do worker) gera um único evento.
 
-Ainda não emitidos (o worker não reporta esses fatos): `chat.presence`, `group.updated`. `agent.failed` e `agent.handoff` chegam com o hook de agente (marco 5).
+Ainda não emitido: `group.updated` (marco 8, com a gestão de grupos). `agent.failed` e `agent.handoff` chegam com o hook de agente (marco 5).
 
 ### SSE
 
@@ -238,7 +254,7 @@ curl -N "localhost:8787/v1/instances/$ID/events?types=message.*,instance.status"
 curl -N "localhost:8787/v1/events" -H "Authorization: Bearer $ADMIN"   # todas as instâncias
 ```
 
-Cada evento sai como `id: <evt>`, `event: <type>` e `data: <envelope>`; a cada 15s vai um comentário `: ping` para manter a conexão. `types` aceita tipos exatos, famílias (`message.*`) e `*`. Não há replay: eventos de quando o cliente estava desconectado não são reenviados (use webhooks para isso). Um cliente que fica mais de 256 eventos atrasado recebe `event: error` (`slow_consumer`) e é desconectado; reconecte.
+Cada evento sai como `id: <evt>`, `event: <type>` e `data: <envelope>`; a cada 15s vai um comentário `: ping` para manter a conexão. `types` aceita tipos exatos, famílias (`message.*`) e `*` (que não inclui `chat.presence`; sem `types` também não: use `types=*,chat.presence`). Não há replay: eventos de quando o cliente estava desconectado não são reenviados (use webhooks para isso). Um cliente que fica mais de 256 eventos atrasado recebe `event: error` (`slow_consumer`) e é desconectado; reconecte.
 
 ### Webhooks
 
@@ -250,7 +266,8 @@ curl -s -X POST localhost:8787/v1/webhooks -H "Authorization: Bearer $TOK" \
 
 - Com token de instância o webhook é sempre daquela instância. Com token admin, `instance_id` escolhe a instância; sem ele o webhook é global (todas as instâncias).
 - `secret` é opcional (16 a 256 caracteres); sem ele um é gerado. **Ele só aparece na resposta da criação** (e de um `PATCH` que o troque; `{"secret":""}` gera um novo). Guarde-o.
-- `PATCH` aceita `url`, `events`, `enabled` e `secret`; `instance_id` não muda.
+- `PATCH` aceita `url`, `events`, `enabled`, `secret` e `filters`; `instance_id` não muda.
+- **Filtros** (`filters`, opcional; `{}` remove): `chat` (`direct` ou `group`), `chats` (só estes chats; número com DDI ou JID), `exclude_chats` (todos menos estes), `message_types` (`text`, `image`, `video`, `gif`, `ptv`, `audio`, `document`, `sticker`, `location`, `contact`, `poll`, `reaction`, `button_reply`, `unknown`) e `from_me` (`true` só as nossas, `false` exclui as nossas). Cada filtro só restringe eventos que têm aquele campo: `instance.*` sempre passam; `message_types` vale para `message.received/sent/reaction/button_reply`; `from_me` para eventos de mensagem (`message.status` conta como nossa). Ex.: `{"url":"...","events":["message.received"],"filters":{"chat":"direct","message_types":["text","audio"]}}` nunca recebe grupo.
 - Só URLs `http(s)`. Por padrão endereços privados, loopback e link-local são bloqueados (checados depois do DNS, a cada conexão); para um receptor no próprio PC use `webhook_allow_private_urls: true`. Redirecionamentos não são seguidos (um `3xx` conta como falha).
 
 Cada entrega é um `POST` com o envelope como corpo e os headers:
@@ -454,6 +471,10 @@ Com a instância conectada (passos acima):
    Reinicie o receptor com `LITEZAP_SECRET=$SECRET` e troque mensagens: cada evento aparece com "assinatura ok".
 4. Retry e dead-letter: pare o receptor, mande uma mensagem e liste `GET /v1/webhooks/<wh_id>/deliveries?status=pending` (`attempts` subindo, `last_error` com o motivo). Suba o receptor de novo: a entrega chega no próximo retry (o intervalo dobra a cada falha, até 1h). Uma entrega que fica 24h sem sucesso aparece em `?status=failed` e pode ser reenviada com `POST .../deliveries/<delivery_id>/retry`.
 5. Restart: com o receptor parado, mande mensagens, pare e suba o `serve` e depois o receptor: as entregas pendentes são feitas depois do restart.
+6. Chamadas e presença (marco 7), com o SSE aberto em `?types=*,chat.presence`:
+   - Ligue do celular do contato para o número conectado: `call.received` e, ao desligar sem atender, `call.ended` com `missed: true`; atendendo no celular, `call.accepted` antes do `call.ended`. Ligue `{"calls":{"auto_reject":true,"reject_message":"..."}}`: a chamada cai sozinha em menos de 3s, o contato recebe a mensagem pela fila (uma vez a cada 10 min) e os eventos saem com `rejected: true` / `reason: "rejected"`.
+   - Ligue `{"presence":{"online":true}}` (o celular conectado para de mostrar notificações enquanto estiver ligado) e comece a digitar ou gravar áudio no chat do contato: `chat.presence` com `composing`/`recording`/`paused`. `POST /presence/subscribe {"to":"<número>"}` passa a mandar `online`/`offline` (com `last_seen` quando o contato mostra).
+   - Mande um áudio de voz pela API e ouça no celular do contato: `message.status` com `played`.
 
 ### Testar o MCP com um cliente de IA
 

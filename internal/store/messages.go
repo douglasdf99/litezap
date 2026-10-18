@@ -169,9 +169,9 @@ func (s *Store) InsertMessages(ctx context.Context, instanceID string, msgs []Me
 	return n, tx.Commit()
 }
 
-var statusRank = map[string]int{"sent": 1, "delivered": 2, "read": 3}
+var statusRank = map[string]int{"sent": 1, "delivered": 2, "read": 3, "played": 4}
 
-// ApplyReceipt raises the status of our own messages (pending < sent < delivered < read;
+// ApplyReceipt raises the status of our own messages (pending < sent < delivered < read < played;
 // never lowers it). A receipt can beat MarkSent: the row exists as pending from MarkInFlight.
 // Receipts are matched by WhatsApp id only: the receipt's chat may be a LID while the log uses the phone JID.
 func (s *Store) ApplyReceipt(ctx context.Context, instanceID string, waIDs []string, status string) ([]ReceiptChange, error) {
@@ -186,7 +186,7 @@ func (s *Store) ApplyReceipt(ctx context.Context, instanceID string, waIDs []str
 	args = append(args, rank)
 	rows, err := s.db.QueryContext(ctx, `UPDATE messages SET status = ?
 		WHERE instance_id = ? AND from_me = 1 AND wa_message_id IN (?`+strings.Repeat(",?", len(waIDs)-1)+`)
-		AND (CASE status WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE 0 END) < ?
+		AND (CASE status WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 WHEN 'played' THEN 4 ELSE 0 END) < ?
 		RETURNING id, wa_message_id, chat_jid`, args...)
 	if err != nil {
 		return nil, err
