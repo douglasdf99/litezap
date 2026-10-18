@@ -3,6 +3,7 @@
 import * as api from './api.js';
 import { h, mount, clear, toast, errMsg, stateBadge, field, fmtTime, phoneOf, confirmDanger } from './ui.js';
 import { webhooksPanel } from './webhooks.js';
+import { agentPanel } from './agent.js';
 
 const ACTIONS = { start: 'Iniciar', stop: 'Parar', restart: 'Reiniciar', logout: 'Deslogar' };
 
@@ -23,7 +24,7 @@ export function availableActions(state) {
 
 const TABS = [
   ['chats', 'Conversas'], ['pair', 'Parear'], ['settings', 'Configurações'],
-  ['webhooks', 'Webhooks'], ['events', 'Eventos ao vivo'],
+  ['agent', 'Atendente IA'], ['webhooks', 'Webhooks'], ['events', 'Eventos ao vivo'],
 ];
 
 export function instanceView(id, { root, shell, setLive }) {
@@ -94,7 +95,7 @@ export function instanceView(id, { root, shell, setLive }) {
       mount(tabs, TABS.map(([t, label]) => h('a', { href: ctx.href(t), class: t === tab ? 'active' : '' }, label)));
       if (current && current.name === tab && current.update) { current.update(rest); return; }
       if (current && current.cleanup) current.cleanup();
-      const make = { chats: chatsTab, pair: pairTab, settings: settingsTab, webhooks: webhooksTab, events: eventsTab }[tab];
+      const make = { chats: chatsTab, pair: pairTab, settings: settingsTab, webhooks: webhooksTab, events: eventsTab, agent: agentPanel }[tab];
       current = { name: tab, ...make(ctx, rest) };
       mount(body, current.el);
     },

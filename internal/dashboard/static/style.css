@@ -261,3 +261,4 @@ textarea { resize: vertical; width: 100%; }
   .table-card .table td:last-child { grid-column: 1 / -1; }
   .table-card .table .actions { justify-content: flex-start; min-width: 0; }
 }
+.agent > .card { margin-bottom: 1rem; }

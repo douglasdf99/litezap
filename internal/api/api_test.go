@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasdf99/litezap/internal/agenthook"
 	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/ingest"
 	"github.com/douglasdf99/litezap/internal/lookup"
@@ -80,7 +81,7 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 		Signer:  media.NewSigner([]byte("0123456789abcdef0123456789abcdef"), "http://example.invalid"),
 		DataDir: dir, Defaults: defaults, Resolver: resolver, SignedURLs: true}
 	opt := Options{AdminToken: admin, Ready: st.Ping, Events: bus,
-		Webhooks: &service.Webhooks{Store: st, Dispatcher: disp}}
+		Webhooks: &service.Webhooks{Store: st, Dispatcher: disp}, AgentHook: &agenthook.Admin{Store: st}}
 	if tweak != nil {
 		tweak(&opt)
 	}

@@ -67,6 +67,7 @@ func TestStaticAssetsAndHeaders(t *testing.T) {
 		"/app/style.css":   "--accent",
 		"/app/logo.svg":    "<svg",
 		"/app/webhooks.js": "webhooksPanel",
+		"/app/agent.js":    "agentPanel",
 	} {
 		rec := get(t, h, path)
 		if rec.Code != 200 {

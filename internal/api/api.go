@@ -77,6 +77,8 @@ type Options struct {
 	Metrics http.Handler
 	// Operator configures the managed-hosting operator role (zero value: off).
 	Operator OperatorOptions
+	// AgentHook, when set, serves the agent hook routes (spec 4.3).
+	AgentHook AgentHookService
 }
 
 type server struct {
@@ -164,6 +166,7 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 			r.Get("/contacts/{jid}", s.getContact)
 			r.Post("/check-numbers", s.checkNumbers)
 			r.Get("/media/{media_id}", s.getMedia)
+			s.agentRoutes(r)
 			if opt.Events != nil {
 				r.Get("/events", s.instanceEvents)
 			}

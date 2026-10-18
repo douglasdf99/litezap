@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/douglasdf99/litezap/internal/agenthook"
 	"github.com/douglasdf99/litezap/internal/api"
 	"github.com/douglasdf99/litezap/internal/config"
 	"github.com/douglasdf99/litezap/internal/dashboard"
@@ -106,7 +107,10 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	hooks := webhook.New(st, webhook.Options{AllowPrivate: cfg.WebhookAllowPrivateURLs, Log: log,
 		Retention:       time.Duration(cfg.WebhookRetentionDays) * day,
 		FailedRetention: time.Duration(cfg.WebhookFailedRetentionDays) * day})
-	bus := events.NewBus(nil, hooks, cl.usage)
+	// Agent hook (spec 4.3): another bus sink; its send path is set once Messaging exists.
+	agent := agenthook.New(st, agenthook.Options{AllowPrivate: cfg.WebhookAllowPrivateURLs, Log: log,
+		Held: cl.sending.Held})
+	bus := events.NewBus(nil, hooks, cl.usage, agent)
 	bus.SetLogger(log)
 	cl.attach(bus)
 	history := events.NewHistoryTracker(bus, nil, 15*time.Second)
@@ -117,6 +121,9 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		&ingest.Ingestor{Store: st, Log: log, Events: bus, History: history}, q, events.Observer{Bus: bus}, cl.proxy,
 	})
 	stopAll := func() {
+		actx, acancel := context.WithTimeout(context.Background(), scaled(5*time.Second, scale))
+		agent.Close(actx) // first: it feeds the send queue
+		acancel()
 		shutdownAll(q, mgr, history, hooks, scale)
 		cctx, cancel := context.WithTimeout(context.Background(), scaled(5*time.Second, scale))
 		cl.close(cctx)
@@ -165,6 +172,10 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	loopback := isLoopback(cfg.ListenAddr)
 	// New sends (REST and MCP) are refused while the operator suspends sending.
 	guarded := service.GuardedMessaging{Messaging: msg, Sending: cl.sending}
+	// Agent replies take the same guarded path as REST sends (queue, pacing, suspension).
+	agent.SetMessenger(guarded)
+	agent.SetPublisher(bus)
+	agent.Start()
 	handler := api.New(svc, guarded, api.Options{
 		// MCP streamable HTTP at /mcp, behind the same tokens (spec 3.1, 6.1).
 		MCP: mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Logger: log,
@@ -176,6 +187,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		Events:     bus,
 		Operator:   cl.operatorOptions(),
 		Metrics:    cl.metrics(),
+		AgentHook:  &agenthook.Admin{Store: st},
 	}, log)
 	var codes *dashboard.LaunchCodes
 	if loopback {
