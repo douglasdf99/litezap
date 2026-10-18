@@ -376,6 +376,13 @@ Cada marco é testável sozinho:
 4. MCP: HTTP em `/mcp` e `litezap mcp` (stdio).
 5. Hook de agente + `examples/agent-claude/`.
 6. Mensagens completas (matriz de paridade com a Z-API, M6): tipos novos, citação, menções, prévia de link, editar/apagar/fixar/encaminhar, enquetes e votos, `delay_ms`/`typing_ms`, fila visível.
+7. Eventos e chamadas (M7): chamadas recebida/atendida/perdida, rejeição automática com mensagem, presença opt-in, recibo `played`, respostas de botão/lista, filtros de webhook.
+
+### 13.1 Backlog anotado (pedidos do usuário, 2026-10-18)
+
+- **M5b — atendente multimodal:** áudio recebido → transcrição → resposta em texto ou em áudio (voz sintetizada); imagens e documentos analisados pela IA; ligação recebida → mensagem automática da IA ("vi que você ligou, como posso ajudar?").
+- **Peça #4 — treinamento de agentes:** criar e treinar agentes com contexto do negócio (base de conhecimento, catálogo, horários, regras) e **modos operantes** prontos e editáveis: vendedor, facilitador de pedido (monta o pedido, confirma itens e endereço), SDR para agendamento (qualifica e marca consulta/reunião), suporte; cada modo com objetivo, roteiro, critérios de passagem para humano e ferramentas permitidas; testes de conversa antes de publicar. Lição do teste real: sem contexto, o agente repetiu a última fala automática da conversa — o contexto precisa separar mensagens automáticas do sistema das falas do atendente.
+- **Pesquisa — atender ligação de voz:** verificar como produtos de terceiros oferecem atendimento de chamadas (WhatsApp Business Calling API oficial da Meta ou VoIP reverso experimental) e se cabe no LiteZap sem risco de banimento.
 
 ## 14. Fora do escopo (YAGNI)
 
