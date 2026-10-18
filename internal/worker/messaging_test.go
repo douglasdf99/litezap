@@ -131,8 +131,8 @@ func TestHandleForwardsMessagesAndReceipts(t *testing.T) {
 		},
 		Message: &waE2E.Message{Conversation: proto.String("oi")},
 	})
-	w.handle(&events.Message{ // status broadcast: ignored
-		Info:    types.MessageInfo{MessageSource: types.MessageSource{Chat: types.StatusBroadcastJID, Sender: pn}, ID: "S1"},
+	w.handle(&events.Message{ // a broadcast list: ignored (statuses have their own event, social.go)
+		Info:    types.MessageInfo{MessageSource: types.MessageSource{Chat: types.NewJID("123", types.BroadcastServer), Sender: pn}, ID: "S1"},
 		Message: &waE2E.Message{Conversation: proto.String("story")},
 	})
 	w.handle(&events.Receipt{

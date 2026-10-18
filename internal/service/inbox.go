@@ -83,6 +83,11 @@ func (s *Messaging) ChatMessages(ctx context.Context, instanceID, chatRaw string
 	if err != nil {
 		return MessagePage{}, err
 	}
+	return s.chatMessages(ctx, instanceID, chat, limit, cursor)
+}
+
+// chatMessages lists a chat given its normalized JID (status@broadcast included).
+func (s *Messaging) chatMessages(ctx context.Context, instanceID, chat string, limit int, cursor string) (MessagePage, error) {
 	var before *store.MessageCursor
 	if cursor != "" {
 		before = &store.MessageCursor{}

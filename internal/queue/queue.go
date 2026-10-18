@@ -56,6 +56,15 @@ type Payload struct {
 	// bounded by the service). They only add time: the pacing floors still apply.
 	DelayMS  int `json:"delay_ms,omitempty"`
 	TypingMS int `json:"typing_ms,omitempty"`
+	// StatusStyle is the look of a text status (marco 10).
+	StatusStyle *StatusStyle `json:"status_style,omitempty"`
+}
+
+// StatusStyle is the background, text color (ARGB) and font of a text status.
+type StatusStyle struct {
+	BackgroundARGB uint32 `json:"background_argb,omitempty"`
+	TextARGB       uint32 `json:"text_argb,omitempty"`
+	Font           int32  `json:"font,omitempty"`
 }
 
 // QuoteTarget is the message a reply quotes.
@@ -64,6 +73,8 @@ type QuoteTarget struct {
 	FromMe      bool   `json:"from_me"`
 	Sender      string `json:"sender,omitempty"`
 	Text        string `json:"text,omitempty"`
+	// RemoteJID: the quoted message is in another chat (a contact's status).
+	RemoteJID string `json:"remote_jid,omitempty"`
 }
 
 // LinkPreview is the preview card of a text (thumbnail: small JPEG).
@@ -782,7 +793,10 @@ func buildRequest(item store.Outbound, p Payload) (*workerv1.SendRequest, error)
 		}
 	}
 	if q := p.Quote; q != nil {
-		req.Quote = &workerv1.Quote{MessageId: q.WAMessageID, FromMe: q.FromMe, Sender: q.Sender, Text: q.Text}
+		req.Quote = &workerv1.Quote{MessageId: q.WAMessageID, FromMe: q.FromMe, Sender: q.Sender, Text: q.Text, RemoteJid: q.RemoteJID}
+	}
+	if st := p.StatusStyle; st != nil {
+		req.StatusStyle = &workerv1.StatusStyle{BackgroundArgb: st.BackgroundARGB, TextArgb: st.TextARGB, Font: st.Font}
 	}
 	if lp := p.LinkPreview; lp != nil {
 		req.LinkPreview = &workerv1.LinkPreview{Url: lp.URL, Title: lp.Title, Description: lp.Description, Thumbnail: lp.Thumbnail}
@@ -799,6 +813,9 @@ func buildRequest(item store.Outbound, p Payload) (*workerv1.SendRequest, error)
 func (d *dispatcher) presend(ctx context.Context, cli workerv1.WorkerClient, chat string, p Payload, set settings.Settings) {
 	if p.DelayMS > 0 && !d.pause(ctx, time.Duration(p.DelayMS)*time.Millisecond) {
 		return
+	}
+	if strings.HasSuffix(chat, "@broadcast") || strings.HasSuffix(chat, "@newsletter") {
+		return // nobody sees "typing..." on a status or a channel post
 	}
 	state, delay := "", time.Duration(0)
 	switch {

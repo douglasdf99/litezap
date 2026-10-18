@@ -133,9 +133,11 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	// Marco 9: chat state from the app state, and auto-read; their services are set below.
 	acct := &service.Account{Store: st, Events: bus, Sending: cl.sending}
 	reader := &autoread.Reader{Workers: mgr, Unread: st, Log: log, Settings: rt.Settings}
+	// Marco 10: status posts, channel posts and label changes.
+	socialEvents := &service.SocialEvents{Store: st, Events: bus, Log: log}
 	mgr.SetObserver(manager.Observers{
 		&ingest.Ingestor{Store: st, Log: log, Events: bus, History: history}, q, events.Observer{Bus: bus}, cl.proxy, rt,
-		groupEvents, acct, reader,
+		groupEvents, acct, reader, socialEvents,
 	})
 	stopAll := func() {
 		actx, acancel := context.WithTimeout(context.Background(), scaled(5*time.Second, scale))
@@ -201,6 +203,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	msg.OnSettingsChanged = rt.SettingsChanged
 	groups := &service.Groups{Store: st, Workers: mgr, Resolver: resolver, Sending: cl.sending,
 		Fetcher: msg.Fetcher, Defaults: cfg.InstanceDefaults, DefaultProxy: cfg.DefaultProxyURL}
+	social := &service.Social{Store: st, Workers: mgr, Messaging: msg, Sending: cl.sending, Fetcher: msg.Fetcher, Events: bus}
 	handler := api.New(svc, guarded, api.Options{
 		// MCP streamable HTTP at /mcp, behind the same tokens (spec 3.1, 6.1).
 		MCP: mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Groups: groups, Logger: log, Account: acct,
@@ -215,6 +218,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		AgentHook:  &agenthook.Admin{Store: st},
 		Groups:     groups,
 		Account:    acct,
+		Social:     social,
 	}, log)
 	var codes *dashboard.LaunchCodes
 	if loopback {

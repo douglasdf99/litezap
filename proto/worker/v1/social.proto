@@ -1,0 +1,132 @@
+syntax = "proto3";
+
+package worker.v1;
+
+import "worker/v1/worker.proto";
+
+option go_package = "github.com/douglasdf99/litezap/gen/worker/v1;workerv1";
+
+// Social is served by `litezap worker` next to Worker and Groups, on the same socket
+// (marco 10): status privacy, channels (newsletters), WhatsApp Business labels and the
+// business profile. Posting a status or publishing in a channel goes through Worker.Send
+// (to "status@broadcast" or "<id>@newsletter"), so the supervisor's queue paces it.
+//
+// Error codes follow worker.proto: NotFound "not_found" (channel or profile), PermissionDenied
+// "forbidden" (WhatsApp refused: not a channel admin, not allowed), InvalidArgument
+// "validation_failed" (refused by the worker before reaching WhatsApp), FailedPrecondition
+// "logged_out" / "app_state_not_synced" / "business_account_required", Unavailable
+// "instance_not_connected".
+service Social {
+  rpc GetStatusPrivacy(GetStatusPrivacyRequest) returns (StatusPrivacy);
+
+  rpc ListChannels(ListChannelsRequest) returns (ListChannelsResponse);
+  // GetChannel reads a channel by JID or by invite code/link (exactly one).
+  rpc GetChannel(GetChannelRequest) returns (Channel);
+  rpc CreateChannel(CreateChannelRequest) returns (Channel);
+  // ChannelAction: follow | unfollow | mute | unmute.
+  rpc ChannelAction(ChannelActionRequest) returns (ChannelActionResponse);
+  rpc ChannelMessages(ChannelMessagesRequest) returns (ChannelMessagesResponse);
+  rpc ChannelReact(ChannelReactRequest) returns (ChannelReactResponse);
+
+  // LabelAction changes labels through the app state (the phone follows).
+  rpc LabelAction(LabelActionRequest) returns (LabelActionResponse);
+  rpc GetBusinessProfile(GetBusinessProfileRequest) returns (BusinessProfileInfo);
+}
+
+message GetStatusPrivacyRequest {}
+
+// StatusPrivacy is who receives the account's status posts (set on the phone).
+// type: contacts (all contacts) | blacklist (contacts except list) | whitelist (only list).
+message StatusPrivacy {
+  string type = 1;
+  repeated string list = 2; // phone-number JIDs when known
+}
+
+message Channel {
+  string jid = 1;
+  string name = 2;
+  string description = 3;
+  string invite_code = 4;
+  int64 subscribers = 5;
+  bool verified = 6;
+  string state = 7; // active | suspended | geosuspended
+  int64 created_ms = 8;
+  // The account's relation to the channel ("" when unknown, e.g. read by invite):
+  // role owner | admin | subscriber | guest; muted.
+  string role = 9;
+  bool muted = 10;
+  string picture_url = 11;
+}
+
+message ListChannelsRequest {}
+message ListChannelsResponse {
+  repeated Channel channels = 1;
+}
+
+message GetChannelRequest {
+  string jid = 1;
+  string invite = 2; // code or https://whatsapp.com/channel/<code>
+}
+
+message CreateChannelRequest {
+  string name = 1;
+  string description = 2;
+  bytes picture = 3; // JPEG (optional)
+}
+
+message ChannelActionRequest {
+  string jid = 1;
+  string action = 2;
+}
+message ChannelActionResponse {}
+
+message ChannelMessagesRequest {
+  string jid = 1;
+  int32 count = 2;      // 1..100
+  int64 before = 3;     // server id: messages older than it (0: newest)
+}
+message ChannelMessagesResponse {
+  repeated ChannelPost posts = 1;
+}
+
+message ChannelReactRequest {
+  string jid = 1;
+  int64 server_id = 2;
+  string emoji = 3; // "" removes our reaction
+}
+message ChannelReactResponse {}
+
+message LabelActionRequest {
+  // edit (create, rename, recolor, delete) | chat (label/unlabel a chat) | message
+  string kind = 1;
+  string label_id = 2;
+  string name = 3;
+  int32 color = 4;
+  bool deleted = 5;
+  string chat = 6;
+  string message_id = 7;
+  bool labeled = 8;
+}
+message LabelActionResponse {}
+
+message GetBusinessProfileRequest {
+  string jid = 1; // empty: the account itself (must be a business account)
+}
+
+message BusinessHours {
+  string day = 1;   // sun | mon | ...
+  string mode = 2;  // specific_hours | open_24h | appointment_only
+  string open = 3;  // minutes from midnight, as sent by WhatsApp
+  string close = 4;
+}
+
+message BusinessProfileInfo {
+  string jid = 1;
+  string address = 2;
+  string email = 3;
+  repeated string categories = 4;
+  string timezone = 5;
+  repeated BusinessHours hours = 6;
+  map<string, string> options = 7; // profile_options (e.g. website, description)
+  string business_name = 8;        // own account: the verified business name
+}

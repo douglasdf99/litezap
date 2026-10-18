@@ -284,8 +284,8 @@ type ChatCursor struct {
 // ListChats returns chats ordered by last message (most recent first), after the cursor if set.
 func (s *Store) ListChats(ctx context.Context, instanceID string, limit int, after *ChatCursor) ([]Chat, ChatCursor, error) {
 	q := `SELECT jid, name, is_group, last_message_at, unread_count, has_inbound, ` + chatStateCols + ` FROM chats
-		WHERE instance_id = ? AND (deleted_at = '' OR deleted_at < last_message_at)`
-	args := []any{instanceID}
+		WHERE instance_id = ? AND (deleted_at = '' OR deleted_at < last_message_at) AND jid <> ?`
+	args := []any{instanceID, StatusChat} // statuses have their own routes (marco 10)
 	if after != nil {
 		q += ` AND (last_message_at < ? OR (last_message_at = ? AND jid < ?))`
 		ts := fmtTS(after.LastMessageAt)

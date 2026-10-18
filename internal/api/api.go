@@ -84,6 +84,8 @@ type Options struct {
 	Account AccountService
 	// Groups, when set, serves the group and community routes (marco 8).
 	Groups GroupService
+	// Social, when set, serves status, channel, label and business routes (marco 10).
+	Social SocialService
 }
 
 type server struct {
@@ -175,6 +177,7 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 			s.groupRoutes(r)
 			r.Post("/presence/subscribe", s.subscribePresence)
 			s.accountRoutes(r)
+			s.socialRoutes(r)
 			if opt.Events != nil {
 				r.Get("/events", s.instanceEvents)
 			}

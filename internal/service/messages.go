@@ -206,6 +206,11 @@ type SendInput struct {
 	// ExpiresAfter is how long the message may wait in the queue ("90m"; default 24h, max
 	// 7 days); not sent by then, it fails with "expired".
 	ExpiresAfter string `json:"expires_after,omitempty"`
+
+	// Marco 10 (set by service.Social only): the look of a text status, and a reply to a
+	// contact's status (quoted from status@broadcast).
+	statusStyle *queue.StatusStyle
+	statusQuote *queue.QuoteTarget
 }
 
 // requestHash fingerprints a send request (without its client id) to detect a
@@ -343,6 +348,15 @@ func failedErr(lastErr string) error {
 // outcome: the returned view says sent, queued/in_flight (timeout: still queued) or the
 // error says why it failed.
 func (s *Messaging) Send(ctx context.Context, instanceID string, in SendInput, wait time.Duration) (MessageView, error) {
+	return s.send(ctx, instanceID, in, "", wait)
+}
+
+// send is Send; a non-empty chat is the recipient as is (status@broadcast or a channel,
+// marco 10), bypassing the recipient validation of in.To.
+func (s *Messaging) send(ctx context.Context, instanceID string, in SendInput, chat string, wait time.Duration) (MessageView, error) {
+	if chat != "" {
+		in.To = chat // part of the request hash
+	}
 	inst, err := s.Store.GetInstance(ctx, instanceID)
 	if err != nil {
 		return MessageView{}, mapErr(err)
@@ -376,9 +390,10 @@ func (s *Messaging) Send(ctx context.Context, instanceID string, in SendInput, w
 		}
 		expires = d
 	}
-	chat, err := s.resolveChat(ctx, instanceID, in)
-	if err != nil {
-		return MessageView{}, err
+	if chat == "" {
+		if chat, err = s.resolveChat(ctx, instanceID, in); err != nil {
+			return MessageView{}, err
+		}
 	}
 	id := secure.NewID("msg_")
 	p, err := s.payload(ctx, instanceID, id, chat, in)
@@ -450,6 +465,11 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 	}
 	if err := s.common(ctx, instanceID, chat, in, &p); err != nil {
 		return p, err
+	}
+	p.StatusStyle = in.statusStyle
+	if q := in.statusQuote; q != nil {
+		p.Quote = q
+		metaOf(&p).ReplyTo = q.WAMessageID
 	}
 	var err error
 	switch in.Type {

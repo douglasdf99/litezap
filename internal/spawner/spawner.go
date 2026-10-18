@@ -24,6 +24,12 @@ type GroupsHandle interface {
 	Groups() workerv1.GroupsClient
 }
 
+// SocialHandle is implemented by handles whose worker also serves the Social service
+// (marco 10: status privacy, channels, labels, business profile), on the same connection.
+type SocialHandle interface {
+	Social() workerv1.SocialClient
+}
+
 // Spawner starts workers. ProcessSpawner runs local processes; a container
 // implementation arrives with the cloud piece.
 type Spawner interface {

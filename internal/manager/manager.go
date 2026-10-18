@@ -319,6 +319,23 @@ func (m *Manager) Groups(id string) (workerv1.GroupsClient, error) {
 	return gh.Groups(), nil
 }
 
+// ErrNoSocial: the worker does not serve the Social service (marco 10).
+var ErrNoSocial = errors.New("instance worker does not support status, channels and labels")
+
+// Social returns the Social client of the instance's running worker (marco 10);
+// ErrNotRunning when it is not running, ErrNoSocial when the worker does not serve it.
+func (m *Manager) Social(id string) (workerv1.SocialClient, error) {
+	h, err := m.handle(id)
+	if err != nil {
+		return nil, err
+	}
+	sh, ok := h.(spawner.SocialHandle)
+	if !ok {
+		return nil, ErrNoSocial
+	}
+	return sh.Social(), nil
+}
+
 // QR returns the latest QR code while the instance is waiting to be paired.
 func (m *Manager) QR(id string) (string, bool) {
 	m.mu.Lock()
