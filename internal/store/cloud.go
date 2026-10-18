@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -239,27 +240,75 @@ func (s *Store) ExpireMediaFiles(ctx context.Context, now time.Time) (int, error
 	return n, nil
 }
 
+// pruneBatch bounds each retention transaction: the store has one connection, so a
+// long transaction would hold every other write (ingest, queue, webhooks) behind it.
+var pruneBatch int64 = 2000
+
 // PruneMessages deletes messages older than before, their media (rows and local files)
-// and finished sends (sent or failed) last updated before it. It returns the number of
-// messages deleted.
+// and finished sends (sent or failed) last updated before it, in small transactions. It
+// returns the number of messages deleted.
 func (s *Store) PruneMessages(ctx context.Context, before time.Time) (int64, error) {
 	cut := fmtTS(before)
-	rows, err := s.db.QueryContext(ctx, `SELECT md.path FROM media md JOIN messages m ON m.id = md.message_id
-		WHERE m.timestamp < ? AND md.path <> ''`, cut)
+	var total int64
+	for {
+		n, err := s.pruneMessageBatch(ctx, cut)
+		total += n
+		if err != nil || n < pruneBatch {
+			if err != nil {
+				return total, err
+			}
+			break
+		}
+	}
+	for {
+		res, err := s.db.ExecContext(ctx, `DELETE FROM outbound_queue WHERE seq IN (SELECT seq FROM outbound_queue
+			WHERE status IN ('sent', 'failed') AND updated_at < ? LIMIT ?)`, cut, pruneBatch)
+		if err != nil {
+			return total, err
+		}
+		if n, _ := res.RowsAffected(); n < pruneBatch {
+			return total, nil
+		}
+	}
+}
+
+func (s *Store) pruneMessageBatch(ctx context.Context, cut string) (int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT seq, id FROM messages WHERE timestamp < ? LIMIT ?`, cut, pruneBatch)
+	if err != nil {
+		return 0, err
+	}
+	var seqs []any
+	var ids []any
+	for rows.Next() {
+		var seq int64
+		var id string
+		if err := rows.Scan(&seq, &id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		seqs, ids = append(seqs, seq), append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(seqs) == 0 {
+		return 0, err
+	}
+	in := strings.Repeat("?,", len(ids))
+	in = in[:len(in)-1]
+	prows, err := s.db.QueryContext(ctx, `SELECT path FROM media WHERE path <> '' AND message_id IN (`+in+`)`, ids...)
 	if err != nil {
 		return 0, err
 	}
 	var paths []string
-	for rows.Next() {
+	for prows.Next() {
 		var p string
-		if err := rows.Scan(&p); err != nil {
-			rows.Close()
+		if err := prows.Scan(&p); err != nil {
+			prows.Close()
 			return 0, err
 		}
 		paths = append(paths, p)
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	prows.Close()
+	if err := prows.Err(); err != nil {
 		return 0, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -267,15 +316,11 @@ func (s *Store) PruneMessages(ctx context.Context, before time.Time) (int64, err
 		return 0, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM media WHERE message_id IN (SELECT id FROM messages WHERE timestamp < ?)`, cut); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM media WHERE message_id IN (`+in+`)`, ids...); err != nil {
 		return 0, err
 	}
-	res, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE timestamp < ?`, cut)
+	res, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE seq IN (`+in+`)`, seqs...)
 	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM outbound_queue WHERE status IN ('sent', 'failed') AND updated_at < ?`, cut); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -284,17 +329,24 @@ func (s *Store) PruneMessages(ctx context.Context, before time.Time) (int64, err
 	for _, p := range paths {
 		_ = os.Remove(p)
 	}
+	n, _ := res.RowsAffected()
 	return n, nil
 }
 
 // ScrubForExport removes the operator's data from a backup copy (its webhooks with their
-// secrets, runtime settings and per-instance flags) and rewrites the file so the deleted
+// secrets, runtime settings, per-instance flags, proxy URLs) and the instance token
+// hashes, and rewrites the file so the deleted
 // rows do not linger in free pages. Run it on the copy, never on the live database.
 func (s *Store) ScrubForExport(ctx context.Context) error {
 	for _, q := range []string{
 		`DELETE FROM webhooks WHERE owner = 'operator'`,
 		`DELETE FROM engine_kv`,
 		`DELETE FROM instance_flags`,
+		// Proxy credentials never leave the server (the operator's pool, E4); instance
+		// tokens are not exported either (a restore issues new ones).
+		`UPDATE instances SET settings_json = json_remove(settings_json, '$.proxy_url')
+			WHERE json_valid(settings_json) AND json_type(settings_json, '$.proxy_url') IS NOT NULL`,
+		`UPDATE instances SET token_hash = 'exported:' || id`,
 		`VACUUM`,
 		`PRAGMA wal_checkpoint(TRUNCATE)`,
 	} {

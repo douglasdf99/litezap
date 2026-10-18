@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
@@ -68,7 +69,11 @@ func Run(ctx context.Context, opt Options, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load device: %w", err)
 	}
-	cli := whatsmeow.NewClient(device, waLog.Stdout("whatsmeow", "WARN", false))
+	waLogger := waLog.Stdout("whatsmeow", "WARN", false)
+	if strings.EqualFold(os.Getenv("LITEZAP_LOG_FORMAT"), "json") {
+		waLogger = newSlogWA(log, slog.LevelWarn) // JSON lines only, phone numbers redacted
+	}
+	cli := whatsmeow.NewClient(device, waLogger)
 	// Always set, before connecting: applies to the websocket and to media upload/download,
 	// and an empty URL replaces the default transports, which would honor HTTPS_PROXY.
 	if err := cli.SetProxyAddress(opt.ProxyURL); err != nil {

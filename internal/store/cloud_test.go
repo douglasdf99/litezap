@@ -170,6 +170,27 @@ func TestRetentionPrunesMessagesAndExpiresMedia(t *testing.T) {
 	}
 }
 
+func TestPruneMessagesInBatches(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	seedInstance(t, s, "i1")
+	old := pruneBatch
+	pruneBatch = 2
+	defer func() { pruneBatch = old }()
+	for i := 0; i < 5; i++ {
+		id := string(rune('a' + i))
+		m := Message{ID: "msg_" + id, WAMessageID: "W" + id, ChatJID: "c@s.whatsapp.net", Source: "contact", Type: "text",
+			Status: "received", Timestamp: t0}
+		if _, err := s.InsertMessage(ctx, "i1", m, ChatUpdate{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := s.PruneMessages(ctx, t0.Add(time.Hour))
+	if err != nil || n != 5 {
+		t.Fatalf("pruned %d, %v", n, err)
+	}
+}
+
 func TestBackupTo(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)

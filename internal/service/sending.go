@@ -179,3 +179,12 @@ func (g GuardedMessaging) Send(ctx context.Context, instanceID string, in SendIn
 	}
 	return g.Messaging.Send(ctx, instanceID, in, wait)
 }
+
+// CheckNumbers is refused too: number lookups reach WhatsApp and are the usual tool of
+// list-checking abuse.
+func (g GuardedMessaging) CheckNumbers(ctx context.Context, instanceID string, phones []string) ([]NumberView, error) {
+	if err := g.Sending.Check(instanceID); err != nil {
+		return nil, err
+	}
+	return g.Messaging.CheckNumbers(ctx, instanceID, phones)
+}

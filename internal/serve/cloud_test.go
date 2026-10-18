@@ -102,13 +102,23 @@ func TestOpsListener(t *testing.T) {
 			t.Errorf("%s = %d %s", path, resp.StatusCode, b)
 		}
 	}
-	// The API listener (loopback here) serves /metrics too.
+	// The API listener serves /metrics only with the admin token, even on loopback.
 	resp, err := http.Get(info.URL + "/metrics")
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Fatalf("api /metrics without token = %d", resp.StatusCode)
+	}
+	req, _ := http.NewRequest("GET", info.URL+"/metrics", nil)
+	req.Header.Set("Authorization", "Bearer "+info.AdminToken)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
 	if resp.StatusCode != 200 {
-		t.Fatalf("api /metrics = %d", resp.StatusCode)
+		t.Fatalf("api /metrics with admin = %d", resp.StatusCode)
 	}
 }

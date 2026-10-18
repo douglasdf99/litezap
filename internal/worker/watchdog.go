@@ -19,6 +19,7 @@ type watchdog struct {
 	timeout     time.Duration
 	isConnected func() bool
 	now         func() time.Time
+	sink        Sink // the watched sink (reports go through it so the state stays known)
 
 	mu            sync.Mutex
 	state, reason string
@@ -42,8 +43,10 @@ func (w *Whatsmeow) withWatchdog(ctx context.Context, sink Sink) Sink {
 		return sink
 	}
 	d := &watchdog{w: w, timeout: w.zombieTimeout, isConnected: w.cli.IsConnected, now: time.Now}
+	ws := watchedSink{Sink: sink, d: d}
+	d.sink = ws // set before the loop starts: check reports through it
 	go d.run(ctx)
-	return watchedSink{Sink: sink, d: d}
+	return ws
 }
 
 func (d *watchdog) observe(state, reason string) {
@@ -93,15 +96,17 @@ func (d *watchdog) check() bool {
 		return false
 	}
 	d.badSince = time.Time{}
+	state := d.state
 	d.mu.Unlock()
 
-	w.log.Warn("connection watchdog: forcing a reconnect", "state", d.state, "socket_connected", connected, "after", d.timeout)
-	w.sink.ConnState("reconnecting", ZombieReason, w.jid())
 	w.mu.Lock()
 	ctx := w.loopCtx
 	w.mu.Unlock()
-	if ctx != nil && ctx.Err() == nil {
-		w.startConnectLoop(ctx, true, 0)
+	if ctx == nil || ctx.Err() != nil || w.connecting.Load() {
+		return false // a connect loop is already at work
 	}
+	w.log.Warn("connection watchdog: forcing a reconnect", "state", state, "socket_connected", connected, "after", d.timeout)
+	d.sink.ConnState("reconnecting", ZombieReason, w.jid())
+	w.startConnectLoop(ctx, true, 0)
 	return true
 }

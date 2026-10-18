@@ -28,7 +28,8 @@ func setup(t *testing.T) (*Exporter, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.CreateInstance(ctx, store.Instance{ID: "inst_a", Name: "Loja", State: instance.Connected, TokenHash: "h"}); err != nil {
+	if err := st.CreateInstance(ctx, store.Instance{ID: "inst_a", Name: "Loja", State: instance.Connected, TokenHash: "h",
+		SettingsJSON: `{"max_per_minute":10,"proxy_url":"socks5://user:proxypass@10.0.0.1:1080"}`}); err != nil {
 		t.Fatal(err)
 	}
 	for id, owner := range map[string]string{"wh_c": "", "wh_op": store.OwnerOperator} {
@@ -99,6 +100,9 @@ func TestExportDownload(t *testing.T) {
 	if bytes.Contains(files["litezap.db"], []byte("secret-wh_op")) {
 		t.Fatal("operator webhook secret leaked into the export")
 	}
+	if bytes.Contains(files["litezap.db"], []byte("proxypass")) || bytes.Contains(files["litezap.db"], []byte("10.0.0.1")) {
+		t.Fatal("proxy credentials leaked into the export")
+	}
 	p := filepath.Join(t.TempDir(), "copy.db")
 	_ = os.WriteFile(p, files["litezap.db"], 0o600)
 	cp, err := store.Open(p)
@@ -113,8 +117,9 @@ func TestExportDownload(t *testing.T) {
 	if _, err := cp.GetKV(context.Background(), "max_instances"); err == nil {
 		t.Fatal("engine_kv exported")
 	}
-	if n, _ := cp.CountInstances(context.Background()); n != 1 {
-		t.Fatalf("instances = %d", n)
+	in, err := cp.GetInstance(context.Background(), "inst_a")
+	if err != nil || in.SettingsJSON != `{"max_per_minute":10}` || in.TokenHash == "h" {
+		t.Fatalf("exported instance = %+v, %v", in, err)
 	}
 	// Temporary files are gone.
 	if left, _ := os.ReadDir(filepath.Join(dir, "tmp")); len(left) != 0 {

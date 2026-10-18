@@ -14,6 +14,7 @@ func TestWatchdogForcesReconnectAfterTimeout(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
 	d := &watchdog{w: w, timeout: time.Minute, isConnected: socket.Load, now: func() time.Time { return now }}
 	w.sink = watchedSink{Sink: r, d: d}
+	d.sink = w.sink
 
 	w.sink.ConnState("connected", "", "")
 	socket.Store(true)
@@ -38,6 +39,9 @@ func TestWatchdogForcesReconnectAfterTimeout(t *testing.T) {
 	}
 	if connects.Load() != 1 {
 		t.Fatalf("connects = %d", connects.Load())
+	}
+	for w.connecting.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
 	}
 	states, _ := r.snapshot()
 	if last := states[len(states)-1]; last != (connEvt{"reconnecting", ZombieReason}) {
@@ -68,6 +72,7 @@ func TestWatchdogIgnoresUnpairedAndTerminal(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
 	d := &watchdog{w: w, timeout: time.Minute, isConnected: func() bool { return false }, now: func() time.Time { return now }}
 	w.sink = watchedSink{Sink: r, d: d}
+	d.sink = w.sink
 	w.sink.ConnState("connected", "", "")
 	d.check()
 	now = now.Add(time.Hour)
@@ -77,6 +82,7 @@ func TestWatchdogIgnoresUnpairedAndTerminal(t *testing.T) {
 	w2, r2 := newTestAdapter(t, true, func(context.Context) error { return nil })
 	d2 := &watchdog{w: w2, timeout: time.Minute, isConnected: func() bool { return false }, now: func() time.Time { return now }}
 	w2.sink = watchedSink{Sink: r2, d: d2}
+	d2.sink = w2.sink
 	w2.sink.ConnState("connected", "", "")
 	w2.terminal.Store(true)
 	d2.check()

@@ -27,7 +27,7 @@ func TestConfigJSONEnvThenVariables(t *testing.T) {
 	}
 	t.Setenv("LITEZAP_CONFIG_JSON", `{"max_instances": 5, "webhook_retention_days": 3,
 		"instance_defaults": {"max_per_minute": 10, "timezone": "America/Sao_Paulo"},
-		"locked_settings": ["proxy_url"], "zombie_timeout": "5m"}`)
+		"locked_settings": ["proxy_url"], "operator_token": "lzo_aaaaaaaaaaaaaaaaaaaa", "zombie_timeout": "5m"}`)
 	t.Setenv("LITEZAP_MAX_INSTANCES", "7")
 	cfg, err := Load(p)
 	if err != nil {
@@ -80,7 +80,8 @@ func TestCloudValidation(t *testing.T) {
 		"short operator":    {"LITEZAP_OPERATOR_TOKEN": "short"},
 		"three operators":   {"LITEZAP_OPERATOR_TOKEN": "lzo_aaaaaaaaaaaaaaaaaaaa,lzo_bbbbbbbbbbbbbbbbbbbb,lzo_cccccccccccccccccccc"},
 		"operator is admin": {"LITEZAP_OPERATOR_TOKEN": "lza_sameeeeeeeeeeeeeeeeee", "LITEZAP_ADMIN_TOKEN": "lza_sameeeeeeeeeeeeeeeeee"},
-		"unknown lock":      {"LITEZAP_LOCKED_SETTINGS": "proxy_url,timezone"},
+		"unknown lock":      {"LITEZAP_LOCKED_SETTINGS": "proxy_url,timezone", "LITEZAP_OPERATOR_TOKEN": "lzo_aaaaaaaaaaaaaaaaaaaa"},
+		"lock no operator":  {"LITEZAP_LOCKED_SETTINGS": "proxy_url"},
 		"negative max":      {"LITEZAP_MAX_INSTANCES": "-1"},
 		"bad bool":          {"LITEZAP_REQUIRE_PROXY": "maybe"},
 		"negative days":     {"LITEZAP_MESSAGE_RETENTION_DAYS": "-3"},

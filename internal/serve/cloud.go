@@ -57,6 +57,7 @@ func newCloud(cfg config.Config, st *store.Store, log *slog.Logger) *cloud {
 		sweeper: &retention.Sweeper{Store: st, Log: log, Media: cfg.MediaRetentionDays > 0,
 			Messages: time.Duration(cfg.MessageRetentionDays) * 24 * time.Hour},
 	}
+	export.CleanupStale(cfg.DataDir)
 	if !cfg.DisableDashboard && len(cfg.OperatorTokens()) > 0 {
 		c.remoteCodes = dashboard.NewRemoteLaunchCodes()
 	}

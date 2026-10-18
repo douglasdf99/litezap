@@ -130,6 +130,9 @@ func validateCloud(cfg Config) error {
 			return errors.New("operator_token must differ from admin_token")
 		}
 	}
+	if len(cfg.LockedSettings) > 0 && len(ops) == 0 {
+		return errors.New("locked_settings needs operator_token (otherwise nobody could change them)")
+	}
 	for _, s := range cfg.LockedSettings {
 		ok := false
 		for _, l := range LockableSettings {

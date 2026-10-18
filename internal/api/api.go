@@ -70,7 +70,7 @@ type Options struct {
 	// MCP, when set, serves the MCP streamable HTTP endpoint at /mcp behind the same
 	// Bearer authentication; the caller's service.Scope is in the request context.
 	MCP http.Handler
-	// Metrics, when set, serves GET /metrics (protected like /healthz).
+	// Metrics, when set, serves GET /metrics (admin or operator token).
 	Metrics http.Handler
 	// Operator configures the managed-hosting operator role (zero value: off).
 	Operator OperatorOptions
@@ -109,10 +109,12 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 		}
 		r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 		r.Get("/readyz", s.readyz)
-		if opt.Metrics != nil {
-			r.Method(http.MethodGet, "/metrics", opt.Metrics)
-		}
 	})
+	// Metrics always need the admin token here, even on loopback (a reverse proxy on the
+	// same host would expose them); ops_listen_addr serves them without a token.
+	if opt.Metrics != nil {
+		r.With(s.authenticate, s.requireAdmin).Method(http.MethodGet, "/metrics", opt.Metrics)
+	}
 
 	// Signed media URLs work without a token (spec 4.5); the signature is the credential.
 	r.Get("/media/{id}/{media_id}", s.signedMedia)

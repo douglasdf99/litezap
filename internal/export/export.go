@@ -128,6 +128,15 @@ func (e *Exporter) logErr(msg string, err error) {
 	}
 }
 
+// CleanupStale removes temporary files of an export interrupted by a crash (unscrubbed
+// database copies included). Call it at startup.
+func CleanupStale(dataDir string) {
+	matches, _ := filepath.Glob(filepath.Join(dataDir, "tmp", "export_*"))
+	for _, m := range matches {
+		_ = os.Remove(m)
+	}
+}
+
 // snapshot writes a scrubbed online backup of the database under DataDir/tmp.
 func (e *Exporter) snapshot(ctx context.Context) (path string, cleanup func(), err error) {
 	dir := filepath.Join(e.DataDir, "tmp")
@@ -270,7 +279,9 @@ func (e *Exporter) upload(ctx context.Context, w http.ResponseWriter, target, db
 	}
 	client := e.Client
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Minute}
+		client = &http.Client{Timeout: 30 * time.Minute,
+			// A presigned URL never redirects; refuse instead of following (possibly to http).
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, io.NopCloser(f))
 	if err != nil {

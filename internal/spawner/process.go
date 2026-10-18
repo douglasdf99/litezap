@@ -60,10 +60,12 @@ var proxyVars = []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "
 // (defense in depth; a worker only talks to WhatsApp and its supervisor), and a stale
 // watchdog setting (the supervisor appends the current one).
 var supervisorOnlyVars = []string{"LITEZAP_ADMIN_TOKEN", "LITEZAP_OPERATOR_TOKEN", "LITEZAP_CONFIG_JSON",
-	"LITEZAP_DEFAULT_PROXY_URL", "LITEZAP_WORKER_ZOMBIE_TIMEOUT"}
+	"LITEZAP_DEFAULT_PROXY_URL", "LITEZAP_INSTANCE_DEFAULTS_JSON", "LITEZAP_WORKER_ZOMBIE_TIMEOUT"}
+
+var droppedVars = append(append([]string{}, proxyVars...), supervisorOnlyVars...)
 
 func isProxyVar(name string) bool {
-	for _, v := range append(proxyVars, supervisorOnlyVars...) {
+	for _, v := range droppedVars {
 		if strings.EqualFold(name, v) {
 			return true
 		}

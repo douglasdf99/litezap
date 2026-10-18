@@ -251,6 +251,9 @@ func TestSendingSuspension(t *testing.T) {
 	if code, out := send(); code != 403 || errCode(out) != "sending_suspended" {
 		t.Fatalf("send while suspended = %d %v", code, out)
 	}
+	if code, out := e.do("POST", "/v1/instances/"+id+"/check-numbers", tok, `{"phones":["5511988887777"]}`); code != 403 || errCode(out) != "sending_suspended" {
+		t.Fatalf("check-numbers while suspended = %d %v", code, out)
+	}
 	_, out := e.do("GET", "/v1/operator/sending", operator, "")
 	if out["suspended"] != false || len(out["instances"].([]any)) != 1 {
 		t.Fatalf("status = %v", out)
