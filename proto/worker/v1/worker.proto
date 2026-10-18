@@ -96,6 +96,10 @@ message Call {
   string media = 5;  // audio | video ("" when unknown)
   int64 timestamp_ms = 6;
   string reason = 7; // terminate reason as sent by WhatsApp
+  // The signal came from one of the account's own devices (its phone or another
+  // companion), not from the other party: e.g. the phone telling companions it handles
+  // the call. Such a reject does not end the call.
+  bool from_self = 8;
 }
 
 // ConnState.state uses the instance.State strings:

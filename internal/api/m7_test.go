@@ -115,6 +115,8 @@ func TestMissedAndAnsweredCalls(t *testing.T) {
 	if got := callData(t, sse.next(events.TypeCallReceived)); got.Rejected || got.Media != "video" {
 		t.Fatalf("received = %+v", got)
 	}
+	// The phone's reject right after the offer (seen on real devices) does not end the call.
+	f.EmitCall(&workerv1.Call{CallId: "M1", Kind: "reject", Caller: caller, FromSelf: true})
 	f.EmitCall(&workerv1.Call{CallId: "M1", Kind: "terminate", Caller: caller, Reason: "timeout"})
 	if got := callData(t, sse.next(events.TypeCallEnded)); !got.Missed || got.Reason != "timeout" || got.Media != "video" {
 		t.Fatalf("missed = %+v", got)

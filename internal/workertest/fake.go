@@ -405,8 +405,12 @@ func (f *Fake) EmitCall(c *workerv1.Call) {
 			f.WA.offers = map[string]bool{}
 		}
 		f.WA.offers[c.CallId] = true
-	case "terminate", "reject":
+	case "terminate":
 		delete(f.WA.offers, c.CallId)
+	case "reject":
+		if !c.FromSelf { // our own devices' rejects do not end the call
+			delete(f.WA.offers, c.CallId)
+		}
 	}
 	f.WA.msgMu.Unlock()
 	f.WA.getSink().Data(&workerv1.Event{Kind: &workerv1.Event_Call{Call: c}})

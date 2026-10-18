@@ -254,3 +254,39 @@ func TestPlayedReceiptForwarded(t *testing.T) {
 		t.Fatal("played-self must be ignored")
 	}
 }
+
+// A reject sent by another device of the account (the phone) is flagged from_self and does
+// not make the call unknown: it can still be rejected by us.
+func TestRejectFromOwnDevice(t *testing.T) {
+	w := newMsgAdapter(t)
+	w.rejectCall = func(context.Context, types.JID, string) error { return nil }
+	caller := types.NewJID("5511888887777", types.DefaultUserServer)
+	ownPhone := types.JID{User: "5511999999999", Server: types.DefaultUserServer, Device: 0}
+	w.handle(&events.CallOffer{BasicCallMeta: types.BasicCallMeta{From: caller, CallCreator: caller, CallID: "S1"},
+		Data: &waBinary.Node{Tag: "offer", Content: []waBinary.Node{{Tag: "audio"}}}})
+	if lastEvent(t, w).GetCall().GetFromSelf() {
+		t.Fatal("the caller's offer is not from_self")
+	}
+	w.handle(&events.CallReject{BasicCallMeta: types.BasicCallMeta{From: ownPhone, CallCreator: caller, CallID: "S1"},
+		Data: &waBinary.Node{Tag: "reject", Attrs: waBinary.Attrs{"call-id": "S1", "count": "0"}}})
+	if c := lastEvent(t, w).GetCall(); c.GetKind() != "reject" || !c.GetFromSelf() || c.GetCaller() != caller.String() {
+		t.Fatalf("reject = %+v", c)
+	}
+	if err := w.RejectCall(context.Background(), "S1"); err != nil {
+		t.Fatalf("call forgotten after own-device reject: %v", err)
+	}
+	// A reject from the other party ends it.
+	w.handle(&events.CallOffer{BasicCallMeta: types.BasicCallMeta{From: caller, CallCreator: caller, CallID: "S2"}})
+	w.handle(&events.CallReject{BasicCallMeta: types.BasicCallMeta{From: caller, CallCreator: caller, CallID: "S2"}})
+	if c := lastEvent(t, w).GetCall(); c.GetFromSelf() {
+		t.Fatalf("peer reject = %+v", c)
+	}
+	if err := w.RejectCall(context.Background(), "S2"); status.Code(err) != codes.NotFound {
+		t.Fatalf("peer-rejected call still known: %v", err)
+	}
+	tag, children, attrs := callData(&waBinary.Node{Tag: "reject", Attrs: waBinary.Attrs{"count": "0", "call-id": "x"},
+		Content: []waBinary.Node{{Tag: "audio"}}})
+	if tag != "reject" || len(children) != 1 || len(attrs) != 2 || attrs[0] != "call-id" {
+		t.Fatalf("callData = %s %v %v", tag, children, attrs)
+	}
+}

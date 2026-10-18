@@ -54,6 +54,10 @@ const (
 	// pushNameRetry: right after pairing WhatsApp has not synced the profile name yet and
 	// SetPresence fails; it is tried once more after this delay.
 	pushNameRetry = 20 * time.Second
+	// defaultCallTimeout ends a call with reason "timeout" when no terminate arrives for
+	// this long after its last signal (a linked device is not told about every outcome:
+	// a call answered on the phone may never send it an accept).
+	defaultCallTimeout = 2 * time.Minute
 )
 
 type callState struct {
@@ -66,6 +70,7 @@ type callState struct {
 	accepted bool
 	rejected bool // by this instance (auto_reject)
 	ended    bool
+	timer    *time.Timer // ends the call after CallTimeout without signals
 }
 
 type presenceState struct {
@@ -81,6 +86,8 @@ type Handler struct {
 	Events   events.Publisher
 	Log      *slog.Logger
 	Clock    clock.Clock
+	// CallTimeout overrides defaultCallTimeout (tests).
+	CallTimeout time.Duration
 
 	mu       sync.Mutex
 	sender   Sender
@@ -109,7 +116,35 @@ func (h *Handler) Close() {
 	default:
 		close(stop)
 	}
+	h.mu.Lock()
+	for _, c := range h.calls {
+		if c.timer != nil {
+			c.timer.Stop()
+		}
+	}
+	h.mu.Unlock()
 	h.wg.Wait()
+}
+
+// arm (re)starts the call's timeout; must hold h.mu.
+func (h *Handler) arm(id, key string, st *callState, c *workerv1.Call) {
+	if st.ended {
+		return
+	}
+	d := h.CallTimeout
+	if d <= 0 {
+		d = defaultCallTimeout
+	}
+	if st.timer != nil {
+		st.timer.Stop()
+	}
+	select {
+	case <-h.stopped():
+		return
+	default:
+	}
+	cc := &workerv1.Call{CallId: c.CallId, Caller: c.Caller, Group: c.Group}
+	st.timer = time.AfterFunc(d, func() { h.end(id, key, cc, h.now().UTC(), "timeout") })
 }
 
 func (h *Handler) now() time.Time {
@@ -314,6 +349,9 @@ func (h *Handler) track(key string, now time.Time) *callState {
 	}
 	for k, c := range h.calls {
 		if now.Sub(c.seen) > callMemory {
+			if c.timer != nil {
+				c.timer.Stop()
+			}
 			delete(h.calls, k)
 		}
 	}
@@ -324,6 +362,9 @@ func (h *Handler) track(key string, now time.Time) *callState {
 			if first || c.seen.Before(at) {
 				oldest, at, first = k, c.seen, false
 			}
+		}
+		if t := h.calls[oldest].timer; t != nil {
+			t.Stop()
 		}
 		delete(h.calls, oldest)
 	}
@@ -353,6 +394,7 @@ func (h *Handler) call(id string, c *workerv1.Call) {
 		if st.group {
 			st.chat = c.Group
 		}
+		h.arm(id, key, st, c)
 		h.mu.Unlock()
 		if fresh {
 			// A call that already ended (signals out of order) or that rang long ago is only
@@ -364,15 +406,32 @@ func (h *Handler) call(id string, c *workerv1.Call) {
 		st := h.track(key, now)
 		first := !st.accepted && !st.ended
 		st.accepted = true
+		h.arm(id, key, st, c)
 		data := h.data(st, c, at)
 		h.mu.Unlock()
 		if first {
 			h.Events.Publish(id, events.TypeCallAccepted, data)
 		}
-	case "terminate", "reject":
+	case "reject":
+		if c.FromSelf {
+			// Seen on real phones: right after the offer, a reject from one of the account's
+			// own devices reaches this companion, whether the call is then answered on the
+			// phone or not. It is signalling between our devices, not the end of the call:
+			// keep waiting for the terminate (or the timeout).
+			h.mu.Lock()
+			st := h.track(key, now)
+			h.arm(id, key, st, c)
+			h.mu.Unlock()
+			h.log().Info("call reject from own device ignored", "instance_id", id)
+			return
+		}
+		h.end(id, key, c, at, "rejected_by_peer")
+	case "terminate":
 		reason := c.Reason
-		if c.Kind == "reject" {
-			reason = "rejected_by_device"
+		if reason == "accepted_elsewhere" { // answered on another device of the account
+			h.mu.Lock()
+			h.track(key, now).accepted = true
+			h.mu.Unlock()
 		}
 		h.end(id, key, c, at, reason)
 	}
@@ -438,11 +497,14 @@ func (h *Handler) end(id, key string, c *workerv1.Call, at time.Time, reason str
 		return
 	}
 	st.ended = true
+	if st.timer != nil {
+		st.timer.Stop()
+	}
 	data := h.data(st, c, at)
 	if st.rejected {
 		reason = "rejected"
 	}
-	data.Missed = !st.accepted && !st.rejected && reason != "rejected_by_device"
+	data.Missed = !st.accepted && !st.rejected && reason != "rejected_by_peer"
 	h.mu.Unlock()
 	data.Reason = reason
 	h.Events.Publish(id, events.TypeCallEnded, data)
