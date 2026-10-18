@@ -52,6 +52,8 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `GET\|PUT /v1/instances/{id}/settings` | instância ou admin (`proxy_url` e `unsafe_pacing` só admin) |
 | `POST /v1/instances/{id}/messages[?wait=true&timeout=30s]` | instância ou admin |
 | `GET /v1/instances/{id}/messages/{msg_id}` | instância ou admin |
+| `GET /v1/instances/{id}/queue[?status=queued\|in_flight\|sent\|failed\|all&limit=&cursor=]` | instância ou admin |
+| `DELETE /v1/instances/{id}/queue/{msg_id}` (cancela um item `queued`) · `DELETE /v1/instances/{id}/queue` (esvazia) | instância ou admin |
 | `GET /v1/instances/{id}/chats[?limit=&cursor=]` | instância ou admin |
 | `GET /v1/instances/{id}/chats/{jid}/messages[?limit=&cursor=]` | instância ou admin |
 | `POST /v1/instances/{id}/chats/{jid}/read` | instância ou admin |
@@ -85,9 +87,42 @@ curl -s -X POST localhost:8787/v1/instances/$ID/messages -H "Authorization: Bear
 # reação a uma mensagem do log (id do LiteZap ou wa_message_id)
 curl -s -X POST localhost:8787/v1/instances/$ID/messages -H "Authorization: Bearer $TOK" \
   -d '{"to":"5511999999999","type":"reaction","reaction":{"message_id":"msg_...","emoji":"👍"}}'
+
+# resposta citando uma mensagem, com menção e prévia do link
+curl -s -X POST localhost:8787/v1/instances/$ID/messages -H "Authorization: Bearer $TOK" \
+  -d '{"to":"1203630000@g.us","type":"text","text":"@5511988887777 veja https://exemplo.com","reply_to":"msg_...","mentions":["5511988887777"],"link_preview":"auto"}'
+
+# localização, contatos e enquete
+curl -s -X POST localhost:8787/v1/instances/$ID/messages -H "Authorization: Bearer $TOK" \
+  -d '{"to":"5511999999999","type":"location","location":{"latitude":-23.5614,"longitude":-46.6559,"name":"MASP"}}'
+curl -s -X POST localhost:8787/v1/instances/$ID/messages -H "Authorization: Bearer $TOK" \
+  -d '{"to":"5511999999999","type":"contact","contacts":[{"name":"Ana","phone":"5511977776666"}]}'
+curl -s -X POST localhost:8787/v1/instances/$ID/messages -H "Authorization: Bearer $TOK" \
+  -d '{"to":"1203630000@g.us","type":"poll","poll":{"name":"Almoço?","options":["12h","13h"],"max_selections":1}}'
+
+# editar (até 20 min), apagar para todos (até 48h), fixar e encaminhar
+curl -s -X POST localhost:8787/v1/instances/$ID/messages -H "Authorization: Bearer $TOK" \
+  -d '{"type":"edit","message_id":"msg_...","text":"texto corrigido"}'
+curl -s -X POST localhost:8787/v1/instances/$ID/messages -H "Authorization: Bearer $TOK" \
+  -d '{"type":"revoke","message_id":"msg_..."}'
+curl -s -X POST localhost:8787/v1/instances/$ID/messages -H "Authorization: Bearer $TOK" \
+  -d '{"type":"pin","message_id":"msg_...","pin":{"duration":"7d"}}'
+curl -s -X POST localhost:8787/v1/instances/$ID/messages -H "Authorization: Bearer $TOK" \
+  -d '{"to":"5511966665555","type":"forward","forward":{"message_id":"msg_..."}}'
 ```
 
-Tipos: `text`, `image`, `video`, `audio` (`media.ptt: true` envia como mensagem de voz), `document`, `reaction`. `to` aceita número com DDI ou JID (`...@s.whatsapp.net`, `...@g.us`, `...@lid`). `?wait=true` espera o resultado por `timeout` (padrão `30s`, no máximo 2 minutos); se o tempo acabar a resposta é `202` com o status atual (`queued`/`in_flight`) e o envio continua na fila. Limites: imagem 16MB, vídeo/áudio 64MB, documento 100MB. `expires_after` (padrão `24h`, máximo `168h`): não enviada até lá, a mensagem falha com `message_expired`.
+Tipos: `text`, `image`, `video`, `gif` (MP4 tocado em loop), `ptv` (vídeo redondo, sem legenda), `audio` (`media.ptt: true` envia como mensagem de voz), `document`, `sticker` (WebP até 1MB; animado detectado sozinho), `location`, `contact` (1 a 10 cartões: `name` + `phone`, ou `vcard` pronto), `poll` (2 a 12 opções distintas; `max_selections` padrão 1, `0` = qualquer número), `reaction`, `edit`, `revoke`, `pin`, `forward`.
+
+Campos que valem para mensagens novas (não para `reaction`, `edit`, `revoke`, `pin`):
+
+- `reply_to`: id do LiteZap ou `wa_message_id` de uma mensagem do chat; fora do log responde `validation_failed`.
+- `mentions`: números ou JIDs (escreva `@<número>` no texto onde a menção aparece); em grupo, `["all"]` menciona todos (grupos de até 256 participantes).
+- `link_preview` (só `text`): `"off"` (padrão), `"auto"` (lê o primeiro link do texto: título, descrição e miniatura de `og:*`) ou um objeto `{"url","title","description","image_url"}` com o cartão pronto. A página é buscada no enfileiramento com o mesmo filtro de endereço da mídia (IPs privados e locais recusados, sem proxy do ambiente), só `text/html`, até 512KB, e todo o trabalho tem limite de 5s: se falhar ou demorar, a mensagem sai sem prévia.
+- `delay_ms` e `typing_ms` (0 a 15000): espera extra antes do envio e "digitando..." por esse tempo (mesmo com `typing_simulation` desligado). Só somam tempo depois da verificação de ritmo: `min_interval_ms`, `max_per_minute`, rampa e janela continuam valendo.
+
+`edit`, `revoke` e `pin` usam `message_id` (id do LiteZap ou `wa_message_id`); com id do LiteZap, `to` é opcional. Editar: só textos enviados por este número, até 20 minutos depois (`409 edit_window_expired`). Apagar para todos: as próprias mensagens até 48h (`409 revoke_window_expired`); de outra pessoa, só em grupo onde o número é admin (o worker confere; senão `403 forbidden`). Fixar: `pin.duration` `24h`, `7d` (padrão) ou `30d`; `pin.unpin: true` desafixa. As janelas são conferidas no envio e de novo quando o item sai da fila. Editar e apagar atualizam o log (`edited_at`, `revoked_at` e texto) e emitem `message.edited`/`message.revoked`; esses itens passam pela fila como qualquer envio, mas não viram mensagem no log. Encaminhar (`forward.message_id`, ou `wa_message_id` com `forward.chat`): textos, localizações, contatos e mídia **recebida** (reenviada a partir dos servidores do WhatsApp, sem novo upload); mídia enviada pela API não pode ser encaminhada porque o LiteZap não guarda o arquivo.
+
+`to` aceita número com DDI ou JID (`...@s.whatsapp.net`, `...@g.us`, `...@lid`). `?wait=true` espera o resultado por `timeout` (padrão `30s`, no máximo 2 minutos); se o tempo acabar a resposta é `202` com o status atual (`queued`/`in_flight`) e o envio continua na fila. Limites: imagem 16MB, vídeo/áudio 64MB, documento 100MB. `expires_after` (padrão `24h`, máximo `168h`): não enviada até lá, a mensagem falha com `message_expired`.
 
 A fila é persistente e por instância: ordem estrita por destinatário, pausa enquanto a instância não está `connected` (e por 15–30s depois de conectar), janela de envio para quem não mandou nada nas últimas 24h, ritmo e rampa conforme `settings`, até 5 tentativas em falhas temporárias. Antes do primeiro envio a um número, o LiteZap confere se ele tem WhatsApp (e usa o JID que o WhatsApp devolve, com ou sem o 9º dígito); número sem WhatsApp falha com `invalid_number` sem enviar nada. Envios de mídia grande esperam vaga (no máximo 3 ao mesmo tempo) em vez de falhar; só se o cliente desistir da requisição antes de abrir vaga a resposta é `503 rate_limited`. `client_message_id` repetido devolve a mesma mensagem (idempotência); repetido com outro conteúdo responde `409 conflict`. O status (`queued`, `in_flight`, `sent`, `delivered`, `read`, `failed`) fica em `GET /messages/{id}`. No log de mensagens (`GET /chats/{jid}/messages`) o `status` é `received` para mensagens recebidas e `pending` → `sent` → `delivered` → `read` para as enviadas (`pending` = em envio, ainda sem confirmação do WhatsApp). Consultas de número também têm ritmo: cada uma que vai ao WhatsApp conta como um envio para `min_interval_ms`/`max_per_minute`, e por dia a instância faz no máximo o limite diário da rampa (quando ligada); acima disso o item espera a janela do dia seguinte. `check-numbers` tem limite próprio de 200 números não cacheados por dia (UTC), além de 10 por minuto (`429 rate_limited`).
 
@@ -112,12 +147,14 @@ Erros: `{"error":{"code","message","retryable"}}`. Códigos:
 | `forbidden` | 403 | token sem acesso ao recurso; URL assinada inválida ou expirada |
 | `instance_not_found` | 404 | instância inexistente |
 | `not_found` | 404 | mensagem, chat, contato ou mídia inexistente |
-| `conflict` | 409 | `client_message_id` reusado com outro conteúdo; URLs assinadas desativadas |
+| `conflict` | 409 | `client_message_id` reusado com outro conteúdo; URLs assinadas desativadas; cancelar item da fila que já está em envio ou terminou |
 | `instance_not_connected` | 409 | worker da instância não está rodando ou número deslogado |
 | `instance_banned` | 409 | número banido; apague a instância |
 | `instance_not_pairing` | 409 | instância não está aguardando QR/pareamento |
 | `media_unavailable` | 410 | mídia recebida expirou no WhatsApp |
 | `message_expired` | 410 | mensagem não enviada antes de `expires_after` |
+| `message_canceled` | 409 | mensagem removida da fila antes do envio (`?wait=true` ou reenvio com o mesmo `client_message_id`) |
+| `edit_window_expired` · `revoke_window_expired` | 409 | edição depois de 20 minutos · apagar para todos depois de 48h |
 | `media_too_large` | 413 | mídia acima do limite do tipo, ou corpo do envio acima de 140MB |
 | `media_fetch_failed` | 422 | `media.url` não pôde ser baixada (`retryable`) |
 | `rate_limited` | 429 | muitas consultas de números por minuto em `check-numbers` (cota própria, separada da fila) (`retryable`) |
@@ -126,6 +163,10 @@ Erros: `{"error":{"code","message","retryable"}}`. Códigos:
 | `worker_timeout` | 504 | o worker da instância não respondeu a tempo (`retryable`) |
 | `shutting_down` | 503 | servidor encerrando |
 | `internal` | 500 | erro interno |
+
+### Fila de envio
+
+`GET /queue` lista os itens ainda não enviados (`queued` e `in_flight`), do mais antigo ao mais novo; `?status=` filtra (`queued`, `in_flight`, `sent`, `failed`, `all`) e `next_cursor` pagina (`limit` padrão 50, máx. 200). `DELETE /queue/{msg_id}` remove um item `queued` sem enviar: ele termina como `failed` com `error: "canceled: ..."`, o arquivo de mídia preparado é apagado e sai `message.status` `failed`; um item `in_flight` (sendo enviado agora) ou já terminado responde `409 conflict`. `DELETE /queue` cancela todos os `queued` de uma vez (os `in_flight` terminam normalmente) e devolve `{"canceled": n}`. Útil antes de reconectar uma instância que ficou parada com mensagens velhas na fila.
 
 ### Verificar números
 
@@ -161,11 +202,14 @@ Adicionar campos em `data` não muda a versão; remover ou mudar o sentido de um
 | `message.sent` | envio pela API concluído (`source: "api"`) ou mensagem enviada pelo celular (`source: "device"`) | mensagem |
 | `message.status` | `sent`, `delivered`, `read` ou `failed` de uma mensagem nossa | `{id, wa_message_id?, chat, status, error?}` |
 | `message.reaction` | reação recebida | mensagem com `type: "reaction"`, `text` = emoji (vazio = reação removida), `reaction_to` |
+| `message.edited` | mensagem editada (pela API, pelo celular ou pelo contato) | `{id?, wa_message_id, chat, sender?, from_me, source, text, timestamp}` (`text` = texto novo; `id` vazio se a mensagem não está no log) |
+| `message.revoked` | mensagem apagada para todos | `{id?, wa_message_id, chat, sender?, from_me, source, timestamp}` |
+| `message.poll_vote` | voto em enquete (o voto atual da pessoa; lista vazia = voto retirado) | `{poll_id?, poll_wa_message_id, chat, voter, push_name?, from_me, selected_options, unknown_options?, timestamp}` |
 | `history.synced` | fim da ingestão de um history sync (um evento por sync, 15s depois do último bloco) | `{chats, messages, new_messages}` |
 
-Mensagem: `{id, wa_message_id, chat, sender, from_me, is_group, push_name, source, type, text, media?, reaction_to?, timestamp}`, os mesmos campos de `GET /messages/{id}`. `media` traz `{id, kind, mime, size, file_name, seconds, ptt, url}`; `url` é a rota autenticada de download (`GET /v1/instances/{id}/media/{media_id}`). Mensagens de history sync não geram eventos individuais (só o `history.synced`); uma mensagem que chega duas vezes (reconexão do worker) gera um único evento.
+Mensagem: `{id, wa_message_id, chat, sender, from_me, is_group, push_name, source, type, text, media?, reaction_to?, timestamp}` mais o conteúdo estruturado quando houver: `reply_to` (wa id citado), `mentions`, `forwarded`, `location {latitude, longitude, name, address, url}`, `contacts [{display_name, vcard}]`, `poll {name, options, selectable}` e `link_preview {url, title, description}`; os mesmos campos de `GET /messages/{id}`. Tipos recebidos: os de envio, mais `unknown`. Votos chegam cifrados e só são decifrados para enquetes cujo segredo a sessão conhece (criadas ou recebidas depois do pareamento); as opções são casadas pelo SHA-256 contra as opções guardadas no log (`unknown_options` conta as que não casaram). `media` traz `{id, kind, mime, size, file_name, seconds, ptt, url}`; `url` é a rota autenticada de download (`GET /v1/instances/{id}/media/{media_id}`). Mensagens de history sync não geram eventos individuais (só o `history.synced`); uma mensagem que chega duas vezes (reconexão do worker) gera um único evento.
 
-Ainda não emitidos (o worker não reporta esses fatos): `message.revoked`, `chat.presence`, `group.updated`. `agent.failed` e `agent.handoff` chegam com o hook de agente (marco 5).
+Ainda não emitidos (o worker não reporta esses fatos): `chat.presence`, `group.updated`. `agent.failed` e `agent.handoff` chegam com o hook de agente (marco 5).
 
 ### SSE
 
@@ -269,8 +313,11 @@ O LiteZap expõe as mesmas operações como ferramentas do [Model Context Protoc
 | `list_instances` | instâncias visíveis para o token e seus estados (com token de instância, só a própria) |
 | `get_instance_status` | estado, número conectado e dica do próximo passo |
 | `get_qr` | QR de pareamento como imagem PNG (estado `qr_pending`) |
-| `send_message` | envia texto; espera o resultado por padrão (`timeout_seconds` 30, máx. 55: muitos clientes MCP desistem de uma chamada em 60s) |
-| `send_media` | envia imagem, vídeo, áudio (ou nota de voz) ou documento a partir de uma URL pública |
+| `send_message` | envia texto, com `reply_to` e `mentions` opcionais; espera o resultado por padrão (`timeout_seconds` 30, máx. 55: muitos clientes MCP desistem de uma chamada em 60s) |
+| `send_media` | envia imagem, vídeo, áudio (ou nota de voz), documento, sticker, gif ou vídeo redondo a partir de uma URL pública |
+| `send_reaction` | reage com um emoji a uma mensagem (vazio remove) |
+| `send_location` · `send_contact` | localização; 1 a 10 cartões de contato (nome + telefone) |
+| `edit_message` · `delete_message` | edita um texto enviado (até 20 min) · apaga para todos (até 48h; marcadas como destrutivas, com aviso para só agir a pedido do usuário) |
 | `get_message_status` | `queued`, `in_flight`, `sent`, `delivered`, `read` ou `failed` |
 | `list_chats` | chats do log, mais recentes primeiro, com não lidas (paginado) |
 | `get_messages` | mensagens de um chat, mais novas primeiro (paginado por `cursor`) |
@@ -399,19 +446,22 @@ Com a instância conectada (passos acima):
 
 ## Limitações conhecidas
 
-- Eventos ainda não emitidos: `message.revoked`, `chat.presence` e `group.updated` (o worker não os reporta). SSE não tem replay (`Last-Event-ID` é ignorado).
+- Eventos ainda não emitidos: `chat.presence` e `group.updated` (o worker não os reporta). SSE não tem replay (`Last-Event-ID` é ignorado).
 - A garantia "pelo menos uma vez" vale a partir do outbox. Antes dele o evento passa por um buffer em memória (até 10.000): um crash do supervisor entre gravar a mensagem no log e gravar a entrega, ou um buffer cheio (logado), perde o evento para os webhooks. Um shutdown normal grava o buffer antes de sair.
 - `wait_for_events` (MCP) só vê eventos publicados enquanto espera; para o que chegou antes, use `get_messages`.
 - Streams SSE checam o token só na conexão: um stream aberto continua depois de o token ser rotacionado (reconecte para aplicar).
 - Se um recibo chegar antes da confirmação do envio, sai `message.status: delivered` (ou `read`) antes de `message.sent`, e o `message.status: sent` é omitido.
-- Sem busca full-text e sem envio de `sticker`, `location` e `contact` (marco 2b); essas mensagens são recebidas e registradas.
+- Sem busca full-text (marco 2b).
+- Botões, listas e carrossel não são enviados (instáveis no WhatsApp); respostas a eles chegam como `unknown`.
+- Votos em enquetes criadas antes do pareamento não são decifrados (a sessão não tem o segredo). Votos não ficam no log, só no evento `message.poll_vote`.
+- Fixar mensagem não emite evento, e fixações feitas pelo celular não são registradas.
+- A prévia de link `auto` lê só `og:*`/`twitter:*`/`<title>` da página (sem JavaScript); miniatura só de JPEG, PNG ou GIF.
 - Mídia recebida baixada fica em `data/media/` sem limpeza automática ainda (o prazo de 7 dias é gravado, a limpeza vem no marco 2b).
 - Mídia passa entre supervisor e worker por arquivos em `data/` (mesma máquina). Um spawner em container (nuvem) vai precisar de um volume compartilhado.
 - Se o supervisor morrer entre o worker entregar um evento e o supervisor gravá-lo, esse evento se perde (sem confirmação de entrega worker→supervisor ainda).
-- Mensagens editadas e apagadas ainda não atualizam o log.
 - Suporte a Windows não testado (compila, mas não foi executado).
 
-A lista completa do que foi adiado para o marco 2b (busca, envio de sticker/location/contact, retenção, confirmação de entrega, edições/revogações, nome de grupos, métricas) está na seção "Marco 2b" de `docs/superpowers/plans/2026-10-17-litezap-m2-messaging.md`.
+A lista completa do que foi adiado para o marco 2b (busca, retenção, confirmação de entrega, nome de grupos, métricas) está na seção "Marco 2b" de `docs/superpowers/plans/2026-10-17-litezap-m2-messaging.md`.
 
 ## Desenvolvimento
 

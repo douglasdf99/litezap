@@ -102,7 +102,7 @@ Sem dependências externas no modo local.
 
 **Rampa por idade da instância** (padrão ligado, configurável por instância em `settings`): o limite diário de destinatários *novos* (chats — diretos ou grupos — sem nenhuma mensagem recebida, inclusive via history sync) começa em 50/dia e sobe linearmente até 150/dia ao longo de 14 dias desde o primeiro `connected`. Cada destinatário conta uma vez por dia; o "dia" é o do `timezone` da instância. Acima do limite, os envios para destinatários novos ficam `queued` até o **início da janela de envio do dia seguinte, mais a variação** (nunca à meia-noite), sem gastar tentativa; respostas a chats que já falaram com a instância não contam. Mensagens idênticas para muitos destinatários novos em sequência são espaçadas com o dobro do `min_interval`.
 
-Tipos de mensagem suportados (lista fechada nesta peça): `text`, `image`, `video`, `audio` (inclui voz/ptt), `document`, `sticker`, `location`, `contact`, `reaction` (o marco 2 entrega `text`, `image`, `video`, `audio`, `document` e `reaction`; os demais no marco 2b). Mídia entra por `media.url` (o supervisor baixa) ou `media.base64`; multipart fica fora; no máximo 3 corpos grandes e 3 downloads/decodificações de mídia ao mesmo tempo (os demais esperam vaga; o corpo é liberado assim que a mensagem entra na fila, antes da espera de `?wait=true`). O download por URL tem proteção contra SSRF: timeout 30s, limite de tamanho do tipo, sem proxy de ambiente, e só endereços unicast globais (bloqueia privados, loopback, link-local, `0.0.0.0/8`, `100.64.0.0/10`, `198.18.0.0/15`, `240.0.0.0/4`, `64:ff9b::/96`, `2002::/16`), checados depois da resolução DNS em toda conexão, inclusive redirecionamentos (desligável por config para uso local: `media_allow_private_urls`). Um `Content-Type` remoto que contradiz o tipo da mensagem é ignorado; conteúdo que não é imagem/vídeo/áudio de verdade é recusado (SVG nunca vale como imagem).
+Tipos de mensagem suportados: `text`, `image`, `video`, `audio` (inclui voz/ptt), `document`, `reaction` (marco 2) e, desde o marco 6, `sticker` (WebP até 1MB), `gif` (MP4 com `GifPlayback`), `ptv` (vídeo redondo), `location`, `contact` (1 a 10 vCards), `poll`, `edit` (texto próprio, até 20 min), `revoke` (próprias até 48h; de outros só em grupo onde a instância é admin), `pin` (24h/7d/30d) e `forward` (texto, localização, contato e mídia recebida, reenviada pelo `ref` sem novo upload). Campos transversais do marco 6: `reply_to` (mensagem do log; fora dele, `validation_failed`), `mentions` (lista ou `["all"]` em grupo de até 256), `link_preview` (`auto`/`off`/custom; página buscada no enfileiramento pelo mesmo fetcher com filtro SSRF, só HTML até 512KB, orçamento total de 5s, sem prévia em falha), `delay_ms`/`typing_ms` (0–15s, só somam espera depois da verificação de ritmo). Edições, revogações e fixações passam pela fila (ritmo, janela, rampa) e não viram linha no log; as janelas de edição/revogação são conferidas no enfileiramento e no despacho (`edit_window_expired`, `revoke_window_expired`). A fila é visível: `GET /queue`, `DELETE /queue/{msg_id}` (só `queued`; `in_flight` → `conflict`) e `DELETE /queue` (cancelado = `failed` com `canceled:`). Botões, listas e carrossel ficam fora (instáveis). Mídia entra por `media.url` (o supervisor baixa) ou `media.base64`; multipart fica fora; no máximo 3 corpos grandes e 3 downloads/decodificações de mídia ao mesmo tempo (os demais esperam vaga; o corpo é liberado assim que a mensagem entra na fila, antes da espera de `?wait=true`). O download por URL tem proteção contra SSRF: timeout 30s, limite de tamanho do tipo, sem proxy de ambiente, e só endereços unicast globais (bloqueia privados, loopback, link-local, `0.0.0.0/8`, `100.64.0.0/10`, `198.18.0.0/15`, `240.0.0.0/4`, `64:ff9b::/96`, `2002::/16`), checados depois da resolução DNS em toda conexão, inclusive redirecionamentos (desligável por config para uso local: `media_allow_private_urls`). Um `Content-Type` remoto que contradiz o tipo da mensagem é ignorado; conteúdo que não é imagem/vídeo/áudio de verdade é recusado (SVG nunca vale como imagem).
 
 O `id` devolvido no envio é o id do item da fila, e é ele que se consulta em `GET /messages/{msg_id}` (que também mostra o `wa_message_id` quando houver).
 
@@ -201,7 +201,9 @@ Regra de versionamento: adicionar campos em `data` não muda a versão; remover 
 | `message.sent` | mensagem enviada (pela API ou `from_me` pelo celular; campo `source: api\|device`) |
 | `message.status` | `sent`, `delivered`, `read`, `failed` de mensagem enviada |
 | `message.reaction` | reação recebida |
-| `message.revoked` | mensagem apagada para todos |
+| `message.edited` | mensagem editada (API, celular ou contato) — marco 6 |
+| `message.revoked` | mensagem apagada para todos — marco 6 |
+| `message.poll_vote` | voto em enquete, com as opções decifradas (casadas por SHA-256 com as opções guardadas) — marco 6 |
 | `chat.presence` | digitando/gravando/online |
 | `group.updated` | entrada/saída de participantes, mudança de nome |
 | `history.synced` | ingestão de history sync concluída |
@@ -232,6 +234,7 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 | `GET/PUT /instances/{id}/settings` | inst (`proxy_url` e `unsafe_pacing`: admin) | ritmo, janela, fuso, rampa, proxy |
 | `POST /instances/{id}/messages` | inst | enviar (4.1) |
 | `GET /instances/{id}/messages/{msg_id}` | inst | status de uma mensagem |
+| `GET /instances/{id}/queue` · `DELETE .../queue/{msg_id}` · `DELETE .../queue` | inst | fila visível: listar, cancelar item `queued`, esvaziar (marco 6) |
 | `GET /instances/{id}/chats` | inst | chats do log, ordenados por última mensagem |
 | `GET /instances/{id}/chats/{jid}/messages` | inst | histórico paginado (cursor) |
 | `GET /instances/{id}/messages/search?q=` | inst | busca full-text (FTS5) |
@@ -260,6 +263,8 @@ Todas mapeiam casos de uso do `service`:
 
 `list_instances` (com token de instância devolve só a própria), `get_instance_status`, `send_message` (texto, com `wait` por padrão), `send_media` (por URL), `list_chats`, `get_messages` (por chat, paginado), `search_messages`, `get_contact`, `check_numbers`, `mark_read`.
 
+Marco 6: `send_message` ganha `reply_to` e `mentions`, `send_media` aceita `sticker`, `gif` e `ptv`, e entram `send_reaction`, `send_location`, `send_contact`, `edit_message` e `delete_message` (as duas últimas marcadas como destrutivas, com aviso para só agir a pedido explícito).
+
 Implementado no marco 4 (além das acima, exceto `search_messages`, que depende da busca do marco 2b): `get_qr` (imagem PNG), `get_message_status`, `list_contacts` e `wait_for_events` (espera curta por eventos novos, sem replay). O endpoint HTTP é *stateless* (cada POST autenticado ganha um servidor ligado ao escopo do token) e `litezap mcp` descobre o escopo do token por `GET /v1/me`. Envios sempre passam pela fila; mensagem que fica na fila volta como sucesso com `sent: false` e uma nota, não como erro.
 
 ## 8. Store (SQLite)
@@ -268,7 +273,7 @@ Arquivo `data/litezap.db`, modo WAL, migrações versionadas embutidas no binár
 
 - `instances` (id, name, state, state_reason, jid, token_hash, settings_json, first_connected_at, created_at, updated_at) — `settings_json` guarda só os overrides da instância; o efetivo soma os padrões da config
 - `chats` (instance_id, jid, name, is_group, last_message_at, unread_count, has_inbound, last_inbound_at, agent_enabled NULL|bool, agent_paused_until) — `is_group` e `has_inbound` nunca voltam a falso; `last_inbound_at` define conversa ativa para a janela de envio
-- `messages` (seq, instance_id, id, wa_message_id, chat_jid, sender_jid, from_me, source `contact|api|device|history`, type, text, media_json, reaction_to, status `received|pending|sent|delivered|read`, timestamp), única por (instance_id, chat_jid, wa_message_id) + tabela FTS5 sobre `text` (marco 2b)
+- `messages` (seq, instance_id, id, wa_message_id, chat_jid, sender_jid, from_me, source `contact|api|device|history`, type, text, media_json, reaction_to, status `received|pending|sent|delivered|read`, timestamp, meta_json, edited_at, revoked_at), única por (instance_id, chat_jid, wa_message_id) + tabela FTS5 sobre `text` (marco 2b). `meta_json` (marco 6) guarda citação, menções, encaminhado, localização, contatos, enquete e prévia de link; edição troca `text` e marca `edited_at`, revogação limpa `text` e marca `revoked_at`
 - `outbound_queue` (seq, id, instance_id, client_message_id, chat_jid, wa_message_id, payload_json, status, attempts, next_attempt_at, last_error, new_recipient, request_hash, expires_at, lookup_failures, created_at, updated_at, sent_at), com índice parcial dos itens ativos
 - `number_cache` (instance_id, phone, found, jid, checked_at) — resultado de `IsOnWhatsApp` (válido 30 dias se encontrado, 24h se não)
 - `webhooks` (id, instance_id?, url, secret, events_json, version, enabled)
@@ -349,6 +354,7 @@ Cada marco é testável sozinho:
 3. Eventos: barramento, SSE, webhooks com assinatura, retry e dead-letter.
 4. MCP: HTTP em `/mcp` e `litezap mcp` (stdio).
 5. Hook de agente + `examples/agent-claude/`.
+6. Mensagens completas (matriz de paridade com a Z-API, M6): tipos novos, citação, menções, prévia de link, editar/apagar/fixar/encaminhar, enquetes e votos, `delay_ms`/`typing_ms`, fila visível.
 
 ## 14. Fora do escopo (YAGNI)
 
