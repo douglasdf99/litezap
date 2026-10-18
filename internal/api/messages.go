@@ -30,7 +30,7 @@ func (s *server) getSettings(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	writeJSON(w, 200, set)
+	writeJSON(w, 200, s.settingsView(r, set))
 }
 
 func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
@@ -39,9 +39,10 @@ func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	// The proxy decides the egress IP and unsafe_pacing lifts the anti-ban floors: admin only.
-	if (patch.ProxyURL != nil || patch.UnsafePacing != nil) && !principalFrom(r).admin {
-		apierr.Write(w, apierr.New(http.StatusForbidden, "forbidden", "proxy_url and unsafe_pacing need the admin token", false))
+	// The proxy decides the egress IP and unsafe_pacing lifts the anti-ban floors: admin
+	// only, or operator only when locked (operator.go).
+	if err := s.checkSettingsPatch(r, patch); err != nil {
+		apierr.Write(w, err)
 		return
 	}
 	set, err := s.msg.UpdateSettings(r.Context(), chi.URLParam(r, "id"), patch)
@@ -49,7 +50,7 @@ func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	writeJSON(w, 200, set)
+	writeJSON(w, 200, s.settingsView(r, set))
 }
 
 // sendMessage answers 202 while the message is queued and 200 once it was sent

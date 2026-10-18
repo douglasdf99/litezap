@@ -70,6 +70,10 @@ type Options struct {
 	// MCP, when set, serves the MCP streamable HTTP endpoint at /mcp behind the same
 	// Bearer authentication; the caller's service.Scope is in the request context.
 	MCP http.Handler
+	// Metrics, when set, serves GET /metrics (protected like /healthz).
+	Metrics http.Handler
+	// Operator configures the managed-hosting operator role (zero value: off).
+	Operator OperatorOptions
 }
 
 type server struct {
@@ -83,6 +87,7 @@ type server struct {
 
 type principal struct {
 	admin      bool
+	operator   bool // managed hosting: above the admin (always also admin)
 	instanceID string
 }
 
@@ -104,6 +109,9 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 		}
 		r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 		r.Get("/readyz", s.readyz)
+		if opt.Metrics != nil {
+			r.Method(http.MethodGet, "/metrics", opt.Metrics)
+		}
 	})
 
 	// Signed media URLs work without a token (spec 4.5); the signature is the credential.
@@ -118,6 +126,7 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 		r.Get("/me", s.me)
 		r.With(s.requireAdmin).Post("/instances", s.createInstance)
 		r.With(s.requireAdmin).Get("/instances", s.listInstances)
+		s.operatorRoutes(r)
 		if opt.Webhooks != nil {
 			r.Route("/webhooks", s.webhookRoutes)
 		}
@@ -163,7 +172,9 @@ func (s *server) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		var p principal
-		if secure.Equal(tok, s.opt.AdminToken) {
+		if s.isOperator(tok) {
+			p.admin, p.operator = true, true
+		} else if secure.Equal(tok, s.opt.AdminToken) {
 			p.admin = true
 		} else {
 			id, err := s.svc.Authenticate(r.Context(), tok)
@@ -174,7 +185,7 @@ func (s *server) authenticate(next http.Handler) http.Handler {
 			p.instanceID = id
 		}
 		ctx := context.WithValue(r.Context(), ctxKey{}, p)
-		ctx = service.WithScope(ctx, service.Scope{Admin: p.admin, InstanceID: p.instanceID})
+		ctx = service.WithScope(ctx, p.scope())
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -254,7 +265,7 @@ func decodeMax(w http.ResponseWriter, r *http.Request, v any, limit int64) error
 // me tells the caller who its token is (used by `litezap mcp` to learn its scope).
 func (s *server) me(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
-	out := map[string]any{"admin": p.admin}
+	out := map[string]any{"admin": p.admin, "role": p.role()}
 	if p.instanceID != "" {
 		out["instance_id"] = p.instanceID
 	}

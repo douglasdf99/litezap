@@ -25,8 +25,7 @@ type WebhookService interface {
 }
 
 func scopeOf(r *http.Request) service.Scope {
-	p := principalFrom(r)
-	return service.Scope{Admin: p.admin, InstanceID: p.instanceID}
+	return principalFrom(r).scope()
 }
 
 func (s *server) webhookRoutes(r chi.Router) {

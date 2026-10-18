@@ -30,6 +30,8 @@ type Instances struct {
 	Queues *queue.Queues
 	// Events, when set, receives instance.pair_code.
 	Events events.Publisher
+	// Policy, when set, applies the managed-hosting limits (instance cap, required proxy).
+	Policy *Policy
 }
 
 type InstanceView struct {
@@ -115,10 +117,22 @@ func (s *Instances) Create(ctx context.Context, name string) (InstanceView, stri
 	}
 	id := secure.NewID("inst_")
 	tok := secure.NewInstanceToken()
-	if err := s.Store.CreateInstance(ctx, store.Instance{
-		ID: id, Name: name, State: instance.Created, TokenHash: secure.HashToken(tok),
-	}); err != nil {
+	release, err := s.Policy.admit(ctx)
+	if err != nil {
 		return InstanceView{}, "", err
+	}
+	err = s.Store.CreateInstance(ctx, store.Instance{
+		ID: id, Name: name, State: instance.Created, TokenHash: secure.HashToken(tok),
+	})
+	release()
+	if err != nil {
+		return InstanceView{}, "", err
+	}
+	if held, err := s.Policy.holdWithoutProxy(ctx, id); err != nil {
+		return InstanceView{}, "", err
+	} else if held { // stays stopped until the operator sets a proxy and starts it
+		v, err := s.Get(ctx, id)
+		return v, tok, err
 	}
 	if err := s.Manager.Start(ctx, id); err != nil {
 		return InstanceView{}, "", mapErr(err)
@@ -182,6 +196,9 @@ func (s *Instances) Delete(ctx context.Context, id string) error {
 }
 
 func (s *Instances) Start(ctx context.Context, id string) error {
+	if err := s.Policy.checkProxy(ctx, id); err != nil {
+		return err
+	}
 	return mapErr(s.Manager.Start(ctx, id))
 }
 
@@ -192,6 +209,9 @@ func (s *Instances) Stop(ctx context.Context, id string) error {
 func (s *Instances) Restart(ctx context.Context, id string) error {
 	if _, err := s.Store.GetInstance(ctx, id); err != nil {
 		return mapErr(err)
+	}
+	if err := s.Policy.checkProxy(ctx, id); err != nil {
+		return err
 	}
 	return mapErr(s.Manager.Restart(ctx, id))
 }

@@ -17,9 +17,11 @@ import (
 	"github.com/douglasdf99/litezap/internal/webhook"
 )
 
-// Scope is who calls: the admin, or the token of one instance.
+// Scope is who calls: the operator (managed hosting; always also Admin), the admin, or
+// the token of one instance.
 type Scope struct {
 	Admin      bool
+	Operator   bool
 	InstanceID string
 }
 
@@ -143,7 +145,8 @@ func validateSecret(s string) error {
 // visible loads a webhook the caller may see.
 func (s *Webhooks) visible(ctx context.Context, sc Scope, id string) (store.Webhook, error) {
 	w, err := s.Store.GetWebhook(ctx, id)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && !sc.Admin && w.InstanceID != sc.InstanceID) {
+	if errors.Is(err, store.ErrNotFound) || (err == nil && !sc.Admin && w.InstanceID != sc.InstanceID) ||
+		(err == nil && w.Owner == store.OwnerOperator && !sc.Operator) { // the operator's are invisible to others
 		return w, webhookNotFound()
 	}
 	return w, err
@@ -157,6 +160,9 @@ func (s *Webhooks) reload(ctx context.Context) {
 
 func (s *Webhooks) Create(ctx context.Context, sc Scope, in WebhookInput) (WebhookView, error) {
 	w := store.Webhook{ID: secure.NewID("wh_"), Version: events.Version, Enabled: true}
+	if sc.Operator {
+		w.Owner = store.OwnerOperator
+	}
 	if in.URL == nil {
 		return WebhookView{}, apierr.Validation("url is required")
 	}
@@ -219,7 +225,7 @@ func (s *Webhooks) List(ctx context.Context, sc Scope, instanceID string) ([]Web
 	}
 	out := []WebhookView{}
 	for _, w := range list {
-		if instanceID != "" && w.InstanceID != instanceID {
+		if (instanceID != "" && w.InstanceID != instanceID) || (w.Owner == store.OwnerOperator && !sc.Operator) {
 			continue
 		}
 		out = append(out, webhookView(w))

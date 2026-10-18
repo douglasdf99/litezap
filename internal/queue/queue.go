@@ -69,6 +69,9 @@ type Options struct {
 	Log      *slog.Logger
 	// Events, when set, receives message.sent and message.status (sent, failed) for API sends.
 	Events events.Publisher
+	// Hold, when set, pauses an instance's queue while it returns true (operator send
+	// suspension); whoever releases it must call Wake.
+	Hold func(instanceID string) bool
 }
 
 // Queues owns the per-instance dispatchers. It is a manager.Observer: reaching connected
@@ -342,6 +345,9 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 	}
 	if in.State != instance.Connected {
 		return -1, true // paused: no attempt is consumed while disconnected
+	}
+	if opt.Hold != nil && opt.Hold(d.id) {
+		return -1, true // sending suspended by the operator: Wake resumes
 	}
 	now := opt.Clock.Now()
 	if ready := d.q.ready(d.id); ready.Equal(notReady) {

@@ -88,6 +88,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	defer st.Close()
 
 	spawner.CleanupOrphans(cfg.DataDir, log)
+	cl := newCloud(cfg, st, log)
 	sp := &spawner.Process{DataDir: cfg.DataDir, MemoryLimitMB: cfg.WorkerMemoryMB, Log: log,
 		Env: workerEnv(st, cfg)}
 	mgr := manager.New(st, sp, manager.DefaultOptions(), log)
@@ -101,7 +102,8 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	bus.SetLogger(log)
 	history := events.NewHistoryTracker(bus, nil, 15*time.Second)
 	q := queue.New(st, mgr, queue.Options{Defaults: cfg.InstanceDefaults, Log: log, Resolver: resolver,
-		ConnectGrace: 15 * time.Second, Events: bus})
+		ConnectGrace: 15 * time.Second, Events: bus, Hold: cl.sending.Held})
+	cl.sending.Wake = q.Wake
 	mgr.SetObserver(manager.Observers{
 		&ingest.Ingestor{Store: st, Log: log, Events: bus, History: history}, q, events.Observer{Bus: bus},
 	})
@@ -117,6 +119,10 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		stopAll()
 		return fmt.Errorf("start webhooks: %w", err)
 	}
+	if err := cl.beforeBoot(ctx); err != nil {
+		stopAll()
+		return err
+	}
 	if err := mgr.Boot(ctx); err != nil {
 		stopAll()
 		return err
@@ -131,7 +137,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		stopAll()
 		return fmt.Errorf("media key: %w", err)
 	}
-	svc := &service.Instances{Store: st, Manager: mgr, DataDir: cfg.DataDir, Queues: q, Events: bus}
+	svc := &service.Instances{Store: st, Manager: mgr, DataDir: cfg.DataDir, Queues: q, Events: bus, Policy: cl.policy}
 	msg := &service.Messaging{
 		Store: st, Manager: mgr, Queues: q, Resolver: resolver,
 		Fetcher:  &media.Fetcher{AllowPrivate: cfg.MediaAllowPrivateURLs},
@@ -142,15 +148,18 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		SignedURLs: cfg.PublicURL != "" || isLoopback(cfg.ListenAddr),
 	}
 	loopback := isLoopback(cfg.ListenAddr)
-	handler := api.New(svc, msg, api.Options{
+	// New sends (REST and MCP) are refused while the operator suspends sending.
+	guarded := service.GuardedMessaging{Messaging: msg, Sending: cl.sending}
+	handler := api.New(svc, guarded, api.Options{
 		// MCP streamable HTTP at /mcp, behind the same tokens (spec 3.1, 6.1).
-		MCP: mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: msg, Events: bus, Logger: log,
+		MCP: mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Logger: log,
 			PublicHost: publicHost(cfg.PublicURL)}),
 		AdminToken: cfg.AdminToken,
 		ProtectOps: !loopback,
 		Ready:      st.Ping,
 		Webhooks:   &service.Webhooks{Store: st, Dispatcher: hooks},
 		Events:     bus,
+		Operator:   cl.operatorOptions(),
 	}, log)
 	var codes *dashboard.LaunchCodes
 	if loopback {
@@ -230,6 +239,9 @@ func workerEnv(st *store.Store, cfg config.Config) func(context.Context, string)
 		set, err := settings.Effective(cfg.InstanceDefaults, cfg.DefaultProxyURL, in.SettingsJSON)
 		if err != nil {
 			return nil, err
+		}
+		if cfg.RequireProxy && set.ProxyURL == "" {
+			return nil, errProxyRequired
 		}
 		return []string{"LITEZAP_WORKER_PROXY_URL=" + set.ProxyURL}, nil
 	}
