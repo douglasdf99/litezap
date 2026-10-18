@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/ingest"
 	"github.com/douglasdf99/litezap/internal/lookup"
 	"github.com/douglasdf99/litezap/internal/manager"
@@ -22,6 +23,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/service"
 	"github.com/douglasdf99/litezap/internal/settings"
 	"github.com/douglasdf99/litezap/internal/store"
+	"github.com/douglasdf99/litezap/internal/webhook"
 	"github.com/douglasdf99/litezap/internal/workertest"
 )
 
@@ -31,6 +33,8 @@ type env struct {
 	t   *testing.T
 	srv *httptest.Server
 	sp  *workertest.Spawner
+	bus *events.Bus
+	st  *store.Store
 }
 
 func newEnv(t *testing.T) *env {
@@ -57,26 +61,33 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 	defaults.MinIntervalMS, defaults.JitterMS, defaults.TypingSimulation, defaults.Ramp.Enabled = 0, 0, false, false
 	defaults.SendWindow, defaults.UnsafePacing = settings.Window{}, true
 	resolver := &lookup.Resolver{Store: st, Workers: mgr}
-	q := queue.New(st, mgr, queue.Options{Defaults: defaults, Log: log, Resolver: resolver})
-	mgr.SetObserver(manager.Observers{&ingest.Ingestor{Store: st, Log: log}, q})
+	disp := webhook.New(st, webhook.Options{AllowPrivate: true, Log: log})
+	bus := events.NewBus(nil, disp)
+	q := queue.New(st, mgr, queue.Options{Defaults: defaults, Log: log, Resolver: resolver, Events: bus})
+	mgr.SetObserver(manager.Observers{&ingest.Ingestor{Store: st, Log: log, Events: bus}, q, events.Observer{Bus: bus}})
+	if err := disp.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		q.Shutdown(ctx)
 		mgr.Shutdown(ctx)
+		disp.Close(ctx)
 	})
-	svc := &service.Instances{Store: st, Manager: mgr, DataDir: dir, Queues: q}
+	svc := &service.Instances{Store: st, Manager: mgr, DataDir: dir, Queues: q, Events: bus}
 	msg := &service.Messaging{Store: st, Manager: mgr, Queues: q, Fetcher: &media.Fetcher{AllowPrivate: true},
 		Signer:  media.NewSigner([]byte("0123456789abcdef0123456789abcdef"), "http://example.invalid"),
 		DataDir: dir, Defaults: defaults, Resolver: resolver, SignedURLs: true}
-	opt := Options{AdminToken: admin, Ready: st.Ping}
+	opt := Options{AdminToken: admin, Ready: st.Ping, Events: bus,
+		Webhooks: &service.Webhooks{Store: st, Dispatcher: disp}}
 	if tweak != nil {
 		tweak(&opt)
 	}
 	h := New(svc, msg, opt, log)
 	srv := httptest.NewServer(h)
-	t.Cleanup(srv.Close)
-	return &env{t: t, srv: srv, sp: sp}
+	t.Cleanup(func() { bus.CloseSubscribers(); srv.Close() })
+	return &env{t: t, srv: srv, sp: sp, bus: bus, st: st}
 }
 
 func (e *env) do(method, path, token, body string) (int, map[string]any) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/douglasdf99/litezap/internal/apierr"
+	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/secure"
 	"github.com/douglasdf99/litezap/internal/service"
 	"github.com/douglasdf99/litezap/internal/settings"
@@ -58,6 +59,14 @@ type Options struct {
 	// ProtectOps requires the admin token on /healthz and /readyz (set when not bound to loopback).
 	ProtectOps bool
 	Ready      func(context.Context) error
+	// Webhooks, when set, serves /v1/webhooks.
+	Webhooks WebhookService
+	// Events, when set, serves the SSE streams.
+	Events *events.Bus
+	// SSEHeartbeat is the interval of keep-alive comments (default 15s); SSEBuffer is how
+	// many events a stream may lag behind before it is disconnected (default 256).
+	SSEHeartbeat time.Duration
+	SSEBuffer    int
 }
 
 type server struct {
@@ -77,6 +86,12 @@ type principal struct {
 type ctxKey struct{}
 
 func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logger) http.Handler {
+	if opt.SSEHeartbeat == 0 {
+		opt.SSEHeartbeat = 15 * time.Second
+	}
+	if opt.SSEBuffer == 0 {
+		opt.SSEBuffer = 256
+	}
 	s := &server{svc: svc, msg: msg, opt: opt, log: log, bodySlots: make(chan struct{}, 3)}
 	r := chi.NewRouter()
 
@@ -95,6 +110,12 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 		r.Use(s.authenticate)
 		r.With(s.requireAdmin).Post("/instances", s.createInstance)
 		r.With(s.requireAdmin).Get("/instances", s.listInstances)
+		if opt.Webhooks != nil {
+			r.Route("/webhooks", s.webhookRoutes)
+		}
+		if opt.Events != nil {
+			r.With(s.requireAdmin).Get("/events", s.allEvents)
+		}
 		r.Route("/instances/{id}", func(r chi.Router) {
 			r.Use(s.requireInstance)
 			r.Get("/", s.getInstance)
@@ -118,6 +139,9 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 			r.Get("/contacts/{jid}", s.getContact)
 			r.Post("/check-numbers", s.checkNumbers)
 			r.Get("/media/{media_id}", s.getMedia)
+			if opt.Events != nil {
+				r.Get("/events", s.instanceEvents)
+			}
 		})
 	})
 	return r
