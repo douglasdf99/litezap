@@ -77,7 +77,7 @@ const (
 )
 
 type callEntry struct {
-	from types.JID // the offer's sender, as RejectCall wants it
+	from types.JID // the call creator, as RejectCall wants it
 	seen time.Time
 }
 
@@ -216,7 +216,13 @@ func (w *Whatsmeow) onRealtime(evt any) bool {
 	}
 	switch c.Kind {
 	case "offer", "offer_notice":
-		w.calls.add(c.CallId, meta.From, time.Now())
+		// RejectCall puts this JID in both "to" and "call-creator": the creator, as the
+		// offer named it (falling back to the stanza's sender).
+		creator := meta.CallCreator
+		if creator.IsEmpty() {
+			creator = meta.From
+		}
+		w.calls.add(c.CallId, creator, time.Now())
 	case "terminate", "reject":
 		w.calls.remove(c.CallId)
 	}

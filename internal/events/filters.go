@@ -41,7 +41,12 @@ func NormalizeChat(v string) string {
 	v = strings.TrimSpace(v)
 	if strings.Contains(v, "@") {
 		user, server, _ := strings.Cut(v, "@")
-		if user == "" || server == "" {
+		switch server {
+		case "s.whatsapp.net", "g.us", "lid":
+		default:
+			return ""
+		}
+		if user == "" {
 			return ""
 		}
 		if i := strings.IndexByte(user, ':'); i >= 0 && server != "g.us" {

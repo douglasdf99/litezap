@@ -66,7 +66,8 @@ func (u MessageUpdate) EventAttrs() Attrs {
 }
 func (v PollVote) EventAttrs() Attrs { return Attrs{Chat: v.Chat, HasFromMe: true, FromMe: v.FromMe} }
 
-// Status events are always about the instance's own messages.
-func (s MessageStatus) EventAttrs() Attrs { return Attrs{Chat: s.Chat, HasFromMe: true, FromMe: true} }
+// Status events are always about the instance's own messages: from_me does not apply
+// (filters.from_me=false must not hide every status).
+func (s MessageStatus) EventAttrs() Attrs { return Attrs{Chat: s.Chat} }
 func (p ChatPresence) EventAttrs() Attrs  { return Attrs{Chat: p.Chat} }
 func (c Call) EventAttrs() Attrs          { return Attrs{Chat: c.Chat} }

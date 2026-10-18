@@ -548,7 +548,7 @@ function settingsTab(ctx) {
       h('label', { class: 'check' }, noWin, ' Sem janela (enviar a qualquer hora)'),
       h('div', { class: 'grid3' }, field('Início', winStart), field('Fim', winEnd), field('Fuso horário', tz)), tzList),
     h('fieldset', null, h('legend', null, 'Chamadas e presença'),
-      h('label', { class: 'check' }, autoReject, ' Rejeitar chamadas automaticamente'),
+      h('label', { class: 'check' }, autoReject, ' Rejeitar chamadas individuais automaticamente'),
       field('Mensagem ao rejeitar', rejectMsg, 'Vai pela fila (ritmo e janela valem), no máximo uma por contato a cada 10 min; só em chamadas individuais.'),
       h('label', { class: 'check' }, online, ' Ficar online (recebe "digitando…" e presença dos contatos)'),
       h('p', { class: 'small muted' }, 'Atenção: com a conta online o WhatsApp para de mostrar notificações no celular. Deixe desligado se alguém usa o celular para atender.')),

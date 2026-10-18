@@ -234,7 +234,7 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 | `POST /instances/{id}/token/rotate` | admin | gera novo token de instância |
 | `GET /instances/{id}/qr` · `POST .../pair-phone` | inst | pareamento |
 | `GET/PUT /instances/{id}/settings` | inst (`proxy_url` e `unsafe_pacing`: admin) | ritmo, janela, fuso, rampa, proxy, `calls {auto_reject, reject_message}`, `presence {online}` (marco 7) |
-| `POST /instances/{id}/presence/subscribe` | inst | presença de um contato (exige `presence.online`; 20/min) — marco 7 |
+| `POST /instances/{id}/presence/subscribe` | inst | presença de um contato (exige `presence.online`; 20/min e 200/dia; bloqueada por suspensão de envio) — marco 7 |
 | `POST /instances/{id}/messages` | inst | enviar (4.1) |
 | `GET /instances/{id}/messages/{msg_id}` | inst | status de uma mensagem |
 | `GET /instances/{id}/queue` · `DELETE .../queue/{msg_id}` · `DELETE .../queue` | inst | fila visível: listar, cancelar item `queued`, esvaziar (marco 6) |

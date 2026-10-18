@@ -102,7 +102,7 @@ func TestCallEventsAndReject(t *testing.T) {
 	if err := w.RejectCall(context.Background(), "C1"); err != nil {
 		t.Fatal(err)
 	}
-	if len(rejected) != 1 || rejected[0] != from.String()+"/C1" {
+	if len(rejected) != 1 || rejected[0] != lid.String()+"/C1" { // the creator, without device
 		t.Fatalf("rejected = %v", rejected)
 	}
 	// Rejected calls are forgotten; unknown ids are never rejected.
@@ -128,9 +128,14 @@ func TestCallEventsAndReject(t *testing.T) {
 		t.Fatalf("ended call reject = %v", err)
 	}
 	group := types.NewJID("1203630", types.GroupServer)
-	w.handle(&events.CallOfferNotice{BasicCallMeta: types.BasicCallMeta{From: pn, CallCreator: pn, CallID: "G1", GroupJID: group}, Media: "audio", Type: "group"})
-	if c := lastEvent(t, w).GetCall(); c.GetKind() != "offer_notice" || c.GetGroup() != group.String() {
+	creator := types.NewJID("5511777776666", types.DefaultUserServer)
+	w.handle(&events.CallOfferNotice{BasicCallMeta: types.BasicCallMeta{From: pn, CallCreator: creator, CallID: "G1", GroupJID: group}, Media: "audio", Type: "group"})
+	if c := lastEvent(t, w).GetCall(); c.GetKind() != "offer_notice" || c.GetGroup() != group.String() || c.GetCaller() != creator.String() {
 		t.Fatalf("group = %+v", c)
+	}
+	// RejectCall names the call creator, not the stanza's sender.
+	if err := w.RejectCall(context.Background(), "G1"); err != nil || rejected[len(rejected)-1] != creator.String()+"/G1" {
+		t.Fatalf("group reject = %v %v", err, rejected)
 	}
 	n := eventCount(w)
 	w.handle(&events.CallRelayLatency{BasicCallMeta: meta})

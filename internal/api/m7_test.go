@@ -83,10 +83,25 @@ func TestCallsSettingsAndAutoReject(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("reject messages = %d", n)
 	}
-	// Group calls are rejected without a message.
+	// Group calls are only reported (rejecting needs a creator group notices lack).
 	f.EmitCall(&workerv1.Call{CallId: "G1", Kind: "offer_notice", Caller: "5511977776666@s.whatsapp.net", Group: "1203630@g.us"})
-	if g := callData(t, sse.next(events.TypeCallReceived)); !g.IsGroup || g.Chat != "1203630@g.us" || !g.Rejected {
+	if g := callData(t, sse.next(events.TypeCallReceived)); !g.IsGroup || g.Chat != "1203630@g.us" || g.Rejected {
 		t.Fatalf("group call = %+v", g)
+	}
+	// An offer that rang minutes ago (delivered after a reconnect) is not rejected nor answered.
+	other := "5511966665555@s.whatsapp.net"
+	f.EmitCall(&workerv1.Call{CallId: "OLD", Kind: "offer", Caller: other, TimestampMs: time.Now().Add(-5 * time.Minute).UnixMilli()})
+	if g := callData(t, sse.next(events.TypeCallReceived)); g.Rejected || g.CallID != "OLD" {
+		t.Fatalf("stale call = %+v", g)
+	}
+	time.Sleep(100 * time.Millisecond)
+	for _, s := range f.WA.Sent() {
+		if s.To == other {
+			t.Fatal("reject message for a stale call")
+		}
+	}
+	if slices.Contains(f.WA.Rejected(), "OLD") || slices.Contains(f.WA.Rejected(), "G1") {
+		t.Fatalf("rejected = %v", f.WA.Rejected())
 	}
 }
 
@@ -163,12 +178,28 @@ func TestPresenceOptInAndSubscribe(t *testing.T) {
 
 	e.do("PUT", "/v1/instances/"+id+"/settings", tok, `{"presence":{"online":false}}`)
 	e.eventually("marked unavailable", func() bool { return slices.Equal(f.WA.PresenceStates(), []bool{true, true, false}) })
+
+	// Quick toggles always end in the latest setting.
+	for i := 0; i < 5; i++ {
+		e.do("PUT", "/v1/instances/"+id+"/settings", tok, `{"presence":{"online":true}}`)
+		e.do("PUT", "/v1/instances/"+id+"/settings", tok, `{"presence":{"online":false}}`)
+	}
+	e.rt.Wait()
+	if st := f.WA.PresenceStates(); st[len(st)-1] {
+		t.Fatalf("final presence = %v", st)
+	}
 }
 
 func TestChatPresenceIsOptInAndSurvivesBursts(t *testing.T) {
 	e := newEnv(t)
 	id, tok := e.connected("Typing")
 	f := e.sp.Last(id)
+	e.do("PUT", "/v1/instances/"+id+"/settings", tok, `{"presence":{"online":true}}`)
+	e.eventually("online", func() bool { return len(f.WA.PresenceStates()) == 1 })
+	rcv := newHookReceiver(t)
+	if code, body := e.do("POST", "/v1/webhooks", tok, `{"url":"`+rcv.srv.URL+`","events":["*"]}`); code != 201 {
+		t.Fatalf("webhook = %d %v", code, body)
+	}
 	all, _ := e.sse("/v1/instances/"+id+"/events", tok) // no types: chat.presence excluded
 	typing, _ := e.sse("/v1/instances/"+id+"/events?types=chat.presence", tok)
 
@@ -186,6 +217,10 @@ func TestChatPresenceIsOptInAndSurvivesBursts(t *testing.T) {
 	}
 	f.EmitMessage(&workerv1.Message{Id: "IN1", Chat: caller, Sender: caller, TimestampMs: 1, Type: "text", Text: "oi"})
 	all.next(events.TypeMessageReceived)
+	e.eventually("webhook got the message", func() bool { _, _, ok := rcv.find(events.TypeMessageReceived); return ok })
+	if _, _, ok := rcv.find(events.TypeChatPresence); ok {
+		t.Fatal(`a "*" webhook received chat.presence`)
+	}
 	select {
 	case ev := <-all.evs:
 		if ev.typ == events.TypeChatPresence {

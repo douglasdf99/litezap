@@ -3,6 +3,7 @@ package realtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"github.com/douglasdf99/litezap/internal/clock"
 	"github.com/douglasdf99/litezap/internal/events"
+	"github.com/douglasdf99/litezap/internal/instance"
 	"github.com/douglasdf99/litezap/internal/settings"
 )
 
@@ -76,7 +78,11 @@ func TestUnknownCallEnds(t *testing.T) {
 
 func TestPresenceDedupeWindow(t *testing.T) {
 	c := clock.NewFake(time.Unix(1_800_000_000, 0))
-	h, r := newHandler(settings.Defaults(), c)
+	set := settings.Defaults()
+	set.Presence.Online = true
+	h, r := newHandler(set, c)
+	h.StateChanged("i1", instance.Connected, "") // applies presence.online (worker missing: flag only)
+	h.Wait()
 	typing := &workerv1.Event{Kind: &workerv1.Event_ChatPresence{ChatPresence: &workerv1.ChatPresence{
 		Chat: "5511@s.whatsapp.net", Sender: "5511@s.whatsapp.net", State: "composing"}}}
 	h.WorkerEvent("i1", typing)
@@ -86,5 +92,51 @@ func TestPresenceDedupeWindow(t *testing.T) {
 	h.WorkerEvent("i1", &workerv1.Event{Kind: &workerv1.Event_Presence{Presence: &workerv1.Presence{Jid: "5511@s.whatsapp.net", Online: true}}})
 	if len(r.evs) != 3 || r.evs[2].data.(events.ChatPresence).State != "online" {
 		t.Fatalf("events = %+v", r.evs)
+	}
+}
+
+// Presence that still arrives while presence.online is off (or before it was applied)
+// is dropped.
+func TestPresenceDroppedWhileOffline(t *testing.T) {
+	h, r := newHandler(settings.Defaults(), nil)
+	h.StateChanged("i1", instance.Connected, "")
+	h.Wait()
+	h.WorkerEvent("i1", &workerv1.Event{Kind: &workerv1.Event_ChatPresence{ChatPresence: &workerv1.ChatPresence{
+		Chat: "5511@s.whatsapp.net", State: "composing"}}})
+	h.WorkerEvent("i1", &workerv1.Event{Kind: &workerv1.Event_Presence{Presence: &workerv1.Presence{Jid: "5511@s.whatsapp.net", Online: true}}})
+	if len(r.evs) != 0 {
+		t.Fatalf("events = %+v", r.evs)
+	}
+}
+
+// Signals out of order: a call that already ended is reported, never rejected.
+func TestOfferAfterEndIsNotRejected(t *testing.T) {
+	set := settings.Defaults()
+	set.Calls.AutoReject = true
+	h, r := newHandler(set, nil)
+	h.WorkerEvent("i1", call("terminate", "L1"))
+	h.WorkerEvent("i1", call("offer", "L1"))
+	if len(r.evs) != 2 || r.evs[1].typ != events.TypeCallReceived || r.evs[1].data.(events.Call).Rejected {
+		t.Fatalf("events = %+v", r.evs)
+	}
+}
+
+func TestCallMemoryEvictsOldest(t *testing.T) {
+	c := clock.NewFake(time.Unix(1_800_000_000, 0))
+	h, _ := newHandler(settings.Defaults(), c)
+	for i := 0; i < maxCalls+5; i++ {
+		h.WorkerEvent("i1", call("offer", fmt.Sprint("C", i)))
+		c.Advance(time.Millisecond)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.calls) > maxCalls {
+		t.Fatalf("calls = %d", len(h.calls))
+	}
+	if _, ok := h.calls["i1|C0"]; ok {
+		t.Fatal("oldest call kept")
+	}
+	if _, ok := h.calls[fmt.Sprint("i1|C", maxCalls+4)]; !ok {
+		t.Fatal("newest call evicted")
 	}
 }

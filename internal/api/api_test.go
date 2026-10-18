@@ -82,7 +82,7 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 		defer cancel()
 		q.Shutdown(ctx)
 		mgr.Shutdown(ctx)
-		rt.Wait()
+		rt.Close()
 		disp.Close(ctx)
 	})
 	svc := &service.Instances{Store: st, Manager: mgr, DataDir: dir, Queues: q, Events: bus}

@@ -1166,8 +1166,9 @@ paths:
       description: |
         Pede ao WhatsApp as mudanças de online/offline (e visto por último, se o contato mostra) de um
         contato; chegam como `chat.presence` com `state` `online`/`offline`. Exige
-        `presence.online` nas settings (`409 presence_offline`). Até 20 assinaturas por minuto por
-        instância (`429 rate_limited`); valem até a conexão cair.
+        `presence.online` nas settings (`409 presence_offline`). Até 20 assinaturas por minuto e 200 por dia por
+        instância (`429 rate_limited`); recusada com `403 sending_suspended` enquanto o operador suspende
+        envios. Valem até a conexão cair.
       requestBody:
         required: true
         content:
@@ -1468,7 +1469,7 @@ components:
       type: object
       description: Política de chamadas recebidas (marco 7).
       properties:
-        auto_reject: { type: boolean, default: false, description: "Rejeita toda chamada assim que toca (< 3s); `call.received` sai com `rejected: true`." }
+        auto_reject: { type: boolean, default: false, description: "Rejeita toda chamada individual assim que toca (< 3s); `call.received` sai com `rejected: true`. Chamadas em grupo só são informadas." }
         reject_message:
           type: string
           maxLength: 1000
@@ -1492,7 +1493,7 @@ components:
           type: array
           items: { type: string, enum: [text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, button_reply, unknown] }
           description: "Só eventos de mensagem destes tipos (received, sent, reaction, button_reply)."
-        from_me: { type: boolean, description: "true: só mensagens nossas; false: exclui as nossas. Omitido: ambas." }
+        from_me: { type: boolean, description: "true: só mensagens nossas; false: exclui as nossas. Omitido: ambas. Não se aplica a message.status." }
     ChatPresenceEvent:
       type: object
       description: Dados de `chat.presence`.
@@ -2132,8 +2133,9 @@ webhooks:
       x-zapi: Webhook de chamadas
       description: |
         Uma chamada de voz ou vídeo está tocando (individual, ou em grupo com `is_group`). Com
-        `calls.auto_reject` a chamada é rejeitada antes do evento (em menos de 3 segundos) e sai com
-        `rejected: true`; `calls.reject_message` vai ao autor pela fila. Atender chamadas pela API não é
+        `calls.auto_reject` uma chamada individual é rejeitada antes do evento (em menos de 3 segundos)
+        e sai com `rejected: true`; `calls.reject_message` vai ao autor pela fila. Chamadas em grupo e
+        ofertas com mais de 1 minuto (entregues depois de uma reconexão) só são informadas. Atender chamadas pela API não é
         possível.
       x-related: [call.accepted, call.ended]
       x-fields:

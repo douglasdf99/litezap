@@ -18,7 +18,7 @@ Data: 2026-10-18 · Branch: `feat/m7-events` (a partir de `main`) · Spec: `2026
 3. Novo pacote `internal/realtime` (Observer do manager): publica `chat.presence`, `call.received`, `call.accepted`, `call.ended` (com `missed`), aplica `calls.auto_reject` (RPC em goroutine, < 3s) e manda `calls.reject_message` pela fila (`GuardedMessaging.Send`, ritmo/janela/rampa intactos; no máximo uma por contato a cada 10 min; só chamadas 1:1). Ao conectar com `presence.online=true` manda `SetPresence(available)`; mudar a setting aplica na hora.
 4. Settings novas: `calls {auto_reject, reject_message}` e `presence {online}` (padrão desligado — ficar "disponível" silencia as notificações do celular).
 5. `chat.presence` é opt-in também no filtro: `*` (ou SSE sem `types`) não o inclui; é preciso nomear `chat.presence` ou `chat.*`. Volume e privacidade (online/visto por último de contatos).
-6. `POST /instances/{id}/presence/subscribe {"to"}`: exige `presence.online`, cota de 20 assinaturas/min por instância; as assinaturas valem até a conexão cair.
+6. `POST /instances/{id}/presence/subscribe {"to"}`: exige `presence.online`, cota de 20 assinaturas/min e 200/dia por instância, recusada com envio suspenso pelo operador; as assinaturas valem até a conexão cair.
 7. Respostas de botão/lista/template/interativa recebidas: tipo `button_reply` no log, `button_reply {kind, id, title, description?}` no meta, evento `message.button_reply` (só recebimento).
 8. Filtros de webhook (`filters`): `chat` (`direct|group`), `chats` (permitidos), `exclude_chats`, `message_types`, `from_me` (true só nossas, false exclui nossas). Só restringem eventos que têm o campo (eventos `instance.*` sempre passam). O bus anexa atributos (chat, tipo, from_me) ao envelope; o dispatcher casa sem decodificar JSON. Migração `0006_m7_events.sql` (`webhooks.filters_json`).
 9. Eventos de grupo (`group.updated`) ficam no M8.
@@ -32,3 +32,12 @@ Data: 2026-10-18 · Branch: `feat/m7-events` (a partir de `main`) · Spec: `2026
 5. Filtros de webhook (service/store/dispatcher) + teste de contrato (`filters.chat=direct` nunca recebe grupo).
 6. API (`presence/subscribe`, settings), MCP (`wait_for_events`), painel (resumo dos eventos novos, settings de chamadas/presença), README, OpenAPI, spec.
 7. gofmt, vet, `go test -p 2 -race ./...`; revisão independente; smoke em 127.0.0.1:18796.
+
+## Revisão independente (feita) e correções
+
+- Presença aplicada em ordem: chamadas serializadas por instância, cada uma relê a setting (toggles rápidos terminam no último valor); `online` guardado por instância e eventos de presença descartados com a setting desligada; uma nova tentativa 20s depois quando o nome do perfil ainda não sincronizou.
+- Ofertas velhas (> 1 min, entregues depois de reconectar) e chamadas que já terminaram não são rejeitadas nem respondidas; chamadas em grupo só são informadas.
+- `RejectCall` usa o `CallCreator` da oferta (com `From` de reserva).
+- Mensagem de rejeição enfileirada em segundo plano (o loop de eventos da instância só espera a rejeição); `Handler.Close` no shutdown.
+- `SubscribePresence` passa pela suspensão de envio do operador; cota diária de 200.
+- `message.status` não carrega `from_me` (o filtro `from_me:false` não esconde status); chats de filtro só aceitam `s.whatsapp.net`, `g.us` e `lid`; memória de chamadas descarta a mais antiga.

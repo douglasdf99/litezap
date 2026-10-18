@@ -34,6 +34,7 @@ func TestFiltersMatch(t *testing.T) {
 		{"from_me only mine", Filters{FromMe: &yes}, mine, true},
 		{"exclude from_me", Filters{FromMe: &no}, mine, false},
 		{"from_me ignores events without it", Filters{FromMe: &yes}, status, true},
+		{"from_me=false keeps message.status", Filters{FromMe: &no}, MessageStatus{Chat: "5511@s.whatsapp.net"}.EventAttrs(), true},
 	}
 	for _, c := range cases {
 		if got := c.f.Match(env("message.received", c.a)); got != c.want {
@@ -53,6 +54,7 @@ func TestFiltersNormalize(t *testing.T) {
 	}
 	for _, bad := range []Filters{
 		{Chat: "private"}, {Chats: []string{"abc"}}, {ExcludeChats: []string{"@g.us"}}, {MessageTypes: []string{"video_call"}},
+		{Chats: []string{"abc@foo"}},
 	} {
 		if _, err := bad.Normalize(); err == nil {
 			t.Errorf("%+v accepted", bad)

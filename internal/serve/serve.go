@@ -128,6 +128,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	})
 	stopAll := func() {
 		shutdownAll(q, mgr, history, hooks, scale)
+		rt.Close() // reject messages being queued, presence retries
 		cctx, cancel := context.WithTimeout(context.Background(), scaled(5*time.Second, scale))
 		cl.close(cctx)
 		cancel()
