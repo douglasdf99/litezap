@@ -15,6 +15,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/export"
 	"github.com/douglasdf99/litezap/internal/ops"
+	"github.com/douglasdf99/litezap/internal/retention"
 	"github.com/douglasdf99/litezap/internal/service"
 	"github.com/douglasdf99/litezap/internal/store"
 	"github.com/douglasdf99/litezap/internal/usage"
@@ -36,6 +37,7 @@ type cloud struct {
 	usage   *usage.Recorder
 	proxy   *usage.ProxyWatch
 	health  *ops.Health
+	sweeper *retention.Sweeper
 
 	// remoteCodes are the one-click dashboard logins minted by the operator (E7); nil
 	// without an operator token or with the dashboard disabled.
@@ -52,6 +54,8 @@ func newCloud(cfg config.Config, st *store.Store, log *slog.Logger) *cloud {
 		usage:   &usage.Recorder{Store: st, Log: log},
 		proxy:   &usage.ProxyWatch{},
 		health:  &ops.Health{Ping: st.Ping},
+		sweeper: &retention.Sweeper{Store: st, Log: log, Media: cfg.MediaRetentionDays > 0,
+			Messages: time.Duration(cfg.MessageRetentionDays) * 24 * time.Hour},
 	}
 	if !cfg.DisableDashboard && len(cfg.OperatorTokens()) > 0 {
 		c.remoteCodes = dashboard.NewRemoteLaunchCodes()
@@ -77,6 +81,13 @@ func (c *cloud) attach(bus *events.Bus) {
 	c.proxy.Bus = bus
 	c.usage.Start()
 	c.proxy.Start()
+	c.sweeper.Start() // no-op unless a retention is configured
+}
+
+// mediaRetention is how long a downloaded attachment is kept locally (0: the default
+// expiry, which nothing enforces unless media_retention_days is set).
+func (c *cloud) mediaRetention() time.Duration {
+	return time.Duration(c.cfg.MediaRetentionDays) * 24 * time.Hour
 }
 
 // beforeBoot loads the persisted suspensions and parks instances that would start
@@ -132,6 +143,7 @@ func (c *cloud) drain() { c.health.Drain() }
 // (their last state changes count) and before the store closes. The ops listener goes
 // last so health checks keep answering during the shutdown.
 func (c *cloud) close(ctx context.Context) {
+	c.sweeper.Close()
 	c.proxy.Close()
 	if err := c.usage.Close(ctx); err != nil {
 		c.log.Error("usage: final flush", "err", err)

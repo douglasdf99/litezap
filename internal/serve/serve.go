@@ -158,6 +158,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		Signer:   media.NewSigner(mediaKey, baseURL),
 		DataDir:  cfg.DataDir,
 		Defaults: cfg.InstanceDefaults, DefaultProxy: cfg.DefaultProxyURL,
+		MediaRetention: cl.mediaRetention(),
 		// A URL built from a non-loopback listen address may be unreachable for third parties.
 		SignedURLs: cfg.PublicURL != "" || isLoopback(cfg.ListenAddr),
 	}
@@ -262,7 +263,11 @@ func workerEnv(st *store.Store, cfg config.Config) func(context.Context, string)
 		if cfg.RequireProxy && set.ProxyURL == "" {
 			return nil, errProxyRequired
 		}
-		return []string{"LITEZAP_WORKER_PROXY_URL=" + set.ProxyURL}, nil
+		env := []string{"LITEZAP_WORKER_PROXY_URL=" + set.ProxyURL}
+		if cfg.ZombieTimeout > 0 {
+			env = append(env, "LITEZAP_WORKER_ZOMBIE_TIMEOUT="+cfg.ZombieTimeout.String())
+		}
+		return env, nil
 	}
 }
 

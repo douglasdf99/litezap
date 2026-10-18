@@ -31,6 +31,8 @@ type Options struct {
 	// for as long as the supervisor lives). Reaching EOF means the supervisor is gone,
 	// and the worker shuts down. The worker command passes os.Stdin.
 	Parent io.Reader
+	// ZombieTimeout enables the connection watchdog (0: off).
+	ZombieTimeout time.Duration
 }
 
 // Run is the body of `litezap worker`. It blocks until ctx is cancelled or serving fails.
@@ -78,6 +80,7 @@ func Run(ctx context.Context, opt Options, log *slog.Logger) error {
 	wa := NewWhatsmeow(cli, log)
 	wa.proxied = opt.ProxyURL != ""
 	wa.dataDir, wa.instanceID = opt.DataDir, opt.InstanceID
+	wa.zombieTimeout = opt.ZombieTimeout
 	srv := NewServer(wa)
 	srv.SetLogger(log)
 

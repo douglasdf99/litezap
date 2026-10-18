@@ -37,6 +37,8 @@ type Whatsmeow struct {
 	// DownloadMedia writes (media/<instance>/).
 	dataDir    string
 	instanceID string
+	// zombieTimeout enables the connection watchdog (watchdog.go); 0 disables it.
+	zombieTimeout time.Duration
 
 	// Group addressing (reactions and read receipts must name participants the way the
 	// group does). groupInfo and lidFor default to the client and its LID store; tests
@@ -108,7 +110,7 @@ func drain(ch chan struct{}) {
 }
 
 func (w *Whatsmeow) Run(ctx context.Context, sink Sink) error {
-	w.sink = sink
+	w.sink = w.withWatchdog(ctx, sink)
 	w.cli.AddEventHandler(w.handle)
 	loopCtx, cancel := context.WithCancel(ctx)
 	w.mu.Lock()

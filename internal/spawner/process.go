@@ -56,8 +56,14 @@ func (p *Process) command(id, sock string) *exec.Cmd {
 // Names are compared case-insensitively, as Windows environment names are.
 var proxyVars = []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "LITEZAP_WORKER_PROXY_URL"}
 
+// supervisorOnlyVars are also dropped: secrets and settings the worker never needs
+// (defense in depth; a worker only talks to WhatsApp and its supervisor), and a stale
+// watchdog setting (the supervisor appends the current one).
+var supervisorOnlyVars = []string{"LITEZAP_ADMIN_TOKEN", "LITEZAP_OPERATOR_TOKEN", "LITEZAP_CONFIG_JSON",
+	"LITEZAP_DEFAULT_PROXY_URL", "LITEZAP_WORKER_ZOMBIE_TIMEOUT"}
+
 func isProxyVar(name string) bool {
-	for _, v := range proxyVars {
+	for _, v := range append(proxyVars, supervisorOnlyVars...) {
 		if strings.EqualFold(name, v) {
 			return true
 		}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -27,7 +26,7 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	log := newLogger(os.Stderr, os.Getenv("LITEZAP_LOG_FORMAT"))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -67,8 +66,9 @@ func main() {
 		err = worker.Run(ctx, worker.Options{
 			InstanceID: *id, Socket: *sock, DataDir: *dataDir,
 			// Set by the supervisor (env, not a flag: flags are visible to every user in ps).
-			ProxyURL: os.Getenv("LITEZAP_WORKER_PROXY_URL"),
-			Parent:   os.Stdin, // parent-liveness pipe: exit when the supervisor goes away
+			ProxyURL:      os.Getenv("LITEZAP_WORKER_PROXY_URL"),
+			Parent:        os.Stdin, // parent-liveness pipe: exit when the supervisor goes away
+			ZombieTimeout: envDuration("LITEZAP_WORKER_ZOMBIE_TIMEOUT"),
 		}, log.With("instance_id", *id))
 	case "version":
 		fmt.Println(version)
