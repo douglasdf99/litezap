@@ -43,7 +43,7 @@ func TestToolList(t *testing.T) {
 		t.Fatalf("tools = %v", names)
 	}
 	b, _ := json.Marshal(byName["send_message"].InputSchema)
-	for _, frag := range []string{`"required":["to","text"]`, `"maximum":120`, `"default":true`} {
+	for _, frag := range []string{`"required":["to","text"]`, `"maximum":55`, `"default":true`} {
 		if !strings.Contains(string(b), frag) {
 			t.Errorf("send_message schema %s lacks %s", b, frag)
 		}

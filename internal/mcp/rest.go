@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/douglasdf99/litezap/internal/apierr"
@@ -159,10 +160,11 @@ func pageQuery(limit int, cursor string) url.Values {
 
 func (r *REST) Scope(ctx context.Context) (service.Scope, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.scope != nil {
+		defer r.mu.Unlock()
 		return *r.scope, nil
 	}
+	r.mu.Unlock() // not held across the call: concurrent first calls each ask, that is fine
 	var me struct {
 		Admin      bool   `json:"admin"`
 		InstanceID string `json:"instance_id"`
@@ -173,8 +175,11 @@ func (r *REST) Scope(ctx context.Context) (service.Scope, error) {
 	if !me.Admin && me.InstanceID == "" {
 		return service.Scope{}, errors.New("GET /v1/me returned neither admin nor an instance")
 	}
-	r.scope = &service.Scope{Admin: me.Admin, InstanceID: me.InstanceID}
-	return *r.scope, nil
+	sc := service.Scope{Admin: me.Admin, InstanceID: me.InstanceID}
+	r.mu.Lock()
+	r.scope = &sc
+	r.mu.Unlock()
+	return sc, nil
 }
 
 func (r *REST) ListInstances(ctx context.Context) ([]service.InstanceView, error) {
@@ -279,11 +284,16 @@ func (r *REST) WaitEvents(ctx context.Context, id string, types []string, timeou
 	connectTimer := time.AfterFunc(restTimeout, cancel)
 	resp, err := r.request(sctx, "GET", instPath(id, "events"), q, nil)
 	connectTimer.Stop()
+	var ae *apierr.Error
+	if errors.As(err, &ae) && ae.Status == http.StatusNotFound && ae.Code == "server_error" {
+		return nil, apierr.New(http.StatusNotImplemented, "not_implemented", "events are not available on this server", false)
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	evs := make(chan json.RawMessage)
+	var ended atomic.Bool // the server closed the stream (error frame or EOF)
 	go func() {
 		defer close(evs)
 		sc := bufio.NewScanner(resp.Body)
@@ -293,8 +303,11 @@ func (r *REST) WaitEvents(ctx context.Context, id string, types []string, timeou
 		for sc.Scan() {
 			line := sc.Text()
 			switch {
+			case line == "" && name == "error": // e.g. slow_consumer: the server drops us
+				ended.Store(true)
+				return
 			case line == "":
-				if len(data) > 0 && name != "error" {
+				if len(data) > 0 {
 					select {
 					case evs <- json.RawMessage(data):
 					case <-sctx.Done():
@@ -305,8 +318,14 @@ func (r *REST) WaitEvents(ctx context.Context, id string, types []string, timeou
 			case strings.HasPrefix(line, "event:"):
 				name = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 			case strings.HasPrefix(line, "data:"):
+				if len(data) > 0 {
+					data = append(data, '\n')
+				}
 				data = append(data, strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " ")...)
 			}
+		}
+		if sctx.Err() == nil {
+			ended.Store(true)
 		}
 	}()
 	out := collect(sctx, timeout, limit, func(ctx context.Context) (json.RawMessage, bool) {
@@ -318,5 +337,9 @@ func (r *REST) WaitEvents(ctx context.Context, id string, types []string, timeou
 		}
 	})
 	cancel() // closes the stream; the reader goroutine ends
+	if len(out) == 0 && ended.Load() {
+		return nil, apierr.New(http.StatusServiceUnavailable, "stream_ended",
+			"the server closed the event stream (restarting or this client was too slow); call wait_for_events again", true)
+	}
 	return out, nil
 }

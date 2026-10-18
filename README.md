@@ -269,7 +269,7 @@ O LiteZap expõe as mesmas operações como ferramentas do [Model Context Protoc
 | `list_instances` | instâncias visíveis para o token e seus estados (com token de instância, só a própria) |
 | `get_instance_status` | estado, número conectado e dica do próximo passo |
 | `get_qr` | QR de pareamento como imagem PNG (estado `qr_pending`) |
-| `send_message` | envia texto; espera o resultado por padrão (`timeout_seconds` 30, máx. 120) |
+| `send_message` | envia texto; espera o resultado por padrão (`timeout_seconds` 30, máx. 55: muitos clientes MCP desistem de uma chamada em 60s) |
 | `send_media` | envia imagem, vídeo, áudio (ou nota de voz) ou documento a partir de uma URL pública |
 | `get_message_status` | `queued`, `in_flight`, `sent`, `delivered`, `read` ou `failed` |
 | `list_chats` | chats do log, mais recentes primeiro, com não lidas (paginado) |
@@ -277,7 +277,7 @@ O LiteZap expõe as mesmas operações como ferramentas do [Model Context Protoc
 | `mark_read` | marca o chat como lido (o contato vê os tiques azuis) |
 | `list_contacts` / `get_contact` | contatos da sessão (filtro `query`, `limit`) |
 | `check_numbers` | até 10 números por chamada; respeita o cache e a cota de consultas da instância |
-| `wait_for_events` | espera até 60s por eventos novos da instância (ex.: `message.received`), sem replay |
+| `wait_for_events` | espera até 55s por eventos novos da instância (ex.: `message.received`), sem replay |
 
 `instance_id` é opcional com token de instância (é sempre a dela) e com token admin quando só existe uma instância. A busca de mensagens fica para o marco 2b.
 
@@ -330,7 +330,7 @@ Serviços na nuvem (ChatGPT, OpenAI) precisam alcançar o servidor: publique-o a
 ### Segurança
 
 - **Use token de instância** (`lzi_...`) para dar ao assistente só um número: ele não lista nem opera outras instâncias, não cria, apaga nem troca token. O token admin dá acesso a todas.
-- **O assistente não fura o anti-ban**: todo envio passa pela mesma fila da API (intervalo mínimo, rampa diária de números novos, janela de envio, espera após conectar). Não há ferramenta para mudar settings, proxy ou `unsafe_pacing`. Uma mensagem que fica na fila volta com `sent: false` e uma nota dizendo que será enviada sozinha e não deve ser reenviada; `client_message_id` torna novas tentativas seguras.
+- **O assistente não fura o anti-ban**: todo envio passa pela mesma fila da API (intervalo mínimo, rampa diária de números novos, janela de envio, espera após conectar). Não há ferramenta para mudar settings, proxy ou `unsafe_pacing`. Uma mensagem que fica na fila volta com `sent: false` e uma nota dizendo que será enviada sozinha e não deve ser reenviada. Cada envio usa um `client_message_id` (o do modelo ou um gerado, `mcp_…`); num erro ambíguo (timeout, conexão perdida) a mensagem de erro traz esse id e pede para conferir `get_message_status` antes de reenviar.
 - **`check_numbers`** gasta a cota diária de consultas da instância e responde `rate_limited` quando ela acaba.
 - **Texto de terceiros**: mensagens, nomes e eventos vêm de outras pessoas. As instruções do servidor e as descrições das ferramentas pedem ao modelo para tratá-los como dados, mas prompt injection não é um problema resolvido: prefira clientes que pedem aprovação antes de `send_message`/`send_media` (por exemplo `require_approval`).
 - Erros chegam ao modelo como erro de ferramenta, com código, dica e se dá para tentar de novo (ex.: `instance_not_connected` sugere `get_instance_status`/`get_qr`). Erros internos aparecem só como `internal error` (o detalhe vai para o log do servidor).
@@ -395,7 +395,7 @@ Com a instância conectada (passos acima):
 3. Antes de parear, peça "mostre o QR para parear": `get_qr` devolve a imagem; escaneie no celular e peça o status até `connected`.
 4. Peça "quais são minhas conversas recentes?" e "o que Fulano disse por último?" (`list_chats`, `get_messages`).
 5. Peça para enviar uma mensagem ao contato de teste. Fora da janela de envio a resposta diz que ficou na fila (`sent: false`) e que sai sozinha depois; confirme com `get_message_status` ou no celular.
-6. Peça "espere a resposta dele" e responda pelo celular do contato em até 60s: `wait_for_events` devolve o `message.received`.
+6. Peça "espere a resposta dele" e responda pelo celular do contato em até 55s: `wait_for_events` devolve o `message.received`.
 
 ## Limitações conhecidas
 

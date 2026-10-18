@@ -21,6 +21,7 @@ func TestHTTPHostCheck(t *testing.T) {
 		{"zap.example.com", "zap.example.com", http.StatusOK},
 		{"zap.example.com", "evil.example", http.StatusForbidden},
 		{"zap.example.com", "127.0.0.1", http.StatusOK},
+		{"zap.example.com:443", "zap.example.com", http.StatusOK},
 	} {
 		h := NewHTTPHandler(HTTPDeps{Instances: e.svc, Messaging: e.msg, Events: e.bus, PublicHost: c.publicHost})
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

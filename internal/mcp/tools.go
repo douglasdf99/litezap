@@ -11,6 +11,7 @@ import (
 
 	"github.com/douglasdf99/litezap/internal/apierr"
 	"github.com/douglasdf99/litezap/internal/events"
+	"github.com/douglasdf99/litezap/internal/secure"
 	"github.com/douglasdf99/litezap/internal/service"
 	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -31,9 +32,9 @@ Typical flow: list_instances -> get_instance_status (if qr_pending: get_qr and a
 
 const (
 	defaultWait       = 30 * time.Second
-	maxWaitSeconds    = 120
+	maxWaitSeconds    = 55 // MCP clients often give up on a request after 60s
 	defaultEventWait  = 20
-	maxEventWait      = 60
+	maxEventWait      = 55
 	defaultMaxEvents  = 20
 	maxEventsLimit    = 100
 	defaultPageLimit  = 20
@@ -206,7 +207,7 @@ type sendMessageInput struct {
 	Text            string `json:"text" jsonschema:"Message text (WhatsApp formatting such as *bold* and _italic_ works). Up to 64KB."`
 	ClientMessageID string `json:"client_message_id,omitempty" jsonschema:"Your idempotency key (up to 128 chars). Calling again with the same key and content returns the same message instead of sending twice."`
 	Wait            *bool  `json:"wait,omitempty" jsonschema:"Wait for the outcome before returning (default true). The message is queued either way."`
-	TimeoutSeconds  int    `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for the send, in seconds (default 30, max 120). On timeout the message stays queued and is still sent later."`
+	TimeoutSeconds  int    `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for the send, in seconds (default 30, max 55). On timeout the message stays queued and is still sent later."`
 }
 
 type sendMediaInput struct {
@@ -220,7 +221,7 @@ type sendMediaInput struct {
 	PTT             bool   `json:"ptt,omitempty" jsonschema:"For audio: send as a voice note instead of an audio file."`
 	ClientMessageID string `json:"client_message_id,omitempty" jsonschema:"Your idempotency key (up to 128 chars); a retried call with the same key never sends twice."`
 	Wait            *bool  `json:"wait,omitempty" jsonschema:"Wait for the outcome before returning (default true)."`
-	TimeoutSeconds  int    `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for the send, in seconds (default 30, max 120)."`
+	TimeoutSeconds  int    `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for the send, in seconds (default 30, max 55)."`
 }
 
 type sendOutput struct {
@@ -285,7 +286,7 @@ type checkNumbersOutput struct {
 type waitEventsInput struct {
 	InstanceID     string   `json:"instance_id,omitempty" jsonschema:"Instance whose events to wait for"`
 	Types          []string `json:"types,omitempty" jsonschema:"Event types to wait for, e.g. [\"message.received\"]; \"message.*\" matches a family. Omit for every type. Known types: instance.status, instance.qr, instance.pair_code, message.received, message.sent, message.status, message.reaction, history.synced."`
-	TimeoutSeconds int      `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for the first event, in seconds (default 20, max 60)."`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for the first event, in seconds (default 20, max 55)."`
 	MaxEvents      int      `json:"max_events,omitempty" jsonschema:"Maximum events returned (default 20, max 100)."`
 }
 
@@ -501,7 +502,7 @@ func (t *tools) getQR(ctx context.Context, in instanceInput) (*sdk.CallToolResul
 	return &sdk.CallToolResult{Content: []sdk.Content{
 		&sdk.ImageContent{Data: png, MIMEType: "image/png"},
 		&sdk.TextContent{Text: out.Instructions},
-	}}, out, nil
+	}}, out, nil // the SDK fills structuredContent; the text above carries the same instructions
 }
 
 func waitOf(wait *bool, seconds int) time.Duration {
@@ -516,9 +517,22 @@ func (t *tools) send(ctx context.Context, instanceID string, in service.SendInpu
 	if err != nil {
 		return nil, sendOutput{}, err
 	}
-	v, err := t.b.Send(ctx, id, in, wait)
+	if in.ClientMessageID == "" {
+		// Our own idempotency key: the wait below and any retry reuse it, so a message is
+		// never queued twice by one call.
+		in.ClientMessageID = secure.NewID("mcp_")
+	}
+	v, err := t.b.Send(ctx, id, in, 0) // queue it
 	if err != nil {
-		return nil, sendOutput{}, err
+		return nil, sendOutput{}, &sendFailure{err: err, clientID: in.ClientMessageID}
+	}
+	if wait > 0 && (v.Status == "queued" || v.Status == "in_flight") {
+		// Same key and content: the server returns the queued message and waits on it.
+		w, err := t.b.Send(ctx, id, in, wait)
+		if err != nil {
+			return nil, sendOutput{}, &sendFailure{err: err, clientID: in.ClientMessageID, messageID: v.ID}
+		}
+		v = w
 	}
 	out := sendOutput{Message: v}
 	switch v.Status {
