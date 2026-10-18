@@ -82,6 +82,8 @@ type Options struct {
 	AgentHook AgentHookService
 	// Account, when set, serves chats, contacts, profile and privacy routes (marco 9).
 	Account AccountService
+	// Groups, when set, serves the group and community routes (marco 8).
+	Groups GroupService
 }
 
 type server struct {
@@ -170,6 +172,7 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 			r.Post("/check-numbers", s.checkNumbers)
 			r.Get("/media/{media_id}", s.getMedia)
 			s.agentRoutes(r)
+			s.groupRoutes(r)
 			r.Post("/presence/subscribe", s.subscribePresence)
 			s.accountRoutes(r)
 			if opt.Events != nil {

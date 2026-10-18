@@ -220,7 +220,7 @@ Regra de versionamento: adicionar campos em `data` não muda a versão; remover 
 | `message.button_reply` | resposta a botão/lista/template/interativa recebida (só recebimento) — marco 7 |
 | `chat.presence` | digitando/gravando/parou, online/offline de contato assinado — marco 7; opt-in: exige `presence.online` e não entra em `*` |
 | `call.received` · `call.accepted` · `call.ended` | chamada tocando (com `rejected` se `calls.auto_reject`), atendida num aparelho da conta, encerrada (`reason`, `missed`) — marco 7 |
-| `group.updated` | entrada/saída de participantes, mudança de nome — marco 8 |
+| `group.updated` | mudança num grupo, um evento por `kind` (participantes adicionados/removidos/promovidos/rebaixados, pedido de entrada, nome, descrição, foto, configurações, link redefinido, `joined`, `deleted`, vínculo de comunidade) — marco 8 |
 | `history.synced` | ingestão de history sync concluída |
 | `agent.failed` | falha no hook de agente |
 | `agent.handoff` | ação `handoff` do agente |
@@ -260,6 +260,8 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 | `GET /instances/{id}/media/{media_id}` | inst | mídia recebida (`?signed=1` → URL assinada) |
 | `GET /media/{id}/{media_id}?exp=&sig=` | assinatura | mídia recebida via URL assinada (4.5) |
 | `GET/PUT/DELETE /instances/{id}/agent-hook` · `PUT .../chats/{jid}/agent` · `GET .../agent-hook/chats` · `GET .../agent-hook/calls` | inst | hook de agente (4.3) |
+| `GET/POST /instances/{id}/groups` · `GET/PATCH .../groups/{jid}` · `PUT/DELETE .../photo` · `POST .../participants` · `GET/POST .../requests` · `GET .../invite` · `POST .../invite/reset` · `POST .../leave` · `POST .../groups/preview` · `POST .../groups/join` | inst | grupos (marco 8): síncrono, resultado por participante; criar/adicionar/entrar passam por cotas `settings.groups` (tetos só com `unsafe_pacing`), adições só de contatos conhecidos, bloqueados por suspensão de envio |
+| `GET/POST /instances/{id}/communities` · `GET .../communities/{jid}` · `GET/POST .../communities/{jid}/groups` · `DELETE .../groups/{group}` | inst | comunidades (marco 8) |
 | `GET /instances/{id}/events` · `GET /events` | inst · admin | SSE |
 | `/webhooks...` | admin ou inst (só os da própria instância) | 5.3 |
 | `GET /me` | qualquer | quem é o token (`{admin, instance_id}`), usado por `litezap mcp` |
@@ -283,6 +285,8 @@ Marco 6: `send_message` ganha `reply_to` e `mentions`, `send_media` aceita `stic
 
 Implementado no marco 4 (além das acima, exceto `search_messages`, que depende da busca do marco 2b): `get_qr` (imagem PNG), `get_message_status`, `list_contacts` e `wait_for_events` (espera curta por eventos novos, sem replay). O endpoint HTTP é *stateless* (cada POST autenticado ganha um servidor ligado ao escopo do token) e `litezap mcp` descobre o escopo do token por `GET /v1/me`. Envios sempre passam pela fila; mensagem que fica na fila volta como sucesso com `sent: false` e uma nota, não como erro.
 
+Marco 8: `list_groups`, `get_group` (leitura), `create_group`, `update_group`, `manage_group_participants` (destrutiva) e `get_group_invite_link` (nunca redefine), com aviso de risco de banimento nas escritas; as cotas e a checagem de participantes valem como na REST.
+
 ## 8. Store (SQLite)
 
 Arquivo `data/litezap.db`, modo WAL, migrações versionadas embutidas no binário. Entidades:
@@ -296,6 +300,8 @@ Arquivo `data/litezap.db`, modo WAL, migrações versionadas embutidas no binár
 - `webhook_deliveries` (id, webhook_id, event_id, status, attempts, next_attempt_at, last_status_code, last_error)
 - `agent_hooks` (instance_id, config_json)
 - `media` (id, instance_id, message_id, kind, mime, size, file_name, ref, path, expires_at, created_at) — `ref` é a referência opaca de download vinda do worker
+
+Marco 8: as cotas de grupos (adições, criações, entradas por link) ficam em `engine_kv` (`groups.quota:<instância>`, timestamps das últimas 24h), sem migração nova.
 
 Retenção do log de mensagens: ilimitada por padrão, com `message_retention_days` configurável. A interface `Store` expõe operações por agregado (Instances, Chats, Messages, Queue, Webhooks, Media) para permitir implementação Postgres na peça #3.
 

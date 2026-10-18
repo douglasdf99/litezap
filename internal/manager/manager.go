@@ -302,6 +302,23 @@ func (m *Manager) Client(id string) (workerv1.WorkerClient, error) {
 	return h.Client(), nil
 }
 
+// ErrNoGroups: the worker does not serve the Groups service.
+var ErrNoGroups = errors.New("instance worker does not support groups")
+
+// Groups returns the Groups client of the instance's running worker (marco 8);
+// ErrNotRunning when it is not running, ErrNoGroups when the worker does not serve it.
+func (m *Manager) Groups(id string) (workerv1.GroupsClient, error) {
+	h, err := m.handle(id)
+	if err != nil {
+		return nil, err
+	}
+	gh, ok := h.(spawner.GroupsHandle)
+	if !ok {
+		return nil, ErrNoGroups
+	}
+	return gh.Groups(), nil
+}
+
 // QR returns the latest QR code while the instance is waiting to be paired.
 func (m *Manager) QR(id string) (string, bool) {
 	m.mu.Lock()

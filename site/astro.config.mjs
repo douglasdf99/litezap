@@ -118,7 +118,7 @@ export default defineConfig({
 						'docs/guias/solucao-de-problemas',
 						{ slug: 'docs/guias/multi-instancia', badge: { text: 'Parcial', variant: 'tip' } },
 						soonPage('docs/guias/atendimento-ia', 'M5'),
-						soonPage('docs/guias/grupos', 'M8'),
+						'docs/guias/grupos',
 						{ slug: 'docs/guias/mensagens-interativas', badge: exp },
 					],
 				},
@@ -149,8 +149,6 @@ export default defineConfig({
 							items: [
 								soonPage('docs/api/em-breve/fila', 'M6'),
 								soonPage('docs/api/em-breve/chamadas', 'M7'),
-								soonPage('docs/api/em-breve/grupos', 'M8'),
-								soonPage('docs/api/em-breve/comunidades', 'M8'),
 								soonPage('docs/api/em-breve/chats-e-contatos', 'M9'),
 								soonPage('docs/api/em-breve/perfil-e-privacidade', 'M9'),
 								soonPage('docs/api/em-breve/status', 'M10'),

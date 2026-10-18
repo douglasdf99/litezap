@@ -70,6 +70,7 @@ func TestStaticAssetsAndHeaders(t *testing.T) {
 		"/app/agent.js":       "agentPanel",
 		"/app/profile.js":     "profilePanel",
 		"/app/chatactions.js": "chatActions",
+		"/app/groups.js":      "groupsPanel",
 	} {
 		rec := get(t, h, path)
 		if rec.Code != 200 {

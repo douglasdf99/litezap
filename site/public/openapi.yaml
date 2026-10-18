@@ -86,6 +86,27 @@ tags:
       dígito). A fila já faz essa verificação antes do primeiro envio a cada número; este endpoint serve
       para conferir contatos pontuais, com cache e cota diária.
     x-concept: /docs/conceitos/verificacao-de-numeros/
+  - name: Grupos
+    description: Criar e administrar grupos, participantes, convites e pedidos de entrada.
+    x-slug: grupos
+    x-intro: |
+      Gestão dos grupos em que o número está (marco 8). As rotas são síncronas (até 30 segundos) e a
+      instância precisa estar conectada. Operações com participantes devolvem um resultado por pessoa:
+      uma falha nunca derruba o lote.
+
+      Adicionar desconhecidos em grupos é um dos gatilhos de banimento mais rápidos. Por isso só são
+      adicionadas pessoas que já conversam com o número ou que a consulta de números confirma no
+      WhatsApp, no máximo 10 por requisição, com 10 segundos entre lotes e cotas por hora e por dia
+      (`settings.groups`). Criar grupos e entrar por link também têm cota diária.
+    x-concept: /docs/guias/grupos/
+  - name: Comunidades
+    description: Criar comunidades e vincular grupos a elas.
+    x-slug: comunidades
+    x-intro: |
+      Uma comunidade é um grupo "pai" que reúne grupos; ao criá-la, o WhatsApp cria sozinho o grupo de
+      avisos. Nome, descrição, configurações, link e participantes da comunidade usam as rotas de
+      [Grupos](/docs/api/grupos/) com o JID dela.
+    x-concept: /docs/guias/grupos/
   - name: Mídia
     description: Baixar mídia recebida e gerar URLs assinadas temporárias.
     x-slug: midia
@@ -1641,6 +1662,559 @@ paths:
         "429": { $ref: "#/components/responses/RateLimited" }
         "502": { $ref: "#/components/responses/WorkerError" }
 
+  /v1/instances/{id}/groups:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Grupos]
+      operationId: listGroups
+      x-litezap-milestone: M8
+      x-zapi: "Buscar grupos"
+      summary: Listar grupos
+      x-litezap-scope: instancia
+      description: Grupos em que o número está, com configurações e número de participantes (sem a lista de participantes; use `GET /groups/{jid}`).
+      responses:
+        "200":
+          description: Grupos.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups: { type: array, items: { $ref: "#/components/schemas/Group" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+    post:
+      tags: [Grupos]
+      operationId: createGroup
+      x-litezap-milestone: M8
+      x-zapi: "Criar grupo"
+      x-litezap-events: [group.updated]
+      x-litezap-notes: "Criar grupos com desconhecidos é gatilho de banimento: cota diária e participantes só conhecidos."
+      summary: Criar grupo
+      x-litezap-scope: instancia
+      description: |
+        Cria um grupo com até 10 participantes iniciais (número com DDI ou JID). Só entram pessoas que já
+        têm conversa no log da instância ou que a consulta de números confirma no WhatsApp (gasta a cota
+        de `check-numbers`); as demais voltam em `results` com `not_on_whatsapp` ou `unknown_contact`, sem
+        chegar ao WhatsApp. Conta na cota `settings.groups.max_creates_per_day` (padrão 3) e os
+        participantes nas cotas de adição (e no intervalo de 10s entre lotes); acima, `429 rate_limited`. A
+        cota só volta se a requisição não chegou ao WhatsApp. Com envios suspensos pelo operador,
+        `403 sending_suspended`. Com `parent`, o grupo nasce dentro da comunidade.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateGroup" }
+            example: { name: "Equipe", participants: ["5511999999999"], description: "Avisos da equipe", settings: { announce: false } }
+      responses:
+        "201":
+          description: Grupo criado e resultado por participante.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateGroupResult" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "429": { $ref: "#/components/responses/GroupRateLimited" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+
+  /v1/instances/{id}/groups/{jid}:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }, { $ref: "#/components/parameters/GroupJID" }]
+    get:
+      tags: [Grupos]
+      operationId: getGroup
+      x-litezap-milestone: M8
+      x-zapi: "Metadata do grupo"
+      summary: Metadados do grupo
+      x-litezap-scope: instancia
+      description: Nome, descrição, dono, configurações e participantes (com `admin` e `super_admin`). Participantes vêm com o JID de telefone quando conhecido e o `lid`.
+      responses:
+        "200":
+          description: Grupo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/GroupForbidden" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+    patch:
+      tags: [Grupos]
+      operationId: updateGroup
+      x-litezap-milestone: M8
+      x-zapi: "Atualizar nome / descrição / configurações do grupo"
+      x-litezap-events: [group.updated]
+      summary: Alterar grupo
+      x-litezap-scope: instancia
+      description: |
+        Muda nome, descrição (`""` remove) e configurações, nessa ordem; para na primeira falha (as
+        anteriores ficam). As configurações podem vir soltas ou dentro de `settings`. Responde com o grupo
+        depois das mudanças. Com o grupo `locked`, só admins mudam os dados.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateGroup" }
+            example: { name: "Novo nome", settings: { locked: true, ephemeral_seconds: 86400 } }
+      responses:
+        "200":
+          description: Grupo depois das mudanças.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/GroupForbidden" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
+  /v1/instances/{id}/groups/{jid}/photo:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }, { $ref: "#/components/parameters/GroupJID" }]
+    put:
+      tags: [Grupos]
+      operationId: setGroupPhoto
+      x-litezap-milestone: M8
+      x-zapi: "Atualizar imagem do grupo"
+      x-litezap-events: [group.updated]
+      summary: Trocar foto do grupo
+      x-litezap-scope: instancia
+      description: JPEG até 2MB, em `base64` (aceita `data:` URI) ou `url` pública (o servidor baixa, sem endereços privados).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                base64: { type: string }
+                url: { type: string, format: uri }
+            example: { url: "https://exemplo.com/foto.jpg" }
+      responses:
+        "204": { description: Foto trocada. }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/GroupForbidden" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "413": { $ref: "#/components/responses/MediaTooLarge" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+    delete:
+      tags: [Grupos]
+      operationId: deleteGroupPhoto
+      x-litezap-milestone: M8
+      x-zapi: "Atualizar imagem do grupo"
+      summary: Remover foto do grupo
+      x-litezap-scope: instancia
+      description: Remove a foto do grupo.
+      responses:
+        "204": { description: Foto removida. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/GroupForbidden" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
+  /v1/instances/{id}/groups/{jid}/participants:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }, { $ref: "#/components/parameters/GroupJID" }]
+    post:
+      tags: [Grupos]
+      operationId: groupParticipants
+      x-litezap-milestone: M8
+      x-zapi: "Adicionar / remover participantes; promover / remover admin"
+      x-litezap-events: [group.updated]
+      x-litezap-notes: "Adições: só contatos conhecidos, 10 por lote, 10s entre lotes, cotas por hora e por dia."
+      summary: Gerenciar participantes
+      x-litezap-scope: instancia
+      description: |
+        `action`: `add`, `remove`, `promote` ou `demote` (a instância precisa ser admin). Responde um
+        resultado por participante pedido. Para `add`: até 10 por requisição; só pessoas com conversa no log
+        ou confirmadas pela consulta de números (`@lid` sem conversa é recusado); 10 segundos entre lotes e
+        cotas `max_adds_per_hour` (padrão 10) e `max_adds_per_day` (padrão 50) por instância, persistidas;
+        acima, `429 rate_limited`; recusado com envios suspensos (`403 sending_suspended`). Demais ações: até
+        50 por requisição.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, participants]
+              properties:
+                action: { type: string, enum: [add, remove, promote, demote] }
+                participants: { type: array, minItems: 1, maxItems: 50, items: { type: string } }
+            example: { action: promote, participants: ["5511999999999"] }
+      responses:
+        "200":
+          description: Resultado por participante.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results: { type: array, items: { $ref: "#/components/schemas/ParticipantResult" } }
+              example:
+                results:
+                  - { participant: "5511999999999@s.whatsapp.net", jid: "5511999999999@s.whatsapp.net", status: ok }
+                  - { participant: "5511888888888@s.whatsapp.net", status: privacy_invite_required, code: 403, invite_code: "AbCd" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/GroupForbidden" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "429": { $ref: "#/components/responses/GroupRateLimited" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
+  /v1/instances/{id}/groups/{jid}/requests:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }, { $ref: "#/components/parameters/GroupJID" }]
+    get:
+      tags: [Grupos]
+      operationId: listJoinRequests
+      x-litezap-milestone: M8
+      x-zapi: "Listar solicitações"
+      summary: Listar pedidos de entrada
+      x-litezap-scope: instancia
+      description: Pedidos pendentes em grupos com `approval_required` (só admins).
+      responses:
+        "200":
+          description: Pedidos.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requests:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        jid: { type: string }
+                        lid: { type: string }
+                        requested_at: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/GroupForbidden" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+    post:
+      tags: [Grupos]
+      operationId: decideJoinRequests
+      x-litezap-milestone: M8
+      x-zapi: "Aceitar / recusar solicitações"
+      x-litezap-events: [group.updated]
+      summary: Aprovar ou rejeitar pedidos
+      x-litezap-scope: instancia
+      description: Aprova ou rejeita pedidos de entrada (até 50), com resultado por participante.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, participants]
+              properties:
+                action: { type: string, enum: [approve, reject] }
+                participants: { type: array, minItems: 1, maxItems: 50, items: { type: string } }
+            example: { action: approve, participants: ["5511999999999"] }
+      responses:
+        "200":
+          description: Resultado por participante.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results: { type: array, items: { $ref: "#/components/schemas/ParticipantResult" } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/GroupForbidden" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
+  /v1/instances/{id}/groups/{jid}/invite:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }, { $ref: "#/components/parameters/GroupJID" }]
+    get:
+      tags: [Grupos]
+      operationId: groupInviteLink
+      x-litezap-milestone: M8
+      x-zapi: "Obter link de convite"
+      summary: Link de convite
+      x-litezap-scope: instancia
+      description: Link `https://chat.whatsapp.com/…` do grupo (a instância precisa ser admin). Quem tem o link entra; a resposta não é cacheável.
+      responses:
+        "200":
+          description: Link.
+          content:
+            application/json:
+              schema: { type: object, properties: { link: { type: string } } }
+              example: { link: "https://chat.whatsapp.com/AbCdEfGhIjK" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/GroupForbidden" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
+  /v1/instances/{id}/groups/{jid}/invite/reset:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }, { $ref: "#/components/parameters/GroupJID" }]
+    post:
+      tags: [Grupos]
+      operationId: resetGroupInviteLink
+      x-litezap-milestone: M8
+      x-zapi: "Redefinir link de convite"
+      x-litezap-events: [group.updated]
+      summary: Redefinir link de convite
+      x-litezap-scope: instancia
+      description: Revoga o link atual (para de funcionar para todos) e devolve um novo.
+      responses:
+        "200":
+          description: Link novo.
+          content:
+            application/json:
+              schema: { type: object, properties: { link: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/GroupForbidden" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
+  /v1/instances/{id}/groups/{jid}/leave:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }, { $ref: "#/components/parameters/GroupJID" }]
+    post:
+      tags: [Grupos]
+      operationId: leaveGroup
+      x-litezap-milestone: M8
+      x-zapi: "Sair do grupo"
+      summary: Sair do grupo
+      x-litezap-scope: instancia
+      description: O número sai do grupo; para voltar, precisa de convite.
+      responses:
+        "204": { description: Saiu. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/GroupForbidden" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
+  /v1/instances/{id}/groups/preview:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Grupos]
+      operationId: previewGroupInvite
+      x-litezap-milestone: M8
+      x-zapi: "Metadata do grupo pelo convite"
+      summary: Ver grupo pelo convite
+      x-litezap-scope: instancia
+      description: Metadados do grupo de um link de convite, sem entrar (`410 invite_revoked`, `400 invite_invalid`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [code], properties: { code: { type: string, description: "Código ou link https://chat.whatsapp.com/…" } } }
+            example: { code: "https://chat.whatsapp.com/AbCdEfGhIjK" }
+      responses:
+        "200":
+          description: Grupo (sem participantes).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "410": { $ref: "#/components/responses/InviteRevoked" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
+  /v1/instances/{id}/groups/join:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Grupos]
+      operationId: joinGroupInvite
+      x-litezap-milestone: M8
+      x-zapi: "Aceitar convite do grupo"
+      x-litezap-events: [group.updated]
+      summary: Entrar por convite
+      x-litezap-scope: instancia
+      description: |
+        Entra no grupo do link. Se o grupo exige aprovação, um pedido é enviado (`pending: true`). Conta na
+        cota `settings.groups.max_joins_per_day` (padrão 10); recusado com envios suspensos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [code], properties: { code: { type: string } } }
+            example: { code: "AbCdEfGhIjK" }
+      responses:
+        "200":
+          description: Grupo.
+          content:
+            application/json:
+              schema: { type: object, properties: { jid: { type: string }, pending: { type: boolean } } }
+              example: { jid: "120363000000000001@g.us", pending: false }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "410": { $ref: "#/components/responses/InviteRevoked" }
+        "429": { $ref: "#/components/responses/GroupRateLimited" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
+  /v1/instances/{id}/communities:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Comunidades]
+      operationId: listCommunities
+      x-litezap-milestone: M8
+      x-zapi: "Listar comunidades"
+      summary: Listar comunidades
+      x-litezap-scope: instancia
+      description: Comunidades em que o número está.
+      responses:
+        "200":
+          description: Comunidades.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  communities: { type: array, items: { $ref: "#/components/schemas/Group" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+    post:
+      tags: [Comunidades]
+      operationId: createCommunity
+      x-litezap-milestone: M8
+      x-zapi: "Criar comunidade"
+      summary: Criar comunidade
+      x-litezap-scope: instancia
+      description: Cria uma comunidade (o WhatsApp cria o grupo de avisos sozinho). Mesmo corpo e mesmas cotas de `POST /groups`, sem `parent` e sem `participants`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateGroup" }
+            example: { name: "Condomínio", description: "Comunidade do prédio" }
+      responses:
+        "201":
+          description: Comunidade criada.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateGroupResult" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "429": { $ref: "#/components/responses/GroupRateLimited" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
+  /v1/instances/{id}/communities/{jid}:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }, { $ref: "#/components/parameters/GroupJID" }]
+    get:
+      tags: [Comunidades]
+      operationId: getCommunity
+      x-litezap-milestone: M8
+      x-zapi: "Metadata da comunidade"
+      summary: Metadados da comunidade
+      x-litezap-scope: instancia
+      description: A comunidade (como um grupo) e seus grupos; o de avisos vem com `announcement_group`. Um grupo comum responde `404 group_not_found`.
+      responses:
+        "200":
+          description: Comunidade e grupos.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  community: { $ref: "#/components/schemas/Group" }
+                  groups: { type: array, items: { $ref: "#/components/schemas/SubGroup" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/GroupForbidden" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
+  /v1/instances/{id}/communities/{jid}/groups:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }, { $ref: "#/components/parameters/GroupJID" }]
+    get:
+      tags: [Comunidades]
+      operationId: listCommunityGroups
+      x-litezap-milestone: M8
+      x-zapi: "Metadata da comunidade"
+      summary: Grupos da comunidade
+      x-litezap-scope: instancia
+      description: Grupos vinculados à comunidade.
+      responses:
+        "200":
+          description: Grupos.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups: { type: array, items: { $ref: "#/components/schemas/SubGroup" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/GroupForbidden" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+    post:
+      tags: [Comunidades]
+      operationId: linkCommunityGroup
+      x-litezap-milestone: M8
+      x-zapi: "Vincular grupos"
+      x-litezap-events: [group.updated]
+      summary: Vincular grupo
+      x-litezap-scope: instancia
+      description: Vincula um grupo existente (em que o número é admin) à comunidade.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [group], properties: { group: { type: string } } }
+            example: { group: "120363000000000001@g.us" }
+      responses:
+        "204": { description: Vinculado. }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/GroupForbidden" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
+  /v1/instances/{id}/communities/{jid}/groups/{group}:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { $ref: "#/components/parameters/GroupJID" }
+      - { name: group, in: path, required: true, description: JID do grupo a desvincular., schema: { type: string } }
+    delete:
+      tags: [Comunidades]
+      operationId: unlinkCommunityGroup
+      x-litezap-milestone: M8
+      x-zapi: "Desvincular grupos"
+      x-litezap-events: [group.updated]
+      summary: Desvincular grupo
+      x-litezap-scope: instancia
+      description: Tira o grupo da comunidade (o grupo continua existindo).
+      responses:
+        "204": { description: Desvinculado. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/GroupForbidden" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
   /v1/instances/{id}/events:
     parameters: [{ $ref: "#/components/parameters/InstanceID" }]
     get:
@@ -1832,6 +2406,12 @@ components:
       required: true
       description: "JID do chat (`...@s.whatsapp.net`, `...@g.us`, `...@lid`) ou número com DDI. Prefira o `jid` devolvido por `GET /chats` ou `check-numbers`."
       schema: { type: string }
+    GroupJID:
+      name: jid
+      in: path
+      required: true
+      description: "JID do grupo ou comunidade (`120363…@g.us`)."
+      schema: { type: string }
     MediaID:
       name: media_id
       in: path
@@ -1917,6 +2497,7 @@ components:
         proxy_url: { type: string, description: "http://, https:// ou socks5://; senha mascarada na leitura." }
         calls: { $ref: "#/components/schemas/CallSettings" }
         presence: { $ref: "#/components/schemas/PresenceSettings" }
+        groups: { $ref: "#/components/schemas/GroupLimits" }
         auto_read: { $ref: "#/components/schemas/AutoReadSettings" }
     AutoReadSettings:
       type: object
@@ -1975,6 +2556,120 @@ components:
         reason: { type: string, description: "call.ended: `caller_hangup`, `accepted_elsewhere`, `ended`, `rejected` (por esta instância), `rejected_by_peer`, `timeout` ou outro motivo do WhatsApp." }
         missed: { type: boolean, description: "call.ended: tocou sem ninguém atender." }
         timestamp: { type: string, format: date-time }
+    GroupSettings:
+      type: object
+      description: Configurações de um grupo (marco 8).
+      properties:
+        announce: { type: boolean, description: Só admins enviam mensagens. }
+        locked: { type: boolean, description: Só admins editam nome, descrição e foto. }
+        approval_required: { type: boolean, description: Entrada com aprovação de um admin. }
+        admins_add_members: { type: boolean, description: Só admins adicionam participantes. }
+        ephemeral_seconds: { type: integer, enum: [0, 86400, 604800, 7776000], description: "Mensagens temporárias (0: desligadas)." }
+    GroupParticipant:
+      type: object
+      properties:
+        jid: { type: string, description: "JID de telefone quando conhecido; senão o LID." }
+        lid: { type: string }
+        phone: { type: string }
+        admin: { type: boolean }
+        super_admin: { type: boolean, description: Dono do grupo. }
+    Group:
+      type: object
+      properties:
+        jid: { type: string, example: "120363000000000001@g.us" }
+        name: { type: string }
+        description: { type: string }
+        owner: { type: string }
+        created_at: { type: string, format: date-time }
+        community: { type: boolean, description: É uma comunidade. }
+        parent: { type: string, description: Comunidade a que o grupo pertence. }
+        announcement_group: { type: boolean, description: Grupo de avisos da comunidade. }
+        participant_count: { type: integer }
+        lid_addressing: { type: boolean, description: O grupo endereça os membros por LID. }
+        suspended: { type: boolean }
+        settings: { $ref: "#/components/schemas/GroupSettings" }
+        participants: { type: array, items: { $ref: "#/components/schemas/GroupParticipant" }, description: "Só em `GET /groups/{jid}` e na criação." }
+    SubGroup:
+      type: object
+      properties:
+        jid: { type: string }
+        name: { type: string }
+        announcement_group: { type: boolean }
+    CreateGroup:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 100 }
+        participants: { type: array, maxItems: 10, items: { type: string }, description: Número com DDI ou JID. }
+        description: { type: string, maxLength: 2048 }
+        parent: { type: string, description: "Criar dentro desta comunidade (só em `POST /groups`)." }
+        settings:
+          type: object
+          properties:
+            announce: { type: boolean }
+            locked: { type: boolean }
+            approval_required: { type: boolean }
+            admins_add_members: { type: boolean }
+            ephemeral_seconds: { type: integer, enum: [0, 86400, 604800, 7776000] }
+    UpdateGroup:
+      type: object
+      description: Campos ausentes ficam como estão. As configurações podem vir soltas ou em `settings`.
+      properties:
+        name: { type: string, maxLength: 100 }
+        description: { type: string, maxLength: 2048, description: "\"\" remove." }
+        announce: { type: boolean }
+        locked: { type: boolean }
+        approval_required: { type: boolean }
+        admins_add_members: { type: boolean }
+        ephemeral_seconds: { type: integer, enum: [0, 86400, 604800, 7776000] }
+        settings: { $ref: "#/components/schemas/GroupSettings" }
+    ParticipantResult:
+      type: object
+      properties:
+        participant: { type: string, description: Como foi pedido (normalizado para JID). }
+        jid: { type: string, description: Como o WhatsApp respondeu. }
+        status:
+          type: string
+          description: "`ok`, `not_on_whatsapp`, `unknown_contact`, `privacy_invite_required`, `recently_left`, `already_participant`, `not_participant`, `group_full`, `error_<código>` ou `unknown`."
+        code: { type: integer, description: Código do WhatsApp (melhor esforço). }
+        invite_code: { type: string, description: "`privacy_invite_required`: código de convite por mensagem (não enviado)." }
+        invite_expires_at: { type: string, format: date-time }
+    CreateGroupResult:
+      type: object
+      properties:
+        group: { $ref: "#/components/schemas/Group" }
+        results: { type: array, items: { $ref: "#/components/schemas/ParticipantResult" } }
+        warning: { type: string, description: "Um passo depois da criação falhou (descrição); o grupo existe." }
+    GroupLimits:
+      type: object
+      description: "Cotas anti-ban de grupos por instância (marco 8). Tetos sobem só com `unsafe_pacing` (admin)."
+      properties:
+        max_adds_per_hour: { type: integer, default: 10, maximum: 30 }
+        max_adds_per_day: { type: integer, default: 50, maximum: 200 }
+        max_creates_per_day: { type: integer, default: 3, maximum: 10 }
+        max_joins_per_day: { type: integer, default: 10, maximum: 30 }
+    GroupUpdatedEvent:
+      type: object
+      description: Dados de `group.updated`.
+      properties:
+        chat: { type: string, description: JID do grupo. }
+        kind: { type: string, enum: [participants_added, participants_removed, participants_promoted, participants_demoted, join_request, join_request_revoked, subject, description, photo, settings, invite_link_reset, joined, deleted, suspended, unsuspended, community_linked, community_unlinked] }
+        actor: { type: string }
+        participants: { type: array, items: { type: string } }
+        reason: { type: string }
+        name: { type: string }
+        description: { type: string }
+        removed: { type: boolean }
+        settings:
+          type: object
+          properties:
+            announce: { type: boolean }
+            locked: { type: boolean }
+            approval_required: { type: boolean }
+            ephemeral_seconds: { type: integer }
+            approval_mode_changed: { type: boolean, description: "A aprovação de entrada mudou e o valor novo não pôde ser lido." }
+        group: { type: string }
+        timestamp: { type: string, format: date-time }
     SettingsPatch:
       type: object
       description: Todos os campos são opcionais; ausentes mantêm o valor atual.
@@ -2003,6 +2698,7 @@ components:
           type: object
           properties:
             online: { type: boolean }
+        groups: { $ref: "#/components/schemas/GroupLimits" }
         auto_read:
           type: object
           properties:
@@ -2422,6 +3118,30 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: { code: worker_error, message: "worker request failed", retryable: true } }
+    GroupNotFound:
+      description: "`group_not_found`: grupo inexistente ou a instância não participa dele (ou `instance_not_found`)."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: group_not_found, message: "group not found (or the instance is not in it)", retryable: false } }
+    GroupForbidden:
+      description: "`group_forbidden`: o WhatsApp recusou (a instância não é admin ou não participa); ou `forbidden` (token)."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: group_forbidden, message: "not allowed: the account must be a member (or an admin) of the group", retryable: false } }
+    GroupRateLimited:
+      description: "`rate_limited`: cota de grupos (`settings.groups`), 10s entre lotes de adição, cota de consultas ao checar participantes, ou limite do próprio WhatsApp."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: rate_limited, message: "participant add limit reached: at most 10 per hour per instance (0 left; settings.groups.max_adds_per_hour)", retryable: true } }
+    InviteRevoked:
+      description: "`invite_revoked`: o link de convite foi revogado."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: invite_revoked, message: "the invite link was revoked", retryable: false } }
     WorkerTimeout:
       description: "`worker_timeout`: o worker não respondeu a tempo."
       content:
@@ -2774,6 +3494,48 @@ webhooks:
           application/json:
             schema: { $ref: "#/components/schemas/Envelope" }
             example: { id: evt_9c4f2a8e6b1d3075, type: call.ended, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T10:09:00.000Z", data: { call_id: 7D1A3F9B2E5C, chat: 5511999999999@s.whatsapp.net, caller: 5511999999999@s.whatsapp.net, media: audio, reason: timeout, missed: true, timestamp: "2026-10-18T10:09:00Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  group.updated:
+    post:
+      summary: Grupo alterado
+      x-slug: group-updated
+      x-litezap-milestone: M8
+      x-zapi: Webhook de recebimento (notificações de grupo)
+      description: |
+        Mudança num grupo em que o número está, feita no celular, por outro membro ou pela API. Sai um
+        evento por tipo de mudança (`kind`): `participants_added` (`reason: invite` = entrou por link),
+        `participants_removed`, `participants_promoted`, `participants_demoted`, `join_request` (pedido de
+        entrada em grupo com aprovação), `join_request_revoked` (pedido cancelado ou recusado), `subject`
+        (`name`), `description` (`""` = removida), `photo` (`removed`), `settings` (só os campos que
+        mudaram; a aprovação de entrada sai depois, lida do grupo), `invite_link_reset`, `joined` (o número
+        foi adicionado ou criou o grupo), `deleted`, `suspended`/`unsuspended`,
+        `community_linked`/`community_unlinked` (`group`).
+        `filters.chat: group` do webhook casa com ele.
+      x-related: [message.received]
+      x-fields:
+        - [chat, string, "JID do grupo."]
+        - [kind, string, "Tipo da mudança."]
+        - [actor, string, "Quem fez a mudança (opcional)."]
+        - [participants, array, "Participantes afetados (participants_*, join_request)."]
+        - [reason, string, "participants_added/joined: invite quando por link (opcional)."]
+        - [name, string, "subject, joined (opcional)."]
+        - [description, string, "description (opcional)."]
+        - [removed, boolean, "photo: foto removida (opcional)."]
+        - [settings, object, "settings: announce, locked, approval_required, ephemeral_seconds (opcional)."]
+        - [group, string, "community_linked/unlinked: o grupo (opcional)."]
+        - [timestamp, string, "Quando aconteceu."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            examples:
+              participants:
+                summary: Participante adicionado
+                value: { id: evt_2b7d0f4a9c1e6358, type: group.updated, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T11:00:00.000Z", data: { chat: 120363000000000001@g.us, kind: participants_added, actor: 5511999999999@s.whatsapp.net, participants: [5511888888888@s.whatsapp.net], timestamp: "2026-10-18T11:00:00Z" } }
+              settings:
+                summary: Configurações
+                value: { id: evt_8e3a1c6f0b2d9475, type: group.updated, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T11:01:00.000Z", data: { chat: 120363000000000001@g.us, kind: settings, actor: 5511999999999@s.whatsapp.net, settings: { announce: true }, timestamp: "2026-10-18T11:01:00Z" } }
       responses:
         "2XX": { description: Qualquer 2xx confirma a entrega. }
   chat.updated:

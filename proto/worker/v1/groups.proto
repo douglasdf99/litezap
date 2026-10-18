@@ -1,0 +1,225 @@
+syntax = "proto3";
+
+package worker.v1;
+
+option go_package = "github.com/douglasdf99/litezap/gen/worker/v1;workerv1";
+
+// Groups is served by `litezap worker` next to Worker, on the same socket (marco 8).
+// Error codes follow worker.proto (the status message starts with a stable code):
+// NotFound "group_not_found" / "invite_revoked", PermissionDenied "forbidden" (not an
+// admin / not a member / locked), InvalidArgument "validation_failed" (refused by the
+// worker before reaching WhatsApp) / "invite_invalid" / "not_acceptable" (refused by
+// WhatsApp), ResourceExhausted "rate_limited" (WhatsApp), Unavailable
+// "instance_not_connected".
+//
+// Participant JIDs are reported as phone-number JIDs when known (lid holds the LID);
+// requests accept phone-number JIDs or LIDs.
+service Groups {
+  rpc ListGroups(ListGroupsRequest) returns (ListGroupsResponse);
+  rpc GetGroup(GetGroupRequest) returns (GroupInfo);
+  rpc CreateGroup(CreateGroupRequest) returns (CreateGroupResponse);
+  // UpdateGroup applies the set fields in order and stops at the first failure.
+  rpc UpdateGroup(UpdateGroupRequest) returns (UpdateGroupResponse);
+  rpc SetGroupPhoto(SetGroupPhotoRequest) returns (SetGroupPhotoResponse);
+  rpc UpdateParticipants(UpdateParticipantsRequest) returns (UpdateParticipantsResponse);
+  rpc ListJoinRequests(ListJoinRequestsRequest) returns (ListJoinRequestsResponse);
+  rpc UpdateJoinRequests(UpdateJoinRequestsRequest) returns (UpdateParticipantsResponse);
+  rpc InviteLink(InviteLinkRequest) returns (InviteLinkResponse);
+  rpc PreviewInvite(PreviewInviteRequest) returns (GroupInfo);
+  rpc JoinInvite(JoinInviteRequest) returns (JoinInviteResponse);
+  rpc LeaveGroup(LeaveGroupRequest) returns (LeaveGroupResponse);
+  rpc LinkGroup(LinkGroupRequest) returns (LinkGroupResponse);
+  rpc ListSubGroups(ListSubGroupsRequest) returns (ListSubGroupsResponse);
+}
+
+message GroupParticipant {
+  string jid = 1;   // phone-number JID when known, else the LID
+  string lid = 2;   // LID, when known
+  bool admin = 3;
+  bool super_admin = 4; // the group's creator/owner
+}
+
+message GroupInfo {
+  string jid = 1;
+  string name = 2;
+  string description = 3;
+  string owner = 4;
+  int64 created_ms = 5;
+  bool announce = 6;          // only admins send messages
+  bool locked = 7;            // only admins edit the group info
+  bool approval_required = 8; // join requests need an admin's approval
+  bool admins_add_members = 9; // member_add_mode admin_add
+  uint32 ephemeral_seconds = 10; // 0: disappearing messages off
+  bool community = 11;        // a community (parent group)
+  string parent = 12;         // the community this group belongs to
+  bool announcement_group = 13; // the community's default announcement group
+  int32 participant_count = 14;
+  bool lid_addressing = 15;
+  repeated GroupParticipant participants = 16;
+  bool suspended = 17;
+  int64 name_set_ms = 18;
+}
+
+message ListGroupsRequest {} // groups come without participants (participant_count only)
+message ListGroupsResponse {
+  repeated GroupInfo groups = 1;
+}
+
+message GetGroupRequest {
+  string jid = 1;
+}
+
+message CreateGroupRequest {
+  string name = 1;
+  repeated string participants = 2;
+  bool community = 3;
+  string parent = 4; // create the group inside this community
+  bool announce = 5;
+  bool locked = 6;
+  bool approval_required = 7;
+  uint32 ephemeral_seconds = 8;
+  bool admins_add_members = 9;
+}
+message CreateGroupResponse {
+  GroupInfo group = 1;
+  repeated ParticipantResult results = 2; // one per requested participant
+}
+
+message UpdateGroupRequest {
+  string jid = 1;
+  optional string name = 2;
+  optional string description = 3; // "" removes it
+  optional bool announce = 4;
+  optional bool locked = 5;
+  optional bool approval_required = 6;
+  optional uint32 ephemeral_seconds = 7;
+  optional bool admins_add_members = 8;
+}
+message UpdateGroupResponse {
+  repeated string applied = 1; // field names, in order
+}
+
+message SetGroupPhotoRequest {
+  string jid = 1;
+  bytes jpeg = 2; // empty removes the photo
+}
+message SetGroupPhotoResponse {
+  string picture_id = 1;
+}
+
+message UpdateParticipantsRequest {
+  string jid = 1;
+  string action = 2; // add | remove | promote | demote
+  repeated string participants = 3;
+}
+
+// ParticipantResult is the outcome for one requested participant. status: ok |
+// not_on_whatsapp | privacy_invite_required | recently_left | already_participant |
+// not_participant | group_full | error_<code>.
+message ParticipantResult {
+  string participant = 1; // as requested
+  string jid = 2;         // as WhatsApp answered (phone-number JID when known)
+  string status = 3;
+  int32 code = 4;         // WhatsApp's code (0 on success)
+  string invite_code = 5; // privacy_invite_required: code of an invite message (not sent)
+  int64 invite_expires_ms = 6;
+}
+message UpdateParticipantsResponse {
+  repeated ParticipantResult results = 1;
+}
+
+message JoinRequest {
+  string jid = 1;
+  string lid = 2;
+  int64 requested_ms = 3;
+}
+message ListJoinRequestsRequest {
+  string jid = 1;
+}
+message ListJoinRequestsResponse {
+  repeated JoinRequest requests = 1;
+}
+message UpdateJoinRequestsRequest {
+  string jid = 1;
+  bool approve = 2;
+  repeated string participants = 3;
+}
+
+message InviteLinkRequest {
+  string jid = 1;
+  bool reset = 2; // revoke the current link and create a new one
+}
+message InviteLinkResponse {
+  string link = 1;
+}
+
+message PreviewInviteRequest {
+  string code = 1; // code or https://chat.whatsapp.com/<code>
+}
+message JoinInviteRequest {
+  string code = 1;
+}
+message JoinInviteResponse {
+  string jid = 1;
+  bool pending = 2; // the group requires approval: a join request was sent
+}
+
+message LeaveGroupRequest {
+  string jid = 1;
+}
+message LeaveGroupResponse {}
+
+message LinkGroupRequest {
+  string community = 1;
+  string group = 2;
+  bool unlink = 3;
+}
+message LinkGroupResponse {}
+
+message SubGroup {
+  string jid = 1;
+  string name = 2;
+  bool announcement_group = 3;
+}
+message ListSubGroupsRequest {
+  string community = 1;
+}
+message ListSubGroupsResponse {
+  repeated SubGroup groups = 1;
+}
+
+// GroupUpdate is a change to a group, as WhatsApp notified it (event).
+message GroupUpdate {
+  string group = 1;
+  string actor = 2; // who made the change (phone-number JID when known), "" when unknown
+  int64 timestamp_ms = 3;
+  // Set only when the change carries it.
+  optional string name = 4;
+  optional string description = 5;
+  optional bool announce = 6;
+  optional bool locked = 7;
+  optional bool approval_required = 8; // unused: see approval_mode_changed
+  optional uint32 ephemeral_seconds = 9;
+  repeated string joined = 10;
+  repeated string left = 11;
+  repeated string promoted = 12;
+  repeated string demoted = 13;
+  string join_reason = 14; // "invite" when joined by link
+  bool photo_changed = 15;
+  bool photo_removed = 16;
+  bool deleted = 17;
+  bool invite_link_reset = 18;
+  string linked_group = 19;
+  string unlinked_group = 20;
+  repeated string join_requests = 21; // participants asking to join (approval mode)
+  // joined_self: the account was added to (or created) the group; info is its metadata.
+  bool joined_self = 22;
+  GroupInfo info = 23;
+  repeated string unknown = 24; // tags of changes not understood
+  // The join approval mode changed; whatsmeow does not tell on or off (the supervisor
+  // looks the group up).
+  bool approval_mode_changed = 25;
+  repeated string join_requests_revoked = 26; // requests cancelled or rejected
+  bool suspended = 27;
+  bool unsuspended = 28;
+}

@@ -263,6 +263,10 @@ textarea { resize: vertical; width: 100%; }
 }
 .agent > .card { margin-bottom: 1rem; }
 
+/* groups (marco 8) */
+.group-detail { overflow-y: auto; }
+.prewrap { white-space: pre-wrap; }
+.group-add { margin-top: .75rem; }
 /* marco 9: chat actions and profile */
 .chat-actions { margin-left: auto; gap: .35rem; }
 .avatar-big { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; background: var(--surface-2); display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: .8rem; }

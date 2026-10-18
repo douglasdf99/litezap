@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package worker.v1;
 
+import "worker/v1/groups.proto";
+
 option go_package = "github.com/douglasdf99/litezap/gen/worker/v1;workerv1";
 
 // Worker is served by `litezap worker` (one process per WhatsApp instance).
@@ -83,7 +85,8 @@ message Event {
     ChatPresence chat_presence = 6;
     Presence presence = 7;
     Call call = 8;
-    ChatUpdate chat_update = 20; // marco 9
+    GroupUpdate group = 20; // marco 8 (groups.proto)
+    ChatUpdate chat_update = 21; // marco 9
   }
 }
 

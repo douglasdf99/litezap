@@ -53,7 +53,8 @@ type FakeWA struct {
 	rejected   []string
 	presence   []bool // SetPresence calls (true: available)
 	subscribed []string
-	rtErr      error // returned by the Realtime methods when set
+	rtErr      error      // returned by the Realtime methods when set
+	grp        fakeGroups // groups and communities (groups.go)
 	// Chats, contacts, profile and privacy (marco 9, account.go).
 	acct fakeAccount
 }
@@ -363,6 +364,7 @@ func newFake(id string, onDone func()) *Fake {
 	lis := bufconn.Listen(1 << 20)
 	f.grpc = grpc.NewServer(wire.ServerOptions()...)
 	workerv1.RegisterWorkerServer(f.grpc, fakeService{Server: f.server, f: f})
+	workerv1.RegisterGroupsServer(f.grpc, worker.NewGroupsServer(f.server))
 	go f.grpc.Serve(lis)
 	f.cc, _ = grpc.NewClient("passthrough:///bufnet",
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),

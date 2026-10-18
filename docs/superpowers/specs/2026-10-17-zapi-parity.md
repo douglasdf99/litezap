@@ -152,31 +152,31 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 
 | ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
 |---|---|---|---|---|---|---|---|
-| GRP-1 | Listar grupos | Buscar grupos | Sim — `GetJoinedGroups` (group.go) | Falta | S | | M8 |
-| GRP-2 | Criar grupo | Criar grupo | Sim — `CreateGroup` | Falta | S | Criar grupos adicionando desconhecidos é gatilho de banimento; limitar por dia | M8 |
-| GRP-3 | Nome, foto, descrição | 3 páginas | Sim — `SetGroupName`, `SetGroupPhoto` (JPEG), `SetGroupDescription`/`SetGroupTopic` | Falta | S | | M8 |
-| GRP-4 | Adicionar / remover participantes | 2 páginas | Sim — `UpdateGroupParticipants` (add/remove) | Falta | S | Quem restringe "quem me adiciona" gera erro 403 com convite; devolver por participante | M8 |
-| GRP-5 | Aprovar / rejeitar pedidos de entrada | 2 páginas | Sim — `GetGroupRequestParticipants`, `UpdateGroupRequestParticipants` | Falta | S | | M8 |
-| GRP-6 | Promover / rebaixar admin | 2 páginas | Sim — `UpdateGroupParticipants` (promote/demote) | Falta | S | | M8 |
-| GRP-7 | Sair do grupo | Sair do grupo | Sim — `LeaveGroup` | Falta | S | | M8 |
-| GRP-8 | Metadados (completo e leve) | 2 páginas | Sim — `GetGroupInfo` | Falta | S | Também preenche o nome dos chats de grupo no log (M2b item 6) | M8 |
-| GRP-9 | Metadados por link de convite | Metadata pelo convite | Sim — `GetGroupInfoFromLink` | Falta | S | | M8 |
-| GRP-10 | Configurações (só admins enviam, editam, aprovação, quem adiciona) | Configurações do grupo | Sim — `SetGroupAnnounce`, `SetGroupLocked`, `SetGroupJoinApprovalMode`, `SetGroupMemberAddMode` | Falta | S | | M8 |
-| GRP-11 | Link de convite (obter / redefinir) | 2 páginas | Sim — `GetGroupInviteLink(reset)` | Falta | S | | M8 |
-| GRP-12 | Entrar por convite | Aceitar convite | Sim — `JoinGroupWithLink`, `JoinGroupWithInvite` | Falta | S | | M8 |
-| GRP-13 | Eventos de grupo (entrou, saiu, promovido, nome/descrição mudou) | (webhook de recebimento) | Sim — `events.GroupInfo`, `events.JoinedGroup` | Falta — `group.updated` adiado no M3 | S | | M8 |
+| GRP-1 | Listar grupos | Buscar grupos | Sim — `GetJoinedGroups` (group.go) | Pronto — `GET /groups` (M8) | S | | M8 |
+| GRP-2 | Criar grupo | Criar grupo | Sim — `CreateGroup` | Pronto — `POST /groups`, até 10 participantes, cota diária `groups.max_creates_per_day` (M8) | S | Criar grupos adicionando desconhecidos é gatilho de banimento; limitar por dia | M8 |
+| GRP-3 | Nome, foto, descrição | 3 páginas | Sim — `SetGroupName`, `SetGroupPhoto` (JPEG), `SetGroupDescription`/`SetGroupTopic` | Pronto — `PATCH /groups/{jid}` (nome, descrição), `PUT\|DELETE /groups/{jid}/photo` (M8) | S | | M8 |
+| GRP-4 | Adicionar / remover participantes | 2 páginas | Sim — `UpdateGroupParticipants` (add/remove) | Pronto — `POST /groups/{jid}/participants` (add/remove), resultado por participante; adições só de contatos conhecidos, com ritmo e cotas (M8) | S | Quem restringe "quem me adiciona" gera erro 403 com convite; devolver por participante | M8 |
+| GRP-5 | Aprovar / rejeitar pedidos de entrada | 2 páginas | Sim — `GetGroupRequestParticipants`, `UpdateGroupRequestParticipants` | Pronto — `GET\|POST /groups/{jid}/requests` (M8) | S | | M8 |
+| GRP-6 | Promover / rebaixar admin | 2 páginas | Sim — `UpdateGroupParticipants` (promote/demote) | Pronto — `POST /groups/{jid}/participants` (promote/demote) (M8) | S | | M8 |
+| GRP-7 | Sair do grupo | Sair do grupo | Sim — `LeaveGroup` | Pronto — `POST /groups/{jid}/leave` (M8) | S | | M8 |
+| GRP-8 | Metadados (completo e leve) | 2 páginas | Sim — `GetGroupInfo` | Pronto — `GET /groups/{jid}` (completo), `GET /groups` (leve) (M8) | S | Também preenche o nome dos chats de grupo no log (M2b item 6) | M8 |
+| GRP-9 | Metadados por link de convite | Metadata pelo convite | Sim — `GetGroupInfoFromLink` | Pronto — `POST /groups/preview` (M8) | S | | M8 |
+| GRP-10 | Configurações (só admins enviam, editam, aprovação, quem adiciona) | Configurações do grupo | Sim — `SetGroupAnnounce`, `SetGroupLocked`, `SetGroupJoinApprovalMode`, `SetGroupMemberAddMode` | Pronto — `settings` no `PATCH` (announce, locked, approval_required, admins_add_members, ephemeral_seconds) (M8) | S | | M8 |
+| GRP-11 | Link de convite (obter / redefinir) | 2 páginas | Sim — `GetGroupInviteLink(reset)` | Pronto — `GET /groups/{jid}/invite`, `POST …/invite/reset` (M8) | S | | M8 |
+| GRP-12 | Entrar por convite | Aceitar convite | Sim — `JoinGroupWithLink`, `JoinGroupWithInvite` | Pronto — `POST /groups/join` (link; convite por mensagem adiado), cota `max_joins_per_day` (M8) | S | | M8 |
+| GRP-13 | Eventos de grupo (entrou, saiu, promovido, nome/descrição mudou) | (webhook de recebimento) | Sim — `events.GroupInfo`, `events.JoinedGroup` | Pronto — `group.updated` com `kind` (M8) | S | | M8 |
 
 ### 2.10 Comunidades (Z-API: Communities)
 
 | ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
 |---|---|---|---|---|---|---|---|
-| COM-1 | Criar comunidade | Criar comunidade | Sim — `CreateGroup` com `IsParent` (group.go) | Falta | S | | M8 |
-| COM-2 | Listar comunidades | Listar comunidades | Sim — `GetJoinedGroups` filtrando `IsParent` | Falta | S | | M8 |
-| COM-3 | Vincular / desvincular grupos | 2 páginas | Sim — `LinkGroup`, `UnlinkGroup` | Falta | S | | M8 |
-| COM-4 | Metadados | Metadata da comunidade | Sim — `GetGroupInfo`, `GetSubGroups`, `GetLinkedGroupsParticipants` | Falta | S | | M8 |
-| COM-5 | Redefinir link | Redefinir link | Sim — `GetGroupInviteLink(reset=true)` | Falta | S | | M8 |
-| COM-6 | Participantes e admins | 4 páginas | Sim — `UpdateGroupParticipants` no grupo pai/avisos (incerto: semântica exata em comunidades) | Falta | M | | M8 |
-| COM-7 | Configurações e descrição | 2 páginas | Sim — mesmas funções de grupo aplicadas ao pai (incerto) | Falta | S | | M8 |
+| COM-1 | Criar comunidade | Criar comunidade | Sim — `CreateGroup` com `IsParent` (group.go) | Pronto — `POST /communities` (M8) | S | | M8 |
+| COM-2 | Listar comunidades | Listar comunidades | Sim — `GetJoinedGroups` filtrando `IsParent` | Pronto — `GET /communities` (M8) | S | | M8 |
+| COM-3 | Vincular / desvincular grupos | 2 páginas | Sim — `LinkGroup`, `UnlinkGroup` | Pronto — `POST /communities/{jid}/groups`, `DELETE …/groups/{group}` (M8) | S | | M8 |
+| COM-4 | Metadados | Metadata da comunidade | Sim — `GetGroupInfo`, `GetSubGroups`, `GetLinkedGroupsParticipants` | Pronto — `GET /communities/{jid}` (com sub-grupos; `GetLinkedGroupsParticipants` adiado) (M8) | S | | M8 |
+| COM-5 | Redefinir link | Redefinir link | Sim — `GetGroupInviteLink(reset=true)` | Pronto — `POST /groups/{jid}/invite/reset` (M8) | S | | M8 |
+| COM-6 | Participantes e admins | 4 páginas | Sim — `UpdateGroupParticipants` no grupo pai/avisos (incerto: semântica exata em comunidades) | Pronto — rotas de `/groups/{jid}/participants` aplicadas à comunidade (semântica não verificada em aparelho real) (M8) | M | | M8 |
+| COM-7 | Configurações e descrição | 2 páginas | Sim — mesmas funções de grupo aplicadas ao pai (incerto) | Pronto — `PATCH /groups/{jid}` aplicado à comunidade (não verificado em aparelho real) (M8) | S | | M8 |
 | COM-8 | Desativar comunidade | Desativar | Não — sem função pública | Falta | — | Avaliar engenharia reversa | Avaliar |
 
 ### 2.11 Canais (Z-API: Newsletter)
@@ -292,9 +292,9 @@ Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-AP
 | — whatsmeow `Parcial` | 10 |
 | — whatsmeow `Não` | 21 |
 | Recursos só da camada LiteZap (`N/A`) | 27 |
-| **LiteZap `Pronto`** | **56** |
+| **LiteZap `Pronto`** | **76** |
 | LiteZap `Parcial` | 2 |
-| LiteZap `Falta` | 83 |
+| LiteZap `Falta` | 63 |
 | LiteZap `Fora` | 18 |
 
 Viáveis com whatsmeow (`Sim` + `Manual` + `Parcial`): **111 de 132** recursos de protocolo. Os 21 inviáveis hoje: INS-11 (extensão, produto próprio da Z-API), MOB-1…4 (registro como aparelho principal), CON-8 (denúncia), CAL-1/2 (chamadas de voz e SIP), COM-8 (desativar comunidade), CHN-2/5/7/9/10/11 (administração avançada de canais), BRD-1 (listas de transmissão), BUS-1/2/3/6/7 (catálogo, coleções, notas, perfil comercial editável).
@@ -349,6 +349,8 @@ Aceite:
 5. Catálogo de eventos do README, do OpenAPI e da docs atualizados no mesmo PR.
 
 ### M8 — Grupos e comunidades
+
+Entregue em 2026-10-18 (branch `feat/m8-groups`, plano `docs/superpowers/plans/2026-10-18-litezap-m8-groups.md`). Diferenças em relação ao texto abaixo: SEC-6 (`announcement_guard`) ficou para depois; convite por mensagem (`JoinGroupWithInvite`) para quem só aceita convite também (devolvemos o `invite_code` do 403); `group.updated` sai um por tipo de mudança (`kind`), incluindo foto, pedido de entrada, link redefinido e vínculo de comunidade; anti-ban além da criação: adições só de contatos conhecidos (conversa no log ou confirmados pela consulta), 10 por lote, 10s entre lotes e cotas por hora/dia, entradas por link com cota diária, todas persistidas e configuráveis em `settings.groups` com tetos.
 
 Escopo: GRP-1…13, COM-1…7, SEC-6, nome de grupos no log (M2b item 6).
 

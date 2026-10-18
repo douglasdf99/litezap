@@ -2,7 +2,7 @@
 
 Data: 2026-10-18 · Branch: `feat/m9-chats-profile` (a partir de `main`) · Spec: `2026-10-17-zapi-parity.md`, seção 4 "M9" (CHT-2…8, CON-3, 4, 7, PRF-1…3, PRV-1, 2, INS-8, 10, 12).
 
-Em paralelo, outro agente faz o M8 (grupos) a partir de `main`: este marco fica em arquivos novos sempre que possível (`worker/account.go`, `workertest/account.go`, `service/account*.go`, `api/account.go`, `events/account.go`, `autoread/`, migração `0009_m9_chats.sql`) e só toca de leve `worker.proto` (bloco no fim do serviço; evento `chat_update = 20` no oneof), `whatsmeow.go` (`handle`), `api.go` (Options + rotas), `serve.go`, `settings.go`, catálogo de eventos, MCP e painel.
+Em paralelo, outro agente faz o M8 (grupos) a partir de `main`: este marco fica em arquivos novos sempre que possível (`worker/account.go`, `workertest/account.go`, `service/account*.go`, `api/account.go`, `events/account.go`, `autoread/`, migração `0009_m9_chats.sql`) e só toca de leve `worker.proto` (bloco no fim do serviço; evento `chat_update = 21` no oneof (o 20 ficou com `group` do M8)), `whatsmeow.go` (`handle`), `api.go` (Options + rotas), `serve.go`, `settings.go`, catálogo de eventos, MCP e painel.
 
 ## APIs do whatsmeow conferidas (cache de módulos, `v0.0.0-20261016130820-0b0a1cdac3e2`)
 

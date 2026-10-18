@@ -58,6 +58,8 @@ type Whatsmeow struct {
 	rejectCall        func(context.Context, types.JID, string) error
 	sendPresence      func(context.Context, types.Presence) error
 	subscribePresence func(context.Context, types.JID) error
+	// Groups (groups.go); nil means the client itself.
+	gapi groupAPI
 	// Chats, contacts, profile and privacy (account.go, marco 9).
 	acct accountHooks
 
@@ -412,7 +414,7 @@ func (w *Whatsmeow) reportTerminal(state, reason, jid string) {
 }
 
 func (w *Whatsmeow) handle(evt any) {
-	if w.onData(evt) || w.onRealtime(evt) || w.onAccount(evt) {
+	if w.onData(evt) || w.onRealtime(evt) || w.onGroup(evt) || w.onAccount(evt) {
 		return
 	}
 	loggedIn := w.cli.Store.ID != nil

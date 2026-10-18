@@ -309,6 +309,7 @@ type Event struct {
 	//	*Event_ChatPresence
 	//	*Event_Presence
 	//	*Event_Call
+	//	*Event_Group
 	//	*Event_ChatUpdate
 	Kind          isEvent_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
@@ -424,6 +425,15 @@ func (x *Event) GetCall() *Call {
 	return nil
 }
 
+func (x *Event) GetGroup() *GroupUpdate {
+	if x != nil {
+		if x, ok := x.Kind.(*Event_Group); ok {
+			return x.Group
+		}
+	}
+	return nil
+}
+
 func (x *Event) GetChatUpdate() *ChatUpdate {
 	if x != nil {
 		if x, ok := x.Kind.(*Event_ChatUpdate); ok {
@@ -469,8 +479,12 @@ type Event_Call struct {
 	Call *Call `protobuf:"bytes,8,opt,name=call,proto3,oneof"`
 }
 
+type Event_Group struct {
+	Group *GroupUpdate `protobuf:"bytes,20,opt,name=group,proto3,oneof"` // marco 8 (groups.proto)
+}
+
 type Event_ChatUpdate struct {
-	ChatUpdate *ChatUpdate `protobuf:"bytes,20,opt,name=chat_update,json=chatUpdate,proto3,oneof"` // marco 9
+	ChatUpdate *ChatUpdate `protobuf:"bytes,21,opt,name=chat_update,json=chatUpdate,proto3,oneof"` // marco 9
 }
 
 func (*Event_Conn) isEvent_Kind() {}
@@ -488,6 +502,8 @@ func (*Event_ChatPresence) isEvent_Kind() {}
 func (*Event_Presence) isEvent_Kind() {}
 
 func (*Event_Call) isEvent_Kind() {}
+
+func (*Event_Group) isEvent_Kind() {}
 
 func (*Event_ChatUpdate) isEvent_Kind() {}
 
@@ -4282,7 +4298,7 @@ var File_worker_v1_worker_proto protoreflect.FileDescriptor
 
 const file_worker_v1_worker_proto_rawDesc = "" +
 	"\n" +
-	"\x16worker/v1/worker.proto\x12\tworker.v1\"\r\n" +
+	"\x16worker/v1/worker.proto\x12\tworker.v1\x1a\x16worker/v1/groups.proto\"\r\n" +
 	"\vPingRequest\"$\n" +
 	"\fPingResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\"(\n" +
@@ -4292,7 +4308,7 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x04code\x18\x01 \x01(\tR\x04code\"\x0f\n" +
 	"\rLogoutRequest\"\x10\n" +
 	"\x0eLogoutResponse\"\x0f\n" +
-	"\rEventsRequest\"\xc5\x03\n" +
+	"\rEventsRequest\"\xf5\x03\n" +
 	"\x05Event\x12*\n" +
 	"\x04conn\x18\x01 \x01(\v2\x14.worker.v1.ConnStateH\x00R\x04conn\x12\x1f\n" +
 	"\x02qr\x18\x02 \x01(\v2\r.worker.v1.QRH\x00R\x02qr\x12.\n" +
@@ -4301,8 +4317,9 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\ahistory\x18\x05 \x01(\v2\x17.worker.v1.HistoryChunkH\x00R\ahistory\x12>\n" +
 	"\rchat_presence\x18\x06 \x01(\v2\x17.worker.v1.ChatPresenceH\x00R\fchatPresence\x121\n" +
 	"\bpresence\x18\a \x01(\v2\x13.worker.v1.PresenceH\x00R\bpresence\x12%\n" +
-	"\x04call\x18\b \x01(\v2\x0f.worker.v1.CallH\x00R\x04call\x128\n" +
-	"\vchat_update\x18\x14 \x01(\v2\x15.worker.v1.ChatUpdateH\x00R\n" +
+	"\x04call\x18\b \x01(\v2\x0f.worker.v1.CallH\x00R\x04call\x12.\n" +
+	"\x05group\x18\x14 \x01(\v2\x16.worker.v1.GroupUpdateH\x00R\x05group\x128\n" +
+	"\vchat_update\x18\x15 \x01(\v2\x15.worker.v1.ChatUpdateH\x00R\n" +
 	"chatUpdateB\x06\n" +
 	"\x04kind\"k\n" +
 	"\fChatPresence\x12\x12\n" +
@@ -4709,6 +4726,7 @@ var file_worker_v1_worker_proto_goTypes = []any{
 	(*GetPrivacyRequest)(nil),              // 66: worker.v1.GetPrivacyRequest
 	(*SetPrivacyRequest)(nil),              // 67: worker.v1.SetPrivacyRequest
 	nil,                                    // 68: worker.v1.Privacy.SettingsEntry
+	(*GroupUpdate)(nil),                    // 69: worker.v1.GroupUpdate
 }
 var file_worker_v1_worker_proto_depIdxs = []int32{
 	11, // 0: worker.v1.Event.conn:type_name -> worker.v1.ConnState
@@ -4719,79 +4737,80 @@ var file_worker_v1_worker_proto_depIdxs = []int32{
 	8,  // 5: worker.v1.Event.chat_presence:type_name -> worker.v1.ChatPresence
 	9,  // 6: worker.v1.Event.presence:type_name -> worker.v1.Presence
 	10, // 7: worker.v1.Event.call:type_name -> worker.v1.Call
-	45, // 8: worker.v1.Event.chat_update:type_name -> worker.v1.ChatUpdate
-	20, // 9: worker.v1.Message.media:type_name -> worker.v1.Media
-	15, // 10: worker.v1.Message.location:type_name -> worker.v1.Location
-	16, // 11: worker.v1.Message.contacts:type_name -> worker.v1.ContactCard
-	17, // 12: worker.v1.Message.poll:type_name -> worker.v1.Poll
-	14, // 13: worker.v1.Message.button_reply:type_name -> worker.v1.ButtonReply
-	13, // 14: worker.v1.HistoryChunk.messages:type_name -> worker.v1.Message
-	18, // 15: worker.v1.SendRequest.quote:type_name -> worker.v1.Quote
-	19, // 16: worker.v1.SendRequest.link_preview:type_name -> worker.v1.LinkPreview
-	15, // 17: worker.v1.SendRequest.location:type_name -> worker.v1.Location
-	16, // 18: worker.v1.SendRequest.contacts:type_name -> worker.v1.ContactCard
-	17, // 19: worker.v1.SendRequest.poll:type_name -> worker.v1.Poll
-	31, // 20: worker.v1.GetContactsResponse.contacts:type_name -> worker.v1.Contact
-	31, // 21: worker.v1.GetContactResponse.contact:type_name -> worker.v1.Contact
-	37, // 22: worker.v1.CheckNumbersResponse.results:type_name -> worker.v1.NumberStatus
-	46, // 23: worker.v1.ChatActionRequest.message:type_name -> worker.v1.MessageRef
-	56, // 24: worker.v1.GetUserInfoResponse.business:type_name -> worker.v1.BusinessProfile
-	68, // 25: worker.v1.Privacy.settings:type_name -> worker.v1.Privacy.SettingsEntry
-	0,  // 26: worker.v1.Worker.Ping:input_type -> worker.v1.PingRequest
-	2,  // 27: worker.v1.Worker.PairPhone:input_type -> worker.v1.PairPhoneRequest
-	4,  // 28: worker.v1.Worker.Logout:input_type -> worker.v1.LogoutRequest
-	6,  // 29: worker.v1.Worker.Events:input_type -> worker.v1.EventsRequest
-	23, // 30: worker.v1.Worker.Send:input_type -> worker.v1.SendRequest
-	25, // 31: worker.v1.Worker.SendPresence:input_type -> worker.v1.SendPresenceRequest
-	27, // 32: worker.v1.Worker.MarkRead:input_type -> worker.v1.MarkReadRequest
-	29, // 33: worker.v1.Worker.DownloadMedia:input_type -> worker.v1.DownloadMediaRequest
-	32, // 34: worker.v1.Worker.GetContacts:input_type -> worker.v1.GetContactsRequest
-	34, // 35: worker.v1.Worker.GetContact:input_type -> worker.v1.GetContactRequest
-	36, // 36: worker.v1.Worker.CheckNumbers:input_type -> worker.v1.CheckNumbersRequest
-	39, // 37: worker.v1.Worker.RejectCall:input_type -> worker.v1.RejectCallRequest
-	41, // 38: worker.v1.Worker.SetPresence:input_type -> worker.v1.SetPresenceRequest
-	43, // 39: worker.v1.Worker.SubscribePresence:input_type -> worker.v1.SubscribePresenceRequest
-	47, // 40: worker.v1.Worker.ChatAction:input_type -> worker.v1.ChatActionRequest
-	49, // 41: worker.v1.Worker.GetChatSettings:input_type -> worker.v1.GetChatSettingsRequest
-	51, // 42: worker.v1.Worker.GetProfilePicture:input_type -> worker.v1.GetProfilePictureRequest
-	53, // 43: worker.v1.Worker.DownloadProfilePicture:input_type -> worker.v1.DownloadProfilePictureRequest
-	55, // 44: worker.v1.Worker.GetUserInfo:input_type -> worker.v1.GetUserInfoRequest
-	58, // 45: worker.v1.Worker.GetBlocklist:input_type -> worker.v1.GetBlocklistRequest
-	59, // 46: worker.v1.Worker.UpdateBlocklist:input_type -> worker.v1.UpdateBlocklistRequest
-	61, // 47: worker.v1.Worker.GetProfile:input_type -> worker.v1.GetProfileRequest
-	63, // 48: worker.v1.Worker.UpdateProfile:input_type -> worker.v1.UpdateProfileRequest
-	66, // 49: worker.v1.Worker.GetPrivacy:input_type -> worker.v1.GetPrivacyRequest
-	67, // 50: worker.v1.Worker.SetPrivacy:input_type -> worker.v1.SetPrivacyRequest
-	1,  // 51: worker.v1.Worker.Ping:output_type -> worker.v1.PingResponse
-	3,  // 52: worker.v1.Worker.PairPhone:output_type -> worker.v1.PairPhoneResponse
-	5,  // 53: worker.v1.Worker.Logout:output_type -> worker.v1.LogoutResponse
-	7,  // 54: worker.v1.Worker.Events:output_type -> worker.v1.Event
-	24, // 55: worker.v1.Worker.Send:output_type -> worker.v1.SendResponse
-	26, // 56: worker.v1.Worker.SendPresence:output_type -> worker.v1.SendPresenceResponse
-	28, // 57: worker.v1.Worker.MarkRead:output_type -> worker.v1.MarkReadResponse
-	30, // 58: worker.v1.Worker.DownloadMedia:output_type -> worker.v1.DownloadMediaResponse
-	33, // 59: worker.v1.Worker.GetContacts:output_type -> worker.v1.GetContactsResponse
-	35, // 60: worker.v1.Worker.GetContact:output_type -> worker.v1.GetContactResponse
-	38, // 61: worker.v1.Worker.CheckNumbers:output_type -> worker.v1.CheckNumbersResponse
-	40, // 62: worker.v1.Worker.RejectCall:output_type -> worker.v1.RejectCallResponse
-	42, // 63: worker.v1.Worker.SetPresence:output_type -> worker.v1.SetPresenceResponse
-	44, // 64: worker.v1.Worker.SubscribePresence:output_type -> worker.v1.SubscribePresenceResponse
-	48, // 65: worker.v1.Worker.ChatAction:output_type -> worker.v1.ChatActionResponse
-	50, // 66: worker.v1.Worker.GetChatSettings:output_type -> worker.v1.GetChatSettingsResponse
-	52, // 67: worker.v1.Worker.GetProfilePicture:output_type -> worker.v1.GetProfilePictureResponse
-	54, // 68: worker.v1.Worker.DownloadProfilePicture:output_type -> worker.v1.DownloadProfilePictureResponse
-	57, // 69: worker.v1.Worker.GetUserInfo:output_type -> worker.v1.GetUserInfoResponse
-	60, // 70: worker.v1.Worker.GetBlocklist:output_type -> worker.v1.GetBlocklistResponse
-	60, // 71: worker.v1.Worker.UpdateBlocklist:output_type -> worker.v1.GetBlocklistResponse
-	62, // 72: worker.v1.Worker.GetProfile:output_type -> worker.v1.GetProfileResponse
-	64, // 73: worker.v1.Worker.UpdateProfile:output_type -> worker.v1.UpdateProfileResponse
-	65, // 74: worker.v1.Worker.GetPrivacy:output_type -> worker.v1.Privacy
-	65, // 75: worker.v1.Worker.SetPrivacy:output_type -> worker.v1.Privacy
-	51, // [51:76] is the sub-list for method output_type
-	26, // [26:51] is the sub-list for method input_type
-	26, // [26:26] is the sub-list for extension type_name
-	26, // [26:26] is the sub-list for extension extendee
-	0,  // [0:26] is the sub-list for field type_name
+	69, // 8: worker.v1.Event.group:type_name -> worker.v1.GroupUpdate
+	45, // 9: worker.v1.Event.chat_update:type_name -> worker.v1.ChatUpdate
+	20, // 10: worker.v1.Message.media:type_name -> worker.v1.Media
+	15, // 11: worker.v1.Message.location:type_name -> worker.v1.Location
+	16, // 12: worker.v1.Message.contacts:type_name -> worker.v1.ContactCard
+	17, // 13: worker.v1.Message.poll:type_name -> worker.v1.Poll
+	14, // 14: worker.v1.Message.button_reply:type_name -> worker.v1.ButtonReply
+	13, // 15: worker.v1.HistoryChunk.messages:type_name -> worker.v1.Message
+	18, // 16: worker.v1.SendRequest.quote:type_name -> worker.v1.Quote
+	19, // 17: worker.v1.SendRequest.link_preview:type_name -> worker.v1.LinkPreview
+	15, // 18: worker.v1.SendRequest.location:type_name -> worker.v1.Location
+	16, // 19: worker.v1.SendRequest.contacts:type_name -> worker.v1.ContactCard
+	17, // 20: worker.v1.SendRequest.poll:type_name -> worker.v1.Poll
+	31, // 21: worker.v1.GetContactsResponse.contacts:type_name -> worker.v1.Contact
+	31, // 22: worker.v1.GetContactResponse.contact:type_name -> worker.v1.Contact
+	37, // 23: worker.v1.CheckNumbersResponse.results:type_name -> worker.v1.NumberStatus
+	46, // 24: worker.v1.ChatActionRequest.message:type_name -> worker.v1.MessageRef
+	56, // 25: worker.v1.GetUserInfoResponse.business:type_name -> worker.v1.BusinessProfile
+	68, // 26: worker.v1.Privacy.settings:type_name -> worker.v1.Privacy.SettingsEntry
+	0,  // 27: worker.v1.Worker.Ping:input_type -> worker.v1.PingRequest
+	2,  // 28: worker.v1.Worker.PairPhone:input_type -> worker.v1.PairPhoneRequest
+	4,  // 29: worker.v1.Worker.Logout:input_type -> worker.v1.LogoutRequest
+	6,  // 30: worker.v1.Worker.Events:input_type -> worker.v1.EventsRequest
+	23, // 31: worker.v1.Worker.Send:input_type -> worker.v1.SendRequest
+	25, // 32: worker.v1.Worker.SendPresence:input_type -> worker.v1.SendPresenceRequest
+	27, // 33: worker.v1.Worker.MarkRead:input_type -> worker.v1.MarkReadRequest
+	29, // 34: worker.v1.Worker.DownloadMedia:input_type -> worker.v1.DownloadMediaRequest
+	32, // 35: worker.v1.Worker.GetContacts:input_type -> worker.v1.GetContactsRequest
+	34, // 36: worker.v1.Worker.GetContact:input_type -> worker.v1.GetContactRequest
+	36, // 37: worker.v1.Worker.CheckNumbers:input_type -> worker.v1.CheckNumbersRequest
+	39, // 38: worker.v1.Worker.RejectCall:input_type -> worker.v1.RejectCallRequest
+	41, // 39: worker.v1.Worker.SetPresence:input_type -> worker.v1.SetPresenceRequest
+	43, // 40: worker.v1.Worker.SubscribePresence:input_type -> worker.v1.SubscribePresenceRequest
+	47, // 41: worker.v1.Worker.ChatAction:input_type -> worker.v1.ChatActionRequest
+	49, // 42: worker.v1.Worker.GetChatSettings:input_type -> worker.v1.GetChatSettingsRequest
+	51, // 43: worker.v1.Worker.GetProfilePicture:input_type -> worker.v1.GetProfilePictureRequest
+	53, // 44: worker.v1.Worker.DownloadProfilePicture:input_type -> worker.v1.DownloadProfilePictureRequest
+	55, // 45: worker.v1.Worker.GetUserInfo:input_type -> worker.v1.GetUserInfoRequest
+	58, // 46: worker.v1.Worker.GetBlocklist:input_type -> worker.v1.GetBlocklistRequest
+	59, // 47: worker.v1.Worker.UpdateBlocklist:input_type -> worker.v1.UpdateBlocklistRequest
+	61, // 48: worker.v1.Worker.GetProfile:input_type -> worker.v1.GetProfileRequest
+	63, // 49: worker.v1.Worker.UpdateProfile:input_type -> worker.v1.UpdateProfileRequest
+	66, // 50: worker.v1.Worker.GetPrivacy:input_type -> worker.v1.GetPrivacyRequest
+	67, // 51: worker.v1.Worker.SetPrivacy:input_type -> worker.v1.SetPrivacyRequest
+	1,  // 52: worker.v1.Worker.Ping:output_type -> worker.v1.PingResponse
+	3,  // 53: worker.v1.Worker.PairPhone:output_type -> worker.v1.PairPhoneResponse
+	5,  // 54: worker.v1.Worker.Logout:output_type -> worker.v1.LogoutResponse
+	7,  // 55: worker.v1.Worker.Events:output_type -> worker.v1.Event
+	24, // 56: worker.v1.Worker.Send:output_type -> worker.v1.SendResponse
+	26, // 57: worker.v1.Worker.SendPresence:output_type -> worker.v1.SendPresenceResponse
+	28, // 58: worker.v1.Worker.MarkRead:output_type -> worker.v1.MarkReadResponse
+	30, // 59: worker.v1.Worker.DownloadMedia:output_type -> worker.v1.DownloadMediaResponse
+	33, // 60: worker.v1.Worker.GetContacts:output_type -> worker.v1.GetContactsResponse
+	35, // 61: worker.v1.Worker.GetContact:output_type -> worker.v1.GetContactResponse
+	38, // 62: worker.v1.Worker.CheckNumbers:output_type -> worker.v1.CheckNumbersResponse
+	40, // 63: worker.v1.Worker.RejectCall:output_type -> worker.v1.RejectCallResponse
+	42, // 64: worker.v1.Worker.SetPresence:output_type -> worker.v1.SetPresenceResponse
+	44, // 65: worker.v1.Worker.SubscribePresence:output_type -> worker.v1.SubscribePresenceResponse
+	48, // 66: worker.v1.Worker.ChatAction:output_type -> worker.v1.ChatActionResponse
+	50, // 67: worker.v1.Worker.GetChatSettings:output_type -> worker.v1.GetChatSettingsResponse
+	52, // 68: worker.v1.Worker.GetProfilePicture:output_type -> worker.v1.GetProfilePictureResponse
+	54, // 69: worker.v1.Worker.DownloadProfilePicture:output_type -> worker.v1.DownloadProfilePictureResponse
+	57, // 70: worker.v1.Worker.GetUserInfo:output_type -> worker.v1.GetUserInfoResponse
+	60, // 71: worker.v1.Worker.GetBlocklist:output_type -> worker.v1.GetBlocklistResponse
+	60, // 72: worker.v1.Worker.UpdateBlocklist:output_type -> worker.v1.GetBlocklistResponse
+	62, // 73: worker.v1.Worker.GetProfile:output_type -> worker.v1.GetProfileResponse
+	64, // 74: worker.v1.Worker.UpdateProfile:output_type -> worker.v1.UpdateProfileResponse
+	65, // 75: worker.v1.Worker.GetPrivacy:output_type -> worker.v1.Privacy
+	65, // 76: worker.v1.Worker.SetPrivacy:output_type -> worker.v1.Privacy
+	52, // [52:77] is the sub-list for method output_type
+	27, // [27:52] is the sub-list for method input_type
+	27, // [27:27] is the sub-list for extension type_name
+	27, // [27:27] is the sub-list for extension extendee
+	0,  // [0:27] is the sub-list for field type_name
 }
 
 func init() { file_worker_v1_worker_proto_init() }
@@ -4799,6 +4818,7 @@ func file_worker_v1_worker_proto_init() {
 	if File_worker_v1_worker_proto != nil {
 		return
 	}
+	file_worker_v1_groups_proto_init()
 	file_worker_v1_worker_proto_msgTypes[7].OneofWrappers = []any{
 		(*Event_Conn)(nil),
 		(*Event_Qr)(nil),
@@ -4808,6 +4828,7 @@ func file_worker_v1_worker_proto_init() {
 		(*Event_ChatPresence)(nil),
 		(*Event_Presence)(nil),
 		(*Event_Call)(nil),
+		(*Event_Group)(nil),
 		(*Event_ChatUpdate)(nil),
 	}
 	type x struct{}
