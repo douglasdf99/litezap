@@ -19,7 +19,7 @@ type anthropicChat struct {
 }
 
 func newAnthropic(s Settings, key string) *anthropicChat {
-	opts := []option.RequestOption{option.WithAPIKey(key), option.WithMaxRetries(1),
+	opts := []option.RequestOption{option.WithAPIKey(key), option.WithMaxRetries(0), // one provider call per reserved slot
 		option.WithRequestTimeout(providerTimeout), option.WithHTTPClient(httpClient())}
 	if s.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(s.BaseURL))

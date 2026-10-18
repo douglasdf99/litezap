@@ -42,8 +42,9 @@ type Attendant struct {
 	Location func(ctx context.Context, instanceID string) *time.Location
 	Log      *slog.Logger
 
-	mu    sync.Mutex
-	marks map[string]eventMark // instance|chat|type -> last emitted (dedupe)
+	mu      sync.Mutex
+	marks   map[string]eventMark // instance|chat|type -> last emitted (dedupe)
+	budgets map[string]int       // instance|chat or simulate|day -> provider calls
 }
 
 type eventMark struct {
@@ -157,9 +158,40 @@ func (a *Attendant) backends(s Settings, sec Secrets) (Backends, error) {
 	return f(s, sec)
 }
 
-// reserve counts one provider call against the daily cap.
-func (a *Attendant) reserve(ctx context.Context, instanceID string, s Settings) error {
-	ok, err := a.Store.ReserveAttendantCall(ctx, instanceID, a.now().UTC().Format("2006-01-02"), s.DailyCallCap)
+// reserve counts one provider call against the per-chat (or simulator) budget and the
+// instance's daily cap. The per-chat budget keeps one chat (a customer sending messages
+// the agent stays silent on, a bot) from draining the instance's cap; the simulator has
+// its own, smaller one.
+func (a *Attendant) reserve(ctx context.Context, in *runInput) error {
+	s := in.settings
+	day := a.now().UTC().Format("2006-01-02")
+	scope, limit, field := "chat|"+in.chat, s.ChatDailyCallCap, "chat_daily_call_cap"
+	if in.simulate {
+		scope, limit, field = "simulate", s.SimulateDailyCap, "simulate_daily_cap"
+	}
+	if limit > 0 {
+		key := in.instanceID + "|" + scope + "|" + day
+		a.mu.Lock()
+		if a.budgets == nil {
+			a.budgets = map[string]int{}
+		}
+		if len(a.budgets) > 20000 {
+			for k := range a.budgets {
+				if !strings.HasSuffix(k, "|"+day) {
+					delete(a.budgets, k)
+				}
+			}
+		}
+		over := a.budgets[key] >= limit
+		if !over {
+			a.budgets[key]++
+		}
+		a.mu.Unlock()
+		if over {
+			return &agenthook.CallError{Reason: "daily_cap", Detail: fmt.Sprintf("daily limit of %d provider calls reached (%s)", limit, field)}
+		}
+	}
+	ok, err := a.Store.ReserveAttendantCall(ctx, in.instanceID, day, s.DailyCallCap)
 	if err != nil {
 		return err
 	}
@@ -175,6 +207,19 @@ func (a *Attendant) addUsage(instanceID string, s Settings, model string, in, ou
 		a.log().Error("attendant: log usage", "instance_id", instanceID, "err", err)
 	}
 	return cost
+}
+
+var _ agenthook.CallFollower = (*Attendant)(nil)
+
+// WantsCall reports whether the instance's answering agent follows up on rejected calls
+// (call_followup) and the attendant can answer.
+func (a *Attendant) WantsCall(ctx context.Context, instanceID string) bool {
+	s, sec, ok, err := a.load(ctx, instanceID)
+	if err != nil || !ok || s.ready(sec) != "" {
+		return false
+	}
+	_, prof, err := a.activeProfile(ctx, instanceID, s)
+	return err == nil && prof.CallFollowUp
 }
 
 // Answer is the agent hook's built-in target.
@@ -294,12 +339,12 @@ func (a *Attendant) enrich(ctx context.Context, instanceID string, s Settings, b
 	kind := cm.Type
 	mime := baseMime(md.Mime)
 	switch {
-	case kind == "audio" && backs.Transcriber != nil:
+	case kind == "audio" && backs.Transcriber != nil && md.Size <= maxAudioBytes:
 		data, err := a.read(ctx, instanceID, md.ID, maxAudioBytes)
 		if err != nil {
 			return "[mensagem de voz — não foi possível ouvir]"
 		}
-		if err := a.reserve(ctx, instanceID, s); err != nil {
+		if err := a.reserve(ctx, in); err != nil {
 			return "[mensagem de voz — transcrição indisponível]"
 		}
 		got, err := backs.Transcriber.Transcribe(ctx, Blob{Mime: md.Mime, Name: audioName(mime), Data: data})
@@ -431,7 +476,7 @@ func (a *Attendant) run(ctx context.Context, in runInput) (runResult, error) {
 	}
 	turn := userTurn(in.history, in.latest, in.contactName, a.now(), a.loc(ctx, in.instanceID), task)
 	parts := append([]Part{{Text: turn}}, in.parts...)
-	if err := a.reserve(ctx, in.instanceID, s); err != nil {
+	if err := a.reserve(ctx, &in); err != nil {
 		return runResult{}, err
 	}
 	resp, err := in.backs.Chat.Chat(ctx, ChatRequest{System: systemPrompt(p, canary), MaxTokens: s.MaxTokens,
@@ -475,6 +520,12 @@ func (a *Attendant) run(ctx context.Context, in runInput) (runResult, error) {
 	if in.trigger != "call" {
 		res.Events = a.buildEvents(in, out.Event)
 	}
+	// Everything the model wrote leaves the engine (handoff note, event fields): none of
+	// it may carry the instructions or a key.
+	if leaks(res.HandoffNote, canary, in.secrets) || eventsLeak(res.Events, canary, in.secrets) {
+		return runResult{}, &agenthook.CallError{Reason: "invalid_response",
+			Detail: "answer blocked: it contained the agent's instructions or keys"}
+	}
 	if res.Reply != "" && in.backs.Speaker != nil &&
 		(p.VoiceReply == VoiceAlways || (p.VoiceReply == VoiceWhenAudio && in.latestType == "audio")) {
 		res.WouldVoice = true
@@ -487,7 +538,7 @@ func (a *Attendant) run(ctx context.Context, in runInput) (runResult, error) {
 
 // speak synthesizes the reply; nil (a text reply) when it fails or the cap is reached.
 func (a *Attendant) speak(ctx context.Context, in runInput, text string) *Blob {
-	if err := a.reserve(ctx, in.instanceID, in.settings); err != nil {
+	if err := a.reserve(ctx, &in); err != nil {
 		return nil
 	}
 	b, err := in.backs.Speaker.Speak(ctx, text)
@@ -508,6 +559,42 @@ func leaks(reply, canary string, sec Secrets) bool {
 	}
 	for _, k := range []string{sec.APIKey, sec.AudioAPIKey} {
 		if len(k) >= 8 && strings.Contains(reply, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// eventsLeak runs leaks over every string of the events' data.
+func eventsLeak(evs []agenthook.AgentEvent, canary string, sec Secrets) bool {
+	var walk func(v any) bool
+	walk = func(v any) bool {
+		switch t := v.(type) {
+		case string:
+			return leaks(t, canary, sec)
+		case map[string]any:
+			for _, x := range t {
+				if walk(x) {
+					return true
+				}
+			}
+		case []map[string]any:
+			for _, x := range t {
+				if walk(x) {
+					return true
+				}
+			}
+		case []any:
+			for _, x := range t {
+				if walk(x) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, e := range evs {
+		if walk(e.Data) {
 			return true
 		}
 	}
@@ -551,10 +638,16 @@ func (a *Attendant) buildEvents(in runInput, e modelEvent) []agenthook.AgentEven
 	default:
 		return nil
 	}
-	if !in.simulate && a.duplicate(in.instanceID, in.chat, typ, data) {
+	if in.simulate {
+		return []agenthook.AgentEvent{{Type: typ, Data: data}}
+	}
+	key, hash := eventKey(in.instanceID, in.chat, typ, data)
+	if a.duplicate(key, hash) {
 		return nil
 	}
-	return []agenthook.AgentEvent{{Type: typ, Data: data}}
+	// Marked only once the hook published it: a reply discarded (human took over, send
+	// refused) leaves the event free to be emitted on the next answer.
+	return []agenthook.AgentEvent{{Type: typ, Data: data, Published: func() { a.mark(key, hash) }}}
 }
 
 // priceOrder keeps sane items, taking unit prices from the catalog when the name matches.
@@ -586,12 +679,24 @@ func priceOrder(p Profile, raw []orderItem) ([]map[string]any, float64, bool) {
 
 func roundMoney(f float64) float64 { return float64(int64(f*100+0.5)) / 100 }
 
-// duplicate drops an event identical to the last one of its type in the chat (24h).
-func (a *Attendant) duplicate(instanceID, chat, typ string, data map[string]any) bool {
+func eventKey(instanceID, chat, typ string, data map[string]any) (string, string) {
 	b, _ := json.Marshal(data)
 	sum := sha256.Sum256(b)
-	h := hex.EncodeToString(sum[:])
-	key := instanceID + "|" + chat + "|" + typ
+	return instanceID + "|" + chat + "|" + typ, hex.EncodeToString(sum[:])
+}
+
+// duplicate reports an event identical to the last one published of its type in the
+// chat (24h).
+func (a *Attendant) duplicate(key, hash string) bool {
+	now := a.now()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	m, ok := a.marks[key]
+	return ok && m.hash == hash && now.Sub(m.at) < 24*time.Hour
+}
+
+// mark remembers a published event.
+func (a *Attendant) mark(key, hash string) {
 	now := a.now()
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -605,9 +710,5 @@ func (a *Attendant) duplicate(instanceID, chat, typ string, data map[string]any)
 			}
 		}
 	}
-	if m, ok := a.marks[key]; ok && m.hash == h && now.Sub(m.at) < 24*time.Hour {
-		return true
-	}
-	a.marks[key] = eventMark{hash: h, at: now}
-	return false
+	a.marks[key] = eventMark{hash: hash, at: now}
 }

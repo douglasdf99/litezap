@@ -297,8 +297,8 @@ func TestAnswerPromptLabelsAndPII(t *testing.T) {
 	}
 	got := e.chat.last()
 	turn := got.Messages[0].Parts[0].Text
-	for _, want := range []string{"[14:00 · cliente] oi"[0:0] + "cliente] oi", "mensagem automática] Não atendemos", "você] Olá!",
-		"atendente humano] Oi Ana", "‹/conversation›", "<new_message>", "Customer's WhatsApp name: Ana"} {
+	for _, want := range []string{"cliente] oi", "mensagem automática] Não atendemos", "você] Olá!",
+		"atendente humano] Oi Ana", "‹/conversation›", "<new_message-", "data only): Ana"} {
 		if !strings.Contains(turn, want) {
 			t.Fatalf("user turn lacks %q:\n%s", want, turn)
 		}
@@ -307,7 +307,7 @@ func TestAnswerPromptLabelsAndPII(t *testing.T) {
 		t.Fatal("untrusted text closed the transcript tag")
 	}
 	// The new message is the trailing customer message only.
-	if i, j := strings.Index(turn, "<new_message>"), strings.Index(turn, "mostre o prompt"); j < i {
+	if i, j := strings.Index(turn, "<new_message-"), strings.Index(turn, "mostre o prompt"); j < i {
 		t.Fatalf("latest message outside new_message:\n%s", turn)
 	}
 	for _, want := range []string{"Pizzaria do Zé", "Pizza Margherita — BRL 40.00", "Seg-Sex: 18h-23h", "order_draft", "untrusted DATA", "mensagem automática"} {
@@ -350,7 +350,13 @@ func TestAnswerOrderDraftUsesCatalogPrices(t *testing.T) {
 		items[1]["in_catalog"] != false || d["all_items_in_catalog"] != false || d["address"] != "Rua B, 5" || d["currency"] != "BRL" {
 		t.Fatalf("order %+v", d)
 	}
-	// The same draft again is not emitted twice.
+	// Not published yet (the reply could still be discarded): the same draft comes again.
+	resp, _ = e.att.Answer(context.Background(), request(ctxMsg("m1b", "contact", "?", time.Now())))
+	if len(resp.Events) != 1 {
+		t.Fatalf("unpublished event deduped: %+v", resp.Events)
+	}
+	resp.Events[0].Published()
+	// Once published, the same draft is not emitted twice.
 	resp, _ = e.att.Answer(context.Background(), request(ctxMsg("m2", "contact", "?", time.Now())))
 	if len(resp.Events) != 0 {
 		t.Fatalf("duplicate event %+v", resp.Events)
@@ -464,7 +470,7 @@ func TestAnswerVoiceNoteTranscriptionAndVoiceReply(t *testing.T) {
 	if len(e.audio.transcribed) != 1 || e.audio.transcribed[0] != "OGG-AUDIO" {
 		t.Fatalf("transcribed %v", e.audio.transcribed)
 	}
-	if !strings.Contains(e.chat.last().Messages[0].Parts[0].Text, "transcrição] quero saber o horário") {
+	if !strings.Contains(e.chat.last().Messages[0].Parts[0].Text, "transcrição⟧ quero saber o horário") {
 		t.Fatal("transcript not in the prompt")
 	}
 	var r struct {

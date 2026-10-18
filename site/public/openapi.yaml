@@ -3753,6 +3753,8 @@ components:
         base_url: { type: string }
         max_tokens: { type: integer }
         daily_call_cap: { type: integer }
+        chat_daily_call_cap: { type: integer }
+        simulate_daily_cap: { type: integer }
         active_agent_id: { type: string }
         vision: { type: boolean }
         audio: { $ref: "#/components/schemas/AttendantAudio" }
@@ -3774,6 +3776,8 @@ components:
         base_url: { type: string }
         max_tokens: { type: integer, minimum: 64, maximum: 8192 }
         daily_call_cap: { type: integer, minimum: 0 }
+        chat_daily_call_cap: { type: integer, minimum: 0, description: "Chamadas por conversa por dia (padrão 40)." }
+        simulate_daily_cap: { type: integer, minimum: 0, description: "Chamadas do simulador por dia (padrão 50)." }
         vision: { type: boolean }
         audio: { $ref: "#/components/schemas/AttendantAudio" }
         price_input_per_mtok: { type: number }

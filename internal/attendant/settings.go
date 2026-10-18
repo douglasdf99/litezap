@@ -29,6 +29,12 @@ type Settings struct {
 	// DailyCallCap bounds provider calls per UTC day (chat, transcription, speech;
 	// default 300; 0 = no limit, discouraged).
 	DailyCallCap int `json:"daily_call_cap"`
+	// ChatDailyCallCap bounds provider calls per chat per UTC day (default 40; 0 = no
+	// per-chat limit): one chat cannot drain the instance's cap.
+	ChatDailyCallCap int `json:"chat_daily_call_cap"`
+	// SimulateDailyCap bounds simulator calls per UTC day (default 50; they also count in
+	// daily_call_cap).
+	SimulateDailyCap int `json:"simulate_daily_cap"`
 	// ActiveAgentID is the agent that answers (default: the first one created).
 	ActiveAgentID string `json:"active_agent_id"`
 	// Vision passes images (and PDFs, on anthropic) to the model.
@@ -59,7 +65,8 @@ type Secrets struct {
 
 // DefaultSettings is the starting point of a new configuration.
 func DefaultSettings() Settings {
-	return Settings{Provider: ProviderAnthropic, Model: DefaultModel, MaxTokens: 1024, DailyCallCap: 300, Vision: true}
+	return Settings{Provider: ProviderAnthropic, Model: DefaultModel, MaxTokens: 1024, DailyCallCap: 300,
+		ChatDailyCallCap: 40, SimulateDailyCap: 50, Vision: true}
 }
 
 // SettingsPatch changes some fields (nil = keep). A key set to "" removes it.
@@ -69,6 +76,8 @@ type SettingsPatch struct {
 	BaseURL            *string        `json:"base_url"`
 	MaxTokens          *int           `json:"max_tokens"`
 	DailyCallCap       *int           `json:"daily_call_cap"`
+	ChatDailyCallCap   *int           `json:"chat_daily_call_cap"`
+	SimulateDailyCap   *int           `json:"simulate_daily_cap"`
 	Vision             *bool          `json:"vision"`
 	Audio              *AudioSettings `json:"audio"`
 	PriceInputPerMTok  *float64       `json:"price_input_per_mtok"`
@@ -91,6 +100,12 @@ func (p SettingsPatch) apply(s Settings, sec Secrets) (Settings, Secrets) {
 	}
 	if p.DailyCallCap != nil {
 		s.DailyCallCap = *p.DailyCallCap
+	}
+	if p.ChatDailyCallCap != nil {
+		s.ChatDailyCallCap = *p.ChatDailyCallCap
+	}
+	if p.SimulateDailyCap != nil {
+		s.SimulateDailyCap = *p.SimulateDailyCap
 	}
 	if p.Vision != nil {
 		s.Vision = *p.Vision
@@ -140,6 +155,8 @@ func (s *Settings) Validate(sec Secrets) error {
 		return errors.New("max_tokens must be between 64 and 8192")
 	case s.DailyCallCap < 0 || s.DailyCallCap > 1_000_000:
 		return errors.New("daily_call_cap must be between 0 (no limit) and 1000000")
+	case s.ChatDailyCallCap < 0 || s.ChatDailyCallCap > 100_000 || s.SimulateDailyCap < 0 || s.SimulateDailyCap > 100_000:
+		return errors.New("chat_daily_call_cap and simulate_daily_cap must be between 0 (no limit) and 100000")
 	case bad(s.PriceInputPerMTok) || bad(s.PriceOutputPerMTok):
 		return errors.New("prices must be between 0 and 1000 USD per million tokens")
 	case len(sec.APIKey) > 1000 || len(sec.AudioAPIKey) > 1000:

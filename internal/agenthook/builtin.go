@@ -40,6 +40,12 @@ func (h *Hook) callBuiltin(ctx context.Context, cfg Config, req Request, j job) 
 	return r
 }
 
+// CallFollower is implemented by a built-in agent that can follow up on calls; WantsCall
+// reports whether the instance's agent opted in (and is ready to answer).
+type CallFollower interface {
+	WantsCall(ctx context.Context, instanceID string) bool
+}
+
 // CallFollowUp is asked by the call handler (after its per-caller cooldown) when a 1:1
 // call was rejected automatically: when the instance's hook uses the built-in attendant
 // and it is active in the caller's chat, the attendant writes a short message there
@@ -65,6 +71,11 @@ func (h *Hook) CallFollowUp(instanceID, caller, callID, fallback string) bool {
 		return false
 	}
 	if h.opt.Held != nil && h.opt.Held(instanceID) {
+		return false
+	}
+	// Only an agent that opted in (call_followup) writes after a call; otherwise the
+	// static reject message (if any) goes out as before.
+	if cf, ok := h.opt.Builtin.(CallFollower); !ok || !cf.WantsCall(ctx, instanceID) {
 		return false
 	}
 	now := h.opt.Clock.Now()

@@ -22,6 +22,13 @@ type fakeBuiltin struct {
 	reqs   []Request
 	answer func(Request) (Response, error)
 	block  chan struct{} // when set, Answer waits on it
+	noCall bool          // WantsCall answers false
+}
+
+func (f *fakeBuiltin) WantsCall(context.Context, string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.noCall
 }
 
 func (f *fakeBuiltin) Answer(ctx context.Context, req Request) (Response, error) {

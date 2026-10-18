@@ -76,6 +76,8 @@ func (e *CallError) Error() string { return e.Reason + ": " + e.Detail }
 type AgentEvent struct {
 	Type string
 	Data map[string]any
+	// Published, when set, is called after the event was published.
+	Published func()
 }
 
 // builtinEventTypes are the only event types an AgentEvent may have.
@@ -435,68 +437,75 @@ func active(cfg Config, ca store.ChatAgent, now time.Time) bool {
 
 // handle runs the hook for one message (spec 4.3).
 func (h *Hook) handle(instanceID string, j job) {
+	if settled := h.handleJob(instanceID, j); !settled && j.call != nil && h.ctx.Err() == nil {
+		// A call follow-up that produced no reply (skipped, failed, silent): the caller
+		// still gets the static reject message, as without the attendant.
+		h.callFallback(instanceID, j)
+	}
+}
+
+// handleJob runs one job; settled is false when a call follow-up still needs its static
+// fallback.
+func (h *Hook) handleJob(instanceID string, j job) (settled bool) {
 	ctx := h.ctx
 	cfg, ok := h.config(ctx, instanceID)
 	if !ok {
-		return
+		return false
 	}
 	m := j.msg
 	ca, err := h.chatAgent(ctx, instanceID, m.Chat)
 	if err != nil {
 		h.log.Error("agent hook: load chat", "instance_id", instanceID, "chat", m.Chat, "err", err)
-		return
+		return false
 	}
 	now := h.opt.Clock.Now()
 	isGroup := m.IsGroup || ca.IsGroup || strings.HasSuffix(m.Chat, "@g.us")
 	switch {
 	case isGroup && !cfg.GroupsEnabled, cfg.ignores(m.Chat, m.Sender), !active(cfg, ca, now), m.Type == "unknown":
-		return
+		return true // paused, disabled or ignored meanwhile: nothing automatic goes out
 	}
 	base := store.AgentCall{InstanceID: instanceID, ChatJID: m.Chat, MessageID: m.ID}
 	if h.stale(cfg, m, now) {
 		base.Status, base.Reason, base.Detail = "skipped", "stale", "message received "+now.Sub(m.Timestamp).Round(time.Second).String()+" ago (offline backlog)"
 		h.record(base)
-		return
+		return false
 	}
 	if h.opt.Held != nil && h.opt.Held(instanceID) {
 		base.Status, base.Reason, base.Detail = "skipped", "sending_suspended", "sending is suspended by the operator"
 		h.record(base)
-		return
+		return true // nothing can be sent
 	}
 	// Loop guard: too many replies in the window means two bots talking, or a runaway agent.
 	if n, err := h.st.CountAgentReplies(ctx, instanceID, m.Chat, now.Add(-cfg.ReplyWindow.D())); err != nil {
 		h.log.Error("agent hook: count replies", "instance_id", instanceID, "err", err)
-		return
+		return false
 	} else if n >= cfg.MaxRepliesPerWindow {
 		h.loopGuard(ctx, cfg, base, j, n, now)
-		return
+		return false
 	}
 
 	select {
 	case h.slots <- struct{}{}:
 	case <-ctx.Done():
-		return
+		return true
 	}
 	if h.stale(cfg, m, h.opt.Clock.Now()) { // waited too long for a slot
 		<-h.slots
 		base.Status, base.Reason, base.Detail = "skipped", "stale", "waited too long for a free call slot"
 		h.record(base)
-		return
+		return false
 	}
 	res := h.call(ctx, cfg, instanceID, ca, j)
 	<-h.slots
 	if ctx.Err() != nil {
-		return // shutting down: not reported, nothing sent
+		return true // shutting down: not reported, nothing sent
 	}
 	base.HTTPStatus, base.DurationMS = res.status, res.duration.Milliseconds()
 	if res.reason != "" {
 		h.fail(base, j, res.reason, res.err, res.status)
-		if j.call != nil {
-			h.callFallback(instanceID, j)
-		}
-		return
+		return false
 	}
-	h.act(ctx, cfg, base, j, res.resp)
+	return h.act(ctx, cfg, base, j, res.resp)
 }
 
 // staleAfter is how old a message may be when its call starts: older ones are an offline
@@ -833,7 +842,11 @@ func plan(resp Response, chat, messageID string) (*service.SendInput, []action, 
 // so a rejected reply leaves nothing else sent), then mark_read and react, then
 // pause/handoff, which always apply (they only make the hook safer). A human taking over
 // during the call discards everything.
-func (h *Hook) act(ctx context.Context, cfg Config, c store.AgentCall, j job, resp Response) {
+//
+// settled reports that the chat needs nothing else from this call: a reply was queued,
+// or a human took over during the call (a call follow-up's static fallback is skipped).
+func (h *Hook) act(ctx context.Context, cfg Config, c store.AgentCall, j job, resp Response) (settled bool) {
+	defer func() { settled = settled || c.Replied }()
 	m := j.msg
 	reply, acts, unknown, err := plan(resp, m.Chat, m.ID)
 	if err != nil {
@@ -857,7 +870,7 @@ func (h *Hook) act(ctx context.Context, cfg Config, c store.AgentCall, j job, re
 	if !active(cfg, ca, h.opt.Clock.Now()) { // a human answered, or the chat was paused/disabled
 		c.Status, c.Reason, c.Detail = "discarded", "chat_paused", "the chat was paused or disabled during the call"
 		h.record(c)
-		return
+		return true
 	}
 	msgr := h.messenger()
 	if msgr == nil {
@@ -928,6 +941,7 @@ func (h *Hook) act(ctx context.Context, cfg Config, c store.AgentCall, j job, re
 	c.Status, c.Detail = "ok", strings.Join(notes, "; ")
 	h.record(c)
 	h.publishEvents(c.InstanceID, m, resp.Events)
+	return c.Replied
 }
 
 // publishEvents publishes the built-in attendant's events (known types only), with the
@@ -951,5 +965,8 @@ func (h *Hook) publishEvents(instanceID string, m events.Message, evs []AgentEve
 			}
 		}
 		h.publish(instanceID, e.Type, data)
+		if e.Published != nil {
+			e.Published()
+		}
 	}
 }

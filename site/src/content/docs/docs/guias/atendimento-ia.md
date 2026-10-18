@@ -27,10 +27,11 @@ curl -s -X PUT $LZ/v1/instances/$ID/attendant -H "Authorization: Bearer $ADMIN" 
 ```
 
 - A chave é **cifrada em repouso** (AES-256-GCM com o arquivo `data/attendant_key`, permissão 0600) e **nunca volta**
-  na API (`api_key_set: true`). Guarde o `attendant_key` junto do backup do banco: sem ele, as chaves não abrem.
+  na API (`api_key_set: true`). Guarde o `attendant_key` junto do backup do banco: sem ele, as chaves não abrem — e lembre que um backup com os dois
+  arquivos dá acesso às chaves, então proteja-o.
 - `daily_call_cap` (padrão 300) limita as chamadas ao provedor por dia (inclui transcrição e voz). Estourou: o
   atendente para até o dia seguinte e sai `agent.failed` com `reason: daily_cap`. `GET /attendant/usage` mostra
-  chamadas, tokens e custo estimado por dia.
+  chamadas, tokens e custo estimado por dia. `chat_daily_call_cap` (padrão 40) limita cada conversa, para um único contato não esgotar o limite da instância, e `simulate_daily_cap` (padrão 50) limita o simulador.
 - **Assinatura do Claude x chave de API**: a assinatura Claude (Pro/Max) só serve para testes locais com um agente
   seu (por exemplo o [`examples/agent-claude`](https://github.com/douglasdf99/litezap/tree/main/examples/agent-claude)
   rodando na sua máquina com as suas credenciais). Para o atendente embutido e para produção, use uma **chave de API**
@@ -80,7 +81,8 @@ Todos podem **passar para humano** (`handoff`): o atendente avisa o cliente, des
 #### Facilitador de pedido
 
 1. Catálogo completo com preços. O motor **recalcula o total** com os preços do catálogo; itens que a IA citou fora
-   do catálogo chegam com `in_catalog: false` (confira antes de aceitar).
+   do catálogo chegam com `in_catalog: false` e `all_items_in_catalog: false` — **sempre confira esse campo** antes de
+   aceitar o pedido.
 2. Ligue `order_draft`. Cada resumo novo gera `agent.order_draft` com itens, total, moeda e endereço; repetições
    idênticas na mesma conversa não são reemitidas.
 3. A confirmação do cliente ("sim") é a próxima mensagem: trate no seu sistema (n8n, ERP) e responda o cliente.
@@ -127,13 +129,13 @@ Ou, no painel, "Quem responde: Atendente LiteZap" e "Responder automaticamente".
   (`/audio/transcriptions`), o áudio é transcrito e o agente responde ao conteúdo. Sem transcrição, ele sabe só que
   chegou um áudio.
 - **Resposta em voz**: com `audio.speech_model` (ex.: `gpt-4o-mini-tts`, `/audio/speech`) e `voice_reply` no agente
-  (`when_audio`: responde áudio com áudio; `always`), a resposta sai como nota de voz (Ogg/Opus). Se a síntese falhar,
-  sai em texto.
+  (`when_audio`: responde áudio com áudio; `always`: toda resposta vira áudio — mais caro e mais lento, use com
+  cuidado), a resposta sai como nota de voz (Ogg/Opus). Se a síntese falhar, sai em texto.
 - **Imagens e PDFs**: com `vision: true`, a imagem (e o PDF, no Claude) da mensagem vai para o modelo. Arquivos de
   texto pequenos vão como texto.
 - **Ligação recebida**: com `calls.auto_reject` ligado e `call_followup` no agente, o atendente escreve para quem
   ligou ("vi que você ligou, como posso ajudar?") pela fila, no máximo uma vez por chamador no intervalo de
-  cooldown. Se a IA falhar, sai o `calls.reject_message` fixo.
+  cooldown. Sem `call_followup` no agente, nada muda: sai só o `calls.reject_message` (se houver). Se a IA falhar ou ficar em silêncio, sai o `reject_message` fixo.
 
 ## Segurança
 

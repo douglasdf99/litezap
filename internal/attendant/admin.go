@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/douglasdf99/litezap/internal/agenthook"
 	"github.com/douglasdf99/litezap/internal/apierr"
 	"github.com/douglasdf99/litezap/internal/secure"
 	"github.com/douglasdf99/litezap/internal/store"
@@ -308,6 +309,13 @@ func (ad *Admin) DeleteAgent(ctx context.Context, id, agentID string) error {
 	if err := ad.instance(ctx, id); err != nil {
 		return err
 	}
+	defer ad.lock(id)()
+	// The answering agent is never swapped silently: activate another one first.
+	if rows, err := ad.A.Store.ListAttendantAgents(ctx, id); err != nil {
+		return err
+	} else if len(rows) > 1 && ad.activeID(ctx, id, rows) == agentID {
+		return apierr.New(http.StatusConflict, "agent_active", "this agent answers the chats: activate another agent before deleting it", false)
+	}
 	err := ad.A.Store.DeleteAttendantAgent(ctx, id, agentID)
 	if errors.Is(err, store.ErrNotFound) {
 		return agentNotFound()
@@ -477,6 +485,10 @@ func (ad *Admin) Simulate(ctx context.Context, id string, in SimulateInput) (Sim
 	}
 	res, err := ad.A.run(ctx, run)
 	if err != nil {
+		var ce *agenthook.CallError
+		if errors.As(err, &ce) && ce.Reason == "daily_cap" {
+			return SimulateResult{}, apierr.New(http.StatusTooManyRequests, "daily_cap", ce.Detail, true)
+		}
 		return SimulateResult{}, apierr.New(http.StatusBadGateway, "simulation_failed", err.Error(), true)
 	}
 	out := SimulateResult{Reply: res.Reply, Voice: res.WouldVoice, Handoff: res.Handoff, HandoffNote: res.HandoffNote,
