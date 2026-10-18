@@ -1,0 +1,100 @@
+---
+// Uma página por tipo de evento (seção `webhooks` do OpenAPI).
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { Code } from '@astrojs/starlight/components';
+import { events, md, eventHref, type EventDef } from '../../../lib/openapi';
+
+export function getStaticPaths() {
+	return events().map((ev) => ({ params: { event: ev.slug }, props: { ev } }));
+}
+
+const { ev } = Astro.props as { ev: EventDef };
+const json = (v: unknown) => JSON.stringify(v, null, 2);
+---
+
+<StarlightPage
+	frontmatter={{ title: ev.type, description: ev.summary, editUrl: false }}
+	headings={[
+		{ depth: 2, slug: 'quando', text: 'Quando é emitido' },
+		{ depth: 2, slug: 'campos', text: 'Campos de data' },
+		{ depth: 2, slug: 'exemplos', text: 'Exemplos' },
+		{ depth: 2, slug: 'garantias', text: 'Entrega e ordem' },
+	]}
+>
+	<div class="lz-endpoint">
+		<span class="lz-method lz-method--post">EVENTO</span>
+		<code>{ev.type}</code>
+		{ev.milestone && <span class="lz-chip">desde {ev.milestone}</span>}
+		<span class="lz-scope">envelope v1</span>
+	</div>
+
+	<p><strong>{ev.summary}.</strong></p>
+
+	<h2 id="quando">Quando é emitido</h2>
+	<Fragment set:html={md(ev.description)} />
+
+	<h2 id="campos">Campos de <code>data</code></h2>
+	<table class="lz-table">
+		<thead>
+			<tr>
+				<th>Campo</th>
+				<th>Tipo</th>
+				<th>Descrição</th>
+			</tr>
+		</thead>
+		<tbody>
+			{
+				ev.fields.map(([name, type, desc]) => (
+					<tr>
+						<td>
+							<code>{name}</code>
+						</td>
+						<td>
+							<code>{type}</code>
+						</td>
+						<td>{desc}</td>
+					</tr>
+				))
+			}
+		</tbody>
+	</table>
+	<p class="lz-muted">
+		O envelope (<code>id</code>, <code>type</code>, <code>version</code>, <code>instance_id</code>, <code>timestamp</code>,
+		<code>data</code>) está em <a href="/docs/eventos/">Visão geral</a>. Campos novos podem ser adicionados em
+		<code>data</code> sem mudar a versão: ignore os que não conhecer.
+	</p>
+
+	<h2 id="exemplos">Exemplos</h2>
+	{ev.examples.map((ex) => <Code code={json(ex.value)} lang="json" title={ex.name ?? 'Corpo do POST'} />)}
+
+	<h2 id="garantias">Entrega e ordem</h2>
+	<ul>
+		<li>
+			Por webhook: pelo menos uma vez, com retry por até 24 horas. O mesmo evento pode chegar duas vezes: deduplique por
+			<code>X-LiteZap-Event-Id</code>. Veja <a href="/docs/eventos/entrega/">Entrega e retentativas</a>.
+		</li>
+		<li>A ordem entre eventos não é garantida (retentativas reordenam): use <code>timestamp</code>.</li>
+		<li>Por SSE: ao vivo, sem replay. Veja <a href="/docs/guias/sse/">Tempo real com SSE</a>.</li>
+		<li>
+			Para assinar só este tipo: <code>{`"events": ["${ev.type}"]`}</code> no webhook, ou
+			<code>{`?types=${ev.type}`}</code> no SSE.
+		</li>
+	</ul>
+
+	{
+		ev.related.length > 0 && (
+			<p>
+				Relacionados:{' '}
+				{ev.related.map((r, i) => (
+					<>
+						{i > 0 && ' · '}
+						<a href={eventHref(r)}>
+							<code>{r}</code>
+						</a>
+					</>
+				))}
+			</p>
+		)
+	}
+	{ev.zapi && <p class="lz-zapi"><strong>Equivalente na Z-API:</strong> {ev.zapi}.</p>}
+</StarlightPage>

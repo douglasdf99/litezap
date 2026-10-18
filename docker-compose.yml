@@ -1,0 +1,28 @@
+# LiteZap self-hosted com Docker Compose.
+#   docker compose up -d
+#   docker compose cp litezap:/data/admin_token - | tar -xO   # token admin gerado (a imagem não tem shell)
+# Docs: site/src/content/docs/docs/self-hosted/docker.md
+services:
+  litezap:
+    build: .
+    image: litezap:local
+    restart: unless-stopped
+    # init reaproveita o tini do Docker como PID 1 (repassa sinais e recolhe processos órfãos).
+    init: true
+    # Por padrão só escuta no loopback do host: exponha via proxy reverso com TLS (Caddy/Nginx).
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      # Fora do loopback, /healthz e /readyz exigem o token admin e URLs assinadas exigem public_url.
+      LITEZAP_PUBLIC_URL: ${LITEZAP_PUBLIC_URL:-}
+      # Defina para não depender do token gerado em /data/admin_token.
+      LITEZAP_ADMIN_TOKEN: ${LITEZAP_ADMIN_TOKEN:-}
+      LITEZAP_DEFAULT_PROXY_URL: ${LITEZAP_DEFAULT_PROXY_URL:-}
+    volumes:
+      - litezap-data:/data
+      # Opcional: config com instance_defaults (ritmo, janela, rampa).
+      # - ./litezap.yaml:/etc/litezap/litezap.yaml:ro
+    stop_grace_period: 30s
+
+volumes:
+  litezap-data:

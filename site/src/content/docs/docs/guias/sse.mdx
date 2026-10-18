@@ -1,0 +1,115 @@
+---
+title: Tempo real com SSE
+description: Receber eventos ao vivo por Server-Sent Events, sem servidor público.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+SSE (Server-Sent Events) é uma resposta HTTP que fica aberta e recebe eventos conforme acontecem. É ideal para
+painéis, apps locais e depuração: não precisa de URL pública nem de verificar assinatura.
+
+```bash
+# uma instância (token da instância ou admin)
+curl -N "localhost:8787/v1/instances/$ID/events?types=message.*,instance.status" -H "Authorization: Bearer $TOK"
+
+# todas as instâncias (só admin)
+curl -N "localhost:8787/v1/events" -H "Authorization: Bearer $ADMIN"
+```
+
+## Formato
+
+```txt
+retry: 3000
+: connected
+
+id: evt_5f2c9a1b7d3e4f60
+event: message.received
+data: {"id":"evt_5f2c9a1b7d3e4f60","type":"message.received","version":1,...}
+
+: ping
+```
+
+- `data` é o [envelope](/docs/conceitos/eventos/) completo, igual ao do webhook.
+- `: ping` a cada 15 segundos mantém a conexão viva através de proxies.
+- `types` filtra por tipos exatos, famílias (`message.*`) ou `*`.
+
+## Cliente
+
+O `EventSource` do navegador não envia cabeçalho `Authorization`, então consuma o stream no seu backend (ou num app
+local) e repasse ao front.
+
+<Tabs syncKey="lang">
+<TabItem label="Node.js">
+
+```js
+const res = await fetch(`http://localhost:8787/v1/instances/${id}/events?types=message.*`, {
+  headers: { Authorization: `Bearer ${process.env.LITEZAP_TOKEN}` },
+});
+let buf = "";
+for await (const chunk of res.body.pipeThrough(new TextDecoderStream())) {
+  buf += chunk;
+  let i;
+  while ((i = buf.indexOf("\n\n")) >= 0) {
+    const block = buf.slice(0, i);
+    buf = buf.slice(i + 2);
+    const data = block.split("\n").find((l) => l.startsWith("data: "));
+    if (data) console.log(JSON.parse(data.slice(6)));
+  }
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+import json, os, requests
+
+with requests.get(
+    f"http://localhost:8787/v1/instances/{instance_id}/events",
+    headers={"Authorization": f"Bearer {os.environ['LITEZAP_TOKEN']}"},
+    params={"types": "message.*"},
+    stream=True,
+    timeout=None,
+) as r:
+    for line in r.iter_lines(decode_unicode=True):
+        if line and line.startswith("data: "):
+            evt = json.loads(line[6:])
+            print(evt["type"], evt["data"])
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+req, _ := http.NewRequest("GET", "http://localhost:8787/v1/instances/"+id+"/events", nil)
+req.Header.Set("Authorization", "Bearer "+os.Getenv("LITEZAP_TOKEN"))
+resp, err := http.DefaultClient.Do(req)
+if err != nil {
+	panic(err)
+}
+defer resp.Body.Close()
+sc := bufio.NewScanner(resp.Body)
+sc.Buffer(make([]byte, 64*1024), 4*1024*1024) // eventos grandes
+for sc.Scan() {
+	if line := sc.Text(); strings.HasPrefix(line, "data: ") {
+		fmt.Println(line[6:])
+	}
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Reconexão
+
+<Aside type="caution" title="Sem replay">
+	Eventos que aconteceram enquanto o cliente estava desconectado **não** são reenviados (`Last-Event-ID` é
+	ignorado). Se você não pode perder eventos, use [webhooks](/docs/guias/webhooks/). Depois de reconectar, recarregue
+	o estado por `GET /chats` ou `GET /messages/{id}`.
+</Aside>
+
+- Reconecte com espera (o servidor sugere `retry: 3000`, 3 segundos).
+- Um cliente que fica mais de 256 eventos atrasado recebe `event: error` com `slow_consumer` e é desconectado.
+  Processe rápido (ou só enfileire) e reconecte.
+- O token é checado só na conexão: depois de rotacionar um token, derrube e reabra os streams.
+- Atrás do Nginx, desligue o buffering (`proxy_buffering off`); o LiteZap já envia `X-Accel-Buffering: no`.

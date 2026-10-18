@@ -1,0 +1,55 @@
+---
+title: Verificar assinatura
+description: Validar X-LiteZap-Signature em Go, Node.js, Python e PHP, com proteção contra replay.
+---
+
+import { Tabs, TabItem, Code, Aside } from '@astrojs/starlight/components';
+import { verifySamples } from '../../../../lib/samples';
+
+Toda entrega de webhook leva o cabeçalho:
+
+```txt
+X-LiteZap-Signature: t=1792252800,v1=5257a869e7ecebeda32affa62cdca3fa51cad7e77a0e56ff536d0ce8e108d8bd
+```
+
+- `t`: momento da assinatura (Unix, segundos).
+- `v1`: `HMAC-SHA256(secret, "<t>.<corpo>")` em hexadecimal, onde `secret` é o segredo do webhook e `<corpo>` é o
+  corpo **bruto** da requisição.
+
+## Como validar
+
+1. Leia o corpo bruto, **antes** de qualquer parse de JSON (reserializar muda os bytes e quebra a assinatura).
+2. Separe `t` e `v1` do cabeçalho.
+3. Recuse se `t` estiver a mais de 5 minutos do seu relógio (anti-replay).
+4. Calcule o HMAC de `"<t>.<corpo>"` e compare com `v1` em **tempo constante**.
+
+<Tabs syncKey="lang">
+	{
+		verifySamples.map((s) => (
+			<TabItem label={s.label}>
+				<Code code={s.code} lang={s.lang} />
+			</TabItem>
+		))
+	}
+</Tabs>
+
+O cabeçalho pode trazer mais de um `v1` no futuro (rotação de segredo): aceite se qualquer um bater, como nos exemplos
+em Go e Python.
+
+<Aside type="caution" title="Erros comuns">
+
+- Usar o corpo já parseado (`req.body` de um middleware JSON). Em Express, use `express.raw({ type: "application/json" })` na rota do webhook.
+- Comparar com `==`, que vaza tempo. Use `timingSafeEqual`, `hmac.compare_digest`, `hmac.Equal` ou `hash_equals`.
+- Relógio do servidor desajustado: sincronize com NTP, ou a janela de 5 minutos recusa entregas válidas.
+
+</Aside>
+
+## Testar localmente
+
+```bash
+SECRET=whsec_exemplo_para_teste_1234
+BODY='{"id":"evt_teste","type":"instance.status","version":1,"instance_id":"inst_x","timestamp":"2026-10-17T13:40:02Z","data":{"state":"connected"}}'
+T=$(date +%s)
+SIG=$(printf '%s.%s' "$T" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.* //')
+curl -s -X POST http://127.0.0.1:9000/ -H "X-LiteZap-Signature: t=$T,v1=$SIG" -d "$BODY"
+```

@@ -1,0 +1,263 @@
+---
+// Uma página por operação do OpenAPI, com a anatomia da arquitetura de informação da docs.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { Aside, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+import {
+	operations,
+	md,
+	examples,
+	fields,
+	schemaType,
+	scopeLabel,
+	scopeText,
+	errorRows,
+	eventHref,
+	opHref,
+	type Operation,
+} from '../../../../lib/openapi';
+import { samples } from '../../../../lib/samples';
+
+export function getStaticPaths() {
+	return operations().map((op) => ({ params: { tag: op.tag.slug, op: op.slug }, props: { op } }));
+}
+
+const { op } = Astro.props as { op: Operation };
+const json = (v: unknown) => JSON.stringify(v, null, 2);
+const media = op.requestBody?.content?.['application/json'];
+const reqExamples = examples(media);
+const bodyFields = fields(media?.schema);
+const pathParams = op.parameters.filter((p) => p.in === 'path');
+const queryParams = op.parameters.filter((p) => p.in === 'query');
+const ok = op.responses.filter((r) => r.code.startsWith('2'));
+const errs = errorRows(op);
+const code = samples(op, reqExamples[0]?.value);
+const siblings = operations().filter((o) => o.tag.slug === op.tag.slug && o.id !== op.id);
+
+const headings = [
+	{ depth: 2, slug: 'quando-usar', text: 'Quando usar' },
+	{ depth: 2, slug: 'autenticacao', text: 'Autenticação' },
+	...(pathParams.length || queryParams.length || bodyFields.length ? [{ depth: 2, slug: 'parametros', text: 'Parâmetros' }] : []),
+	{ depth: 2, slug: 'exemplo', text: 'Exemplo' },
+	{ depth: 2, slug: 'resposta', text: 'Resposta' },
+	...(errs.length ? [{ depth: 2, slug: 'erros', text: 'Erros' }] : []),
+	...(op.events.length ? [{ depth: 2, slug: 'eventos', text: 'Eventos gerados' }] : []),
+];
+
+const paramRow = (p: any) => ({
+	name: p.name,
+	type: schemaType(p.schema),
+	required: !!p.required,
+	description: p.description,
+	extra: p.schema?.default !== undefined ? `padrão ${JSON.stringify(p.schema.default)}` : '',
+});
+---
+
+<StarlightPage
+	frontmatter={{ title: op.summary, description: `${op.method.toUpperCase()} ${op.path}`, editUrl: false }}
+	headings={headings}
+>
+	<div class="lz-endpoint">
+		<span class={`lz-method lz-method--${op.method}`}>{op.method.toUpperCase()}</span>
+		<code>{op.path}</code>
+		{op.milestone && <span class="lz-chip" title="Marco em que entrou">desde {op.milestone}</span>}
+		<span class={`lz-scope lz-scope--${op.scope}`}>{scopeLabel[op.scope] ?? op.scope}</span>
+	</div>
+
+	<h2 id="quando-usar">Quando usar</h2>
+	<Fragment set:html={md(op.description ?? op.summary)} />
+	{op.notes && <Aside type="caution" title="Confiabilidade e risco"><Fragment set:html={md(op.notes, true)} /></Aside>}
+
+	<h2 id="autenticacao">Autenticação</h2>
+	<Fragment set:html={md(scopeText[op.scope])} />
+
+	{
+		(pathParams.length > 0 || queryParams.length > 0 || bodyFields.length > 0) && (
+			<>
+				<h2 id="parametros">Parâmetros</h2>
+				{[
+					['Caminho', pathParams.map(paramRow)],
+					['Query', queryParams.map(paramRow)],
+					['Corpo (JSON)', bodyFields],
+				].map(
+					([title, rows]: any) =>
+						rows.length > 0 && (
+							<>
+								<h3>{title}</h3>
+								<table class="lz-table">
+									<thead>
+										<tr>
+											<th>Nome</th>
+											<th>Tipo</th>
+											<th>Descrição</th>
+										</tr>
+									</thead>
+									<tbody>
+										{rows.map((f: any) => (
+											<tr>
+												<td>
+													<code>{f.name}</code>
+													{f.required && <span class="lz-req">obrigatório</span>}
+												</td>
+												<td>
+													<code>{f.type}</code>
+												</td>
+												<td>
+													<Fragment set:html={md(f.description, true)} />
+													{f.extra && <span class="lz-extra"> ({f.extra})</span>}
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</>
+						),
+				)}
+			</>
+		)
+	}
+
+	<h2 id="exemplo">Exemplo</h2>
+	<Tabs syncKey="lang">
+		{
+			code.map((s) => (
+				<TabItem label={s.label}>
+					<Code code={s.code} lang={s.lang} />
+				</TabItem>
+			))
+		}
+	</Tabs>
+	{
+		reqExamples.length > 1 && (
+			<details class="lz-details">
+				<summary>Outros corpos de exemplo</summary>
+				{reqExamples.slice(1).map((ex) => (
+					<Code code={json(ex.value)} lang="json" title={ex.name} />
+				))}
+			</details>
+		)
+	}
+	<p class="lz-muted">
+		Nos exemplos, <code>LITEZAP_URL</code> é a URL base (ex.: <code>http://localhost:8787</code>) e o token vem de
+		<code>LITEZAP_TOKEN</code> (instância) ou <code>LITEZAP_ADMIN_TOKEN</code>.
+	</p>
+
+	<h2 id="resposta">Resposta</h2>
+	{
+		ok.map((r) => {
+			const content = r.content ?? {};
+			const exs = Object.values<any>(content).flatMap((m) => examples(m));
+			const schema = content['application/json']?.schema;
+			const types = Object.keys(content).filter((t) => t !== 'application/json');
+			const rf = fields(schema);
+			return (
+				<div class="lz-resp">
+					<p>
+						<span class="lz-status lz-status--ok">{r.code}</span> <Fragment set:html={md(r.description, true)} />
+						{types.length > 0 && <> Também: {types.map((t) => <code>{t}</code>)}.</>}
+					</p>
+					{rf.length > 0 && (
+						<details class="lz-details">
+							<summary>
+								Campos de <code>{schemaType(schema)}</code>
+							</summary>
+							<table class="lz-table">
+								<tbody>
+									{rf.map((f) => (
+										<tr>
+											<td>
+												<code>{f.name}</code>
+											</td>
+											<td>
+												<code>{f.type}</code>
+											</td>
+											<td set:html={md(f.description, true)} />
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</details>
+					)}
+					{exs.map((ex) => (
+						<Code code={typeof ex.value === 'string' ? ex.value : json(ex.value)} lang={typeof ex.value === 'string' ? 'txt' : 'json'} title={ex.name} />
+					))}
+				</div>
+			);
+		})
+	}
+
+	{
+		errs.length > 0 && (
+			<>
+				<h2 id="erros">Erros</h2>
+				<table class="lz-table">
+					<thead>
+						<tr>
+							<th>Código</th>
+							<th>HTTP</th>
+							<th>Retentável</th>
+							<th>O que fazer</th>
+						</tr>
+					</thead>
+					<tbody>
+						{errs.map((e) => (
+							<tr>
+								<td>
+									<code>{e.code}</code>
+								</td>
+								<td>
+									<span class="lz-status lz-status--err">{e.http}</span>
+								</td>
+								<td>{e.retryable}</td>
+								<td>
+									<Fragment set:html={md(e.action, true)} />
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+				<p class="lz-muted">
+					Todo erro usa o envelope <code>{'{"error":{"code","message","retryable"}}'}</code>. Tabela completa em <a href="/docs/api/erros/">Erros</a>.
+				</p>
+			</>
+		)
+	}
+
+	{
+		op.events.length > 0 && (
+			<>
+				<h2 id="eventos">Eventos gerados</h2>
+				<ul>
+					{op.events.map((e) => (
+						<li>
+							<a href={eventHref(e)}>
+								<code>{e}</code>
+							</a>
+						</li>
+					))}
+				</ul>
+			</>
+		)
+	}
+
+	{
+		op.zapi && (
+			<p class="lz-zapi">
+				<strong>Equivalente na Z-API:</strong> {op.zapi}. Veja <a href="/docs/migrar-da-z-api/">Migrar da Z-API</a>.
+			</p>
+		)
+	}
+
+	{
+		siblings.length > 0 && (
+			<p class="lz-muted">
+				Outras operações de <a href={`/docs/api/${op.tag.slug}/`}>{op.tag.name}</a>:{' '}
+				{siblings.map((s, i) => (
+					<>
+						{i > 0 && ' · '}
+						<a href={opHref(s)}>{s.summary}</a>
+					</>
+				))}
+			</p>
+		)
+	}
+</StarlightPage>

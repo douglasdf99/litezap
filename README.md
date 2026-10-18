@@ -566,6 +566,25 @@ Com Docker, o mesmo arquivo vai em `docker run --env-file /etc/litezap/env --sto
 
 A lista completa do que foi adiado para o marco 2b (busca, retenção, confirmação de entrega, nome de grupos, métricas) está na seção "Marco 2b" de `docs/superpowers/plans/2026-10-17-litezap-m2-messaging.md`.
 
+## Docker
+
+```bash
+docker compose up -d --build   # imagem distroless, binário estático, usuário não root, volume /data
+```
+
+Dentro do container o servidor escuta em `0.0.0.0:8787` (a porta é publicada só em `127.0.0.1` do host): `/healthz` e `/readyz` exigem o token admin e URLs assinadas exigem `LITEZAP_PUBLIC_URL`. Detalhes em `site/src/content/docs/docs/self-hosted/docker.md`.
+
+## Site e docs
+
+O site do produto e a documentação (Astro + Starlight, busca com Pagefind) ficam em `site/`. A referência da API é gerada de `site/public/openapi.yaml`.
+
+```bash
+cd site
+pnpm install
+pnpm dev     # http://localhost:4321
+pnpm build   # gera site/dist (estático)
+```
+
 ## Desenvolvimento
 
 ```bash

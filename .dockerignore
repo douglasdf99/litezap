@@ -1,0 +1,9 @@
+.git
+.claude
+data
+litezap
+litezap.yaml
+site
+docs
+*.test
+*.out

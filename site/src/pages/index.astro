@@ -1,0 +1,1230 @@
+---
+import { Code } from 'astro:components';
+import { Image } from 'astro:assets';
+import Architecture from '../components/Architecture.astro';
+import Icon from '../components/Icon.astro';
+import logoFull from '../assets/brand/logo-full.png';
+import logoWhite from '../assets/brand/logo-full-white.png';
+import '../styles/tokens.css';
+
+const GITHUB = 'https://github.com/douglasdf99/litezap';
+const site = Astro.site?.toString().replace(/\/$/, '') ?? '';
+const FONTS =
+	'https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,300..800;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap';
+
+const features = [
+	{ icon: 'layers', title: 'Várias instâncias', text: 'Um número de WhatsApp por instância, cada uma com token próprio. Crie, pare, reinicie e apague pela API.' },
+	{ icon: 'qr', title: 'QR ou código por telefone', text: 'Pareie escaneando o QR (JSON ou PNG) ou digitando no celular um código gerado pela API.' },
+	{ icon: 'refresh', title: 'Supervisor com auto-restart', text: 'Cada número roda num processo isolado. Heartbeat a cada 10s, restart com backoff e circuit breaker. Crash de um worker não derruba os outros.' },
+	{ icon: 'message', title: 'Envio e recebimento', text: 'Fila persistente por instância, modo síncrono com ?wait=true, idempotência por client_message_id, chats, histórico e confirmações de leitura.' },
+	{ icon: 'image', title: 'Mídia', text: 'Imagem, vídeo, áudio (inclusive mensagem de voz), documento e reações. Mídia recebida sob demanda, com URLs assinadas temporárias.' },
+	{ icon: 'shield', title: 'Anti-ban por padrão', text: 'Ritmo com variação aleatória, rampa para números novos, janela de envio para contatos frios e verificação do número antes do primeiro envio.' },
+	{ icon: 'globe', title: 'Proxy por instância', text: 'HTTP, HTTPS ou SOCKS5 por número, fixo durante a sessão. Se o proxy cai, a instância espera: nunca vaza pela conexão direta.' },
+	{ icon: 'webhook', title: 'Webhooks e SSE', text: 'Eventos com envelope único, assinados com HMAC, retry por 24h e dead-letter, além de streams SSE ao vivo.' },
+	{ icon: 'sparkles', title: 'MCP para IA', text: 'Claude, ChatGPT e outros clientes leem conversas e enviam mensagens pelo servidor MCP, sempre pela mesma fila anti-ban. Atendente automático (hook de agente) em breve.' },
+] as const;
+
+const modes = [
+	{ icon: 'laptop', title: 'No seu PC', text: 'App de bandeja com painel web: pareie, converse e configure sem terminal. Seu IP residencial, API só em localhost.', tag: 'Disponível', note: 'instaladores em breve', href: '/docs/app-local/' },
+	{ icon: 'server', title: 'No seu servidor', text: 'VPS ou servidor próprio com Docker ou systemd, atrás de um proxy reverso com TLS.', tag: 'Disponível', href: '/docs/self-hosted/' },
+	{ icon: 'cloud', title: 'Na nuvem LiteZap', text: 'Um projeto pré-instalado só seu, com upgrades, backups, monitoramento e IPs gerenciados.', tag: 'Em breve', soon: true, href: '#precos' },
+] as const;
+
+// Amplitude de recursos, agrupada como a matriz de paridade. true = disponível; string = marco.
+const breadth: { group: string; href: string; items: [string, true | string][] }[] = [
+	{
+		group: 'Mensagens',
+		href: '/docs/api/mensagens/tipos/',
+		items: [
+			['Texto, imagem, vídeo, documento', true],
+			['Áudio e mensagem de voz', true],
+			['Reações', true],
+			['Fila, ritmo e idempotência', true],
+			['Figurinha, GIF, localização, contato', 'M6'],
+			['Responder citando e menções', 'M6'],
+			['Editar, apagar, fixar, encaminhar', 'M6'],
+			['Enquetes com votos', 'M6'],
+			['Botões e listas', 'Exp'],
+		],
+	},
+	{
+		group: 'Eventos',
+		href: '/docs/eventos/',
+		items: [
+			['Webhooks assinados (HMAC)', true],
+			['Streams SSE', true],
+			['Status de entrega e leitura', true],
+			['Retry de 24h e dead-letter', true],
+			['Presença, apagadas e editadas', 'M7'],
+			['Chamadas e rejeição automática', 'M7'],
+		],
+	},
+	{
+		group: 'Grupos',
+		href: '/docs/guias/grupos/',
+		items: [
+			['Enviar e receber em grupos', true],
+			['Criar e administrar grupos', 'M8'],
+			['Participantes, admins e convites', 'M8'],
+			['Comunidades', 'M8'],
+		],
+	},
+	{
+		group: 'Chats e contatos',
+		href: '/docs/api/chats/',
+		items: [
+			['Chats e histórico com cursor', true],
+			['Marcar como lido', true],
+			['Contatos e verificação de números', true],
+			['Arquivar, fixar, silenciar', 'M9'],
+			['Foto de perfil e bloqueio', 'M9'],
+		],
+	},
+	{
+		group: 'Perfil',
+		href: '/docs/api/em-breve/perfil-e-privacidade/',
+		items: [
+			['Nome, recado e foto', 'M9'],
+			['Privacidade', 'M9'],
+		],
+	},
+	{
+		group: 'Business e canais',
+		href: '/docs/api/em-breve/business/',
+		items: [
+			['Status (stories)', 'M10'],
+			['Canais', 'M10'],
+			['Etiquetas e perfil comercial', 'M10'],
+		],
+	},
+	{
+		group: 'Plataforma',
+		href: '/docs/self-hosted/',
+		items: [
+			['Multi-instância com token por número', true],
+			['Proxy por instância', true],
+			['Docker, systemd, app local', true],
+			['MCP para Claude e outros', true],
+			['Atendente IA (hook de agente)', 'M5'],
+			['Pareamento hospedado para parceiros', 'M11'],
+		],
+	},
+];
+
+const comparison: [string, string, string][] = [
+	['Código-fonte', 'Aberto, Apache-2.0', 'Fechado'],
+	['Onde roda', 'Seu PC, seu servidor ou nuvem LiteZap', 'Só na nuvem do fornecedor'],
+	['Seus dados', 'Na sua pasta data/, sob seu controle', 'Nos servidores do fornecedor'],
+	['Trocar de hospedagem', 'Mesma API; copie a pasta de dados', 'Reescrever a integração'],
+	['Anti-ban', 'Ritmo, rampa e janela configuráveis e auditáveis', 'Regras opacas'],
+	['Eventos', 'Webhooks assinados, retry de 24h, dead-letter e SSE', 'Varia; assinatura e reenvio nem sempre existem'],
+	['Custo', 'Grátis no self-host; nuvem opcional', 'Mensalidade por instância'],
+];
+
+const samples = [
+	{
+		id: 'curl',
+		label: 'cURL',
+		lang: 'bash',
+		code: `curl -X POST "localhost:8787/v1/instances/$ID/messages?wait=true" \\
+  -H "Authorization: Bearer $TOK" \\
+  -d '{
+    "to": "5511999999999",
+    "type": "text",
+    "text": "Seu pedido saiu para entrega!",
+    "client_message_id": "pedido-123"
+  }'`,
+	},
+	{
+		id: 'js',
+		label: 'JavaScript',
+		lang: 'js',
+		code: `const res = await fetch(
+  \`http://localhost:8787/v1/instances/\${id}/messages?wait=true\`,
+  {
+    method: "POST",
+    headers: { Authorization: \`Bearer \${token}\` },
+    body: JSON.stringify({
+      to: "5511999999999",
+      type: "text",
+      text: "Seu pedido saiu para entrega!",
+      client_message_id: "pedido-123",
+    }),
+  },
+);
+const msg = await res.json(); // { id, status: "sent", wa_message_id }`,
+	},
+	{
+		id: 'py',
+		label: 'Python',
+		lang: 'python',
+		code: `import requests
+
+r = requests.post(
+    f"http://localhost:8787/v1/instances/{instance_id}/messages",
+    params={"wait": "true"},
+    headers={"Authorization": f"Bearer {token}"},
+    json={
+        "to": "5511999999999",
+        "type": "text",
+        "text": "Seu pedido saiu para entrega!",
+        "client_message_id": "pedido-123",
+    },
+)
+print(r.json()["status"])  # "sent"`,
+	},
+	{
+		id: 'res',
+		label: 'Resposta',
+		lang: 'json',
+		code: `HTTP/1.1 200 OK
+
+{
+  "id": "msg_a41c9e07d2b35f68",
+  "client_message_id": "pedido-123",
+  "wa_message_id": "3EB0A1B2C3D4E5F6A7B8C9",
+  "chat": "5511999999999@s.whatsapp.net",
+  "from_me": true,
+  "type": "text",
+  "status": "sent"
+}`,
+	},
+];
+---
+
+<!doctype html>
+<html lang="pt-BR" data-theme="dark">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>LiteZap · API de WhatsApp open source, local ou na nuvem</title>
+		<meta
+			name="description"
+			content="LiteZap é uma API de WhatsApp não oficial e open source (Apache-2.0). O mesmo binário roda no seu PC, no seu servidor ou na nuvem gerenciada."
+		/>
+		<meta name="theme-color" content="#377AFB" />
+		<meta property="og:title" content="LiteZap · API de WhatsApp open source" />
+		<meta property="og:description" content="O mesmo binário no seu PC, no seu servidor ou na nuvem." />
+		<meta property="og:image" content={`${site}/og.png`} />
+		<meta property="og:type" content="website" />
+		<meta name="twitter:card" content="summary_large_image" />
+		<link rel="icon" href="/favicon.png" type="image/png" />
+		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link rel="stylesheet" href={FONTS} />
+		<script is:inline>
+			// Mesmo armazenamento do Starlight ("starlight-theme": light | dark | vazio = automático).
+			(() => {
+				let t = '';
+				try {
+					t = localStorage.getItem('starlight-theme') || '';
+				} catch {}
+				if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+				document.documentElement.dataset.theme = t;
+			})();
+		</script>
+	</head>
+	<body>
+		<header class="nav">
+			<div class="wrap nav-inner">
+				<a href="/" class="brand" aria-label="LiteZap, início">
+					<Image src={logoFull} alt="LiteZap" height={30} class="logo logo-light" loading="eager" />
+					<Image src={logoWhite} alt="LiteZap" height={30} class="logo logo-dark" loading="eager" />
+				</a>
+				<nav class="links">
+					<a href="/docs/">Documentação</a>
+					<a href="/docs/api/">API</a>
+					<a href="/docs/self-hosted/">Self-hosted</a>
+					<a href="#precos">Preços</a>
+					<a href="/docs/roadmap/">Roadmap</a>
+				</nav>
+				<div class="nav-actions">
+					<button class="icon-btn" id="theme-toggle" type="button" aria-label="Alternar tema claro/escuro">
+						<span class="i-sun"><Icon name="sun" size={18} /></span>
+						<span class="i-moon"><Icon name="moon" size={18} /></span>
+					</button>
+					<a class="btn btn-ghost btn-sm hide-sm" href={GITHUB}><Icon name="github" size={16} /> GitHub</a>
+					<a class="btn btn-primary btn-sm" href="/docs/quickstart/">Começar</a>
+				</div>
+			</div>
+		</header>
+
+		<main>
+			<section class="hero">
+				<div class="hero-bg" aria-hidden="true"></div>
+				<div class="wrap hero-inner">
+					<a class="pill" href="/docs/roadmap/">
+						<span class="pill-dot"></span> Open source · Apache-2.0 · Webhooks e SSE disponíveis
+						<Icon name="arrow" size={14} />
+					</a>
+					<h1>
+						A API de WhatsApp que roda <br /><span class="grad">onde você quiser</span>
+					</h1>
+					<p class="lead">
+						O mesmo binário no seu computador, no seu servidor ou na nuvem gerenciada. Um processo por número,
+						supervisionado, com uma fila que respeita o ritmo de um humano.
+					</p>
+					<div class="ctas">
+						<a class="btn btn-primary btn-lg" href="/docs/quickstart/">Primeira mensagem em 5 minutos</a>
+						<a class="btn btn-ghost btn-lg" href={GITHUB}><Icon name="github" size={18} /> Ver no GitHub</a>
+					</div>
+					<p class="fine">Não oficial. Sem afiliação com o WhatsApp ou a Meta.</p>
+
+					<div class="window" role="region" aria-label="Exemplo de envio de mensagem">
+						{samples.map((s, i) => <input type="radio" name="sample" id={`tab-${s.id}`} checked={i === 0} />)}
+						<div class="window-bar">
+							<span class="dots"><i></i><i></i><i></i></span>
+							<div class="tabs">
+								{samples.map((s) => <label for={`tab-${s.id}`}>{s.label}</label>)}
+							</div>
+							<span class="window-path">POST /v1/instances/{'{id}'}/messages</span>
+						</div>
+						{
+							samples.map((s) => (
+								<div class={`pane pane-${s.id}`}>
+									<Code code={s.code} lang={s.lang as any} theme="github-dark-default" />
+								</div>
+							))
+						}
+					</div>
+				</div>
+			</section>
+
+			<section class="wrap section" id="modos">
+				<p class="eyebrow">Distribuição</p>
+				<h2>Um motor, três formas de rodar</h2>
+				<p class="section-lead">Comece no seu computador e leve para um servidor sem mudar uma linha da sua integração.</p>
+				<div class="modes">
+					{
+						modes.map((m) => (
+							<a class="mode" href={m.href}>
+								<span class="icon-box"><Icon name={m.icon} size={22} /></span>
+								<h3>{m.title}</h3>
+								<p>{m.text}</p>
+								<span class:list={['tag', { soon: 'soon' in m }]}>{m.tag}</span>
+								{'note' in m && <span class="note">{m.note}</span>}
+							</a>
+						))
+					}
+				</div>
+			</section>
+
+			<section class="wrap section" id="recursos">
+				<p class="eyebrow">Recursos</p>
+				<h2>Tudo o que uma integração séria precisa</h2>
+				<p class="section-lead">Recursos no nível das APIs de WhatsApp comerciais, num motor que você pode ler, rodar e auditar.</p>
+				<div class="grid">
+					{
+						features.map((f) => (
+							<article class="card">
+								<span class="icon-box"><Icon name={f.icon} size={20} /></span>
+								<h3>
+									{f.title} {'soon' in f && <span class="tag soon">Em breve</span>}
+								</h3>
+								<p>{f.text}</p>
+							</article>
+						))
+					}
+				</div>
+			</section>
+
+			<section class="wrap section" id="amplitude">
+				<p class="eyebrow">Amplitude</p>
+				<h2>O que já existe e o que vem a seguir</h2>
+				<p class="section-lead">
+					Cada recurso planejado tem marco definido e página na documentação. Nada é anunciado como disponível antes de
+					existir.
+				</p>
+				<div class="breadth">
+					{
+						breadth.map((g) => (
+							<a class="breadth-card" href={g.href}>
+								<h3>{g.group}</h3>
+								<ul>
+									{g.items.map(([label, st]) => (
+										<li>
+											<span>{label}</span>
+											{st === true ? (
+												<span class="tag">Disponível</span>
+											) : st === 'Exp' ? (
+												<span class="tag exp">Experimental</span>
+											) : (
+												<span class="tag soon">Em breve · {st}</span>
+											)}
+										</li>
+									))}
+								</ul>
+							</a>
+						))
+					}
+				</div>
+				<p class="breadth-foot">
+					<a class="link-arrow" href="/docs/roadmap/">Ver o roadmap completo <Icon name="arrow" size={16} /></a>
+					<a class="link-arrow" href="/docs/migrar-da-z-api/">Migrar de outra API <Icon name="arrow" size={16} /></a>
+				</p>
+			</section>
+
+			<section class="wrap section" id="comparativo">
+				<p class="eyebrow">Por que open source</p>
+				<h2>LiteZap vs APIs proprietárias</h2>
+				<p class="section-lead">Os mesmos recursos que você espera de uma API comercial, sem abrir mão do controle.</p>
+				<div class="compare">
+					<div class="compare-row compare-head">
+						<span></span>
+						<span class="compare-us">LiteZap</span>
+						<span>API proprietária típica</span>
+					</div>
+					{
+						comparison.map(([k, us, them]) => (
+							<div class="compare-row">
+								<span class="compare-k">{k}</span>
+								<span class="compare-us">
+									<Icon name="check" size={16} /> {us}
+								</span>
+								<span class="compare-them">{them}</span>
+							</div>
+						))
+					}
+				</div>
+			</section>
+
+			<section class="wrap section">
+				<div class="arch">
+					<div>
+						<p class="eyebrow">Arquitetura</p>
+						<h2>Um supervisor, um worker por número</h2>
+						<p class="muted">
+							<code>litezap serve</code> expõe a API REST, guarda tudo num SQLite local e cuida da fila de envio. Cada
+							número conectado ganha seu próprio processo <code>litezap worker</code>, falando com o supervisor por
+							gRPC num socket local.
+						</p>
+						<ul class="checks">
+							<li><Icon name="check" size={18} /> Se um worker trava ou morre, só aquele número reconecta, sem novo QR.</li>
+							<li><Icon name="check" size={18} /> Se o supervisor morre, os workers encerram sozinhos: nada de processo órfão.</li>
+							<li><Icon name="check" size={18} /> Mensagens na fila sobrevivem a restarts e saem quando o número volta.</li>
+						</ul>
+						<a class="link-arrow" href="/docs/conceitos/instancias/">Como funcionam as instâncias <Icon name="arrow" size={16} /></a>
+					</div>
+					<div class="arch-panel"><Architecture /></div>
+				</div>
+			</section>
+
+			<section class="wrap section" id="precos">
+				<p class="eyebrow">Preços</p>
+				<h2>Grátis para rodar. Nuvem quando você quiser.</h2>
+				<div class="plans">
+					<div class="plan">
+						<h3>Self-hosted</h3>
+						<p class="price">Grátis</p>
+						<p class="muted">Para sempre, Apache-2.0. Rode quantas instâncias o seu hardware aguentar.</p>
+						<ul class="checks small">
+							<li><Icon name="check" size={16} /> Todos os recursos do motor</li>
+							<li><Icon name="check" size={16} /> No seu PC ou no seu servidor</li>
+							<li><Icon name="check" size={16} /> Código aberto e auditável</li>
+						</ul>
+						<a class="btn btn-ghost" href="/docs/self-hosted/">Instalar</a>
+					</div>
+					<div class="plan plan-featured">
+						<span class="tag soon plan-tag">Em breve</span>
+						<h3>Nuvem LiteZap</h3>
+						<p class="price">Em breve</p>
+						<p class="muted">Projeto pré-instalado por cliente, com cobrança mensal por instância.</p>
+						<ul class="checks small">
+							<li><Icon name="check" size={16} /> IP de saída isolado por cliente</li>
+							<li><Icon name="check" size={16} /> Backups e upgrades gerenciados</li>
+							<li><Icon name="check" size={16} /> O mesmo binário open source</li>
+						</ul>
+						<a class="btn btn-primary" href="/docs/roadmap/">Ver roadmap</a>
+					</div>
+				</div>
+			</section>
+
+			<section class="wrap section">
+				<div class="cta">
+					<h2>Conecte seu primeiro número hoje</h2>
+					<p>Compile, suba o servidor e envie a primeira mensagem em poucos minutos.</p>
+					<div class="ctas center">
+						<a class="btn btn-white btn-lg" href="/docs/quickstart/">Ler o quickstart</a>
+						<a class="btn btn-outline-white btn-lg" href="/docs/api/">Referência da API</a>
+					</div>
+				</div>
+			</section>
+		</main>
+
+		<footer class="footer">
+			<div class="wrap footer-grid">
+				<div>
+					<Image src={logoFull} alt="LiteZap" height={26} class="logo logo-light" />
+					<Image src={logoWhite} alt="LiteZap" height={26} class="logo logo-dark" />
+					<p class="muted small-text">API de WhatsApp open source. Projeto independente, não afiliado ao WhatsApp ou à Meta.</p>
+				</div>
+				<div>
+					<h4>Produto</h4>
+					<a href="#recursos">Recursos</a>
+					<a href="#precos">Preços</a>
+					<a href="/docs/roadmap/">Roadmap</a>
+				</div>
+				<div>
+					<h4>Documentação</h4>
+					<a href="/docs/quickstart/">Quickstart</a>
+					<a href="/docs/api/">Referência da API</a>
+					<a href="/docs/boas-praticas/">Boas práticas</a>
+				</div>
+				<div>
+					<h4>Projeto</h4>
+					<a href={GITHUB}>GitHub</a>
+					<a href="/openapi.yaml">OpenAPI</a>
+					<a href={`${GITHUB}/blob/main/LICENSE`}>Licença Apache-2.0</a>
+				</div>
+			</div>
+		</footer>
+
+		<script is:inline>
+			document.getElementById('theme-toggle')?.addEventListener('click', () => {
+				const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+				document.documentElement.dataset.theme = next;
+				try {
+					localStorage.setItem('starlight-theme', next);
+				} catch {}
+			});
+		</script>
+	</body>
+</html>
+
+<style is:global>
+	* {
+		box-sizing: border-box;
+	}
+	html {
+		scroll-behavior: smooth;
+		scroll-padding-top: 80px;
+	}
+	body {
+		margin: 0;
+		background: var(--lz-bg);
+		color: var(--lz-text);
+		font-family: var(--lz-font);
+		font-size: 16px;
+		line-height: 1.6;
+		-webkit-font-smoothing: antialiased;
+		text-rendering: optimizeLegibility;
+	}
+	a {
+		color: var(--lz-link);
+		text-decoration: none;
+	}
+	code {
+		font-family: var(--lz-font-mono);
+	}
+	.wrap {
+		max-width: 1160px;
+		margin: 0 auto;
+		padding: 0 16px;
+	}
+	@media (min-width: 640px) {
+		.wrap {
+			padding: 0 24px;
+		}
+	}
+	.muted {
+		color: var(--lz-text-muted);
+	}
+
+	/* Logo claro/escuro */
+	.logo {
+		width: auto;
+		display: block;
+	}
+	:root[data-theme='dark'] .logo-light,
+	:root[data-theme='light'] .logo-dark {
+		display: none;
+	}
+
+	/* Navegação */
+	.nav {
+		position: sticky;
+		top: 0;
+		z-index: 20;
+		background: color-mix(in srgb, var(--lz-bg) 80%, transparent);
+		backdrop-filter: saturate(160%) blur(12px);
+		border-bottom: 1px solid var(--lz-line);
+	}
+	.nav-inner {
+		display: flex;
+		align-items: center;
+		height: 64px;
+		gap: 2rem;
+	}
+	.brand .logo {
+		height: 28px;
+	}
+	.links {
+		display: flex;
+		gap: 1.6rem;
+		font-size: 0.92rem;
+		font-weight: 500;
+	}
+	.links a {
+		color: var(--lz-text-muted);
+		transition: color 0.15s;
+	}
+	.links a:hover {
+		color: var(--lz-text);
+	}
+	.nav-actions {
+		margin-left: auto;
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+	}
+	.icon-btn {
+		display: inline-grid;
+		place-items: center;
+		width: 36px;
+		height: 36px;
+		border-radius: 0.55rem;
+		border: 1px solid var(--lz-line);
+		background: transparent;
+		color: var(--lz-text-muted);
+		cursor: pointer;
+	}
+	.icon-btn:hover {
+		color: var(--lz-text);
+		border-color: var(--lz-line-strong);
+	}
+	:root[data-theme='dark'] .i-moon,
+	:root[data-theme='light'] .i-sun {
+		display: none;
+	}
+	.icon-btn span {
+		display: inline-flex;
+	}
+
+	/* Botões */
+	.btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		padding: 0.65rem 1.1rem;
+		border-radius: 0.6rem;
+		font-weight: 600;
+		font-size: 0.95rem;
+		border: 1px solid transparent;
+		transition:
+			background 0.15s,
+			border-color 0.15s,
+			box-shadow 0.15s,
+			transform 0.15s;
+		white-space: nowrap;
+	}
+	.btn-sm {
+		padding: 0.45rem 0.85rem;
+		font-size: 0.88rem;
+	}
+	.btn-lg {
+		padding: 0.8rem 1.35rem;
+		font-size: 1rem;
+	}
+	.btn-primary {
+		background: var(--lz-gradient-button);
+		color: #fff;
+		box-shadow:
+			0 1px 0 rgba(255, 255, 255, 0.18) inset,
+			0 8px 24px -10px var(--lz-glow);
+	}
+	.btn-primary:hover {
+		transform: translateY(-1px);
+		box-shadow:
+			0 1px 0 rgba(255, 255, 255, 0.18) inset,
+			0 12px 30px -10px var(--lz-glow);
+	}
+	.btn-ghost {
+		background: var(--lz-surface);
+		border-color: var(--lz-line);
+		color: var(--lz-text);
+	}
+	.btn-ghost:hover {
+		border-color: var(--lz-line-strong);
+		background: var(--lz-surface-2);
+	}
+	.btn-white {
+		background: #fff;
+		color: #1731d2;
+	}
+	.btn-outline-white {
+		border-color: rgba(255, 255, 255, 0.45);
+		color: #fff;
+	}
+	.btn-outline-white:hover {
+		background: rgba(255, 255, 255, 0.1);
+	}
+
+	/* Hero */
+	.hero {
+		position: relative;
+		overflow: hidden;
+		padding: 5.5rem 0 4rem;
+	}
+	.hero-bg {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		background:
+			radial-gradient(60% 50% at 50% 0%, var(--lz-glow), transparent 70%),
+			radial-gradient(30% 30% at 85% 15%, rgba(27, 188, 216, 0.16), transparent 70%);
+	}
+	.hero-bg::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background-image:
+			linear-gradient(var(--lz-line) 1px, transparent 1px),
+			linear-gradient(90deg, var(--lz-line) 1px, transparent 1px);
+		background-size: 56px 56px;
+		opacity: 0.45;
+		mask-image: radial-gradient(70% 55% at 50% 20%, #000 20%, transparent 75%);
+	}
+	.hero-inner {
+		position: relative;
+		text-align: center;
+	}
+	.pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.35rem 0.85rem;
+		border-radius: 999px;
+		border: 1px solid var(--lz-line-strong);
+		background: color-mix(in srgb, var(--lz-surface) 70%, transparent);
+		color: var(--lz-text-muted);
+		font-size: 0.82rem;
+		font-weight: 500;
+	}
+	.pill:hover {
+		color: var(--lz-text);
+	}
+	.pill-dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--lz-success);
+		box-shadow: 0 0 0 3px var(--lz-success-bg);
+	}
+	h1 {
+		margin: 1.5rem auto 1.25rem;
+		font-size: clamp(2.4rem, 6vw, 4.25rem);
+		line-height: 1.05;
+		letter-spacing: -0.035em;
+		font-weight: 800;
+	}
+	.grad {
+		background: var(--lz-gradient-text);
+		-webkit-background-clip: text;
+		background-clip: text;
+		color: transparent;
+	}
+	.lead {
+		margin: 0 auto 2rem;
+		max-width: 38rem;
+		font-size: clamp(1.05rem, 2vw, 1.2rem);
+		color: var(--lz-text-muted);
+	}
+	.ctas {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+		justify-content: center;
+	}
+	.fine {
+		margin: 1rem 0 0;
+		font-size: 0.8rem;
+		color: var(--lz-text-subtle);
+	}
+
+	/* Janela de código */
+	.window {
+		position: relative;
+		margin: 3.5rem auto 0;
+		max-width: 860px;
+		text-align: left;
+		border-radius: 0.9rem;
+		border: 1px solid #22304d;
+		background: #0d1424;
+		box-shadow:
+			0 0 0 1px rgba(255, 255, 255, 0.02),
+			0 40px 80px -30px rgba(23, 49, 210, 0.45);
+		overflow: hidden;
+	}
+	.window input {
+		position: absolute;
+		opacity: 0;
+		pointer-events: none;
+	}
+	.window-bar {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		padding: 0 1rem;
+		height: 46px;
+		border-bottom: 1px solid #1d2943;
+		background: #0b1120;
+	}
+	.dots {
+		display: flex;
+		gap: 6px;
+	}
+	.dots i {
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		background: #26324d;
+	}
+	.tabs {
+		display: flex;
+		gap: 0.25rem;
+		overflow-x: auto;
+	}
+	.tabs label {
+		padding: 0.3rem 0.7rem;
+		border-radius: 0.4rem;
+		font-size: 0.8rem;
+		font-weight: 500;
+		color: #8492ab;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.tabs label:hover {
+		color: #e8eef8;
+	}
+	.window-path {
+		margin-left: auto;
+		font-family: var(--lz-font-mono);
+		font-size: 0.75rem;
+		color: #5f6d88;
+		white-space: nowrap;
+	}
+	.pane {
+		display: none;
+	}
+	.pane pre.astro-code {
+		margin: 0;
+		padding: 1.25rem 1.4rem;
+		background-color: #0d1424 !important;
+		font-size: 0.84rem;
+		line-height: 1.7;
+		overflow-x: auto;
+	}
+	#tab-curl:checked ~ .pane-curl,
+	#tab-js:checked ~ .pane-js,
+	#tab-py:checked ~ .pane-py,
+	#tab-res:checked ~ .pane-res {
+		display: block;
+	}
+	#tab-curl:checked ~ .window-bar label[for='tab-curl'],
+	#tab-js:checked ~ .window-bar label[for='tab-js'],
+	#tab-py:checked ~ .window-bar label[for='tab-py'],
+	#tab-res:checked ~ .window-bar label[for='tab-res'] {
+		color: #fff;
+		background: #1a2541;
+	}
+	.window input:focus-visible ~ .window-bar .tabs {
+		outline: 2px solid var(--lz-primary);
+		outline-offset: 2px;
+		border-radius: 0.4rem;
+	}
+
+	/* Seções */
+	.section {
+		padding-top: 7rem;
+	}
+	.eyebrow {
+		margin: 0 0 0.75rem;
+		font-size: 0.8rem;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--lz-primary);
+	}
+	h2 {
+		margin: 0 0 0.75rem;
+		font-size: clamp(1.75rem, 3.6vw, 2.6rem);
+		line-height: 1.15;
+		letter-spacing: -0.03em;
+		font-weight: 750;
+	}
+	.section-lead {
+		margin: 0 0 2.5rem;
+		max-width: 40rem;
+		font-size: 1.08rem;
+		color: var(--lz-text-muted);
+	}
+	h3 {
+		margin: 0 0 0.45rem;
+		font-size: 1.05rem;
+		font-weight: 650;
+		letter-spacing: -0.01em;
+	}
+	.icon-box {
+		display: inline-grid;
+		place-items: center;
+		width: 40px;
+		height: 40px;
+		margin-bottom: 1rem;
+		border-radius: 0.6rem;
+		color: var(--lz-link);
+		background: var(--lz-primary-bg);
+		border: 1px solid color-mix(in srgb, var(--lz-primary) 25%, transparent);
+	}
+	.tag {
+		display: inline-block;
+		padding: 0.12rem 0.55rem;
+		border-radius: 999px;
+		font-size: 0.7rem;
+		font-weight: 650;
+		letter-spacing: 0.01em;
+		vertical-align: middle;
+		color: var(--lz-success);
+		background: var(--lz-success-bg);
+	}
+	.tag.soon {
+		color: var(--lz-link);
+		background: var(--lz-primary-bg);
+	}
+
+	.modes {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 1rem;
+	}
+	.mode,
+	.card,
+	.plan {
+		position: relative;
+		padding: 1.6rem;
+		border-radius: 0.9rem;
+		border: 1px solid var(--lz-line);
+		background: var(--lz-surface);
+	}
+	.mode {
+		color: var(--lz-text);
+		transition:
+			border-color 0.15s,
+			transform 0.15s,
+			box-shadow 0.15s;
+	}
+	.mode:hover {
+		border-color: color-mix(in srgb, var(--lz-primary) 55%, transparent);
+		transform: translateY(-2px);
+		box-shadow: 0 18px 40px -24px var(--lz-glow);
+	}
+	.mode p,
+	.card p {
+		margin: 0 0 1rem;
+		color: var(--lz-text-muted);
+		font-size: 0.95rem;
+	}
+	.card p {
+		margin: 0;
+	}
+	.note {
+		margin-left: 0.5rem;
+		font-size: 0.78rem;
+		color: var(--lz-text-subtle);
+	}
+	.grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 1px;
+		border: 1px solid var(--lz-line);
+		border-radius: 1rem;
+		overflow: hidden;
+		background: var(--lz-line);
+	}
+	.grid .card {
+		border: 0;
+		border-radius: 0;
+		padding: 1.8rem;
+	}
+
+	.tag.exp {
+		color: var(--lz-warning);
+		background: var(--lz-warning-bg);
+	}
+	.breadth {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+		gap: 1rem;
+	}
+	.breadth-card {
+		display: block;
+		padding: 1.4rem;
+		border-radius: 0.9rem;
+		border: 1px solid var(--lz-line);
+		background: var(--lz-surface);
+		color: var(--lz-text);
+		transition: border-color 0.15s;
+	}
+	.breadth-card:hover {
+		border-color: color-mix(in srgb, var(--lz-primary) 55%, transparent);
+	}
+	.breadth-card ul {
+		list-style: none;
+		padding: 0;
+		margin: 0.75rem 0 0;
+	}
+	.breadth-card li {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.45rem 0;
+		border-top: 1px solid var(--lz-line);
+		font-size: 0.9rem;
+		color: var(--lz-text-muted);
+	}
+	.breadth-card li .tag {
+		flex: none;
+	}
+	.breadth-foot {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1.5rem;
+		margin-top: 1.5rem;
+	}
+	.compare {
+		border: 1px solid var(--lz-line);
+		border-radius: 1rem;
+		overflow: hidden;
+		background: var(--lz-surface);
+	}
+	.compare-row {
+		display: grid;
+		grid-template-columns: 1fr 1.4fr 1.4fr;
+		gap: 1rem;
+		padding: 0.95rem 1.4rem;
+		border-top: 1px solid var(--lz-line);
+		font-size: 0.93rem;
+		align-items: center;
+	}
+	.compare-head {
+		border-top: 0;
+		background: var(--lz-bg-soft);
+		font-weight: 700;
+		font-size: 0.85rem;
+		color: var(--lz-text-muted);
+	}
+	.compare-head .compare-us {
+		color: var(--lz-link);
+	}
+	.compare-k {
+		font-weight: 600;
+	}
+	.compare-us {
+		display: flex;
+		gap: 0.5rem;
+		align-items: flex-start;
+		color: var(--lz-text);
+	}
+	.compare-us svg {
+		flex: none;
+		margin-top: 0.2rem;
+		color: var(--lz-success);
+	}
+	.compare-them {
+		color: var(--lz-text-subtle);
+	}
+	@media (max-width: 640px) {
+		.compare-row {
+			grid-template-columns: 1fr;
+			gap: 0.3rem;
+		}
+		.compare-head {
+			display: none;
+		}
+		.compare-them::before {
+			content: 'Proprietária: ';
+			font-weight: 600;
+		}
+	}
+	.arch {
+		display: grid;
+		grid-template-columns: 1fr 1.1fr;
+		gap: 4rem;
+		align-items: center;
+	}
+	.arch code {
+		color: var(--lz-text);
+		background: var(--lz-surface-2);
+		border: 1px solid var(--lz-line);
+		padding: 0.08rem 0.35rem;
+		border-radius: 0.35rem;
+		font-size: 0.88em;
+	}
+	.arch-panel {
+		padding: 1.75rem;
+		border-radius: 1rem;
+		border: 1px solid var(--lz-line);
+		background:
+			radial-gradient(80% 60% at 50% 0%, var(--lz-primary-bg), transparent 70%),
+			var(--lz-bg-soft);
+	}
+	.checks {
+		list-style: none;
+		padding: 0;
+		margin: 1.5rem 0;
+	}
+	.checks li {
+		display: flex;
+		gap: 0.65rem;
+		align-items: flex-start;
+		margin-bottom: 0.75rem;
+	}
+	.checks li svg {
+		flex: none;
+		margin-top: 0.2rem;
+		color: var(--lz-primary);
+	}
+	.checks.small li {
+		font-size: 0.92rem;
+		margin-bottom: 0.5rem;
+	}
+	.link-arrow {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-weight: 600;
+	}
+
+	.plans {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1rem;
+		max-width: 820px;
+		margin-top: 2rem;
+	}
+	.plan .btn {
+		margin-top: 0.5rem;
+	}
+	.plan-featured {
+		border-color: color-mix(in srgb, var(--lz-primary) 60%, transparent);
+		background:
+			radial-gradient(90% 60% at 100% 0%, var(--lz-primary-bg), transparent 70%),
+			var(--lz-surface);
+	}
+	.plan-tag {
+		position: absolute;
+		top: 1.3rem;
+		right: 1.3rem;
+	}
+	.price {
+		margin: 0.3rem 0 0.5rem;
+		font-size: 2.1rem;
+		font-weight: 750;
+		letter-spacing: -0.03em;
+	}
+
+	.cta {
+		position: relative;
+		overflow: hidden;
+		padding: 4rem 1.5rem;
+		border-radius: 1.25rem;
+		text-align: center;
+		color: #fff;
+		background: var(--lz-gradient);
+	}
+	.cta::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background-image:
+			linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+			linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+		background-size: 40px 40px;
+		mask-image: radial-gradient(60% 80% at 50% 50%, #000, transparent);
+		pointer-events: none;
+	}
+	.cta > * {
+		position: relative;
+		z-index: 1;
+	}
+	.cta p {
+		margin: 0 0 2rem;
+		opacity: 0.9;
+		font-size: 1.08rem;
+	}
+	.ctas.center {
+		justify-content: center;
+	}
+
+	.footer {
+		margin-top: 7rem;
+		padding: 3.5rem 0 3rem;
+		border-top: 1px solid var(--lz-line);
+		background: var(--lz-bg-soft);
+	}
+	.footer-grid {
+		display: grid;
+		grid-template-columns: 2fr 1fr 1fr 1fr;
+		gap: 2rem;
+	}
+	.footer .logo {
+		height: 26px;
+	}
+	.footer h4 {
+		margin: 0 0 0.85rem;
+		font-size: 0.8rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--lz-text-subtle);
+	}
+	.footer a {
+		display: block;
+		margin-bottom: 0.5rem;
+		color: var(--lz-text-muted);
+		font-size: 0.92rem;
+	}
+	.footer a:hover {
+		color: var(--lz-text);
+	}
+	.small-text {
+		font-size: 0.88rem;
+		max-width: 22rem;
+	}
+
+	@media (max-width: 960px) {
+		.links {
+			display: none;
+		}
+		.arch {
+			grid-template-columns: 1fr;
+			gap: 2.5rem;
+		}
+		.grid,
+		.modes {
+			grid-template-columns: 1fr 1fr;
+		}
+		.footer-grid {
+			grid-template-columns: 1fr 1fr;
+		}
+	}
+	@media (max-width: 640px) {
+		.hero {
+			padding-top: 3.5rem;
+		}
+		.grid,
+		.modes,
+		.plans {
+			grid-template-columns: 1fr;
+		}
+		h1 br,
+		.hide-sm,
+		.window-path {
+			display: none;
+		}
+		.section {
+			padding-top: 5rem;
+		}
+	}
+</style>
