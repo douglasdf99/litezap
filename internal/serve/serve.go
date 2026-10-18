@@ -18,6 +18,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/ingest"
 	"github.com/douglasdf99/litezap/internal/lookup"
 	"github.com/douglasdf99/litezap/internal/manager"
+	"github.com/douglasdf99/litezap/internal/mcp"
 	"github.com/douglasdf99/litezap/internal/media"
 	"github.com/douglasdf99/litezap/internal/queue"
 	"github.com/douglasdf99/litezap/internal/service"
@@ -106,6 +107,8 @@ func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
 		SignedURLs: cfg.PublicURL != "" || isLoopback(cfg.ListenAddr),
 	}
 	handler := api.New(svc, msg, api.Options{
+		// MCP streamable HTTP at /mcp, behind the same tokens (spec 3.1, 6.1).
+		MCP:        mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: msg, Events: bus, Logger: log}),
 		AdminToken: cfg.AdminToken,
 		ProtectOps: !isLoopback(cfg.ListenAddr),
 		Ready:      st.Ping,

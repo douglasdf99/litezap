@@ -4,6 +4,8 @@ go 1.26.7
 
 require (
 	github.com/go-chi/chi/v5 v5.5.0
+	github.com/google/jsonschema-go v0.4.3
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	go.mau.fi/whatsmeow v0.0.0-20261016130820-0b0a1cdac3e2
 	google.golang.org/grpc v1.84.0
@@ -85,6 +87,7 @@ require (
 	github.com/tetratelabs/wazero v1.12.0 // indirect
 	github.com/tidwall/btree v1.8.2 // indirect
 	github.com/vektah/gqlparser/v2 v2.5.27 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.lsp.dev/jsonrpc2 v0.10.0 // indirect
 	go.lsp.dev/pkg v0.0.0-20210717090340-384b27a52fb2 // indirect
 	go.lsp.dev/protocol v0.12.0 // indirect
@@ -104,10 +107,12 @@ require (
 	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e // indirect
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20261005182115-fad411399dd8 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
 	google.golang.org/grpc/cmd/protoc-gen-go-grpc v1.6.2 // indirect

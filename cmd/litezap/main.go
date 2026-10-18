@@ -10,6 +10,7 @@ import (
 	"syscall"
 	_ "time/tzdata" // IANA zones for settings.timezone even where the OS has none (Windows, slim images)
 
+	"github.com/douglasdf99/litezap/internal/mcp"
 	"github.com/douglasdf99/litezap/internal/serve"
 	"github.com/douglasdf99/litezap/internal/worker"
 )
@@ -18,7 +19,7 @@ import (
 var version = "dev"
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: litezap <serve|worker|version> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: litezap <serve|mcp|worker|version> [flags]")
 }
 
 func main() {
@@ -37,10 +38,25 @@ func main() {
 	var err error
 	switch os.Args[1] {
 	case "serve":
+		mcp.Version = version
 		fs := flag.NewFlagSet("serve", flag.ExitOnError)
 		cfg := fs.String("config", "litezap.yaml", "config file (optional)")
 		fs.Parse(os.Args[2:])
 		err = serve.Run(ctx, *cfg, log)
+	case "mcp":
+		// stdio MCP bridge to a running `litezap serve` (spec 3); stdout is the protocol
+		// channel, so logs go to stderr only. Never starts a supervisor.
+		fs := flag.NewFlagSet("mcp", flag.ExitOnError)
+		fs.Usage = func() {
+			fmt.Fprintln(os.Stderr, "usage: litezap mcp\n\nServes the LiteZap MCP tools over stdio, talking to a running `litezap serve`.\n"+
+				"Environment: LITEZAP_URL (default http://127.0.0.1:8787), LITEZAP_TOKEN (admin or instance token, required).")
+		}
+		fs.Parse(os.Args[2:])
+		base := os.Getenv("LITEZAP_URL")
+		if base == "" {
+			base = "http://127.0.0.1:8787"
+		}
+		err = mcp.RunStdio(ctx, base, os.Getenv("LITEZAP_TOKEN"), version, log)
 	case "worker":
 		fs := flag.NewFlagSet("worker", flag.ExitOnError)
 		id := fs.String("instance", "", "instance id")
