@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/douglasdf99/litezap/internal/config"
+	"github.com/douglasdf99/litezap/internal/dashboard"
 	"github.com/douglasdf99/litezap/internal/instance"
 	"github.com/douglasdf99/litezap/internal/store"
 )
@@ -186,5 +187,111 @@ func TestShutdownEndsSSEStreams(t *testing.T) {
 	}
 	if d := time.Since(start); d > 4*time.Second {
 		t.Fatalf("shutdown took %v: the SSE stream held it", d)
+	}
+}
+
+func startServe(t *testing.T, opt Options) Info {
+	t.Helper()
+	t.Setenv("LITEZAP_DATA_DIR", t.TempDir())
+	t.Setenv("LITEZAP_LISTEN_ADDR", "127.0.0.1:0")
+	ctx, cancel := context.WithCancel(context.Background())
+	infoc := make(chan Info, 1)
+	opt.OnListening = func(i Info) { infoc <- i }
+	done := make(chan error, 1)
+	go func() { done <- RunWith(ctx, opt, slog.New(slog.DiscardHandler)) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(20 * time.Second):
+			t.Error("Run did not return")
+		}
+	})
+	select {
+	case i := <-infoc:
+		return i
+	case err := <-done:
+		t.Fatalf("serve exited: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve did not start")
+	}
+	return Info{}
+}
+
+func TestDashboardMountedWithOneClickLogin(t *testing.T) {
+	codes := dashboard.NewLaunchCodes()
+	info := startServe(t, Options{LaunchCodes: codes})
+	if !strings.HasPrefix(info.URL, "http://127.0.0.1:") || !info.Dashboard || info.AdminToken == "" {
+		t.Fatalf("info = %+v", info)
+	}
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := noRedirect.Get(info.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/app/" {
+		t.Fatalf("/ = %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp, err = http.Get(info.URL + "/app/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(body), "LiteZap") {
+		t.Fatalf("/app/ = %d", resp.StatusCode)
+	}
+	// The API keeps working behind the dashboard mux.
+	resp, err = http.Get(info.URL + "/v1/instances")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("/v1/instances without token = %d", resp.StatusCode)
+	}
+	req, _ := http.NewRequest("POST", info.URL+"/app/api/session", strings.NewReader(`{"code":"`+codes.Mint()+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", info.URL)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(body), info.AdminToken) {
+		t.Fatalf("session exchange = %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestDashboardCanBeDisabled(t *testing.T) {
+	t.Setenv("LITEZAP_DISABLE_DASHBOARD", "true")
+	info := startServe(t, Options{LaunchCodes: dashboard.NewLaunchCodes()})
+	if info.Dashboard {
+		t.Fatal("dashboard reported as enabled")
+	}
+	for _, p := range []string{"/app/", "/app/api/info"} {
+		resp, err := http.Get(info.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s = %d with the dashboard disabled", p, resp.StatusCode)
+		}
+	}
+}
+
+func TestDashboardURL(t *testing.T) {
+	for in, want := range map[string]string{
+		"127.0.0.1:8787": "http://127.0.0.1:8787",
+		"0.0.0.0:8787":   "http://127.0.0.1:8787",
+		"[::]:8787":      "http://127.0.0.1:8787",
+		"[::1]:8787":     "http://[::1]:8787",
+	} {
+		if got := dashboardURL(in); got != want {
+			t.Errorf("dashboardURL(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

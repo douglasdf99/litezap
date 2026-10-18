@@ -33,6 +33,8 @@ type Config struct {
 	WebhookFailedRetentionDays int `yaml:"webhook_failed_retention_days"`
 	// InstanceDefaults are the pacing and ramp defaults (spec 4.1); instances override them.
 	InstanceDefaults settings.Settings `yaml:"instance_defaults"`
+	// DisableDashboard turns off the embedded web dashboard at /app/ (the API is unaffected).
+	DisableDashboard bool `yaml:"disable_dashboard"`
 }
 
 func Default() Config {
@@ -45,8 +47,12 @@ func Default() Config {
 
 // Load reads path (a missing file means defaults) and applies env overrides.
 // DataDir is always returned as an absolute path.
-func Load(path string) (Config, error) {
-	cfg := Default()
+func Load(path string) (Config, error) { return LoadWith(path, Default()) }
+
+// LoadWith is Load starting from base instead of Default (the tray app uses it to point
+// data_dir at the per-user app folder while the file and env still win).
+func LoadWith(path string, base Config) (Config, error) {
+	cfg := base
 	if path != "" {
 		b, err := os.ReadFile(path)
 		switch {
@@ -94,6 +100,13 @@ func Load(path string) (Config, error) {
 			return cfg, fmt.Errorf("LITEZAP_WEBHOOK_ALLOW_PRIVATE_URLS: %w", err)
 		}
 		cfg.WebhookAllowPrivateURLs = b
+	}
+	if v := os.Getenv("LITEZAP_DISABLE_DASHBOARD"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return cfg, fmt.Errorf("LITEZAP_DISABLE_DASHBOARD: %w", err)
+		}
+		cfg.DisableDashboard = b
 	}
 	if cfg.WebhookRetentionDays < 1 || cfg.WebhookFailedRetentionDays < 1 {
 		return cfg, errors.New("webhook_retention_days and webhook_failed_retention_days must be at least 1")

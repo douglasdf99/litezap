@@ -170,3 +170,37 @@ func TestLoadWebhookSettings(t *testing.T) {
 		t.Fatal("retention 0 accepted")
 	}
 }
+
+func TestLoadWithBaseAndDashboardToggle(t *testing.T) {
+	dir := t.TempDir()
+	base := Default()
+	base.DataDir = filepath.Join(dir, "appdata")
+	cfg, err := LoadWith(filepath.Join(dir, "missing.yaml"), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DataDir != base.DataDir || cfg.DisableDashboard {
+		t.Fatalf("base not kept: %+v", cfg)
+	}
+	// The file and env still override the base.
+	p := filepath.Join(dir, "litezap.yaml")
+	if err := os.WriteFile(p, []byte("disable_dashboard: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LITEZAP_DATA_DIR", filepath.Join(dir, "env"))
+	cfg, err = LoadWith(p, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.DisableDashboard || cfg.DataDir != filepath.Join(dir, "env") {
+		t.Fatalf("overrides not applied: %+v", cfg)
+	}
+	t.Setenv("LITEZAP_DISABLE_DASHBOARD", "false")
+	if cfg, _ = LoadWith(p, base); cfg.DisableDashboard {
+		t.Fatal("env should re-enable the dashboard")
+	}
+	t.Setenv("LITEZAP_DISABLE_DASHBOARD", "maybe")
+	if _, err := LoadWith(p, base); err == nil {
+		t.Fatal("bad bool accepted")
+	}
+}
