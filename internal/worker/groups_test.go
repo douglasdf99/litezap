@@ -355,3 +355,43 @@ func TestGroupsFailFastWhenUnpaired(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// communityFake also creates communities (the worker's own stanza in production).
+type communityFake struct {
+	*fakeGroups
+	name, desc string
+}
+
+func (c *communityFake) CreateCommunity(_ context.Context, name, desc string) (*types.GroupInfo, error) {
+	c.name, c.desc = name, desc
+	if c.err != nil {
+		return nil, c.err
+	}
+	return c.info, nil
+}
+
+// Communities are created with WhatsApp's community stanza (with a description), never
+// whatsmeow's CreateGroup; a refusal is community_not_allowed.
+func TestCreateCommunity(t *testing.T) {
+	w := newMsgAdapter(t)
+	comm := types.NewJID("120363000000000009", types.GroupServer)
+	cf := &communityFake{fakeGroups: &fakeGroups{info: &types.GroupInfo{JID: comm, GroupName: types.GroupName{Name: "Comunidade"},
+		GroupParent: types.GroupParent{IsParent: true}}}}
+	w.gapi = cf
+	out, err := w.CreateGroup(context.Background(), &workerv1.CreateGroupRequest{Name: "Comunidade", Community: true})
+	if err != nil || !out.Group.Community || out.Group.Jid != comm.String() {
+		t.Fatalf("community = %+v %v", out, err)
+	}
+	if cf.name != "Comunidade" || cf.desc != "Comunidade" || cf.created.Name != "" {
+		t.Fatalf("stanza name=%q desc=%q createGroup=%+v", cf.name, cf.desc, cf.created)
+	}
+	_, _ = w.CreateGroup(context.Background(), &workerv1.CreateGroupRequest{Name: "C2", Community: true, Description: "Avisos"})
+	if cf.desc != "Avisos" {
+		t.Fatalf("description = %q", cf.desc)
+	}
+	cf.err = whatsmeow.ErrIQNotAcceptable
+	_, err = w.CreateGroup(context.Background(), &workerv1.CreateGroupRequest{Name: "C3", Community: true})
+	if c, code := codeOf(err); c != codes.FailedPrecondition || code != "community_not_allowed" {
+		t.Fatalf("refused = %v", err)
+	}
+}

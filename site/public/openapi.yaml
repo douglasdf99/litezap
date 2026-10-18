@@ -1183,7 +1183,7 @@ paths:
       x-zapi: "Atualizar foto do perfil"
       summary: Trocar a foto da conta
       x-litezap-scope: instancia
-      description: JPEG ou PNG (até 10 MB) por URL pública ou base64; recortado no centro e reduzido a 640x640 JPEG.
+      description: JPEG, PNG ou GIF (até 10 MB) por URL pública ou base64; recortado no centro e reduzido a 640x640 JPEG (WebP não).
       requestBody:
         required: true
         content:
@@ -1788,7 +1788,7 @@ paths:
       x-litezap-events: [group.updated]
       summary: Trocar foto do grupo
       x-litezap-scope: instancia
-      description: JPEG até 2MB, em `base64` (aceita `data:` URI) ou `url` pública (o servidor baixa, sem endereços privados).
+      description: JPEG, PNG ou GIF até 10MB, em `base64` (aceita `data:` URI) ou `url` pública (o servidor baixa, sem endereços privados); recortado no centro e enviado como JPEG 640x640 (WebP não).
       requestBody:
         required: true
         content:
@@ -2099,7 +2099,7 @@ paths:
       x-zapi: "Criar comunidade"
       summary: Criar comunidade
       x-litezap-scope: instancia
-      description: Cria uma comunidade (o WhatsApp cria o grupo de avisos sozinho). Mesmo corpo e mesmas cotas de `POST /groups`, sem `parent` e sem `participants`.
+      description: "Cria uma comunidade (o WhatsApp cria o grupo de avisos sozinho). Mesmo corpo e mesmas cotas de `POST /groups`, sem `parent` e sem `participants`; a descrição vai na criação (sem ela, vai o nome). Recusa do WhatsApp (contas que não podem criar comunidades): `409 community_not_allowed`."
       requestBody:
         required: true
         content:

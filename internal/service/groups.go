@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -52,7 +51,7 @@ const (
 	maxCreateMembers  = 10 // initial participants of a new group (also adds)
 	maxGroupName      = 100
 	maxGroupDesc      = 2048
-	maxGroupPhoto     = 2 << 20
+	maxGroupPhoto     = maxPictureUpload // before conversion (profile.go)
 )
 
 // ParticipantView is a member of a group.
@@ -185,6 +184,8 @@ func groupErr(err error) error {
 		return apierr.New(http.StatusTooManyRequests, "rate_limited", "WhatsApp rate limit reached; slow down", true)
 	case st.Code() == codes.Unimplemented:
 		return apierr.New(http.StatusNotImplemented, "not_implemented", "this worker does not support groups", false)
+	case st.Code() == codes.FailedPrecondition && code == "community_not_allowed":
+		return apierr.New(http.StatusConflict, "community_not_allowed", detail, false)
 	}
 	return mapErr(err)
 }
@@ -571,6 +572,9 @@ func (g *Groups) Create(ctx context.Context, instanceID string, in CreateGroupIn
 		return CreateGroupResult{}, err
 	}
 	req := &workerv1.CreateGroupRequest{Name: in.Name, Participants: a.send, Community: in.Community, Parent: parent}
+	if in.Community {
+		req.Description = in.Description // a community is created with its description
+	}
 	if s := in.Settings; s != nil {
 		req.Announce, req.Locked = s.Announce != nil && *s.Announce, s.Locked != nil && *s.Locked
 		req.ApprovalRequired = s.ApprovalRequired != nil && *s.ApprovalRequired
@@ -586,7 +590,7 @@ func (g *Groups) Create(ctx context.Context, instanceID string, in CreateGroupIn
 		return CreateGroupResult{}, g.failed(ctx, instanceID, res, err)
 	}
 	out := CreateGroupResult{Group: groupView(created.Group, true), Results: mergeResults(jids, a, created.Results)}
-	if in.Description != "" {
+	if in.Description != "" && !in.Community {
 		d := in.Description
 		dc, dcancel := groupCtx(ctx)
 		defer dcancel()
@@ -640,13 +644,15 @@ func (g *Groups) Update(ctx context.Context, instanceID, groupRaw string, in Upd
 	return groupView(gi, true), nil
 }
 
-// PhotoInput is a JPEG given inline (base64) or by a public URL.
+// PhotoInput is an image (JPEG, PNG or GIF) given inline (base64) or by a public URL;
+// it is cropped to a centered square and sent as a 640x640 JPEG.
 type PhotoInput struct {
 	Base64 string `json:"base64,omitempty"`
 	URL    string `json:"url,omitempty"`
 }
 
-// SetPhoto sets the group's photo (JPEG, up to 2MB); a nil input removes it.
+// SetPhoto sets the group's photo (JPEG, PNG or GIF up to 10MB, converted to a 640x640
+// JPEG like the profile picture); a nil input removes it.
 func (g *Groups) SetPhoto(ctx context.Context, instanceID, groupRaw string, in *PhotoInput) error {
 	jid, err := GroupJID(groupRaw)
 	if err != nil {
@@ -673,7 +679,7 @@ func (g *Groups) SetPhoto(ctx context.Context, instanceID, groupRaw string, in *
 			defer cancel()
 			if data, _, err = g.Fetcher.Fetch(c, in.URL, maxGroupPhoto); err != nil {
 				if errors.Is(err, media.ErrTooLarge) {
-					return apierr.New(http.StatusRequestEntityTooLarge, "media_too_large", "the photo is limited to 2MB", false)
+					return apierr.New(http.StatusRequestEntityTooLarge, "media_too_large", "the photo is limited to 10MB", false)
 				}
 				return apierr.New(http.StatusBadRequest, "media_fetch_failed", "could not download the photo", false)
 			}
@@ -681,10 +687,10 @@ func (g *Groups) SetPhoto(ctx context.Context, instanceID, groupRaw string, in *
 			return apierr.Validation("base64 or url is required")
 		}
 		if len(data) > maxGroupPhoto {
-			return apierr.New(http.StatusRequestEntityTooLarge, "media_too_large", "the photo is limited to 2MB", false)
+			return apierr.New(http.StatusRequestEntityTooLarge, "media_too_large", "the photo is limited to 10MB", false)
 		}
-		if !bytes.HasPrefix(data, []byte{0xFF, 0xD8, 0xFF}) {
-			return apierr.Validation("the photo must be a JPEG image")
+		if data, err = squareJPEG(data, profilePicSide); err != nil {
+			return apierr.Validation("photo: " + err.Error())
 		}
 	}
 	cli, err := g.client(ctx, instanceID)

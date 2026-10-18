@@ -9,8 +9,9 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	_ "image/gif" // pictures may be uploaded as GIF (first frame)
 	"image/jpeg"
-	_ "image/png" // profile pictures may be uploaded as PNG
+	_ "image/png" // or PNG
 	"net/http"
 	"os"
 	"path/filepath"
@@ -438,7 +439,7 @@ func (a *Account) updateProfile(ctx context.Context, instanceID string, req *wor
 	return nil
 }
 
-// PictureInput is an image given by URL or base64 (JPEG or PNG).
+// PictureInput is an image given by URL or base64 (JPEG, PNG or GIF).
 type PictureInput struct {
 	URL    string `json:"url,omitempty"`
 	Base64 string `json:"base64,omitempty"`
@@ -478,7 +479,7 @@ func (a *Account) SetProfilePicture(ctx context.Context, instanceID string, in P
 	}
 	jpg, err := squareJPEG(data, profilePicSide)
 	if err != nil {
-		return ProfileView{}, apierr.Validation(err.Error())
+		return ProfileView{}, apierr.Validation("picture: " + err.Error())
 	}
 	dir := filepath.Join(a.Messaging.DataDir, "outbox", instanceID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -500,12 +501,12 @@ func (a *Account) RemoveProfilePicture(ctx context.Context, instanceID string) e
 	return a.updateProfile(ctx, instanceID, &workerv1.UpdateProfileRequest{RemovePicture: true})
 }
 
-// squareJPEG decodes a JPEG or PNG, crops the centered square and scales it to side x
+// squareJPEG decodes a JPEG, PNG or GIF, crops the centered square and scales it to side x
 // side (area average when shrinking) as a JPEG.
 func squareJPEG(data []byte, side int) ([]byte, error) {
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil || (format != "jpeg" && format != "png") {
-		return nil, errors.New("picture must be a JPEG or PNG image")
+	if err != nil || (format != "jpeg" && format != "png" && format != "gif") {
+		return nil, errors.New("must be a JPEG, PNG or GIF image (WebP is not supported)")
 	}
 	if cfg.Width < 1 || cfg.Height < 1 || cfg.Width*cfg.Height > maxPicturePixels {
 		return nil, errors.New("picture dimensions are out of range")

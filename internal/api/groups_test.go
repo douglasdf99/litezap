@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"image/jpeg"
 	"strings"
 	"testing"
 	"time"
@@ -56,14 +58,16 @@ func TestGroupRoutes(t *testing.T) {
 	if code, body := e.do("POST", base+"/groups/"+jid+"/participants", tok, `{"action":"ban","participants":["5511988887777"]}`); code != 400 {
 		t.Fatalf("bad action = %d %v", code, body)
 	}
-	// Photo: JPEG only.
-	png := base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n...."))
-	if code, body := e.do("PUT", base+"/groups/"+jid+"/photo", tok, `{"base64":"`+png+`"}`); code != 400 {
+	// Photo: JPEG, PNG or GIF, sent as a 640x640 JPEG; anything else is refused.
+	bad := base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n...."))
+	if code, body := e.do("PUT", base+"/groups/"+jid+"/photo", tok, `{"base64":"`+bad+`"}`); code != 400 {
+		t.Fatalf("broken png photo = %d %v", code, body)
+	}
+	if code, body := e.do("PUT", base+"/groups/"+jid+"/photo", tok, `{"base64":"`+pngB64(t, 300, 500)+`"}`); code != 204 {
 		t.Fatalf("png photo = %d %v", code, body)
 	}
-	jpeg := base64.StdEncoding.EncodeToString([]byte("\xff\xd8\xff\xe0fakejpeg"))
-	if code, body := e.do("PUT", base+"/groups/"+jid+"/photo", tok, `{"base64":"`+jpeg+`"}`); code != 204 {
-		t.Fatalf("photo = %d %v", code, body)
+	if img, err := jpeg.Decode(bytes.NewReader(f.WA.GroupPhoto(jid))); err != nil || img.Bounds().Dx() != 640 || img.Bounds().Dy() != 640 {
+		t.Fatalf("group photo sent: %v %v", err, img)
 	}
 	if code, _ := e.do("DELETE", base+"/groups/"+jid+"/photo", tok, ""); code != 204 || len(f.WA.GroupPhoto(jid)) != 0 {
 		t.Fatalf("remove photo = %d", code)

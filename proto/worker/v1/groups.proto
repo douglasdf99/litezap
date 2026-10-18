@@ -79,6 +79,7 @@ message CreateGroupRequest {
   bool approval_required = 7;
   uint32 ephemeral_seconds = 8;
   bool admins_add_members = 9;
+  string description = 10; // communities: sent with the creation (required by WhatsApp)
 }
 message CreateGroupResponse {
   GroupInfo group = 1;

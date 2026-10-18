@@ -404,6 +404,7 @@ type CreateGroupRequest struct {
 	ApprovalRequired bool                   `protobuf:"varint,7,opt,name=approval_required,json=approvalRequired,proto3" json:"approval_required,omitempty"`
 	EphemeralSeconds uint32                 `protobuf:"varint,8,opt,name=ephemeral_seconds,json=ephemeralSeconds,proto3" json:"ephemeral_seconds,omitempty"`
 	AdminsAddMembers bool                   `protobuf:"varint,9,opt,name=admins_add_members,json=adminsAddMembers,proto3" json:"admins_add_members,omitempty"`
+	Description      string                 `protobuf:"bytes,10,opt,name=description,proto3" json:"description,omitempty"` // communities: sent with the creation (required by WhatsApp)
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -499,6 +500,13 @@ func (x *CreateGroupRequest) GetAdminsAddMembers() bool {
 		return x.AdminsAddMembers
 	}
 	return false
+}
+
+func (x *CreateGroupRequest) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
 }
 
 type CreateGroupResponse struct {
@@ -2053,7 +2061,7 @@ const file_worker_v1_groups_proto_rawDesc = "" +
 	"\x12ListGroupsResponse\x12,\n" +
 	"\x06groups\x18\x01 \x03(\v2\x14.worker.v1.GroupInfoR\x06groups\"#\n" +
 	"\x0fGetGroupRequest\x12\x10\n" +
-	"\x03jid\x18\x01 \x01(\tR\x03jid\"\xbe\x02\n" +
+	"\x03jid\x18\x01 \x01(\tR\x03jid\"\xe0\x02\n" +
 	"\x12CreateGroupRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\"\n" +
 	"\fparticipants\x18\x02 \x03(\tR\fparticipants\x12\x1c\n" +
@@ -2063,7 +2071,9 @@ const file_worker_v1_groups_proto_rawDesc = "" +
 	"\x06locked\x18\x06 \x01(\bR\x06locked\x12+\n" +
 	"\x11approval_required\x18\a \x01(\bR\x10approvalRequired\x12+\n" +
 	"\x11ephemeral_seconds\x18\b \x01(\rR\x10ephemeralSeconds\x12,\n" +
-	"\x12admins_add_members\x18\t \x01(\bR\x10adminsAddMembers\"y\n" +
+	"\x12admins_add_members\x18\t \x01(\bR\x10adminsAddMembers\x12 \n" +
+	"\vdescription\x18\n" +
+	" \x01(\tR\vdescription\"y\n" +
 	"\x13CreateGroupResponse\x12*\n" +
 	"\x05group\x18\x01 \x01(\v2\x14.worker.v1.GroupInfoR\x05group\x126\n" +
 	"\aresults\x18\x02 \x03(\v2\x1c.worker.v1.ParticipantResultR\aresults\"\xaf\x03\n" +

@@ -256,6 +256,68 @@ func (w *Whatsmeow) groups() groupAPI {
 	return w.cli
 }
 
+// communityCreator creates a community; *whatsmeow.Client does not, so the worker sends
+// the stanza itself (createCommunity). Tests implement it on their groupAPI fake.
+type communityCreator interface {
+	CreateCommunity(ctx context.Context, name, description string) (*types.GroupInfo, error)
+}
+
+// createCommunity creates a community the way WhatsApp's apps do:
+//
+//	<iq xmlns="w:g2" type="set" to="g.us"><create subject="name">
+//	  <description id="…"><body>text</body></description>
+//	  <parent default_membership_approval_mode="request_required"/>
+//	  <allow_non_admin_sub_group_creation/><create_general_chat/>
+//	</create></iq>
+//
+// whatsmeow's CreateGroup with IsParent sends the plain group stanza (member_add_mode,
+// ephemeral, membership_approval_mode) without a description, which WhatsApp refused on a
+// real account with 406 not-acceptable. A refusal here is reported as community_not_allowed.
+func (w *Whatsmeow) createCommunity(ctx context.Context, name, description string) (*types.GroupInfo, error) {
+	if description == "" {
+		description = name
+	}
+	var gi *types.GroupInfo
+	var err error
+	if cc, ok := w.groups().(communityCreator); ok {
+		gi, err = cc.CreateCommunity(ctx, name, description)
+	} else {
+		gi, err = w.sendCreateCommunity(ctx, name, description)
+	}
+	if errors.Is(err, whatsmeow.ErrIQNotAcceptable) || errors.Is(err, whatsmeow.ErrIQBadRequest) ||
+		errors.Is(err, whatsmeow.ErrIQNotAllowed) || errors.Is(err, whatsmeow.ErrIQForbidden) {
+		return nil, grpcErr(codes.FailedPrecondition, "community_not_allowed",
+			"WhatsApp refused to create the community (some accounts cannot create communities, or the name/description was not accepted); try creating one in the WhatsApp app with this number")
+	}
+	if err != nil {
+		return nil, groupErr(err)
+	}
+	return gi, nil
+}
+
+func (w *Whatsmeow) sendCreateCommunity(ctx context.Context, name, description string) (*types.GroupInfo, error) {
+	in := w.cli.DangerousInternals()
+	resp, err := in.SendGroupIQ(ctx, "set", types.GroupServerJID, waBinary.Node{
+		Tag:   "create",
+		Attrs: waBinary.Attrs{"subject": name},
+		Content: []waBinary.Node{
+			{Tag: "description", Attrs: waBinary.Attrs{"id": string(w.cli.GenerateMessageID())},
+				Content: []waBinary.Node{{Tag: "body", Content: []byte(description)}}},
+			{Tag: "parent", Attrs: waBinary.Attrs{"default_membership_approval_mode": "request_required"}},
+			{Tag: "allow_non_admin_sub_group_creation"},
+			{Tag: "create_general_chat"},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	node, ok := resp.GetOptionalChildByTag("group")
+	if !ok {
+		return nil, grpcErr(codes.Unknown, "worker_error", "no group in the community creation answer")
+	}
+	return in.ParseGroupNode(&node)
+}
+
 // groupErr maps whatsmeow group errors onto the codes documented in groups.proto.
 func groupErr(err error) error {
 	switch {
@@ -489,7 +551,13 @@ func (w *Whatsmeow) CreateGroup(ctx context.Context, req *workerv1.CreateGroupRe
 	if req.AdminsAddMembers {
 		r.MemberAddMode = types.GroupMemberAddModeAdmin
 	}
-	r.IsParent = req.Community
+	if req.Community {
+		gi, err := w.createCommunity(ctx, req.Name, req.Description)
+		if err != nil {
+			return nil, err
+		}
+		return &workerv1.CreateGroupResponse{Group: w.toGroupInfo(gi)}, nil
+	}
 	if req.Parent != "" {
 		parent, err := groupJID(req.Parent)
 		if err != nil {
