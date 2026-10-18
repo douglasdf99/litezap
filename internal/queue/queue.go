@@ -893,12 +893,12 @@ func (d *dispatcher) sent(item store.Outbound, p Payload, at time.Time) error {
 	if pub := d.q.opt.Events; pub != nil {
 		if !Updates(p.Type) {
 			m := events.Message{ID: item.ID, WAMessageID: item.WAMessageID, Chat: item.ChatJID, FromMe: true,
-				Source: "api", Type: p.Type, Text: p.Text, Timestamp: at.UTC()}
+				Source: "api", Type: logType(p), Text: p.Text, Timestamp: at.UTC()}
 			if p.Reaction != nil {
 				m.ReactionTo = p.Reaction.WAMessageID
 			}
-			if p.MediaFile != "" {
-				m.Media = &events.Media{Kind: mediaKind(p.Type), Mime: p.Mime, Size: p.Size, FileName: p.FileName, PTT: p.PTT}
+			if hasMedia(p) {
+				m.Media = &events.Media{Kind: mediaKind(logType(p)), Mime: p.Mime, Size: p.Size, FileName: p.FileName, PTT: p.PTT}
 			}
 			if p.Meta != nil {
 				m.MessageMeta = *p.Meta
@@ -954,6 +954,17 @@ func mediaKind(typ string) string {
 	return typ
 }
 
+// logType is the type a sent message is logged with: a forward takes its content's type.
+func logType(p Payload) string {
+	if p.Type == "forward" && p.ForwardKind != "" {
+		return p.ForwardKind
+	}
+	return p.Type
+}
+
+// hasMedia reports whether the message carries an attachment (staged, or forwarded as is).
+func hasMedia(p Payload) bool { return p.MediaFile != "" || (p.Type == "forward" && p.ForwardKind != "") }
+
 // fail finishes an item for good. If the write fails the item keeps its status (queued,
 // or in_flight when it fails after a send attempt) and its staged media.
 func (d *dispatcher) fail(item store.Outbound, attempts int, msg string) error {
@@ -987,13 +998,13 @@ func pendingMessage(item store.Outbound, p Payload, at time.Time) *store.Message
 	}
 	m := &store.Message{
 		ID: item.ID, WAMessageID: item.WAMessageID, ChatJID: item.ChatJID, FromMe: true, Source: "api",
-		Type: p.Type, Text: p.Text, Status: "pending", Timestamp: at,
+		Type: logType(p), Text: p.Text, Status: "pending", Timestamp: at,
 	}
 	if p.Reaction != nil {
 		m.ReactionTo = p.Reaction.WAMessageID
 	}
-	if p.MediaFile != "" {
-		b, _ := json.Marshal(store.MediaInfo{Kind: mediaKind(p.Type), Mime: p.Mime, Size: p.Size, FileName: p.FileName, PTT: p.PTT})
+	if hasMedia(p) {
+		b, _ := json.Marshal(store.MediaInfo{Kind: mediaKind(logType(p)), Mime: p.Mime, Size: p.Size, FileName: p.FileName, PTT: p.PTT})
 		m.MediaJSON = string(b)
 	}
 	if p.Meta != nil {
