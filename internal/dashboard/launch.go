@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	// LaunchCodeTTL is how long a one-click login code stays valid.
-	LaunchCodeTTL = 2 * time.Minute
+	// LaunchCodeTTL is how long a one-click login code stays valid: enough for a browser
+	// to start cold, short to narrow the window in which another local user could read
+	// it from a process list.
+	LaunchCodeTTL = time.Minute
 	// maxPendingCodes bounds the codes waiting to be redeemed; minting more drops the oldest.
 	maxPendingCodes = 8
 )
@@ -46,7 +48,8 @@ func (l *LaunchCodes) Mint() string {
 	return code
 }
 
-// Redeem consumes code and reports whether it was valid and unexpired.
+// Redeem consumes code and reports whether it was valid and unexpired. A successful
+// redeem also drops every other pending code (each "open dashboard" mints a new one).
 func (l *LaunchCodes) Redeem(code string) bool {
 	if code == "" {
 		return false
@@ -64,7 +67,7 @@ func (l *LaunchCodes) Redeem(code string) bool {
 	if found < 0 {
 		return false
 	}
-	l.codes = append(l.codes[:found], l.codes[found+1:]...)
+	l.codes = l.codes[:0]
 	return true
 }
 

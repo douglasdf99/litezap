@@ -35,6 +35,12 @@ func TestLaunchCodesSingleUseAndExpiry(t *testing.T) {
 		t.Fatal("expired code accepted")
 	}
 
+	// A successful redeem drops the other pending codes.
+	a, b := l.Mint(), l.Mint()
+	if !l.Redeem(b) || l.Redeem(a) {
+		t.Fatal("pending codes should be dropped after a successful redeem")
+	}
+
 	// Minting past the cap drops the oldest pending code.
 	first := l.Mint()
 	for i := 0; i < maxPendingCodes; i++ {
@@ -75,8 +81,11 @@ func TestStaticAssetsAndHeaders(t *testing.T) {
 			t.Fatalf("%s: missing security headers: %v", path, hd)
 		}
 	}
-	if ct := get(t, h, "/app/app.js").Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
-		t.Fatalf("app.js content type %q", ct)
+	for p, want := range map[string]string{"/app/app.js": "text/javascript; charset=utf-8", "/app/style.css": "text/css; charset=utf-8",
+		"/app/logo.svg": "image/svg+xml", "/app/": "text/html; charset=utf-8"} {
+		if ct := get(t, h, p).Header().Get("Content-Type"); ct != want {
+			t.Fatalf("%s content type %q", p, ct)
+		}
 	}
 	if rec := get(t, h, "/app/missing.js"); rec.Code != 404 {
 		t.Fatalf("missing asset: %d", rec.Code)

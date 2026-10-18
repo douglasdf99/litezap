@@ -13,7 +13,7 @@ Spec do motor: `docs/superpowers/specs/2026-10-17-litezap-engine-design.md` (pe�
   então não há superfície de CSRF. O token fica em `sessionStorage` (ou `localStorage` se o usuário marcar
   "lembrar neste navegador"). Login padrão: colar o token (arquivo `data/admin_token`).
 - **Login em um clique (só bandeja, só loopback)**: o `litezap-app` tem o token admin no próprio processo e cria um
-  **código de uso único** (256 bits, vale 2 min, no máximo 8 pendentes) a cada "Abrir painel"; abre
+  **código de uso único** (256 bits, vale 1 min, no máximo 8 pendentes; um resgate descarta os outros) a cada "Abrir painel"; abre
   `http://127.0.0.1:<porta>/app/#code=<código>`. O fragmento não vai ao servidor nem a logs/Referer; o painel o
   apaga da barra de endereço e troca o código pelo token em `POST /app/api/session`. O endpoint só existe quando o
   servidor escuta em loopback e o processo criou códigos; exige conexão de loopback, `Host` de loopback (contra DNS
@@ -51,3 +51,14 @@ Cada commit: `gofmt`, `go vet ./...`, `go test -p 2 -race ./...`.
 
 Instaladores (.dmg/.msi/.deb), assinatura e notarização, auto-update, iniciar com o sistema, túnel opcional,
 login no painel com token de instância, envio de mídia pelo painel.
+
+## Revisão independente (feita)
+
+Sem críticos. Corrigido: tipos MIME fixos para os assets (no Windows o registro pode mapear `.js` para `text/plain`
+e, com `nosniff`, o painel não carregaria); bandeja continua respondendo depois de um erro de inicialização ("Ver
+log", "Abrir pasta", sinais e Sair); consulta de estado da bandeja fora do loop de eventos; abertura ignorada se o
+Sair veio antes; código vale 1 min e um resgate descarta os pendentes; settings não manda 0 para campo vazio nem
+salva a senha mascarada do proxy; status de mensagem nunca volta (evento antes da resposta do POST); hash malformado
+não quebra o roteamento; `h()` ignora `on*` que não é função; aviso do "lembrar" (token por host:porta).
+Aceito/documentado: outro usuário local que leia a linha de comando do navegador no instante da abertura poderia
+disputar o código (máquinas compartilhadas; vale 1 vez, 1 min).

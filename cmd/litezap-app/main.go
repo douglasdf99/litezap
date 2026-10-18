@@ -150,9 +150,21 @@ func (a *app) onReady() {
 	go func() {
 		tick := time.NewTicker(3 * time.Second)
 		defer tick.Stop()
-		quitting := false
-		running := false
+		titles := make(chan string, 1)
+		stopped := a.stopped
+		quitting, running, failed, checking := false, false, false, false
+		checkStatus := func() {
+			if checking {
+				return // the previous check (2s timeout) is still running
+			}
+			checking = true
+			go func() { titles <- a.statusTitle() }()
+		}
 		beginQuit := func() {
+			if failed {
+				systray.Quit() // the engine is not running: nothing to stop
+				return
+			}
 			if quitting {
 				return
 			}
@@ -166,12 +178,21 @@ func (a *app) onReady() {
 		for {
 			select {
 			case info := <-a.infoc:
+				if quitting {
+					continue
+				}
 				a.info = info
 				running = true
 				open.Enable()
-				a.updateStatus(status)
+				checkStatus()
 				if a.openOnStart {
 					a.openDashboard()
+				}
+			case title := <-titles:
+				checking = false
+				if running && !quitting {
+					status.SetTitle(title)
+					systray.SetTooltip(title + " · " + a.info.URL + dashboard.Prefix)
 				}
 			case <-open.ClickedCh:
 				a.openDashboard()
@@ -185,27 +206,23 @@ func (a *app) onReady() {
 				beginQuit()
 			case <-tick.C:
 				if running && !quitting {
-					a.updateStatus(status)
+					checkStatus()
 				}
-			case <-a.stopped:
+			case <-stopped:
+				stopped = nil // closed: stop selecting on it
 				err := a.err
 				if quitting || err == nil {
 					a.log.Info("litezap-app stopped")
 					systray.Quit()
 					return
 				}
-				// The engine could not start (e.g. port in use): keep the tray up with
-				// the reason so the user sees it; Quit still works.
+				// The engine could not start (e.g. port in use): keep the tray up with the
+				// reason; "Ver log" and "Abrir pasta" keep working and Sair just exits.
 				a.log.Error("engine stopped", "err", err)
-				running = false
+				running, failed = false, true
 				open.Disable()
 				status.SetTitle("Erro: " + shorten(err.Error(), 70))
 				systray.SetTooltip("LiteZap: " + err.Error())
-				go func() {
-					<-quit.ClickedCh
-					systray.Quit()
-				}()
-				return
 			}
 		}
 	}()
@@ -250,32 +267,30 @@ func (a *app) openPath(target string) {
 
 var statusClient = &http.Client{Timeout: 2 * time.Second}
 
-func (a *app) updateStatus(item *systray.MenuItem) {
-	title := "LiteZap: rodando"
+// statusTitle asks the local API how many instances are connected.
+func (a *app) statusTitle() string {
 	req, _ := http.NewRequest(http.MethodGet, a.info.URL+"/v1/instances", nil)
 	req.Header.Set("Authorization", "Bearer "+a.info.AdminToken)
 	resp, err := statusClient.Do(req)
 	if err != nil {
-		title = "LiteZap: sem resposta"
-	} else {
-		var body struct {
-			Instances []struct {
-				State string `json:"state"`
-			} `json:"instances"`
-		}
-		if resp.StatusCode == http.StatusOK && json.NewDecoder(resp.Body).Decode(&body) == nil {
-			connected := 0
-			for _, in := range body.Instances {
-				if in.State == "connected" {
-					connected++
-				}
-			}
-			title = fmt.Sprintf("LiteZap: %d de %d conectada(s)", connected, len(body.Instances))
-		}
-		resp.Body.Close()
+		return "LiteZap: sem resposta"
 	}
-	item.SetTitle(title)
-	systray.SetTooltip(title + " · " + a.info.URL + dashboard.Prefix)
+	defer resp.Body.Close()
+	var body struct {
+		Instances []struct {
+			State string `json:"state"`
+		} `json:"instances"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&body) != nil {
+		return "LiteZap: rodando"
+	}
+	connected := 0
+	for _, in := range body.Instances {
+		if in.State == "connected" {
+			connected++
+		}
+	}
+	return fmt.Sprintf("LiteZap: %d de %d conectada(s)", connected, len(body.Instances))
 }
 
 func shorten(s string, n int) string {

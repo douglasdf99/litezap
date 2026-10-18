@@ -220,6 +220,9 @@ const STATUS = {
   sent: ['✓', 'enviada'], delivered: ['✓✓', 'entregue'], read: ['✓✓', 'lida'], failed: ['✗', 'falhou'],
 };
 
+const RANK = { queued: 1, in_flight: 2, pending: 2, sent: 3, delivered: 4, read: 5, failed: 6 };
+const rank = (st) => RANK[st] || 0;
+
 function statusMark(m) {
   const [icon, label] = STATUS[m.status] || ['', m.status || ''];
   return h('span', { class: `status s-${m.status}`, title: m.error ? `${label}: ${m.error}` : label },
@@ -312,6 +315,8 @@ function chatsTab(ctx, rest) {
     const key = m.id || m.wa_message_id;
     const known = current.bubbles.get(m.id) || (m.wa_message_id && current.bubbles.get(m.wa_message_id));
     const merged = known ? { ...known.m, ...Object.fromEntries(Object.entries(m).filter(([, v]) => v !== undefined && v !== '')) } : m;
+    // Events can beat the POST response: never move a status backwards.
+    if (known && rank(known.m.status) > rank(merged.status)) merged.status = known.m.status;
     const el = bubble(merged, current.isGroup);
     const entry = { m: merged, el };
     if (known) known.el.replaceWith(el);
@@ -479,23 +484,30 @@ function settingsTab(ctx) {
       onsubmit: async (ev) => {
         ev.preventDefault();
         const p = {};
-        const n = (input) => Number(input.value);
-        if (n(minI) !== s.min_interval_ms) p.min_interval_ms = n(minI);
-        if (n(jitter) !== s.jitter_ms) p.jitter_ms = n(jitter);
-        if (n(maxMin) !== s.max_per_minute) p.max_per_minute = n(maxMin);
+        // An emptied number field means "keep the current value", never 0.
+        const n = (input, cur) => (input.value.trim() === '' ? cur : Number(input.value));
+        if (n(minI, s.min_interval_ms) !== s.min_interval_ms) p.min_interval_ms = n(minI);
+        if (n(jitter, s.jitter_ms) !== s.jitter_ms) p.jitter_ms = n(jitter);
+        if (n(maxMin, s.max_per_minute) !== s.max_per_minute) p.max_per_minute = n(maxMin);
         if (typing.checked !== s.typing_simulation) p.typing_simulation = typing.checked;
         const ramp = {};
         if (rampOn.checked !== s.ramp.enabled) ramp.enabled = rampOn.checked;
-        if (n(rampStart) !== s.ramp.start_per_day) ramp.start_per_day = n(rampStart);
-        if (n(rampEnd) !== s.ramp.end_per_day) ramp.end_per_day = n(rampEnd);
-        if (n(rampDays) !== s.ramp.days) ramp.days = n(rampDays);
+        if (n(rampStart, s.ramp.start_per_day) !== s.ramp.start_per_day) ramp.start_per_day = n(rampStart);
+        if (n(rampEnd, s.ramp.end_per_day) !== s.ramp.end_per_day) ramp.end_per_day = n(rampEnd);
+        if (n(rampDays, s.ramp.days) !== s.ramp.days) ramp.days = n(rampDays);
         if (Object.keys(ramp).length) p.ramp = ramp;
         const win = noWin.checked ? { start: '', end: '' } : { start: winStart.value, end: winEnd.value };
         if (win.start !== s.send_window.start || win.end !== s.send_window.end) p.send_window = win;
         if (tz.value.trim() !== s.timezone) p.timezone = tz.value.trim();
         if (unsafe.checked !== s.unsafe_pacing) p.unsafe_pacing = unsafe.checked;
         // The server masks the proxy password: send it only when the user changed it.
-        if (proxy.value.trim() !== s.proxy_url) p.proxy_url = proxy.value.trim();
+        if (proxy.value.trim() !== s.proxy_url) {
+          if (proxy.value.includes(':xxxxx@')) {
+            toast('O proxy mudou mas a senha continua mascarada (xxxxx): digite a senha real de novo.', 'error');
+            return;
+          }
+          p.proxy_url = proxy.value.trim();
+        }
         if (!Object.keys(p).length) { toast('Nada mudou'); return; }
         if (p.proxy_url !== undefined && !confirmDanger('Trocar o proxy reinicia o worker da instância. Continuar?')) return;
         save.disabled = true;

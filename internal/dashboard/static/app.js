@@ -74,6 +74,7 @@ async function loginView() {
   h('p', { class: 'muted' }, 'Entre com o token admin do servidor.'),
   field('Token admin', input),
   h('label', { class: 'check' }, remember, ' Lembrar neste navegador'),
+  h('small', { class: 'hint' }, 'Guarda o token neste navegador para este endereço (host e porta). Não marque em computador compartilhado.'),
   err,
   btn,
   h('details', { class: 'help' },
@@ -218,8 +219,11 @@ function globalWebhooksView() {
 let instanceCtx = null; // kept while navigating between tabs of the same instance
 
 function parseRoute() {
-  const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
-  return parts;
+  try {
+    return location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+  } catch {
+    return []; // malformed escape in a hand-edited URL
+  }
 }
 
 async function route() {

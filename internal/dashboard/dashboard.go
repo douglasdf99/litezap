@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 
 	"github.com/douglasdf99/litezap/internal/apierr"
@@ -28,6 +29,16 @@ type Options struct {
 	// LaunchCodes enables one-click login (POST /app/api/session). Set it only when the
 	// server listens on loopback; nil disables the endpoint.
 	LaunchCodes *LaunchCodes
+}
+
+// Fixed MIME types for the assets: on Windows mime.TypeByExtension reads the registry,
+// where .js is sometimes text/plain, and with nosniff the browser would refuse the
+// module scripts.
+var assetTypes = map[string]string{
+	".html": "text/html; charset=utf-8",
+	".js":   "text/javascript; charset=utf-8",
+	".css":  "text/css; charset=utf-8",
+	".svg":  "image/svg+xml",
 }
 
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; " +
@@ -48,7 +59,12 @@ func Handler(opt Options) http.Handler {
 	mux.HandleFunc("POST "+Prefix+"api/session", func(w http.ResponseWriter, r *http.Request) {
 		redeem(w, r, opt)
 	})
-	mux.Handle("GET "+Prefix, files)
+	mux.Handle("GET "+Prefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if t, ok := assetTypes[path.Ext(r.URL.Path)]; ok {
+			w.Header().Set("Content-Type", t)
+		}
+		files.ServeHTTP(w, r)
+	}))
 	return securityHeaders(mux)
 }
 
