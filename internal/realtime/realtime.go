@@ -88,6 +88,7 @@ type Handler struct {
 	replied  map[string]time.Time     // instance|caller -> last reject message
 	presence map[string]presenceState // instance|chat|sender -> last typing state
 	online   map[string]bool          // instance -> presence.online as last applied
+	conn     map[string]bool          // instance -> currently connected
 	presMu   map[string]*sync.Mutex   // instance -> serializes SetPresence calls
 	wg       sync.WaitGroup           // background work (Wait: tests and shutdown)
 	doneOnce sync.Once
@@ -146,10 +147,22 @@ func (h *Handler) goBackground(f func()) {
 // StateChanged marks the account online again after every (re)connection when
 // presence.online is on: WhatsApp forgets it with the socket.
 func (h *Handler) StateChanged(id string, st instance.State, _ string) {
+	h.mu.Lock()
+	if h.conn == nil {
+		h.conn = map[string]bool{}
+	}
+	h.conn[id] = st == instance.Connected
+	h.mu.Unlock()
 	if st != instance.Connected {
 		return
 	}
 	h.goBackground(func() { h.applyPresence(id, false) })
+}
+
+func (h *Handler) connected(id string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.conn[id]
 }
 
 // SettingsChanged applies a change of presence.online right away (a running worker;
@@ -196,12 +209,12 @@ func (h *Handler) applyPresence(id string, sendOff bool) {
 	}
 	h.online[id] = on
 	h.mu.Unlock()
-	if !on && !sendOff {
-		return
+	if (!on && !sendOff) || !h.connected(id) {
+		return // not connected: StateChanged applies it when it connects
 	}
 	cli, err := h.Workers.Client(id)
 	if err != nil {
-		return // not running: StateChanged applies it when it connects
+		return
 	}
 	if _, err := cli.SetPresence(ctx, &workerv1.SetPresenceRequest{Available: on}); err != nil {
 		h.log().Warn("set presence", "instance_id", id, "available", on, "err", err)
@@ -231,7 +244,7 @@ func (h *Handler) retryPresence(id string) {
 	defer mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
-	if set, err := h.Settings(ctx, id); err != nil || !set.Presence.Online {
+	if set, err := h.Settings(ctx, id); err != nil || !set.Presence.Online || !h.connected(id) {
 		return
 	}
 	if cli, err := h.Workers.Client(id); err == nil {
