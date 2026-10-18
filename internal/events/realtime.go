@@ -47,9 +47,11 @@ type Call struct {
 	Media   string `json:"media,omitempty"` // audio | video
 	// call.received: the instance rejected it automatically (calls.auto_reject).
 	Rejected bool `json:"rejected,omitempty"`
-	// call.ended: why (WhatsApp's terminate reason such as "accepted_elsewhere", "rejected"
-	// by this instance, "rejected_by_peer", or "timeout" when no end signal came), and
-	// missed = it rang out unanswered and was not rejected.
+	// call.ended: why — caller_hangup (rang unanswered until the caller gave up),
+	// accepted_elsewhere (answered on another device of the account), ended (after being
+	// answered), rejected (calls.auto_reject), rejected_by_peer, timeout (no signal for 2
+	// min) or another reason sent by WhatsApp — and missed = rang out unanswered and was
+	// not rejected.
 	Reason    string    `json:"reason,omitempty"`
 	Missed    bool      `json:"missed,omitempty"`
 	Timestamp time.Time `json:"timestamp"`

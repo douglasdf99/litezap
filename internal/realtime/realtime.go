@@ -58,6 +58,9 @@ const (
 	// this long after its last signal (a linked device is not told about every outcome:
 	// a call answered on the phone may never send it an accept).
 	defaultCallTimeout = 2 * time.Minute
+	// defaultRejectGrace: a reject from the other party only ends the call if no terminate
+	// follows within this time (a terminate carries the real outcome).
+	defaultRejectGrace = 5 * time.Second
 )
 
 type callState struct {
@@ -86,8 +89,9 @@ type Handler struct {
 	Events   events.Publisher
 	Log      *slog.Logger
 	Clock    clock.Clock
-	// CallTimeout overrides defaultCallTimeout (tests).
+	// CallTimeout and RejectGrace override defaultCallTimeout and defaultRejectGrace (tests).
 	CallTimeout time.Duration
+	RejectGrace time.Duration
 
 	mu       sync.Mutex
 	sender   Sender
@@ -128,12 +132,18 @@ func (h *Handler) Close() {
 
 // arm (re)starts the call's timeout; must hold h.mu.
 func (h *Handler) arm(id, key string, st *callState, c *workerv1.Call) {
-	if st.ended {
-		return
-	}
 	d := h.CallTimeout
 	if d <= 0 {
 		d = defaultCallTimeout
+	}
+	h.armFor(id, key, st, c, d, "timeout")
+}
+
+// armFor ends the call with reason after d unless another signal re-arms or ends it first;
+// must hold h.mu.
+func (h *Handler) armFor(id, key string, st *callState, c *workerv1.Call, d time.Duration, reason string) {
+	if st.ended {
+		return
 	}
 	if st.timer != nil {
 		st.timer.Stop()
@@ -144,7 +154,7 @@ func (h *Handler) arm(id, key string, st *callState, c *workerv1.Call) {
 	default:
 	}
 	cc := &workerv1.Call{CallId: c.CallId, Caller: c.Caller, Group: c.Group}
-	st.timer = time.AfterFunc(d, func() { h.end(id, key, cc, h.now().UTC(), "timeout") })
+	st.timer = time.AfterFunc(d, func() { h.end(id, key, cc, h.now().UTC(), reason) })
 }
 
 func (h *Handler) now() time.Time {
@@ -402,38 +412,64 @@ func (h *Handler) call(id string, c *workerv1.Call) {
 			h.offer(id, key, c, at, !ended && now.Sub(at) < staleOffer)
 		}
 	case "accept":
+		// Real calls answered on the phone: terminate(accepted_elsewhere), then an accept
+		// from our own phone. Either one publishes call.accepted, once.
+		h.accepted(id, key, c, at)
+	case "reject":
 		h.mu.Lock()
 		st := h.track(key, now)
-		first := !st.accepted && !st.ended
-		st.accepted = true
-		h.arm(id, key, st, c)
-		data := h.data(st, c, at)
-		h.mu.Unlock()
-		if first {
-			h.Events.Publish(id, events.TypeCallAccepted, data)
-		}
-	case "reject":
-		if c.FromSelf {
-			// Seen on real phones: right after the offer, a reject from one of the account's
-			// own devices reaches this companion, whether the call is then answered on the
-			// phone or not. It is signalling between our devices, not the end of the call:
-			// keep waiting for the terminate (or the timeout).
-			h.mu.Lock()
-			st := h.track(key, now)
+		switch {
+		case c.FromHosted:
+			// Seen on every real call, ~0.2s after the offer: a reject from a WhatsApp-hosted
+			// device (server hosted.lid, device 99), whether the call is answered or not.
 			h.arm(id, key, st, c)
 			h.mu.Unlock()
-			h.log().Info("call reject from own device ignored", "instance_id", id)
-			return
+			h.log().Info("call reject from hosted device ignored", "instance_id", id, "reason", c.Reason)
+		case c.FromSelf:
+			h.arm(id, key, st, c)
+			h.mu.Unlock()
+			h.log().Info("call reject from own device ignored", "instance_id", id, "reason", c.Reason)
+		default:
+			// Even the other party's reject is not trusted alone: the terminate that usually
+			// follows carries the outcome; without one the call ends as rejected_by_peer.
+			grace := h.RejectGrace
+			if grace <= 0 {
+				grace = defaultRejectGrace
+			}
+			h.armFor(id, key, st, c, grace, "rejected_by_peer")
+			h.mu.Unlock()
+			h.log().Info("call reject from peer; waiting for terminate", "instance_id", id, "reason", c.Reason)
 		}
-		h.end(id, key, c, at, "rejected_by_peer")
 	case "terminate":
 		reason := c.Reason
 		if reason == "accepted_elsewhere" { // answered on another device of the account
-			h.mu.Lock()
-			h.track(key, now).accepted = true
-			h.mu.Unlock()
+			h.accepted(id, key, c, at)
+		}
+		h.mu.Lock()
+		answered := h.track(key, now).accepted
+		h.mu.Unlock()
+		if reason == "" {
+			if answered {
+				reason = "ended"
+			} else {
+				reason = "caller_hangup" // rang without an answer until the caller gave up
+			}
 		}
 		h.end(id, key, c, at, reason)
+	}
+}
+
+// accepted marks the call answered and publishes call.accepted once (never after the end).
+func (h *Handler) accepted(id, key string, c *workerv1.Call, at time.Time) {
+	h.mu.Lock()
+	st := h.track(key, h.now())
+	first := !st.accepted && !st.ended
+	st.accepted = true
+	h.arm(id, key, st, c)
+	data := h.data(st, c, at)
+	h.mu.Unlock()
+	if first {
+		h.Events.Publish(id, events.TypeCallAccepted, data)
 	}
 }
 

@@ -100,6 +100,9 @@ message Call {
   // companion), not from the other party: e.g. the phone telling companions it handles
   // the call. Such a reject does not end the call.
   bool from_self = 8;
+  // The signal came from a WhatsApp-hosted device (server hosted / hosted.lid): seen on
+  // real calls as a reject right after every offer; not the end of the call.
+  bool from_hosted = 9;
 }
 
 // ConnState.state uses the instance.State strings:

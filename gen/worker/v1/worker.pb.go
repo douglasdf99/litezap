@@ -620,7 +620,10 @@ type Call struct {
 	// The signal came from one of the account's own devices (its phone or another
 	// companion), not from the other party: e.g. the phone telling companions it handles
 	// the call. Such a reject does not end the call.
-	FromSelf      bool `protobuf:"varint,8,opt,name=from_self,json=fromSelf,proto3" json:"from_self,omitempty"`
+	FromSelf bool `protobuf:"varint,8,opt,name=from_self,json=fromSelf,proto3" json:"from_self,omitempty"`
+	// The signal came from a WhatsApp-hosted device (server hosted / hosted.lid): seen on
+	// real calls as a reject right after every offer; not the end of the call.
+	FromHosted    bool `protobuf:"varint,9,opt,name=from_hosted,json=fromHosted,proto3" json:"from_hosted,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -707,6 +710,13 @@ func (x *Call) GetReason() string {
 func (x *Call) GetFromSelf() bool {
 	if x != nil {
 		return x.FromSelf
+	}
+	return false
+}
+
+func (x *Call) GetFromHosted() bool {
+	if x != nil {
+		return x.FromHosted
 	}
 	return false
 }
@@ -2928,7 +2938,7 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x03jid\x18\x01 \x01(\tR\x03jid\x12\x16\n" +
 	"\x06online\x18\x02 \x01(\bR\x06online\x12 \n" +
 	"\flast_seen_ms\x18\x03 \x01(\x03R\n" +
-	"lastSeenMs\"\xcf\x01\n" +
+	"lastSeenMs\"\xf0\x01\n" +
 	"\x04Call\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x16\n" +
@@ -2937,7 +2947,9 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x05media\x18\x05 \x01(\tR\x05media\x12!\n" +
 	"\ftimestamp_ms\x18\x06 \x01(\x03R\vtimestampMs\x12\x16\n" +
 	"\x06reason\x18\a \x01(\tR\x06reason\x12\x1b\n" +
-	"\tfrom_self\x18\b \x01(\bR\bfromSelf\"K\n" +
+	"\tfrom_self\x18\b \x01(\bR\bfromSelf\x12\x1f\n" +
+	"\vfrom_hosted\x18\t \x01(\bR\n" +
+	"fromHosted\"K\n" +
 	"\tConnState\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x10\n" +
