@@ -309,6 +309,7 @@ type Event struct {
 	//	*Event_ChatPresence
 	//	*Event_Presence
 	//	*Event_Call
+	//	*Event_ChatUpdate
 	Kind          isEvent_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -423,6 +424,15 @@ func (x *Event) GetCall() *Call {
 	return nil
 }
 
+func (x *Event) GetChatUpdate() *ChatUpdate {
+	if x != nil {
+		if x, ok := x.Kind.(*Event_ChatUpdate); ok {
+			return x.ChatUpdate
+		}
+	}
+	return nil
+}
+
 type isEvent_Kind interface {
 	isEvent_Kind()
 }
@@ -459,6 +469,10 @@ type Event_Call struct {
 	Call *Call `protobuf:"bytes,8,opt,name=call,proto3,oneof"`
 }
 
+type Event_ChatUpdate struct {
+	ChatUpdate *ChatUpdate `protobuf:"bytes,20,opt,name=chat_update,json=chatUpdate,proto3,oneof"` // marco 9
+}
+
 func (*Event_Conn) isEvent_Kind() {}
 
 func (*Event_Qr) isEvent_Kind() {}
@@ -474,6 +488,8 @@ func (*Event_ChatPresence) isEvent_Kind() {}
 func (*Event_Presence) isEvent_Kind() {}
 
 func (*Event_Call) isEvent_Kind() {}
+
+func (*Event_ChatUpdate) isEvent_Kind() {}
 
 // ChatPresence is a typing notification (only received while the account is available).
 type ChatPresence struct {
@@ -2904,6 +2920,1364 @@ func (*SubscribePresenceResponse) Descriptor() ([]byte, []int) {
 	return file_worker_v1_worker_proto_rawDescGZIP(), []int{44}
 }
 
+// ChatUpdate is a chat state change from the app state (made on any device of the
+// account, including this one through ChatAction). field: archived | pinned | muted |
+// unread | deleted | cleared | starred. value is the new state (muted: muted or not,
+// with muted_until_ms; unread: marked as unread; deleted/cleared: always true).
+type ChatUpdate struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Chat         string                 `protobuf:"bytes,1,opt,name=chat,proto3" json:"chat,omitempty"` // phone-number JID when known
+	Field        string                 `protobuf:"bytes,2,opt,name=field,proto3" json:"field,omitempty"`
+	Value        bool                   `protobuf:"varint,3,opt,name=value,proto3" json:"value,omitempty"`
+	MutedUntilMs int64                  `protobuf:"varint,4,opt,name=muted_until_ms,json=mutedUntilMs,proto3" json:"muted_until_ms,omitempty"` // muted: -1 forever, 0 not muted
+	TimestampMs  int64                  `protobuf:"varint,5,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
+	FullSync     bool                   `protobuf:"varint,6,opt,name=full_sync,json=fullSync,proto3" json:"full_sync,omitempty"`
+	// starred: the message (WhatsApp id) and whether it is ours
+	MessageId     string `protobuf:"bytes,7,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	FromMe        bool   `protobuf:"varint,8,opt,name=from_me,json=fromMe,proto3" json:"from_me,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatUpdate) Reset() {
+	*x = ChatUpdate{}
+	mi := &file_worker_v1_worker_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatUpdate) ProtoMessage() {}
+
+func (x *ChatUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatUpdate.ProtoReflect.Descriptor instead.
+func (*ChatUpdate) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *ChatUpdate) GetChat() string {
+	if x != nil {
+		return x.Chat
+	}
+	return ""
+}
+
+func (x *ChatUpdate) GetField() string {
+	if x != nil {
+		return x.Field
+	}
+	return ""
+}
+
+func (x *ChatUpdate) GetValue() bool {
+	if x != nil {
+		return x.Value
+	}
+	return false
+}
+
+func (x *ChatUpdate) GetMutedUntilMs() int64 {
+	if x != nil {
+		return x.MutedUntilMs
+	}
+	return 0
+}
+
+func (x *ChatUpdate) GetTimestampMs() int64 {
+	if x != nil {
+		return x.TimestampMs
+	}
+	return 0
+}
+
+func (x *ChatUpdate) GetFullSync() bool {
+	if x != nil {
+		return x.FullSync
+	}
+	return false
+}
+
+func (x *ChatUpdate) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
+}
+
+func (x *ChatUpdate) GetFromMe() bool {
+	if x != nil {
+		return x.FromMe
+	}
+	return false
+}
+
+// MessageRef identifies a message of the chat (the last one for archive/read/delete,
+// the target for star).
+type MessageRef struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // WhatsApp id
+	FromMe        bool                   `protobuf:"varint,2,opt,name=from_me,json=fromMe,proto3" json:"from_me,omitempty"`
+	Sender        string                 `protobuf:"bytes,3,opt,name=sender,proto3" json:"sender,omitempty"` // author JID (groups)
+	TimestampMs   int64                  `protobuf:"varint,4,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MessageRef) Reset() {
+	*x = MessageRef{}
+	mi := &file_worker_v1_worker_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MessageRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MessageRef) ProtoMessage() {}
+
+func (x *MessageRef) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MessageRef.ProtoReflect.Descriptor instead.
+func (*MessageRef) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *MessageRef) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *MessageRef) GetFromMe() bool {
+	if x != nil {
+		return x.FromMe
+	}
+	return false
+}
+
+func (x *MessageRef) GetSender() string {
+	if x != nil {
+		return x.Sender
+	}
+	return ""
+}
+
+func (x *MessageRef) GetTimestampMs() int64 {
+	if x != nil {
+		return x.TimestampMs
+	}
+	return 0
+}
+
+type ChatActionRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Chat  string                 `protobuf:"bytes,1,opt,name=chat,proto3" json:"chat,omitempty"`
+	// archive | unarchive | pin | unpin | mute | unmute | read | unread | delete | star | unstar
+	Action        string      `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
+	MuteUntilMs   int64       `protobuf:"varint,3,opt,name=mute_until_ms,json=muteUntilMs,proto3" json:"mute_until_ms,omitempty"` // mute: 0 forever
+	Message       *MessageRef `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`                               // last message (archive, read, unread, delete) or target (star)
+	DeleteMedia   bool        `protobuf:"varint,5,opt,name=delete_media,json=deleteMedia,proto3" json:"delete_media,omitempty"`   // delete
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatActionRequest) Reset() {
+	*x = ChatActionRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatActionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatActionRequest) ProtoMessage() {}
+
+func (x *ChatActionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatActionRequest.ProtoReflect.Descriptor instead.
+func (*ChatActionRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *ChatActionRequest) GetChat() string {
+	if x != nil {
+		return x.Chat
+	}
+	return ""
+}
+
+func (x *ChatActionRequest) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *ChatActionRequest) GetMuteUntilMs() int64 {
+	if x != nil {
+		return x.MuteUntilMs
+	}
+	return 0
+}
+
+func (x *ChatActionRequest) GetMessage() *MessageRef {
+	if x != nil {
+		return x.Message
+	}
+	return nil
+}
+
+func (x *ChatActionRequest) GetDeleteMedia() bool {
+	if x != nil {
+		return x.DeleteMedia
+	}
+	return false
+}
+
+type ChatActionResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatActionResponse) Reset() {
+	*x = ChatActionResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatActionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatActionResponse) ProtoMessage() {}
+
+func (x *ChatActionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatActionResponse.ProtoReflect.Descriptor instead.
+func (*ChatActionResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{48}
+}
+
+type GetChatSettingsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Chat          string                 `protobuf:"bytes,1,opt,name=chat,proto3" json:"chat,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetChatSettingsRequest) Reset() {
+	*x = GetChatSettingsRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetChatSettingsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetChatSettingsRequest) ProtoMessage() {}
+
+func (x *GetChatSettingsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetChatSettingsRequest.ProtoReflect.Descriptor instead.
+func (*GetChatSettingsRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *GetChatSettingsRequest) GetChat() string {
+	if x != nil {
+		return x.Chat
+	}
+	return ""
+}
+
+type GetChatSettingsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Found         bool                   `protobuf:"varint,1,opt,name=found,proto3" json:"found,omitempty"`
+	Archived      bool                   `protobuf:"varint,2,opt,name=archived,proto3" json:"archived,omitempty"`
+	Pinned        bool                   `protobuf:"varint,3,opt,name=pinned,proto3" json:"pinned,omitempty"`
+	MutedUntilMs  int64                  `protobuf:"varint,4,opt,name=muted_until_ms,json=mutedUntilMs,proto3" json:"muted_until_ms,omitempty"` // -1 forever, 0 not muted
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetChatSettingsResponse) Reset() {
+	*x = GetChatSettingsResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetChatSettingsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetChatSettingsResponse) ProtoMessage() {}
+
+func (x *GetChatSettingsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetChatSettingsResponse.ProtoReflect.Descriptor instead.
+func (*GetChatSettingsResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *GetChatSettingsResponse) GetFound() bool {
+	if x != nil {
+		return x.Found
+	}
+	return false
+}
+
+func (x *GetChatSettingsResponse) GetArchived() bool {
+	if x != nil {
+		return x.Archived
+	}
+	return false
+}
+
+func (x *GetChatSettingsResponse) GetPinned() bool {
+	if x != nil {
+		return x.Pinned
+	}
+	return false
+}
+
+func (x *GetChatSettingsResponse) GetMutedUntilMs() int64 {
+	if x != nil {
+		return x.MutedUntilMs
+	}
+	return 0
+}
+
+type GetProfilePictureRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jid           string                 `protobuf:"bytes,1,opt,name=jid,proto3" json:"jid,omitempty"` // contact or group; empty: the account itself
+	Preview       bool                   `protobuf:"varint,2,opt,name=preview,proto3" json:"preview,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetProfilePictureRequest) Reset() {
+	*x = GetProfilePictureRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[51]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProfilePictureRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProfilePictureRequest) ProtoMessage() {}
+
+func (x *GetProfilePictureRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[51]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProfilePictureRequest.ProtoReflect.Descriptor instead.
+func (*GetProfilePictureRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{51}
+}
+
+func (x *GetProfilePictureRequest) GetJid() string {
+	if x != nil {
+		return x.Jid
+	}
+	return ""
+}
+
+func (x *GetProfilePictureRequest) GetPreview() bool {
+	if x != nil {
+		return x.Preview
+	}
+	return false
+}
+
+type GetProfilePictureResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Url           string                 `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`   // WhatsApp CDN URL (expires)
+	Type          string                 `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"` // image | preview
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetProfilePictureResponse) Reset() {
+	*x = GetProfilePictureResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[52]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProfilePictureResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProfilePictureResponse) ProtoMessage() {}
+
+func (x *GetProfilePictureResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[52]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProfilePictureResponse.ProtoReflect.Descriptor instead.
+func (*GetProfilePictureResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{52}
+}
+
+func (x *GetProfilePictureResponse) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *GetProfilePictureResponse) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *GetProfilePictureResponse) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+type DownloadProfilePictureRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jid           string                 `protobuf:"bytes,1,opt,name=jid,proto3" json:"jid,omitempty"`
+	Preview       bool                   `protobuf:"varint,2,opt,name=preview,proto3" json:"preview,omitempty"`
+	DestPath      string                 `protobuf:"bytes,3,opt,name=dest_path,json=destPath,proto3" json:"dest_path,omitempty"` // file to write, inside the data directory
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DownloadProfilePictureRequest) Reset() {
+	*x = DownloadProfilePictureRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DownloadProfilePictureRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DownloadProfilePictureRequest) ProtoMessage() {}
+
+func (x *DownloadProfilePictureRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DownloadProfilePictureRequest.ProtoReflect.Descriptor instead.
+func (*DownloadProfilePictureRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *DownloadProfilePictureRequest) GetJid() string {
+	if x != nil {
+		return x.Jid
+	}
+	return ""
+}
+
+func (x *DownloadProfilePictureRequest) GetPreview() bool {
+	if x != nil {
+		return x.Preview
+	}
+	return false
+}
+
+func (x *DownloadProfilePictureRequest) GetDestPath() string {
+	if x != nil {
+		return x.DestPath
+	}
+	return ""
+}
+
+type DownloadProfilePictureResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Size          int64                  `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DownloadProfilePictureResponse) Reset() {
+	*x = DownloadProfilePictureResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[54]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DownloadProfilePictureResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DownloadProfilePictureResponse) ProtoMessage() {}
+
+func (x *DownloadProfilePictureResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[54]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DownloadProfilePictureResponse.ProtoReflect.Descriptor instead.
+func (*DownloadProfilePictureResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{54}
+}
+
+func (x *DownloadProfilePictureResponse) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *DownloadProfilePictureResponse) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+type GetUserInfoRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jid           string                 `protobuf:"bytes,1,opt,name=jid,proto3" json:"jid,omitempty"`
+	Business      bool                   `protobuf:"varint,2,opt,name=business,proto3" json:"business,omitempty"` // also read the business profile (business accounts)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetUserInfoRequest) Reset() {
+	*x = GetUserInfoRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[55]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetUserInfoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetUserInfoRequest) ProtoMessage() {}
+
+func (x *GetUserInfoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[55]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetUserInfoRequest.ProtoReflect.Descriptor instead.
+func (*GetUserInfoRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{55}
+}
+
+func (x *GetUserInfoRequest) GetJid() string {
+	if x != nil {
+		return x.Jid
+	}
+	return ""
+}
+
+func (x *GetUserInfoRequest) GetBusiness() bool {
+	if x != nil {
+		return x.Business
+	}
+	return false
+}
+
+type BusinessProfile struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Address       string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+	Email         string                 `protobuf:"bytes,2,opt,name=email,proto3" json:"email,omitempty"`
+	Categories    []string               `protobuf:"bytes,3,rep,name=categories,proto3" json:"categories,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BusinessProfile) Reset() {
+	*x = BusinessProfile{}
+	mi := &file_worker_v1_worker_proto_msgTypes[56]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BusinessProfile) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BusinessProfile) ProtoMessage() {}
+
+func (x *BusinessProfile) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[56]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BusinessProfile.ProtoReflect.Descriptor instead.
+func (*BusinessProfile) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{56}
+}
+
+func (x *BusinessProfile) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *BusinessProfile) GetEmail() string {
+	if x != nil {
+		return x.Email
+	}
+	return ""
+}
+
+func (x *BusinessProfile) GetCategories() []string {
+	if x != nil {
+		return x.Categories
+	}
+	return nil
+}
+
+type GetUserInfoResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jid           string                 `protobuf:"bytes,1,opt,name=jid,proto3" json:"jid,omitempty"`
+	About         string                 `protobuf:"bytes,2,opt,name=about,proto3" json:"about,omitempty"`
+	PictureId     string                 `protobuf:"bytes,3,opt,name=picture_id,json=pictureId,proto3" json:"picture_id,omitempty"`
+	VerifiedName  string                 `protobuf:"bytes,4,opt,name=verified_name,json=verifiedName,proto3" json:"verified_name,omitempty"`
+	Lid           string                 `protobuf:"bytes,5,opt,name=lid,proto3" json:"lid,omitempty"`
+	Business      *BusinessProfile       `protobuf:"bytes,6,opt,name=business,proto3" json:"business,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetUserInfoResponse) Reset() {
+	*x = GetUserInfoResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[57]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetUserInfoResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetUserInfoResponse) ProtoMessage() {}
+
+func (x *GetUserInfoResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[57]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetUserInfoResponse.ProtoReflect.Descriptor instead.
+func (*GetUserInfoResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{57}
+}
+
+func (x *GetUserInfoResponse) GetJid() string {
+	if x != nil {
+		return x.Jid
+	}
+	return ""
+}
+
+func (x *GetUserInfoResponse) GetAbout() string {
+	if x != nil {
+		return x.About
+	}
+	return ""
+}
+
+func (x *GetUserInfoResponse) GetPictureId() string {
+	if x != nil {
+		return x.PictureId
+	}
+	return ""
+}
+
+func (x *GetUserInfoResponse) GetVerifiedName() string {
+	if x != nil {
+		return x.VerifiedName
+	}
+	return ""
+}
+
+func (x *GetUserInfoResponse) GetLid() string {
+	if x != nil {
+		return x.Lid
+	}
+	return ""
+}
+
+func (x *GetUserInfoResponse) GetBusiness() *BusinessProfile {
+	if x != nil {
+		return x.Business
+	}
+	return nil
+}
+
+type GetBlocklistRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetBlocklistRequest) Reset() {
+	*x = GetBlocklistRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[58]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBlocklistRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBlocklistRequest) ProtoMessage() {}
+
+func (x *GetBlocklistRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[58]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBlocklistRequest.ProtoReflect.Descriptor instead.
+func (*GetBlocklistRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{58}
+}
+
+type UpdateBlocklistRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jid           string                 `protobuf:"bytes,1,opt,name=jid,proto3" json:"jid,omitempty"`
+	Block         bool                   `protobuf:"varint,2,opt,name=block,proto3" json:"block,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateBlocklistRequest) Reset() {
+	*x = UpdateBlocklistRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[59]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateBlocklistRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateBlocklistRequest) ProtoMessage() {}
+
+func (x *UpdateBlocklistRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[59]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateBlocklistRequest.ProtoReflect.Descriptor instead.
+func (*UpdateBlocklistRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{59}
+}
+
+func (x *UpdateBlocklistRequest) GetJid() string {
+	if x != nil {
+		return x.Jid
+	}
+	return ""
+}
+
+func (x *UpdateBlocklistRequest) GetBlock() bool {
+	if x != nil {
+		return x.Block
+	}
+	return false
+}
+
+type GetBlocklistResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jids          []string               `protobuf:"bytes,1,rep,name=jids,proto3" json:"jids,omitempty"` // phone-number JIDs when known
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetBlocklistResponse) Reset() {
+	*x = GetBlocklistResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[60]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBlocklistResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBlocklistResponse) ProtoMessage() {}
+
+func (x *GetBlocklistResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[60]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBlocklistResponse.ProtoReflect.Descriptor instead.
+func (*GetBlocklistResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{60}
+}
+
+func (x *GetBlocklistResponse) GetJids() []string {
+	if x != nil {
+		return x.Jids
+	}
+	return nil
+}
+
+type GetProfileRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetProfileRequest) Reset() {
+	*x = GetProfileRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[61]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProfileRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProfileRequest) ProtoMessage() {}
+
+func (x *GetProfileRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[61]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProfileRequest.ProtoReflect.Descriptor instead.
+func (*GetProfileRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{61}
+}
+
+type GetProfileResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jid           string                 `protobuf:"bytes,1,opt,name=jid,proto3" json:"jid,omitempty"`
+	Lid           string                 `protobuf:"bytes,2,opt,name=lid,proto3" json:"lid,omitempty"`
+	PushName      string                 `protobuf:"bytes,3,opt,name=push_name,json=pushName,proto3" json:"push_name,omitempty"`
+	BusinessName  string                 `protobuf:"bytes,4,opt,name=business_name,json=businessName,proto3" json:"business_name,omitempty"`
+	Platform      string                 `protobuf:"bytes,5,opt,name=platform,proto3" json:"platform,omitempty"`
+	About         string                 `protobuf:"bytes,6,opt,name=about,proto3" json:"about,omitempty"`
+	PictureId     string                 `protobuf:"bytes,7,opt,name=picture_id,json=pictureId,proto3" json:"picture_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetProfileResponse) Reset() {
+	*x = GetProfileResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[62]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProfileResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProfileResponse) ProtoMessage() {}
+
+func (x *GetProfileResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[62]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProfileResponse.ProtoReflect.Descriptor instead.
+func (*GetProfileResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{62}
+}
+
+func (x *GetProfileResponse) GetJid() string {
+	if x != nil {
+		return x.Jid
+	}
+	return ""
+}
+
+func (x *GetProfileResponse) GetLid() string {
+	if x != nil {
+		return x.Lid
+	}
+	return ""
+}
+
+func (x *GetProfileResponse) GetPushName() string {
+	if x != nil {
+		return x.PushName
+	}
+	return ""
+}
+
+func (x *GetProfileResponse) GetBusinessName() string {
+	if x != nil {
+		return x.BusinessName
+	}
+	return ""
+}
+
+func (x *GetProfileResponse) GetPlatform() string {
+	if x != nil {
+		return x.Platform
+	}
+	return ""
+}
+
+func (x *GetProfileResponse) GetAbout() string {
+	if x != nil {
+		return x.About
+	}
+	return ""
+}
+
+func (x *GetProfileResponse) GetPictureId() string {
+	if x != nil {
+		return x.PictureId
+	}
+	return ""
+}
+
+type UpdateProfileRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SetName       bool                   `protobuf:"varint,1,opt,name=set_name,json=setName,proto3" json:"set_name,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	SetAbout      bool                   `protobuf:"varint,3,opt,name=set_about,json=setAbout,proto3" json:"set_about,omitempty"`
+	About         string                 `protobuf:"bytes,4,opt,name=about,proto3" json:"about,omitempty"`
+	PicturePath   string                 `protobuf:"bytes,5,opt,name=picture_path,json=picturePath,proto3" json:"picture_path,omitempty"` // JPEG inside the data directory
+	RemovePicture bool                   `protobuf:"varint,6,opt,name=remove_picture,json=removePicture,proto3" json:"remove_picture,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateProfileRequest) Reset() {
+	*x = UpdateProfileRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[63]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateProfileRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateProfileRequest) ProtoMessage() {}
+
+func (x *UpdateProfileRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[63]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateProfileRequest.ProtoReflect.Descriptor instead.
+func (*UpdateProfileRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{63}
+}
+
+func (x *UpdateProfileRequest) GetSetName() bool {
+	if x != nil {
+		return x.SetName
+	}
+	return false
+}
+
+func (x *UpdateProfileRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *UpdateProfileRequest) GetSetAbout() bool {
+	if x != nil {
+		return x.SetAbout
+	}
+	return false
+}
+
+func (x *UpdateProfileRequest) GetAbout() string {
+	if x != nil {
+		return x.About
+	}
+	return ""
+}
+
+func (x *UpdateProfileRequest) GetPicturePath() string {
+	if x != nil {
+		return x.PicturePath
+	}
+	return ""
+}
+
+func (x *UpdateProfileRequest) GetRemovePicture() bool {
+	if x != nil {
+		return x.RemovePicture
+	}
+	return false
+}
+
+type UpdateProfileResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PictureId     string                 `protobuf:"bytes,1,opt,name=picture_id,json=pictureId,proto3" json:"picture_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateProfileResponse) Reset() {
+	*x = UpdateProfileResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[64]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateProfileResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateProfileResponse) ProtoMessage() {}
+
+func (x *UpdateProfileResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[64]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateProfileResponse.ProtoReflect.Descriptor instead.
+func (*UpdateProfileResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{64}
+}
+
+func (x *UpdateProfileResponse) GetPictureId() string {
+	if x != nil {
+		return x.PictureId
+	}
+	return ""
+}
+
+// Privacy uses whatsmeow's names: last, online, profile, status, groupadd, readreceipts,
+// calladd, messages; values all | contacts | contact_blacklist | none | match_last_seen | known.
+type Privacy struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Settings      map[string]string      `protobuf:"bytes,1,rep,name=settings,proto3" json:"settings,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Privacy) Reset() {
+	*x = Privacy{}
+	mi := &file_worker_v1_worker_proto_msgTypes[65]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Privacy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Privacy) ProtoMessage() {}
+
+func (x *Privacy) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[65]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Privacy.ProtoReflect.Descriptor instead.
+func (*Privacy) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{65}
+}
+
+func (x *Privacy) GetSettings() map[string]string {
+	if x != nil {
+		return x.Settings
+	}
+	return nil
+}
+
+type GetPrivacyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPrivacyRequest) Reset() {
+	*x = GetPrivacyRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[66]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPrivacyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPrivacyRequest) ProtoMessage() {}
+
+func (x *GetPrivacyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[66]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPrivacyRequest.ProtoReflect.Descriptor instead.
+func (*GetPrivacyRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{66}
+}
+
+type SetPrivacyRequest struct {
+	state                      protoimpl.MessageState `protogen:"open.v1"`
+	Name                       string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Value                      string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	SetDefaultDisappearing     bool                   `protobuf:"varint,3,opt,name=set_default_disappearing,json=setDefaultDisappearing,proto3" json:"set_default_disappearing,omitempty"`
+	DefaultDisappearingSeconds uint32                 `protobuf:"varint,4,opt,name=default_disappearing_seconds,json=defaultDisappearingSeconds,proto3" json:"default_disappearing_seconds,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
+}
+
+func (x *SetPrivacyRequest) Reset() {
+	*x = SetPrivacyRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[67]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetPrivacyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetPrivacyRequest) ProtoMessage() {}
+
+func (x *SetPrivacyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[67]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetPrivacyRequest.ProtoReflect.Descriptor instead.
+func (*SetPrivacyRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{67}
+}
+
+func (x *SetPrivacyRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SetPrivacyRequest) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+func (x *SetPrivacyRequest) GetSetDefaultDisappearing() bool {
+	if x != nil {
+		return x.SetDefaultDisappearing
+	}
+	return false
+}
+
+func (x *SetPrivacyRequest) GetDefaultDisappearingSeconds() uint32 {
+	if x != nil {
+		return x.DefaultDisappearingSeconds
+	}
+	return 0
+}
+
 var File_worker_v1_worker_proto protoreflect.FileDescriptor
 
 const file_worker_v1_worker_proto_rawDesc = "" +
@@ -2918,7 +4292,7 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x04code\x18\x01 \x01(\tR\x04code\"\x0f\n" +
 	"\rLogoutRequest\"\x10\n" +
 	"\x0eLogoutResponse\"\x0f\n" +
-	"\rEventsRequest\"\x8b\x03\n" +
+	"\rEventsRequest\"\xc5\x03\n" +
 	"\x05Event\x12*\n" +
 	"\x04conn\x18\x01 \x01(\v2\x14.worker.v1.ConnStateH\x00R\x04conn\x12\x1f\n" +
 	"\x02qr\x18\x02 \x01(\v2\r.worker.v1.QRH\x00R\x02qr\x12.\n" +
@@ -2927,7 +4301,9 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\ahistory\x18\x05 \x01(\v2\x17.worker.v1.HistoryChunkH\x00R\ahistory\x12>\n" +
 	"\rchat_presence\x18\x06 \x01(\v2\x17.worker.v1.ChatPresenceH\x00R\fchatPresence\x121\n" +
 	"\bpresence\x18\a \x01(\v2\x13.worker.v1.PresenceH\x00R\bpresence\x12%\n" +
-	"\x04call\x18\b \x01(\v2\x0f.worker.v1.CallH\x00R\x04callB\x06\n" +
+	"\x04call\x18\b \x01(\v2\x0f.worker.v1.CallH\x00R\x04call\x128\n" +
+	"\vchat_update\x18\x14 \x01(\v2\x15.worker.v1.ChatUpdateH\x00R\n" +
+	"chatUpdateB\x06\n" +
 	"\x04kind\"k\n" +
 	"\fChatPresence\x12\x12\n" +
 	"\x04chat\x18\x01 \x01(\tR\x04chat\x12\x16\n" +
@@ -3117,7 +4493,106 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x13SetPresenceResponse\",\n" +
 	"\x18SubscribePresenceRequest\x12\x10\n" +
 	"\x03jid\x18\x01 \x01(\tR\x03jid\"\x1b\n" +
-	"\x19SubscribePresenceResponse2\x86\b\n" +
+	"\x19SubscribePresenceResponse\"\xea\x01\n" +
+	"\n" +
+	"ChatUpdate\x12\x12\n" +
+	"\x04chat\x18\x01 \x01(\tR\x04chat\x12\x14\n" +
+	"\x05field\x18\x02 \x01(\tR\x05field\x12\x14\n" +
+	"\x05value\x18\x03 \x01(\bR\x05value\x12$\n" +
+	"\x0emuted_until_ms\x18\x04 \x01(\x03R\fmutedUntilMs\x12!\n" +
+	"\ftimestamp_ms\x18\x05 \x01(\x03R\vtimestampMs\x12\x1b\n" +
+	"\tfull_sync\x18\x06 \x01(\bR\bfullSync\x12\x1d\n" +
+	"\n" +
+	"message_id\x18\a \x01(\tR\tmessageId\x12\x17\n" +
+	"\afrom_me\x18\b \x01(\bR\x06fromMe\"p\n" +
+	"\n" +
+	"MessageRef\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
+	"\afrom_me\x18\x02 \x01(\bR\x06fromMe\x12\x16\n" +
+	"\x06sender\x18\x03 \x01(\tR\x06sender\x12!\n" +
+	"\ftimestamp_ms\x18\x04 \x01(\x03R\vtimestampMs\"\xb7\x01\n" +
+	"\x11ChatActionRequest\x12\x12\n" +
+	"\x04chat\x18\x01 \x01(\tR\x04chat\x12\x16\n" +
+	"\x06action\x18\x02 \x01(\tR\x06action\x12\"\n" +
+	"\rmute_until_ms\x18\x03 \x01(\x03R\vmuteUntilMs\x12/\n" +
+	"\amessage\x18\x04 \x01(\v2\x15.worker.v1.MessageRefR\amessage\x12!\n" +
+	"\fdelete_media\x18\x05 \x01(\bR\vdeleteMedia\"\x14\n" +
+	"\x12ChatActionResponse\",\n" +
+	"\x16GetChatSettingsRequest\x12\x12\n" +
+	"\x04chat\x18\x01 \x01(\tR\x04chat\"\x89\x01\n" +
+	"\x17GetChatSettingsResponse\x12\x14\n" +
+	"\x05found\x18\x01 \x01(\bR\x05found\x12\x1a\n" +
+	"\barchived\x18\x02 \x01(\bR\barchived\x12\x16\n" +
+	"\x06pinned\x18\x03 \x01(\bR\x06pinned\x12$\n" +
+	"\x0emuted_until_ms\x18\x04 \x01(\x03R\fmutedUntilMs\"F\n" +
+	"\x18GetProfilePictureRequest\x12\x10\n" +
+	"\x03jid\x18\x01 \x01(\tR\x03jid\x12\x18\n" +
+	"\apreview\x18\x02 \x01(\bR\apreview\"Q\n" +
+	"\x19GetProfilePictureResponse\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x10\n" +
+	"\x03url\x18\x02 \x01(\tR\x03url\x12\x12\n" +
+	"\x04type\x18\x03 \x01(\tR\x04type\"h\n" +
+	"\x1dDownloadProfilePictureRequest\x12\x10\n" +
+	"\x03jid\x18\x01 \x01(\tR\x03jid\x12\x18\n" +
+	"\apreview\x18\x02 \x01(\bR\apreview\x12\x1b\n" +
+	"\tdest_path\x18\x03 \x01(\tR\bdestPath\"D\n" +
+	"\x1eDownloadProfilePictureResponse\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04size\x18\x02 \x01(\x03R\x04size\"B\n" +
+	"\x12GetUserInfoRequest\x12\x10\n" +
+	"\x03jid\x18\x01 \x01(\tR\x03jid\x12\x1a\n" +
+	"\bbusiness\x18\x02 \x01(\bR\bbusiness\"a\n" +
+	"\x0fBusinessProfile\x12\x18\n" +
+	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x14\n" +
+	"\x05email\x18\x02 \x01(\tR\x05email\x12\x1e\n" +
+	"\n" +
+	"categories\x18\x03 \x03(\tR\n" +
+	"categories\"\xcb\x01\n" +
+	"\x13GetUserInfoResponse\x12\x10\n" +
+	"\x03jid\x18\x01 \x01(\tR\x03jid\x12\x14\n" +
+	"\x05about\x18\x02 \x01(\tR\x05about\x12\x1d\n" +
+	"\n" +
+	"picture_id\x18\x03 \x01(\tR\tpictureId\x12#\n" +
+	"\rverified_name\x18\x04 \x01(\tR\fverifiedName\x12\x10\n" +
+	"\x03lid\x18\x05 \x01(\tR\x03lid\x126\n" +
+	"\bbusiness\x18\x06 \x01(\v2\x1a.worker.v1.BusinessProfileR\bbusiness\"\x15\n" +
+	"\x13GetBlocklistRequest\"@\n" +
+	"\x16UpdateBlocklistRequest\x12\x10\n" +
+	"\x03jid\x18\x01 \x01(\tR\x03jid\x12\x14\n" +
+	"\x05block\x18\x02 \x01(\bR\x05block\"*\n" +
+	"\x14GetBlocklistResponse\x12\x12\n" +
+	"\x04jids\x18\x01 \x03(\tR\x04jids\"\x13\n" +
+	"\x11GetProfileRequest\"\xcb\x01\n" +
+	"\x12GetProfileResponse\x12\x10\n" +
+	"\x03jid\x18\x01 \x01(\tR\x03jid\x12\x10\n" +
+	"\x03lid\x18\x02 \x01(\tR\x03lid\x12\x1b\n" +
+	"\tpush_name\x18\x03 \x01(\tR\bpushName\x12#\n" +
+	"\rbusiness_name\x18\x04 \x01(\tR\fbusinessName\x12\x1a\n" +
+	"\bplatform\x18\x05 \x01(\tR\bplatform\x12\x14\n" +
+	"\x05about\x18\x06 \x01(\tR\x05about\x12\x1d\n" +
+	"\n" +
+	"picture_id\x18\a \x01(\tR\tpictureId\"\xc2\x01\n" +
+	"\x14UpdateProfileRequest\x12\x19\n" +
+	"\bset_name\x18\x01 \x01(\bR\asetName\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1b\n" +
+	"\tset_about\x18\x03 \x01(\bR\bsetAbout\x12\x14\n" +
+	"\x05about\x18\x04 \x01(\tR\x05about\x12!\n" +
+	"\fpicture_path\x18\x05 \x01(\tR\vpicturePath\x12%\n" +
+	"\x0eremove_picture\x18\x06 \x01(\bR\rremovePicture\"6\n" +
+	"\x15UpdateProfileResponse\x12\x1d\n" +
+	"\n" +
+	"picture_id\x18\x01 \x01(\tR\tpictureId\"\x84\x01\n" +
+	"\aPrivacy\x12<\n" +
+	"\bsettings\x18\x01 \x03(\v2 .worker.v1.Privacy.SettingsEntryR\bsettings\x1a;\n" +
+	"\rSettingsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x13\n" +
+	"\x11GetPrivacyRequest\"\xb9\x01\n" +
+	"\x11SetPrivacyRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\x128\n" +
+	"\x18set_default_disappearing\x18\x03 \x01(\bR\x16setDefaultDisappearing\x12@\n" +
+	"\x1cdefault_disappearing_seconds\x18\x04 \x01(\rR\x1adefaultDisappearingSeconds2\x8f\x0f\n" +
 	"\x06Worker\x127\n" +
 	"\x04Ping\x12\x16.worker.v1.PingRequest\x1a\x17.worker.v1.PingResponse\x12F\n" +
 	"\tPairPhone\x12\x1b.worker.v1.PairPhoneRequest\x1a\x1c.worker.v1.PairPhoneResponse\x12=\n" +
@@ -3134,7 +4609,22 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\n" +
 	"RejectCall\x12\x1c.worker.v1.RejectCallRequest\x1a\x1d.worker.v1.RejectCallResponse\x12L\n" +
 	"\vSetPresence\x12\x1d.worker.v1.SetPresenceRequest\x1a\x1e.worker.v1.SetPresenceResponse\x12^\n" +
-	"\x11SubscribePresence\x12#.worker.v1.SubscribePresenceRequest\x1a$.worker.v1.SubscribePresenceResponseB7Z5github.com/douglasdf99/litezap/gen/worker/v1;workerv1b\x06proto3"
+	"\x11SubscribePresence\x12#.worker.v1.SubscribePresenceRequest\x1a$.worker.v1.SubscribePresenceResponse\x12I\n" +
+	"\n" +
+	"ChatAction\x12\x1c.worker.v1.ChatActionRequest\x1a\x1d.worker.v1.ChatActionResponse\x12X\n" +
+	"\x0fGetChatSettings\x12!.worker.v1.GetChatSettingsRequest\x1a\".worker.v1.GetChatSettingsResponse\x12^\n" +
+	"\x11GetProfilePicture\x12#.worker.v1.GetProfilePictureRequest\x1a$.worker.v1.GetProfilePictureResponse\x12m\n" +
+	"\x16DownloadProfilePicture\x12(.worker.v1.DownloadProfilePictureRequest\x1a).worker.v1.DownloadProfilePictureResponse\x12L\n" +
+	"\vGetUserInfo\x12\x1d.worker.v1.GetUserInfoRequest\x1a\x1e.worker.v1.GetUserInfoResponse\x12O\n" +
+	"\fGetBlocklist\x12\x1e.worker.v1.GetBlocklistRequest\x1a\x1f.worker.v1.GetBlocklistResponse\x12U\n" +
+	"\x0fUpdateBlocklist\x12!.worker.v1.UpdateBlocklistRequest\x1a\x1f.worker.v1.GetBlocklistResponse\x12I\n" +
+	"\n" +
+	"GetProfile\x12\x1c.worker.v1.GetProfileRequest\x1a\x1d.worker.v1.GetProfileResponse\x12R\n" +
+	"\rUpdateProfile\x12\x1f.worker.v1.UpdateProfileRequest\x1a .worker.v1.UpdateProfileResponse\x12>\n" +
+	"\n" +
+	"GetPrivacy\x12\x1c.worker.v1.GetPrivacyRequest\x1a\x12.worker.v1.Privacy\x12>\n" +
+	"\n" +
+	"SetPrivacy\x12\x1c.worker.v1.SetPrivacyRequest\x1a\x12.worker.v1.PrivacyB7Z5github.com/douglasdf99/litezap/gen/worker/v1;workerv1b\x06proto3"
 
 var (
 	file_worker_v1_worker_proto_rawDescOnce sync.Once
@@ -3148,53 +4638,77 @@ func file_worker_v1_worker_proto_rawDescGZIP() []byte {
 	return file_worker_v1_worker_proto_rawDescData
 }
 
-var file_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
+var file_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 69)
 var file_worker_v1_worker_proto_goTypes = []any{
-	(*PingRequest)(nil),               // 0: worker.v1.PingRequest
-	(*PingResponse)(nil),              // 1: worker.v1.PingResponse
-	(*PairPhoneRequest)(nil),          // 2: worker.v1.PairPhoneRequest
-	(*PairPhoneResponse)(nil),         // 3: worker.v1.PairPhoneResponse
-	(*LogoutRequest)(nil),             // 4: worker.v1.LogoutRequest
-	(*LogoutResponse)(nil),            // 5: worker.v1.LogoutResponse
-	(*EventsRequest)(nil),             // 6: worker.v1.EventsRequest
-	(*Event)(nil),                     // 7: worker.v1.Event
-	(*ChatPresence)(nil),              // 8: worker.v1.ChatPresence
-	(*Presence)(nil),                  // 9: worker.v1.Presence
-	(*Call)(nil),                      // 10: worker.v1.Call
-	(*ConnState)(nil),                 // 11: worker.v1.ConnState
-	(*QR)(nil),                        // 12: worker.v1.QR
-	(*Message)(nil),                   // 13: worker.v1.Message
-	(*ButtonReply)(nil),               // 14: worker.v1.ButtonReply
-	(*Location)(nil),                  // 15: worker.v1.Location
-	(*ContactCard)(nil),               // 16: worker.v1.ContactCard
-	(*Poll)(nil),                      // 17: worker.v1.Poll
-	(*Quote)(nil),                     // 18: worker.v1.Quote
-	(*LinkPreview)(nil),               // 19: worker.v1.LinkPreview
-	(*Media)(nil),                     // 20: worker.v1.Media
-	(*Receipt)(nil),                   // 21: worker.v1.Receipt
-	(*HistoryChunk)(nil),              // 22: worker.v1.HistoryChunk
-	(*SendRequest)(nil),               // 23: worker.v1.SendRequest
-	(*SendResponse)(nil),              // 24: worker.v1.SendResponse
-	(*SendPresenceRequest)(nil),       // 25: worker.v1.SendPresenceRequest
-	(*SendPresenceResponse)(nil),      // 26: worker.v1.SendPresenceResponse
-	(*MarkReadRequest)(nil),           // 27: worker.v1.MarkReadRequest
-	(*MarkReadResponse)(nil),          // 28: worker.v1.MarkReadResponse
-	(*DownloadMediaRequest)(nil),      // 29: worker.v1.DownloadMediaRequest
-	(*DownloadMediaResponse)(nil),     // 30: worker.v1.DownloadMediaResponse
-	(*Contact)(nil),                   // 31: worker.v1.Contact
-	(*GetContactsRequest)(nil),        // 32: worker.v1.GetContactsRequest
-	(*GetContactsResponse)(nil),       // 33: worker.v1.GetContactsResponse
-	(*GetContactRequest)(nil),         // 34: worker.v1.GetContactRequest
-	(*GetContactResponse)(nil),        // 35: worker.v1.GetContactResponse
-	(*CheckNumbersRequest)(nil),       // 36: worker.v1.CheckNumbersRequest
-	(*NumberStatus)(nil),              // 37: worker.v1.NumberStatus
-	(*CheckNumbersResponse)(nil),      // 38: worker.v1.CheckNumbersResponse
-	(*RejectCallRequest)(nil),         // 39: worker.v1.RejectCallRequest
-	(*RejectCallResponse)(nil),        // 40: worker.v1.RejectCallResponse
-	(*SetPresenceRequest)(nil),        // 41: worker.v1.SetPresenceRequest
-	(*SetPresenceResponse)(nil),       // 42: worker.v1.SetPresenceResponse
-	(*SubscribePresenceRequest)(nil),  // 43: worker.v1.SubscribePresenceRequest
-	(*SubscribePresenceResponse)(nil), // 44: worker.v1.SubscribePresenceResponse
+	(*PingRequest)(nil),                    // 0: worker.v1.PingRequest
+	(*PingResponse)(nil),                   // 1: worker.v1.PingResponse
+	(*PairPhoneRequest)(nil),               // 2: worker.v1.PairPhoneRequest
+	(*PairPhoneResponse)(nil),              // 3: worker.v1.PairPhoneResponse
+	(*LogoutRequest)(nil),                  // 4: worker.v1.LogoutRequest
+	(*LogoutResponse)(nil),                 // 5: worker.v1.LogoutResponse
+	(*EventsRequest)(nil),                  // 6: worker.v1.EventsRequest
+	(*Event)(nil),                          // 7: worker.v1.Event
+	(*ChatPresence)(nil),                   // 8: worker.v1.ChatPresence
+	(*Presence)(nil),                       // 9: worker.v1.Presence
+	(*Call)(nil),                           // 10: worker.v1.Call
+	(*ConnState)(nil),                      // 11: worker.v1.ConnState
+	(*QR)(nil),                             // 12: worker.v1.QR
+	(*Message)(nil),                        // 13: worker.v1.Message
+	(*ButtonReply)(nil),                    // 14: worker.v1.ButtonReply
+	(*Location)(nil),                       // 15: worker.v1.Location
+	(*ContactCard)(nil),                    // 16: worker.v1.ContactCard
+	(*Poll)(nil),                           // 17: worker.v1.Poll
+	(*Quote)(nil),                          // 18: worker.v1.Quote
+	(*LinkPreview)(nil),                    // 19: worker.v1.LinkPreview
+	(*Media)(nil),                          // 20: worker.v1.Media
+	(*Receipt)(nil),                        // 21: worker.v1.Receipt
+	(*HistoryChunk)(nil),                   // 22: worker.v1.HistoryChunk
+	(*SendRequest)(nil),                    // 23: worker.v1.SendRequest
+	(*SendResponse)(nil),                   // 24: worker.v1.SendResponse
+	(*SendPresenceRequest)(nil),            // 25: worker.v1.SendPresenceRequest
+	(*SendPresenceResponse)(nil),           // 26: worker.v1.SendPresenceResponse
+	(*MarkReadRequest)(nil),                // 27: worker.v1.MarkReadRequest
+	(*MarkReadResponse)(nil),               // 28: worker.v1.MarkReadResponse
+	(*DownloadMediaRequest)(nil),           // 29: worker.v1.DownloadMediaRequest
+	(*DownloadMediaResponse)(nil),          // 30: worker.v1.DownloadMediaResponse
+	(*Contact)(nil),                        // 31: worker.v1.Contact
+	(*GetContactsRequest)(nil),             // 32: worker.v1.GetContactsRequest
+	(*GetContactsResponse)(nil),            // 33: worker.v1.GetContactsResponse
+	(*GetContactRequest)(nil),              // 34: worker.v1.GetContactRequest
+	(*GetContactResponse)(nil),             // 35: worker.v1.GetContactResponse
+	(*CheckNumbersRequest)(nil),            // 36: worker.v1.CheckNumbersRequest
+	(*NumberStatus)(nil),                   // 37: worker.v1.NumberStatus
+	(*CheckNumbersResponse)(nil),           // 38: worker.v1.CheckNumbersResponse
+	(*RejectCallRequest)(nil),              // 39: worker.v1.RejectCallRequest
+	(*RejectCallResponse)(nil),             // 40: worker.v1.RejectCallResponse
+	(*SetPresenceRequest)(nil),             // 41: worker.v1.SetPresenceRequest
+	(*SetPresenceResponse)(nil),            // 42: worker.v1.SetPresenceResponse
+	(*SubscribePresenceRequest)(nil),       // 43: worker.v1.SubscribePresenceRequest
+	(*SubscribePresenceResponse)(nil),      // 44: worker.v1.SubscribePresenceResponse
+	(*ChatUpdate)(nil),                     // 45: worker.v1.ChatUpdate
+	(*MessageRef)(nil),                     // 46: worker.v1.MessageRef
+	(*ChatActionRequest)(nil),              // 47: worker.v1.ChatActionRequest
+	(*ChatActionResponse)(nil),             // 48: worker.v1.ChatActionResponse
+	(*GetChatSettingsRequest)(nil),         // 49: worker.v1.GetChatSettingsRequest
+	(*GetChatSettingsResponse)(nil),        // 50: worker.v1.GetChatSettingsResponse
+	(*GetProfilePictureRequest)(nil),       // 51: worker.v1.GetProfilePictureRequest
+	(*GetProfilePictureResponse)(nil),      // 52: worker.v1.GetProfilePictureResponse
+	(*DownloadProfilePictureRequest)(nil),  // 53: worker.v1.DownloadProfilePictureRequest
+	(*DownloadProfilePictureResponse)(nil), // 54: worker.v1.DownloadProfilePictureResponse
+	(*GetUserInfoRequest)(nil),             // 55: worker.v1.GetUserInfoRequest
+	(*BusinessProfile)(nil),                // 56: worker.v1.BusinessProfile
+	(*GetUserInfoResponse)(nil),            // 57: worker.v1.GetUserInfoResponse
+	(*GetBlocklistRequest)(nil),            // 58: worker.v1.GetBlocklistRequest
+	(*UpdateBlocklistRequest)(nil),         // 59: worker.v1.UpdateBlocklistRequest
+	(*GetBlocklistResponse)(nil),           // 60: worker.v1.GetBlocklistResponse
+	(*GetProfileRequest)(nil),              // 61: worker.v1.GetProfileRequest
+	(*GetProfileResponse)(nil),             // 62: worker.v1.GetProfileResponse
+	(*UpdateProfileRequest)(nil),           // 63: worker.v1.UpdateProfileRequest
+	(*UpdateProfileResponse)(nil),          // 64: worker.v1.UpdateProfileResponse
+	(*Privacy)(nil),                        // 65: worker.v1.Privacy
+	(*GetPrivacyRequest)(nil),              // 66: worker.v1.GetPrivacyRequest
+	(*SetPrivacyRequest)(nil),              // 67: worker.v1.SetPrivacyRequest
+	nil,                                    // 68: worker.v1.Privacy.SettingsEntry
 }
 var file_worker_v1_worker_proto_depIdxs = []int32{
 	11, // 0: worker.v1.Event.conn:type_name -> worker.v1.ConnState
@@ -3205,53 +4719,79 @@ var file_worker_v1_worker_proto_depIdxs = []int32{
 	8,  // 5: worker.v1.Event.chat_presence:type_name -> worker.v1.ChatPresence
 	9,  // 6: worker.v1.Event.presence:type_name -> worker.v1.Presence
 	10, // 7: worker.v1.Event.call:type_name -> worker.v1.Call
-	20, // 8: worker.v1.Message.media:type_name -> worker.v1.Media
-	15, // 9: worker.v1.Message.location:type_name -> worker.v1.Location
-	16, // 10: worker.v1.Message.contacts:type_name -> worker.v1.ContactCard
-	17, // 11: worker.v1.Message.poll:type_name -> worker.v1.Poll
-	14, // 12: worker.v1.Message.button_reply:type_name -> worker.v1.ButtonReply
-	13, // 13: worker.v1.HistoryChunk.messages:type_name -> worker.v1.Message
-	18, // 14: worker.v1.SendRequest.quote:type_name -> worker.v1.Quote
-	19, // 15: worker.v1.SendRequest.link_preview:type_name -> worker.v1.LinkPreview
-	15, // 16: worker.v1.SendRequest.location:type_name -> worker.v1.Location
-	16, // 17: worker.v1.SendRequest.contacts:type_name -> worker.v1.ContactCard
-	17, // 18: worker.v1.SendRequest.poll:type_name -> worker.v1.Poll
-	31, // 19: worker.v1.GetContactsResponse.contacts:type_name -> worker.v1.Contact
-	31, // 20: worker.v1.GetContactResponse.contact:type_name -> worker.v1.Contact
-	37, // 21: worker.v1.CheckNumbersResponse.results:type_name -> worker.v1.NumberStatus
-	0,  // 22: worker.v1.Worker.Ping:input_type -> worker.v1.PingRequest
-	2,  // 23: worker.v1.Worker.PairPhone:input_type -> worker.v1.PairPhoneRequest
-	4,  // 24: worker.v1.Worker.Logout:input_type -> worker.v1.LogoutRequest
-	6,  // 25: worker.v1.Worker.Events:input_type -> worker.v1.EventsRequest
-	23, // 26: worker.v1.Worker.Send:input_type -> worker.v1.SendRequest
-	25, // 27: worker.v1.Worker.SendPresence:input_type -> worker.v1.SendPresenceRequest
-	27, // 28: worker.v1.Worker.MarkRead:input_type -> worker.v1.MarkReadRequest
-	29, // 29: worker.v1.Worker.DownloadMedia:input_type -> worker.v1.DownloadMediaRequest
-	32, // 30: worker.v1.Worker.GetContacts:input_type -> worker.v1.GetContactsRequest
-	34, // 31: worker.v1.Worker.GetContact:input_type -> worker.v1.GetContactRequest
-	36, // 32: worker.v1.Worker.CheckNumbers:input_type -> worker.v1.CheckNumbersRequest
-	39, // 33: worker.v1.Worker.RejectCall:input_type -> worker.v1.RejectCallRequest
-	41, // 34: worker.v1.Worker.SetPresence:input_type -> worker.v1.SetPresenceRequest
-	43, // 35: worker.v1.Worker.SubscribePresence:input_type -> worker.v1.SubscribePresenceRequest
-	1,  // 36: worker.v1.Worker.Ping:output_type -> worker.v1.PingResponse
-	3,  // 37: worker.v1.Worker.PairPhone:output_type -> worker.v1.PairPhoneResponse
-	5,  // 38: worker.v1.Worker.Logout:output_type -> worker.v1.LogoutResponse
-	7,  // 39: worker.v1.Worker.Events:output_type -> worker.v1.Event
-	24, // 40: worker.v1.Worker.Send:output_type -> worker.v1.SendResponse
-	26, // 41: worker.v1.Worker.SendPresence:output_type -> worker.v1.SendPresenceResponse
-	28, // 42: worker.v1.Worker.MarkRead:output_type -> worker.v1.MarkReadResponse
-	30, // 43: worker.v1.Worker.DownloadMedia:output_type -> worker.v1.DownloadMediaResponse
-	33, // 44: worker.v1.Worker.GetContacts:output_type -> worker.v1.GetContactsResponse
-	35, // 45: worker.v1.Worker.GetContact:output_type -> worker.v1.GetContactResponse
-	38, // 46: worker.v1.Worker.CheckNumbers:output_type -> worker.v1.CheckNumbersResponse
-	40, // 47: worker.v1.Worker.RejectCall:output_type -> worker.v1.RejectCallResponse
-	42, // 48: worker.v1.Worker.SetPresence:output_type -> worker.v1.SetPresenceResponse
-	44, // 49: worker.v1.Worker.SubscribePresence:output_type -> worker.v1.SubscribePresenceResponse
-	36, // [36:50] is the sub-list for method output_type
-	22, // [22:36] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	45, // 8: worker.v1.Event.chat_update:type_name -> worker.v1.ChatUpdate
+	20, // 9: worker.v1.Message.media:type_name -> worker.v1.Media
+	15, // 10: worker.v1.Message.location:type_name -> worker.v1.Location
+	16, // 11: worker.v1.Message.contacts:type_name -> worker.v1.ContactCard
+	17, // 12: worker.v1.Message.poll:type_name -> worker.v1.Poll
+	14, // 13: worker.v1.Message.button_reply:type_name -> worker.v1.ButtonReply
+	13, // 14: worker.v1.HistoryChunk.messages:type_name -> worker.v1.Message
+	18, // 15: worker.v1.SendRequest.quote:type_name -> worker.v1.Quote
+	19, // 16: worker.v1.SendRequest.link_preview:type_name -> worker.v1.LinkPreview
+	15, // 17: worker.v1.SendRequest.location:type_name -> worker.v1.Location
+	16, // 18: worker.v1.SendRequest.contacts:type_name -> worker.v1.ContactCard
+	17, // 19: worker.v1.SendRequest.poll:type_name -> worker.v1.Poll
+	31, // 20: worker.v1.GetContactsResponse.contacts:type_name -> worker.v1.Contact
+	31, // 21: worker.v1.GetContactResponse.contact:type_name -> worker.v1.Contact
+	37, // 22: worker.v1.CheckNumbersResponse.results:type_name -> worker.v1.NumberStatus
+	46, // 23: worker.v1.ChatActionRequest.message:type_name -> worker.v1.MessageRef
+	56, // 24: worker.v1.GetUserInfoResponse.business:type_name -> worker.v1.BusinessProfile
+	68, // 25: worker.v1.Privacy.settings:type_name -> worker.v1.Privacy.SettingsEntry
+	0,  // 26: worker.v1.Worker.Ping:input_type -> worker.v1.PingRequest
+	2,  // 27: worker.v1.Worker.PairPhone:input_type -> worker.v1.PairPhoneRequest
+	4,  // 28: worker.v1.Worker.Logout:input_type -> worker.v1.LogoutRequest
+	6,  // 29: worker.v1.Worker.Events:input_type -> worker.v1.EventsRequest
+	23, // 30: worker.v1.Worker.Send:input_type -> worker.v1.SendRequest
+	25, // 31: worker.v1.Worker.SendPresence:input_type -> worker.v1.SendPresenceRequest
+	27, // 32: worker.v1.Worker.MarkRead:input_type -> worker.v1.MarkReadRequest
+	29, // 33: worker.v1.Worker.DownloadMedia:input_type -> worker.v1.DownloadMediaRequest
+	32, // 34: worker.v1.Worker.GetContacts:input_type -> worker.v1.GetContactsRequest
+	34, // 35: worker.v1.Worker.GetContact:input_type -> worker.v1.GetContactRequest
+	36, // 36: worker.v1.Worker.CheckNumbers:input_type -> worker.v1.CheckNumbersRequest
+	39, // 37: worker.v1.Worker.RejectCall:input_type -> worker.v1.RejectCallRequest
+	41, // 38: worker.v1.Worker.SetPresence:input_type -> worker.v1.SetPresenceRequest
+	43, // 39: worker.v1.Worker.SubscribePresence:input_type -> worker.v1.SubscribePresenceRequest
+	47, // 40: worker.v1.Worker.ChatAction:input_type -> worker.v1.ChatActionRequest
+	49, // 41: worker.v1.Worker.GetChatSettings:input_type -> worker.v1.GetChatSettingsRequest
+	51, // 42: worker.v1.Worker.GetProfilePicture:input_type -> worker.v1.GetProfilePictureRequest
+	53, // 43: worker.v1.Worker.DownloadProfilePicture:input_type -> worker.v1.DownloadProfilePictureRequest
+	55, // 44: worker.v1.Worker.GetUserInfo:input_type -> worker.v1.GetUserInfoRequest
+	58, // 45: worker.v1.Worker.GetBlocklist:input_type -> worker.v1.GetBlocklistRequest
+	59, // 46: worker.v1.Worker.UpdateBlocklist:input_type -> worker.v1.UpdateBlocklistRequest
+	61, // 47: worker.v1.Worker.GetProfile:input_type -> worker.v1.GetProfileRequest
+	63, // 48: worker.v1.Worker.UpdateProfile:input_type -> worker.v1.UpdateProfileRequest
+	66, // 49: worker.v1.Worker.GetPrivacy:input_type -> worker.v1.GetPrivacyRequest
+	67, // 50: worker.v1.Worker.SetPrivacy:input_type -> worker.v1.SetPrivacyRequest
+	1,  // 51: worker.v1.Worker.Ping:output_type -> worker.v1.PingResponse
+	3,  // 52: worker.v1.Worker.PairPhone:output_type -> worker.v1.PairPhoneResponse
+	5,  // 53: worker.v1.Worker.Logout:output_type -> worker.v1.LogoutResponse
+	7,  // 54: worker.v1.Worker.Events:output_type -> worker.v1.Event
+	24, // 55: worker.v1.Worker.Send:output_type -> worker.v1.SendResponse
+	26, // 56: worker.v1.Worker.SendPresence:output_type -> worker.v1.SendPresenceResponse
+	28, // 57: worker.v1.Worker.MarkRead:output_type -> worker.v1.MarkReadResponse
+	30, // 58: worker.v1.Worker.DownloadMedia:output_type -> worker.v1.DownloadMediaResponse
+	33, // 59: worker.v1.Worker.GetContacts:output_type -> worker.v1.GetContactsResponse
+	35, // 60: worker.v1.Worker.GetContact:output_type -> worker.v1.GetContactResponse
+	38, // 61: worker.v1.Worker.CheckNumbers:output_type -> worker.v1.CheckNumbersResponse
+	40, // 62: worker.v1.Worker.RejectCall:output_type -> worker.v1.RejectCallResponse
+	42, // 63: worker.v1.Worker.SetPresence:output_type -> worker.v1.SetPresenceResponse
+	44, // 64: worker.v1.Worker.SubscribePresence:output_type -> worker.v1.SubscribePresenceResponse
+	48, // 65: worker.v1.Worker.ChatAction:output_type -> worker.v1.ChatActionResponse
+	50, // 66: worker.v1.Worker.GetChatSettings:output_type -> worker.v1.GetChatSettingsResponse
+	52, // 67: worker.v1.Worker.GetProfilePicture:output_type -> worker.v1.GetProfilePictureResponse
+	54, // 68: worker.v1.Worker.DownloadProfilePicture:output_type -> worker.v1.DownloadProfilePictureResponse
+	57, // 69: worker.v1.Worker.GetUserInfo:output_type -> worker.v1.GetUserInfoResponse
+	60, // 70: worker.v1.Worker.GetBlocklist:output_type -> worker.v1.GetBlocklistResponse
+	60, // 71: worker.v1.Worker.UpdateBlocklist:output_type -> worker.v1.GetBlocklistResponse
+	62, // 72: worker.v1.Worker.GetProfile:output_type -> worker.v1.GetProfileResponse
+	64, // 73: worker.v1.Worker.UpdateProfile:output_type -> worker.v1.UpdateProfileResponse
+	65, // 74: worker.v1.Worker.GetPrivacy:output_type -> worker.v1.Privacy
+	65, // 75: worker.v1.Worker.SetPrivacy:output_type -> worker.v1.Privacy
+	51, // [51:76] is the sub-list for method output_type
+	26, // [26:51] is the sub-list for method input_type
+	26, // [26:26] is the sub-list for extension type_name
+	26, // [26:26] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_worker_v1_worker_proto_init() }
@@ -3268,6 +4808,7 @@ func file_worker_v1_worker_proto_init() {
 		(*Event_ChatPresence)(nil),
 		(*Event_Presence)(nil),
 		(*Event_Call)(nil),
+		(*Event_ChatUpdate)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -3275,7 +4816,7 @@ func file_worker_v1_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_worker_v1_worker_proto_rawDesc), len(file_worker_v1_worker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   45,
+			NumMessages:   69,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

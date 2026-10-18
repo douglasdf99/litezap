@@ -84,6 +84,7 @@ func Run(ctx context.Context, opt Options, log *slog.Logger) error {
 	}
 	wa := NewWhatsmeow(cli, log)
 	wa.proxied = opt.ProxyURL != ""
+	wa.acct.proxyURL = opt.ProxyURL
 	wa.dataDir, wa.instanceID = opt.DataDir, opt.InstanceID
 	wa.zombieTimeout = opt.ZombieTimeout
 	srv := NewServer(wa)

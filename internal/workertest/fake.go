@@ -54,6 +54,8 @@ type FakeWA struct {
 	presence   []bool // SetPresence calls (true: available)
 	subscribed []string
 	rtErr      error // returned by the Realtime methods when set
+	// Chats, contacts, profile and privacy (marco 9, account.go).
+	acct fakeAccount
 }
 
 func (f *FakeWA) Run(ctx context.Context, sink worker.Sink) error {

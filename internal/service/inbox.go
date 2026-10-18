@@ -17,14 +17,6 @@ import (
 	"github.com/douglasdf99/litezap/internal/store"
 )
 
-type ChatView struct {
-	JID           string    `json:"jid"`
-	Name          string    `json:"name,omitempty"`
-	IsGroup       bool      `json:"is_group"`
-	LastMessageAt time.Time `json:"last_message_at"`
-	UnreadCount   int       `json:"unread_count"`
-}
-
 type ChatPage struct {
 	Chats      []ChatView `json:"chats"`
 	NextCursor string     `json:"next_cursor,omitempty"`
@@ -74,8 +66,7 @@ func (s *Messaging) Chats(ctx context.Context, instanceID string, limit int, cur
 	}
 	page := ChatPage{Chats: make([]ChatView, 0, len(chats))}
 	for _, c := range chats {
-		page.Chats = append(page.Chats, ChatView{JID: c.JID, Name: c.Name, IsGroup: c.IsGroup,
-			LastMessageAt: c.LastMessageAt, UnreadCount: c.UnreadCount})
+		page.Chats = append(page.Chats, chatView(c)) // with the app state (account.go)
 	}
 	if len(chats) == limit {
 		page.NextCursor = encodeCursor(cur)

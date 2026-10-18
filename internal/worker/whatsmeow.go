@@ -58,6 +58,8 @@ type Whatsmeow struct {
 	rejectCall        func(context.Context, types.JID, string) error
 	sendPresence      func(context.Context, types.Presence) error
 	subscribePresence func(context.Context, types.JID) error
+	// Chats, contacts, profile and privacy (account.go, marco 9).
+	acct accountHooks
 
 	// Signals to pairLoop; all are buffered (1) and sent to without blocking.
 	restart    chan struct{} // from PairPhone: end the current round now
@@ -410,7 +412,7 @@ func (w *Whatsmeow) reportTerminal(state, reason, jid string) {
 }
 
 func (w *Whatsmeow) handle(evt any) {
-	if w.onData(evt) || w.onRealtime(evt) {
+	if w.onData(evt) || w.onRealtime(evt) || w.onAccount(evt) {
 		return
 	}
 	loggedIn := w.cli.Store.ID != nil

@@ -45,6 +45,7 @@ type Chat struct {
 	UnreadCount   int
 	HasInbound    bool
 	LastInboundAt time.Time // newest message received in the chat (zero if none)
+	ChatState               // marco 9: archived, pinned, muted, unread mark, deleted
 }
 
 // Media is a received attachment, downloaded on demand through the worker.
@@ -282,7 +283,8 @@ type ChatCursor struct {
 
 // ListChats returns chats ordered by last message (most recent first), after the cursor if set.
 func (s *Store) ListChats(ctx context.Context, instanceID string, limit int, after *ChatCursor) ([]Chat, ChatCursor, error) {
-	q := `SELECT jid, name, is_group, last_message_at, unread_count, has_inbound FROM chats WHERE instance_id = ?`
+	q := `SELECT jid, name, is_group, last_message_at, unread_count, has_inbound, ` + chatStateCols + ` FROM chats
+		WHERE instance_id = ? AND (deleted_at = '' OR deleted_at < last_message_at)`
 	args := []any{instanceID}
 	if after != nil {
 		q += ` AND (last_message_at < ? OR (last_message_at = ? AND jid < ?))`
@@ -301,10 +303,11 @@ func (s *Store) ListChats(ctx context.Context, instanceID string, limit int, aft
 	for rows.Next() {
 		var c Chat
 		var ts string
-		if err := rows.Scan(&c.JID, &c.Name, &c.IsGroup, &ts, &c.UnreadCount, &c.HasInbound); err != nil {
+		var st chatStateScan
+		if err := rows.Scan(append([]any{&c.JID, &c.Name, &c.IsGroup, &ts, &c.UnreadCount, &c.HasInbound}, st.dest()...)...); err != nil {
 			return nil, ChatCursor{}, err
 		}
-		c.LastMessageAt = parseTS(ts)
+		c.LastMessageAt, c.ChatState = parseTS(ts), st.state()
 		cur = ChatCursor{LastMessageAt: c.LastMessageAt, JID: c.JID}
 		out = append(out, c)
 	}
@@ -312,16 +315,7 @@ func (s *Store) ListChats(ctx context.Context, instanceID string, limit int, aft
 }
 
 func (s *Store) GetChat(ctx context.Context, instanceID, jid string) (Chat, error) {
-	var c Chat
-	var ts, inbound string
-	err := s.db.QueryRowContext(ctx, `SELECT jid, name, is_group, last_message_at, unread_count, has_inbound, last_inbound_at
-		FROM chats WHERE instance_id = ? AND jid = ?`, instanceID, jid).
-		Scan(&c.JID, &c.Name, &c.IsGroup, &ts, &c.UnreadCount, &c.HasInbound, &inbound)
-	if errors.Is(err, sql.ErrNoRows) {
-		return c, ErrNotFound
-	}
-	c.LastMessageAt, c.LastInboundAt = parseTS(ts), parseTS(inbound)
-	return c, err
+	return getChat(ctx, s.db, instanceID, jid)
 }
 
 // LatestInbound returns up to limit of the newest messages received in a chat (newest first).

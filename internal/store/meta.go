@@ -13,6 +13,7 @@ type MessageMeta struct {
 	Poll        *Poll         `json:"poll,omitempty"`
 	LinkPreview *LinkPreview  `json:"link_preview,omitempty"`
 	ButtonReply *ButtonReply  `json:"button_reply,omitempty"`
+	Starred     bool          `json:"starred,omitempty"` // marco 9: starred on some device of the account
 }
 
 // ButtonReply is a received answer to a button, list, template or interactive message.

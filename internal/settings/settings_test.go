@@ -161,3 +161,19 @@ func TestCallsAndPresencePatch(t *testing.T) {
 		t.Fatal("long reject_message accepted")
 	}
 }
+
+func TestAutoReadPatch(t *testing.T) {
+	p := Patch{AutoRead: &AutoReadPatch{Enabled: ptr(true)}}
+	p = p.Merge(Patch{AutoRead: &AutoReadPatch{Groups: ptr(true)}})
+	s := Defaults().Apply(p)
+	if !s.AutoRead.Enabled || !s.AutoRead.Groups {
+		t.Fatalf("auto_read = %+v", s.AutoRead)
+	}
+	if d := Defaults(); d.AutoRead.Enabled || d.AutoRead.Groups {
+		t.Fatal("auto_read must be off by default")
+	}
+	s = s.Apply(Patch{AutoRead: &AutoReadPatch{Enabled: ptr(false)}})
+	if s.AutoRead.Enabled || !s.AutoRead.Groups {
+		t.Fatalf("partial patch = %+v", s.AutoRead)
+	}
+}

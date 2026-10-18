@@ -15,6 +15,7 @@ import (
 
 	"github.com/douglasdf99/litezap/internal/agenthook"
 	"github.com/douglasdf99/litezap/internal/api"
+	"github.com/douglasdf99/litezap/internal/autoread"
 	"github.com/douglasdf99/litezap/internal/config"
 	"github.com/douglasdf99/litezap/internal/dashboard"
 	"github.com/douglasdf99/litezap/internal/events"
@@ -127,8 +128,12 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 			}
 			return settings.Effective(cfg.InstanceDefaults, cfg.DefaultProxyURL, in.SettingsJSON)
 		}}
+	// Marco 9: chat state from the app state, and auto-read; their services are set below.
+	acct := &service.Account{Store: st, Events: bus, Sending: cl.sending}
+	reader := &autoread.Reader{Workers: mgr, Unread: st, Log: log, Settings: rt.Settings}
 	mgr.SetObserver(manager.Observers{
 		&ingest.Ingestor{Store: st, Log: log, Events: bus, History: history}, q, events.Observer{Bus: bus}, cl.proxy, rt,
+		acct, reader,
 	})
 	stopAll := func() {
 		actx, acancel := context.WithTimeout(context.Background(), scaled(5*time.Second, scale))
@@ -136,6 +141,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		acancel()
 		shutdownAll(q, mgr, history, hooks, scale)
 		rt.Close() // reject messages being queued, presence retries
+		reader.Close()
 		cctx, cancel := context.WithTimeout(context.Background(), scaled(5*time.Second, scale))
 		cl.close(cctx)
 		cancel()
@@ -180,6 +186,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		// A URL built from a non-loopback listen address may be unreachable for third parties.
 		SignedURLs: cfg.PublicURL != "" || isLoopback(cfg.ListenAddr),
 	}
+	acct.Messaging = msg
 	loopback := isLoopback(cfg.ListenAddr)
 	// New sends (REST and MCP) are refused while the operator suspends sending.
 	guarded := service.GuardedMessaging{Messaging: msg, Sending: cl.sending}
@@ -201,6 +208,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		Operator:   cl.operatorOptions(),
 		Metrics:    cl.metrics(),
 		AgentHook:  &agenthook.Admin{Store: st},
+		Account:    acct,
 	}, log)
 	var codes *dashboard.LaunchCodes
 	if loopback {

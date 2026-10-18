@@ -38,6 +38,22 @@ service Worker {
   rpc RejectCall(RejectCallRequest) returns (RejectCallResponse);
   rpc SetPresence(SetPresenceRequest) returns (SetPresenceResponse);
   rpc SubscribePresence(SubscribePresenceRequest) returns (SubscribePresenceResponse);
+
+  // Chats, contacts, profile and privacy (marco 9). ChatAction changes a chat through
+  // the app state (the phone and other devices follow); GetChatSettings reads the local
+  // copy of that state. Contact lookups reach WhatsApp; picture downloads go through the
+  // instance proxy. NotFound answers "no picture" (not set or hidden by privacy).
+  rpc ChatAction(ChatActionRequest) returns (ChatActionResponse);
+  rpc GetChatSettings(GetChatSettingsRequest) returns (GetChatSettingsResponse);
+  rpc GetProfilePicture(GetProfilePictureRequest) returns (GetProfilePictureResponse);
+  rpc DownloadProfilePicture(DownloadProfilePictureRequest) returns (DownloadProfilePictureResponse);
+  rpc GetUserInfo(GetUserInfoRequest) returns (GetUserInfoResponse);
+  rpc GetBlocklist(GetBlocklistRequest) returns (GetBlocklistResponse);
+  rpc UpdateBlocklist(UpdateBlocklistRequest) returns (GetBlocklistResponse);
+  rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
+  rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
+  rpc GetPrivacy(GetPrivacyRequest) returns (Privacy);
+  rpc SetPrivacy(SetPrivacyRequest) returns (Privacy);
 }
 
 message PingRequest {}
@@ -67,6 +83,7 @@ message Event {
     ChatPresence chat_presence = 6;
     Presence presence = 7;
     Call call = 8;
+    ChatUpdate chat_update = 20; // marco 9
   }
 }
 
@@ -320,3 +337,133 @@ message SubscribePresenceRequest {
   string jid = 1;
 }
 message SubscribePresenceResponse {}
+
+// ---- Marco 9: chats, contacts, profile and privacy ----
+
+// ChatUpdate is a chat state change from the app state (made on any device of the
+// account, including this one through ChatAction). field: archived | pinned | muted |
+// unread | deleted | cleared | starred. value is the new state (muted: muted or not,
+// with muted_until_ms; unread: marked as unread; deleted/cleared: always true).
+message ChatUpdate {
+  string chat = 1; // phone-number JID when known
+  string field = 2;
+  bool value = 3;
+  int64 muted_until_ms = 4; // muted: -1 forever, 0 not muted
+  int64 timestamp_ms = 5;
+  bool full_sync = 6;
+  // starred: the message (WhatsApp id) and whether it is ours
+  string message_id = 7;
+  bool from_me = 8;
+}
+
+// MessageRef identifies a message of the chat (the last one for archive/read/delete,
+// the target for star).
+message MessageRef {
+  string id = 1; // WhatsApp id
+  bool from_me = 2;
+  string sender = 3; // author JID (groups)
+  int64 timestamp_ms = 4;
+}
+
+message ChatActionRequest {
+  string chat = 1;
+  // archive | unarchive | pin | unpin | mute | unmute | read | unread | delete | star | unstar
+  string action = 2;
+  int64 mute_until_ms = 3; // mute: 0 forever
+  MessageRef message = 4;  // last message (archive, read, unread, delete) or target (star)
+  bool delete_media = 5;   // delete
+}
+message ChatActionResponse {}
+
+message GetChatSettingsRequest {
+  string chat = 1;
+}
+message GetChatSettingsResponse {
+  bool found = 1;
+  bool archived = 2;
+  bool pinned = 3;
+  int64 muted_until_ms = 4; // -1 forever, 0 not muted
+}
+
+message GetProfilePictureRequest {
+  string jid = 1; // contact or group; empty: the account itself
+  bool preview = 2;
+}
+message GetProfilePictureResponse {
+  string id = 1;
+  string url = 2; // WhatsApp CDN URL (expires)
+  string type = 3; // image | preview
+}
+
+message DownloadProfilePictureRequest {
+  string jid = 1;
+  bool preview = 2;
+  string dest_path = 3; // file to write, inside the data directory
+}
+message DownloadProfilePictureResponse {
+  string id = 1;
+  int64 size = 2;
+}
+
+message GetUserInfoRequest {
+  string jid = 1;
+  bool business = 2; // also read the business profile (business accounts)
+}
+message BusinessProfile {
+  string address = 1;
+  string email = 2;
+  repeated string categories = 3;
+}
+message GetUserInfoResponse {
+  string jid = 1;
+  string about = 2;
+  string picture_id = 3;
+  string verified_name = 4;
+  string lid = 5;
+  BusinessProfile business = 6;
+}
+
+message GetBlocklistRequest {}
+message UpdateBlocklistRequest {
+  string jid = 1;
+  bool block = 2;
+}
+message GetBlocklistResponse {
+  repeated string jids = 1; // phone-number JIDs when known
+}
+
+message GetProfileRequest {}
+message GetProfileResponse {
+  string jid = 1;
+  string lid = 2;
+  string push_name = 3;
+  string business_name = 4;
+  string platform = 5;
+  string about = 6;
+  string picture_id = 7;
+}
+
+message UpdateProfileRequest {
+  bool set_name = 1;
+  string name = 2;
+  bool set_about = 3;
+  string about = 4;
+  string picture_path = 5; // JPEG inside the data directory
+  bool remove_picture = 6;
+}
+message UpdateProfileResponse {
+  string picture_id = 1;
+}
+
+// Privacy uses whatsmeow's names: last, online, profile, status, groupadd, readreceipts,
+// calladd, messages; values all | contacts | contact_blacklist | none | match_last_seen | known.
+message Privacy {
+  map<string, string> settings = 1;
+}
+message GetPrivacyRequest {}
+message SetPrivacyRequest {
+  string name = 1;
+  string value = 2;
+  bool set_default_disappearing = 3;
+  uint32 default_disappearing_seconds = 4;
+}

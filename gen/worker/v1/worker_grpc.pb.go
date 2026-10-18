@@ -19,20 +19,31 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Worker_Ping_FullMethodName              = "/worker.v1.Worker/Ping"
-	Worker_PairPhone_FullMethodName         = "/worker.v1.Worker/PairPhone"
-	Worker_Logout_FullMethodName            = "/worker.v1.Worker/Logout"
-	Worker_Events_FullMethodName            = "/worker.v1.Worker/Events"
-	Worker_Send_FullMethodName              = "/worker.v1.Worker/Send"
-	Worker_SendPresence_FullMethodName      = "/worker.v1.Worker/SendPresence"
-	Worker_MarkRead_FullMethodName          = "/worker.v1.Worker/MarkRead"
-	Worker_DownloadMedia_FullMethodName     = "/worker.v1.Worker/DownloadMedia"
-	Worker_GetContacts_FullMethodName       = "/worker.v1.Worker/GetContacts"
-	Worker_GetContact_FullMethodName        = "/worker.v1.Worker/GetContact"
-	Worker_CheckNumbers_FullMethodName      = "/worker.v1.Worker/CheckNumbers"
-	Worker_RejectCall_FullMethodName        = "/worker.v1.Worker/RejectCall"
-	Worker_SetPresence_FullMethodName       = "/worker.v1.Worker/SetPresence"
-	Worker_SubscribePresence_FullMethodName = "/worker.v1.Worker/SubscribePresence"
+	Worker_Ping_FullMethodName                   = "/worker.v1.Worker/Ping"
+	Worker_PairPhone_FullMethodName              = "/worker.v1.Worker/PairPhone"
+	Worker_Logout_FullMethodName                 = "/worker.v1.Worker/Logout"
+	Worker_Events_FullMethodName                 = "/worker.v1.Worker/Events"
+	Worker_Send_FullMethodName                   = "/worker.v1.Worker/Send"
+	Worker_SendPresence_FullMethodName           = "/worker.v1.Worker/SendPresence"
+	Worker_MarkRead_FullMethodName               = "/worker.v1.Worker/MarkRead"
+	Worker_DownloadMedia_FullMethodName          = "/worker.v1.Worker/DownloadMedia"
+	Worker_GetContacts_FullMethodName            = "/worker.v1.Worker/GetContacts"
+	Worker_GetContact_FullMethodName             = "/worker.v1.Worker/GetContact"
+	Worker_CheckNumbers_FullMethodName           = "/worker.v1.Worker/CheckNumbers"
+	Worker_RejectCall_FullMethodName             = "/worker.v1.Worker/RejectCall"
+	Worker_SetPresence_FullMethodName            = "/worker.v1.Worker/SetPresence"
+	Worker_SubscribePresence_FullMethodName      = "/worker.v1.Worker/SubscribePresence"
+	Worker_ChatAction_FullMethodName             = "/worker.v1.Worker/ChatAction"
+	Worker_GetChatSettings_FullMethodName        = "/worker.v1.Worker/GetChatSettings"
+	Worker_GetProfilePicture_FullMethodName      = "/worker.v1.Worker/GetProfilePicture"
+	Worker_DownloadProfilePicture_FullMethodName = "/worker.v1.Worker/DownloadProfilePicture"
+	Worker_GetUserInfo_FullMethodName            = "/worker.v1.Worker/GetUserInfo"
+	Worker_GetBlocklist_FullMethodName           = "/worker.v1.Worker/GetBlocklist"
+	Worker_UpdateBlocklist_FullMethodName        = "/worker.v1.Worker/UpdateBlocklist"
+	Worker_GetProfile_FullMethodName             = "/worker.v1.Worker/GetProfile"
+	Worker_UpdateProfile_FullMethodName          = "/worker.v1.Worker/UpdateProfile"
+	Worker_GetPrivacy_FullMethodName             = "/worker.v1.Worker/GetPrivacy"
+	Worker_SetPrivacy_FullMethodName             = "/worker.v1.Worker/SetPrivacy"
 )
 
 // WorkerClient is the client API for Worker service.
@@ -71,6 +82,21 @@ type WorkerClient interface {
 	RejectCall(ctx context.Context, in *RejectCallRequest, opts ...grpc.CallOption) (*RejectCallResponse, error)
 	SetPresence(ctx context.Context, in *SetPresenceRequest, opts ...grpc.CallOption) (*SetPresenceResponse, error)
 	SubscribePresence(ctx context.Context, in *SubscribePresenceRequest, opts ...grpc.CallOption) (*SubscribePresenceResponse, error)
+	// Chats, contacts, profile and privacy (marco 9). ChatAction changes a chat through
+	// the app state (the phone and other devices follow); GetChatSettings reads the local
+	// copy of that state. Contact lookups reach WhatsApp; picture downloads go through the
+	// instance proxy. NotFound answers "no picture" (not set or hidden by privacy).
+	ChatAction(ctx context.Context, in *ChatActionRequest, opts ...grpc.CallOption) (*ChatActionResponse, error)
+	GetChatSettings(ctx context.Context, in *GetChatSettingsRequest, opts ...grpc.CallOption) (*GetChatSettingsResponse, error)
+	GetProfilePicture(ctx context.Context, in *GetProfilePictureRequest, opts ...grpc.CallOption) (*GetProfilePictureResponse, error)
+	DownloadProfilePicture(ctx context.Context, in *DownloadProfilePictureRequest, opts ...grpc.CallOption) (*DownloadProfilePictureResponse, error)
+	GetUserInfo(ctx context.Context, in *GetUserInfoRequest, opts ...grpc.CallOption) (*GetUserInfoResponse, error)
+	GetBlocklist(ctx context.Context, in *GetBlocklistRequest, opts ...grpc.CallOption) (*GetBlocklistResponse, error)
+	UpdateBlocklist(ctx context.Context, in *UpdateBlocklistRequest, opts ...grpc.CallOption) (*GetBlocklistResponse, error)
+	GetProfile(ctx context.Context, in *GetProfileRequest, opts ...grpc.CallOption) (*GetProfileResponse, error)
+	UpdateProfile(ctx context.Context, in *UpdateProfileRequest, opts ...grpc.CallOption) (*UpdateProfileResponse, error)
+	GetPrivacy(ctx context.Context, in *GetPrivacyRequest, opts ...grpc.CallOption) (*Privacy, error)
+	SetPrivacy(ctx context.Context, in *SetPrivacyRequest, opts ...grpc.CallOption) (*Privacy, error)
 }
 
 type workerClient struct {
@@ -230,6 +256,116 @@ func (c *workerClient) SubscribePresence(ctx context.Context, in *SubscribePrese
 	return out, nil
 }
 
+func (c *workerClient) ChatAction(ctx context.Context, in *ChatActionRequest, opts ...grpc.CallOption) (*ChatActionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ChatActionResponse)
+	err := c.cc.Invoke(ctx, Worker_ChatAction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) GetChatSettings(ctx context.Context, in *GetChatSettingsRequest, opts ...grpc.CallOption) (*GetChatSettingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetChatSettingsResponse)
+	err := c.cc.Invoke(ctx, Worker_GetChatSettings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) GetProfilePicture(ctx context.Context, in *GetProfilePictureRequest, opts ...grpc.CallOption) (*GetProfilePictureResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetProfilePictureResponse)
+	err := c.cc.Invoke(ctx, Worker_GetProfilePicture_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) DownloadProfilePicture(ctx context.Context, in *DownloadProfilePictureRequest, opts ...grpc.CallOption) (*DownloadProfilePictureResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DownloadProfilePictureResponse)
+	err := c.cc.Invoke(ctx, Worker_DownloadProfilePicture_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) GetUserInfo(ctx context.Context, in *GetUserInfoRequest, opts ...grpc.CallOption) (*GetUserInfoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetUserInfoResponse)
+	err := c.cc.Invoke(ctx, Worker_GetUserInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) GetBlocklist(ctx context.Context, in *GetBlocklistRequest, opts ...grpc.CallOption) (*GetBlocklistResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetBlocklistResponse)
+	err := c.cc.Invoke(ctx, Worker_GetBlocklist_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) UpdateBlocklist(ctx context.Context, in *UpdateBlocklistRequest, opts ...grpc.CallOption) (*GetBlocklistResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetBlocklistResponse)
+	err := c.cc.Invoke(ctx, Worker_UpdateBlocklist_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) GetProfile(ctx context.Context, in *GetProfileRequest, opts ...grpc.CallOption) (*GetProfileResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetProfileResponse)
+	err := c.cc.Invoke(ctx, Worker_GetProfile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) UpdateProfile(ctx context.Context, in *UpdateProfileRequest, opts ...grpc.CallOption) (*UpdateProfileResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateProfileResponse)
+	err := c.cc.Invoke(ctx, Worker_UpdateProfile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) GetPrivacy(ctx context.Context, in *GetPrivacyRequest, opts ...grpc.CallOption) (*Privacy, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Privacy)
+	err := c.cc.Invoke(ctx, Worker_GetPrivacy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) SetPrivacy(ctx context.Context, in *SetPrivacyRequest, opts ...grpc.CallOption) (*Privacy, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Privacy)
+	err := c.cc.Invoke(ctx, Worker_SetPrivacy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkerServer is the server API for Worker service.
 // All implementations must embed UnimplementedWorkerServer
 // for forward compatibility.
@@ -266,6 +402,21 @@ type WorkerServer interface {
 	RejectCall(context.Context, *RejectCallRequest) (*RejectCallResponse, error)
 	SetPresence(context.Context, *SetPresenceRequest) (*SetPresenceResponse, error)
 	SubscribePresence(context.Context, *SubscribePresenceRequest) (*SubscribePresenceResponse, error)
+	// Chats, contacts, profile and privacy (marco 9). ChatAction changes a chat through
+	// the app state (the phone and other devices follow); GetChatSettings reads the local
+	// copy of that state. Contact lookups reach WhatsApp; picture downloads go through the
+	// instance proxy. NotFound answers "no picture" (not set or hidden by privacy).
+	ChatAction(context.Context, *ChatActionRequest) (*ChatActionResponse, error)
+	GetChatSettings(context.Context, *GetChatSettingsRequest) (*GetChatSettingsResponse, error)
+	GetProfilePicture(context.Context, *GetProfilePictureRequest) (*GetProfilePictureResponse, error)
+	DownloadProfilePicture(context.Context, *DownloadProfilePictureRequest) (*DownloadProfilePictureResponse, error)
+	GetUserInfo(context.Context, *GetUserInfoRequest) (*GetUserInfoResponse, error)
+	GetBlocklist(context.Context, *GetBlocklistRequest) (*GetBlocklistResponse, error)
+	UpdateBlocklist(context.Context, *UpdateBlocklistRequest) (*GetBlocklistResponse, error)
+	GetProfile(context.Context, *GetProfileRequest) (*GetProfileResponse, error)
+	UpdateProfile(context.Context, *UpdateProfileRequest) (*UpdateProfileResponse, error)
+	GetPrivacy(context.Context, *GetPrivacyRequest) (*Privacy, error)
+	SetPrivacy(context.Context, *SetPrivacyRequest) (*Privacy, error)
 	mustEmbedUnimplementedWorkerServer()
 }
 
@@ -317,6 +468,39 @@ func (UnimplementedWorkerServer) SetPresence(context.Context, *SetPresenceReques
 }
 func (UnimplementedWorkerServer) SubscribePresence(context.Context, *SubscribePresenceRequest) (*SubscribePresenceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SubscribePresence not implemented")
+}
+func (UnimplementedWorkerServer) ChatAction(context.Context, *ChatActionRequest) (*ChatActionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ChatAction not implemented")
+}
+func (UnimplementedWorkerServer) GetChatSettings(context.Context, *GetChatSettingsRequest) (*GetChatSettingsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetChatSettings not implemented")
+}
+func (UnimplementedWorkerServer) GetProfilePicture(context.Context, *GetProfilePictureRequest) (*GetProfilePictureResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProfilePicture not implemented")
+}
+func (UnimplementedWorkerServer) DownloadProfilePicture(context.Context, *DownloadProfilePictureRequest) (*DownloadProfilePictureResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DownloadProfilePicture not implemented")
+}
+func (UnimplementedWorkerServer) GetUserInfo(context.Context, *GetUserInfoRequest) (*GetUserInfoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetUserInfo not implemented")
+}
+func (UnimplementedWorkerServer) GetBlocklist(context.Context, *GetBlocklistRequest) (*GetBlocklistResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetBlocklist not implemented")
+}
+func (UnimplementedWorkerServer) UpdateBlocklist(context.Context, *UpdateBlocklistRequest) (*GetBlocklistResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateBlocklist not implemented")
+}
+func (UnimplementedWorkerServer) GetProfile(context.Context, *GetProfileRequest) (*GetProfileResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProfile not implemented")
+}
+func (UnimplementedWorkerServer) UpdateProfile(context.Context, *UpdateProfileRequest) (*UpdateProfileResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateProfile not implemented")
+}
+func (UnimplementedWorkerServer) GetPrivacy(context.Context, *GetPrivacyRequest) (*Privacy, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetPrivacy not implemented")
+}
+func (UnimplementedWorkerServer) SetPrivacy(context.Context, *SetPrivacyRequest) (*Privacy, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetPrivacy not implemented")
 }
 func (UnimplementedWorkerServer) mustEmbedUnimplementedWorkerServer() {}
 func (UnimplementedWorkerServer) testEmbeddedByValue()                {}
@@ -584,6 +768,204 @@ func _Worker_SubscribePresence_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Worker_ChatAction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ChatActionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).ChatAction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_ChatAction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).ChatAction(ctx, req.(*ChatActionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_GetChatSettings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetChatSettingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).GetChatSettings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_GetChatSettings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).GetChatSettings(ctx, req.(*GetChatSettingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_GetProfilePicture_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProfilePictureRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).GetProfilePicture(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_GetProfilePicture_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).GetProfilePicture(ctx, req.(*GetProfilePictureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_DownloadProfilePicture_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DownloadProfilePictureRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).DownloadProfilePicture(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_DownloadProfilePicture_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).DownloadProfilePicture(ctx, req.(*DownloadProfilePictureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_GetUserInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetUserInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).GetUserInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_GetUserInfo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).GetUserInfo(ctx, req.(*GetUserInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_GetBlocklist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetBlocklistRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).GetBlocklist(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_GetBlocklist_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).GetBlocklist(ctx, req.(*GetBlocklistRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_UpdateBlocklist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateBlocklistRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).UpdateBlocklist(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_UpdateBlocklist_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).UpdateBlocklist(ctx, req.(*UpdateBlocklistRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_GetProfile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProfileRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).GetProfile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_GetProfile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).GetProfile(ctx, req.(*GetProfileRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_UpdateProfile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateProfileRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).UpdateProfile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_UpdateProfile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).UpdateProfile(ctx, req.(*UpdateProfileRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_GetPrivacy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPrivacyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).GetPrivacy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_GetPrivacy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).GetPrivacy(ctx, req.(*GetPrivacyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_SetPrivacy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetPrivacyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).SetPrivacy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_SetPrivacy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).SetPrivacy(ctx, req.(*SetPrivacyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Worker_ServiceDesc is the grpc.ServiceDesc for Worker service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -642,6 +1024,50 @@ var Worker_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubscribePresence",
 			Handler:    _Worker_SubscribePresence_Handler,
+		},
+		{
+			MethodName: "ChatAction",
+			Handler:    _Worker_ChatAction_Handler,
+		},
+		{
+			MethodName: "GetChatSettings",
+			Handler:    _Worker_GetChatSettings_Handler,
+		},
+		{
+			MethodName: "GetProfilePicture",
+			Handler:    _Worker_GetProfilePicture_Handler,
+		},
+		{
+			MethodName: "DownloadProfilePicture",
+			Handler:    _Worker_DownloadProfilePicture_Handler,
+		},
+		{
+			MethodName: "GetUserInfo",
+			Handler:    _Worker_GetUserInfo_Handler,
+		},
+		{
+			MethodName: "GetBlocklist",
+			Handler:    _Worker_GetBlocklist_Handler,
+		},
+		{
+			MethodName: "UpdateBlocklist",
+			Handler:    _Worker_UpdateBlocklist_Handler,
+		},
+		{
+			MethodName: "GetProfile",
+			Handler:    _Worker_GetProfile_Handler,
+		},
+		{
+			MethodName: "UpdateProfile",
+			Handler:    _Worker_UpdateProfile_Handler,
+		},
+		{
+			MethodName: "GetPrivacy",
+			Handler:    _Worker_GetPrivacy_Handler,
+		},
+		{
+			MethodName: "SetPrivacy",
+			Handler:    _Worker_SetPrivacy_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

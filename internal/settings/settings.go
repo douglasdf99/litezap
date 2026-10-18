@@ -42,6 +42,15 @@ type Presence struct {
 	Online bool `json:"online" yaml:"online"`
 }
 
+// AutoRead marks received messages as read automatically (marco 9). Off by default: read
+// receipts tell contacts the message was seen (with read receipts off in the privacy
+// settings WhatsApp only clears the unread mark on the account's devices).
+type AutoRead struct {
+	Enabled bool `json:"enabled" yaml:"enabled"`
+	// Groups also reads group messages (direct chats only by default).
+	Groups bool `json:"groups" yaml:"groups"`
+}
+
 // MaxRejectMessage bounds calls.reject_message (bytes).
 const MaxRejectMessage = 1000
 
@@ -64,6 +73,7 @@ type Settings struct {
 	ProxyURL string   `json:"proxy_url" yaml:"-"`
 	Calls    Calls    `json:"calls" yaml:"calls"`
 	Presence Presence `json:"presence" yaml:"presence"`
+	AutoRead AutoRead `json:"auto_read" yaml:"auto_read"`
 }
 
 // Defaults follows spec 4.1: 3s + 0-2s jitter, 20/min, typing on, ramp 50 -> 150 over 14
@@ -230,6 +240,12 @@ type PresencePatch struct {
 	Online *bool `json:"online,omitempty"`
 }
 
+// AutoReadPatch is a partial update of AutoRead.
+type AutoReadPatch struct {
+	Enabled *bool `json:"enabled,omitempty"`
+	Groups  *bool `json:"groups,omitempty"`
+}
+
 // Patch is both the PUT body and what is stored per instance (instances.settings_json):
 // only overridden fields are kept, so instances follow later changes of the defaults.
 type Patch struct {
@@ -245,6 +261,7 @@ type Patch struct {
 	ProxyURL *string        `json:"proxy_url,omitempty"`
 	Calls    *CallsPatch    `json:"calls,omitempty"`
 	Presence *PresencePatch `json:"presence,omitempty"`
+	AutoRead *AutoReadPatch `json:"auto_read,omitempty"`
 }
 
 // Merge returns p with every field set in q overriding it.
@@ -302,6 +319,16 @@ func (p Patch) Merge(q Patch) Patch {
 			b = *q.Presence
 		}
 		out.Presence = &PresencePatch{Online: pickB(a.Online, b.Online)}
+	}
+	if p.AutoRead != nil || q.AutoRead != nil {
+		var a, b AutoReadPatch
+		if p.AutoRead != nil {
+			a = *p.AutoRead
+		}
+		if q.AutoRead != nil {
+			b = *q.AutoRead
+		}
+		out.AutoRead = &AutoReadPatch{Enabled: pickB(a.Enabled, b.Enabled), Groups: pickB(a.Groups, b.Groups)}
 	}
 	if p.Ramp != nil || q.Ramp != nil {
 		var a, b RampPatch
@@ -364,6 +391,14 @@ func (s Settings) Apply(p Patch) Settings {
 	}
 	if p.Presence != nil && p.Presence.Online != nil {
 		s.Presence.Online = *p.Presence.Online
+	}
+	if r := p.AutoRead; r != nil {
+		if r.Enabled != nil {
+			s.AutoRead.Enabled = *r.Enabled
+		}
+		if r.Groups != nil {
+			s.AutoRead.Groups = *r.Groups
+		}
 	}
 	return s
 }
