@@ -146,3 +146,27 @@ func TestExampleConfigLoads(t *testing.T) {
 		t.Fatalf("example defaults = %+v", cfg.InstanceDefaults)
 	}
 }
+
+func TestLoadWebhookSettings(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WebhookAllowPrivateURLs || cfg.WebhookRetentionDays != 7 || cfg.WebhookFailedRetentionDays != 30 {
+		t.Fatalf("defaults = %+v", cfg)
+	}
+	p := filepath.Join(t.TempDir(), "litezap.yaml")
+	if err := os.WriteFile(p, []byte("webhook_retention_days: 2\nwebhook_failed_retention_days: 3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LITEZAP_WEBHOOK_ALLOW_PRIVATE_URLS", "true")
+	if cfg, err = Load(p); err != nil || !cfg.WebhookAllowPrivateURLs || cfg.WebhookRetentionDays != 2 || cfg.WebhookFailedRetentionDays != 3 {
+		t.Fatalf("cfg = %+v, %v", cfg, err)
+	}
+	if err := os.WriteFile(p, []byte("webhook_retention_days: 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err == nil {
+		t.Fatal("retention 0 accepted")
+	}
+}

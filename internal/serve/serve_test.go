@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,5 +139,52 @@ func TestShutdownClosesHungRequests(t *testing.T) {
 		if errors.As(err, &ne) && ne.Timeout() {
 			t.Fatal("the hung request's connection is still open after Run returned")
 		}
+	}
+}
+
+// An open SSE stream ends at shutdown instead of holding Run for the whole grace period.
+func TestShutdownEndsSSEStreams(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := probe.Addr().String()
+	probe.Close()
+	dir := t.TempDir()
+	t.Setenv("LITEZAP_DATA_DIR", dir)
+	t.Setenv("LITEZAP_LISTEN_ADDR", addr)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, "", slog.New(slog.DiscardHandler)) }()
+	var tok []byte
+	for i := 0; i < 100; i++ {
+		if tok, err = os.ReadFile(filepath.Join(dir, "admin_token")); err == nil {
+			if c, err := net.Dial("tcp", addr); err == nil {
+				c.Close()
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	req, _ := http.NewRequest("GET", "http://"+addr+"/v1/events", nil)
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tok)))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("sse = %d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	start := time.Now()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("Run did not return")
+	}
+	if d := time.Since(start); d > 4*time.Second {
+		t.Fatalf("shutdown took %v: the SSE stream held it", d)
 	}
 }

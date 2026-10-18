@@ -10,6 +10,13 @@ default_proxy_url: ""
 # true libera media.url para IPs privados/loopback (uso local). Mantenha false em servidores.
 media_allow_private_urls: false
 
+# Webhooks: true libera entregas para IPs privados/loopback (ex.: um receptor em
+# http://127.0.0.1:9000 no próprio PC). Mantenha false em servidores.
+webhook_allow_private_urls: false
+# Dias que as entregas concluídas e a dead-letter (entregas que falharam por 24h) ficam guardadas.
+webhook_retention_days: 7
+webhook_failed_retention_days: 30
+
 # Padrões de envio por instância (cada instância pode sobrescrever via PUT /settings).
 # Pisos: min_interval_ms >= 1000 e max_per_minute <= 60, salvo unsafe_pacing: true.
 instance_defaults:

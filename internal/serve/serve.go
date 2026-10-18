@@ -14,6 +14,7 @@ import (
 
 	"github.com/douglasdf99/litezap/internal/api"
 	"github.com/douglasdf99/litezap/internal/config"
+	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/ingest"
 	"github.com/douglasdf99/litezap/internal/lookup"
 	"github.com/douglasdf99/litezap/internal/manager"
@@ -23,6 +24,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/settings"
 	"github.com/douglasdf99/litezap/internal/spawner"
 	"github.com/douglasdf99/litezap/internal/store"
+	"github.com/douglasdf99/litezap/internal/webhook"
 )
 
 func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
@@ -54,17 +56,33 @@ func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
 		Env: workerEnv(st, cfg)}
 	mgr := manager.New(st, sp, manager.DefaultOptions(), log)
 	resolver := &lookup.Resolver{Store: st, Workers: mgr}
+	// Events: webhooks are the bus's persistent sink; SSE streams subscribe per request.
+	day := 24 * time.Hour
+	hooks := webhook.New(st, webhook.Options{AllowPrivate: cfg.WebhookAllowPrivateURLs, Log: log,
+		Retention:       time.Duration(cfg.WebhookRetentionDays) * day,
+		FailedRetention: time.Duration(cfg.WebhookFailedRetentionDays) * day})
+	bus := events.NewBus(nil, hooks)
+	bus.SetLogger(log)
+	history := events.NewHistoryTracker(bus, nil, 15*time.Second)
 	q := queue.New(st, mgr, queue.Options{Defaults: cfg.InstanceDefaults, Log: log, Resolver: resolver,
-		ConnectGrace: 15 * time.Second})
-	mgr.SetObserver(manager.Observers{&ingest.Ingestor{Store: st, Log: log}, q})
+		ConnectGrace: 15 * time.Second, Events: bus})
+	mgr.SetObserver(manager.Observers{
+		&ingest.Ingestor{Store: st, Log: log, Events: bus, History: history}, q, events.Observer{Bus: bus},
+	})
+	stopAll := func() { shutdownAll(q, mgr, history, hooks) }
 	// Before any worker starts: sends interrupted by the last shutdown go back to the queue.
 	if n, err := q.Recover(ctx); err != nil {
+		stopAll()
 		return fmt.Errorf("recover send queue: %w", err)
 	} else if n > 0 {
 		log.Warn("requeued sends interrupted by the last shutdown", "count", n)
 	}
+	if err := hooks.Start(ctx); err != nil {
+		stopAll()
+		return fmt.Errorf("start webhooks: %w", err)
+	}
 	if err := mgr.Boot(ctx); err != nil {
-		shutdownAll(q, mgr)
+		stopAll()
 		return err
 	}
 
@@ -74,10 +92,10 @@ func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
 	}
 	mediaKey, err := media.LoadOrCreateKey(filepath.Join(cfg.DataDir, "media_key"))
 	if err != nil {
-		shutdownAll(q, mgr)
+		stopAll()
 		return fmt.Errorf("media key: %w", err)
 	}
-	svc := &service.Instances{Store: st, Manager: mgr, DataDir: cfg.DataDir, Queues: q}
+	svc := &service.Instances{Store: st, Manager: mgr, DataDir: cfg.DataDir, Queues: q, Events: bus}
 	msg := &service.Messaging{
 		Store: st, Manager: mgr, Queues: q, Resolver: resolver,
 		Fetcher:  &media.Fetcher{AllowPrivate: cfg.MediaAllowPrivateURLs},
@@ -91,15 +109,19 @@ func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
 		AdminToken: cfg.AdminToken,
 		ProtectOps: !isLoopback(cfg.ListenAddr),
 		Ready:      st.Ping,
+		Webhooks:   &service.Webhooks{Store: st, Dispatcher: hooks},
+		Events:     bus,
 	}, log)
 	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
-		// No WriteTimeout: Delete/Logout can take ~20s (worker stop), and SSE streams
-		// (later milestones) stay open indefinitely.
+		// No WriteTimeout: Delete/Logout can take ~20s (worker stop), and SSE streams stay
+		// open indefinitely (each SSE write sets its own deadline).
 	}
+	// Shutdown waits for active requests: end the SSE streams so it does not wait for them.
+	srv.RegisterOnShutdown(bus.CloseSubscribers)
 
 	errc := make(chan error, 1)
 	go func() {
@@ -123,20 +145,26 @@ func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
 		_ = srv.Close()
 	}
 	cancel()
-	shutdownAll(q, mgr)
+	stopAll()
 	return serveErr
 }
 
 // shutdownAll stops the dispatchers (a send in flight gets up to 10s, spec 9.2), then
 // halts every worker with its own budget, so supervisor cleanups finish their store
-// writes before the deferred st.Close runs.
-func shutdownAll(q *queue.Queues, mgr *manager.Manager) {
+// writes before the deferred st.Close runs. Events produced until then still reach the
+// webhook outbox: the history tracker flushes, then the webhook dispatcher writes its
+// buffer and gives deliveries in flight up to 5s (cut ones are resent after the restart).
+func shutdownAll(q *queue.Queues, mgr *manager.Manager, history *events.HistoryTracker, hooks *webhook.Dispatcher) {
 	qctx, qcancel := context.WithTimeout(context.Background(), 10*time.Second)
 	q.Shutdown(qctx)
 	qcancel()
 	ctx, cancel := context.WithTimeout(context.Background(), manager.DefaultOptions().StopTimeout+5*time.Second)
-	defer cancel()
 	mgr.Shutdown(ctx)
+	cancel()
+	history.Close()
+	hctx, hcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer hcancel()
+	hooks.Close(hctx)
 }
 
 // workerEnv passes each worker its effective proxy (instance setting, else the default);

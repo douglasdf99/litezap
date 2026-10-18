@@ -25,6 +25,12 @@ type Config struct {
 	DefaultProxyURL string `yaml:"default_proxy_url"`
 	// MediaAllowPrivateURLs disables the SSRF block on media.url downloads (local use).
 	MediaAllowPrivateURLs bool `yaml:"media_allow_private_urls"`
+	// WebhookAllowPrivateURLs lets webhooks reach private and loopback addresses (local use).
+	WebhookAllowPrivateURLs bool `yaml:"webhook_allow_private_urls"`
+	// WebhookRetentionDays keeps delivered webhook deliveries; WebhookFailedRetentionDays
+	// keeps the dead-letter.
+	WebhookRetentionDays       int `yaml:"webhook_retention_days"`
+	WebhookFailedRetentionDays int `yaml:"webhook_failed_retention_days"`
 	// InstanceDefaults are the pacing and ramp defaults (spec 4.1); instances override them.
 	InstanceDefaults settings.Settings `yaml:"instance_defaults"`
 }
@@ -32,6 +38,7 @@ type Config struct {
 func Default() Config {
 	return Config{
 		ListenAddr: "127.0.0.1:8787", DataDir: "data", WorkerMemoryMB: 512,
+		WebhookRetentionDays: 7, WebhookFailedRetentionDays: 30,
 		InstanceDefaults: settings.Defaults(),
 	}
 }
@@ -80,6 +87,16 @@ func Load(path string) (Config, error) {
 			return cfg, fmt.Errorf("LITEZAP_MEDIA_ALLOW_PRIVATE_URLS: %w", err)
 		}
 		cfg.MediaAllowPrivateURLs = b
+	}
+	if v := os.Getenv("LITEZAP_WEBHOOK_ALLOW_PRIVATE_URLS"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return cfg, fmt.Errorf("LITEZAP_WEBHOOK_ALLOW_PRIVATE_URLS: %w", err)
+		}
+		cfg.WebhookAllowPrivateURLs = b
+	}
+	if cfg.WebhookRetentionDays < 1 || cfg.WebhookFailedRetentionDays < 1 {
+		return cfg, errors.New("webhook_retention_days and webhook_failed_retention_days must be at least 1")
 	}
 	if err := settings.ValidateProxyURL(cfg.DefaultProxyURL); err != nil {
 		return cfg, fmt.Errorf("default_proxy_url: %w", err)
