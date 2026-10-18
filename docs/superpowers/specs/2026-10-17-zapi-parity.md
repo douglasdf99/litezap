@@ -1,0 +1,440 @@
+# LiteZap × Z-API — Matriz de paridade de recursos e roadmap
+
+Data: 2026-10-17
+Status: pesquisa (insumo para os specs dos marcos 6+); nada aqui está aprovado como escopo
+
+## 1. Objetivo e método
+
+Mapear **todo** recurso que a Z-API oferece, dizer se o whatsmeow permite implementá-lo, onde o LiteZap está hoje e em que marco ele entra. O objetivo de produto é oferecer o mesmo conjunto de recursos da Z-API com distribuição open source estilo Supabase (spec do motor, seção 2.7).
+
+Fontes e verificações:
+
+- **Z-API**: índice público da documentação (`developer.z-api.io/llms.txt` e `/_llms/en/api-reference.txt`, 250 páginas de referência) e páginas avulsas (introduções de webhooks, fila, chamadas, filtros de webhook, token de segurança, funcionamento dos botões). Os agrupamentos abaixo seguem a navegação deles; a redação é nossa.
+- **whatsmeow**: código no cache de módulos, versão fixada no `go.mod`: `go.mau.fi/whatsmeow@v0.0.0-20261016130820-0b0a1cdac3e2`. Cada célula cita a função e o arquivo conferidos.
+- **LiteZap**: este worktree, branch base `feat/m3-events-impl` (commit `a2dd3a9`): rotas em `internal/api/api.go` e `internal/api/events.go`, RPCs em `proto/worker/v1/worker.proto`, tipos de envio em `internal/service/messages.go` (`payload`), recepção em `internal/worker/messaging.go`, catálogo de eventos em `internal/events/events.go`. As branches `feat/m4-mcp` e `feat/local-app` ainda apontam para o mesmo commit (sem código próprio); `feat/site-docs` tem o site/docs.
+
+Legenda:
+
+- **whatsmeow**: `Sim` = função pronta; `Manual` = não há helper, mas o proto existe e sai por `SendMessage`/`SendAppState` montado à mão; `Parcial` = cobre só parte; `Não` = sem suporte (precisaria de engenharia reversa); `N/A` = recurso da camada LiteZap, não do protocolo.
+- **LiteZap hoje**: `Pronto`, `Parcial`, `Falta`, `Fora` (decidido não fazer no motor).
+- **Esforço** (uma pessoa, com testes no padrão do projeto): `S` ≤ 2 dias, `M` 3–7 dias, `L` > 1 semana.
+- **Marco**: `M1`–`M3` já entregues; `M2b` complementos já planejados; `M4` MCP; `M5` hook de agente; `M6+` propostos na seção 4. `Exp` = experimental atrás de flag, fora da trilha principal.
+- `(incerto)` marca o que não foi possível confirmar só pelo código/docs e precisa de teste E2E com número real.
+
+## 2. Matriz
+
+### 2.1 Segurança e acesso (Z-API: Segurança)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| SEC-1 | Credencial por instância (ID + token) | ID e Token | N/A | Pronto — token `lzi_` por instância, só hash SHA-256 guardado, `Authorization: Bearer` | — | LiteZap usa header Bearer em vez de token na URL (não vaza em logs de proxy) | M1 |
+| SEC-2 | Token de conta que vale para todas as instâncias | Token de segurança da conta (`Client-Token`) | N/A | Pronto — token admin | — | Equivalente; o admin também cria/lista/apaga instâncias | M1 |
+| SEC-3 | Rotação de token | (não documentado) | N/A | Pronto — `POST /instances/{id}/token/rotate` | — | Vantagem LiteZap | M1 |
+| SEC-4 | Restrição de chamadas por IP | Restrição por IP | N/A | Falta | S | Lista de CIDRs por token; atrás de proxy reverso precisa de `trusted_proxies` | M11 |
+| SEC-5 | 2FA no painel | Autenticação de dois fatores | N/A | Fora | — | Não há painel no motor; é da nuvem (peça #3) e do app local | — |
+| SEC-6 | Proteção anti-golpe em grupos de avisos (apaga mensagens de não-admins) | Proteção Anti-Golpe | Manual — detectar remetente não-admin em grupo `announce` (`GetGroupInfo`, group.go) e apagar com `BuildRevoke(chat, sender, id)` (send.go) | Falta | M | Exige a instância ser admin; risco de falso positivo em grupos com muitos admins; depende de M8 | M8 |
+
+### 2.2 Instância, conexão e pareamento (Z-API: Instance)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| INS-1 | QR code (string) | Pegar QRCode | Sim — `GetQRChannel` (qrchan.go) | Pronto — `GET /instances/{id}/qr` + evento `instance.qr` | — | | M1 |
+| INS-2 | QR como imagem / bytes | QRCode imagem e bytes | Sim (string → imagem é local) | Pronto — `GET .../qr?format=png` | — | Z-API devolve base64; LiteZap devolve PNG direto. Avaliar `?format=base64` | M1 |
+| INS-3 | Conectar por código no telefone | Conectar com telefone | Sim — `PairPhone` (pair-code.go) | Pronto — `POST .../pair-phone` + `instance.pair_code` | — | | M1 |
+| INS-4 | Desafio de passkey no pareamento (concluir / reiniciar) | Complete/Reset the Challenge | Sim — `SendPasskeyResponse`, `SendPasskeyConfirmation` (pair-passkey.go); eventos `PairPasskeyRequest/Error/Confirmation` | Falta | M | Fluxo novo do WhatsApp; se exigido, o pareamento hoje falha sem explicação. Expor estado `passkey_pending` + rota de resposta (incerto: frequência real) | M9 |
+| INS-5 | Reiniciar instância | Reiniciar | N/A (Disconnect/Connect) | Pronto — `POST .../restart` (+ `start`/`stop`) | — | | M1 |
+| INS-6 | Desconectar (logout) | Desconectar | Sim — `Logout` (client.go) | Pronto — `POST .../logout` | — | | M1 |
+| INS-7 | Status da instância | Status da instância | Sim — `IsConnected`, `IsLoggedIn` (client.go) | Pronto — `GET /instances/{id}` (estado, motivo, jid) + `instance.status` | — | Máquina de estados mais rica que a da Z-API (banido, temp_banned, failed) | M1 |
+| INS-8 | Dados do celular (plataforma, nome, conta business) | Dados do celular | Parcial — `store.Device.Platform/PushName/BusinessName` (store/store.go); modelo do aparelho não exposto (incerto) | Parcial — só jid e estado | S | | M9 |
+| INS-9 | Renomear instância | Renomear instância | N/A | Falta — nome só na criação | S | `PATCH /instances/{id}` | M11 |
+| INS-10 | Dados da instância (me) | Dados da instância | N/A | Parcial — `GET /instances/{id}` | S | Juntar com INS-8 | M9 |
+| INS-11 | Token de extensão (conector no navegador) | Gerar token de extensão | Não (produto próprio da Z-API) | Fora | — | O equivalente LiteZap é o app local (peça #2) | — |
+| INS-12 | Leitura automática de mensagens | Ler mensagens automaticamente | Sim — `MarkRead` (receipt.go) | Falta (marcar como lido manual existe) | S | Setting por instância; respeitar privacidade de confirmação de leitura | M9 |
+| INS-13 | Leitura automática de status | Ler status automaticamente | Sim — `MarkRead` com chat `types.StatusBroadcastJID` | Falta | S | Depende de receber status (STA-5) | M10 |
+| INS-14 | Rejeitar chamadas automaticamente | Rejeitar chamadas | Sim — `RejectCall` (call.go) + evento `CallOffer` (types/events/call.go) | Falta | S | | M7 |
+| INS-15 | Mensagem automática ao rejeitar chamada | Mensagem de rejeição | Sim — `SendMessage` | Falta | S | Passa pela fila (ritmo/janela) | M7 |
+
+### 2.3 Registro como aparelho principal (Z-API: Mobile)
+
+A Z-API registra um número como aparelho **principal** (sem celular): disponibilidade do número, pedido e confirmação de código, captcha, transferência de aparelho, PIN de duas etapas (verificar, cadastrar, confirmar, recuperar, remover), e-mail da conta (ler, cadastrar, verificar, remover) e pedido de desbanimento — 15 páginas.
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| MOB-1 | Registro do número sem celular (código, captcha, transferência) | Mobile (6 páginas) | Não — whatsmeow é dispositivo companheiro (multi-device) | Fora | — | Exigiria implementar o cliente primário; alto risco de banimento e de ToS | — |
+| MOB-2 | PIN de duas etapas (5 operações) | Mobile | Não | Fora | — | Idem | — |
+| MOB-3 | E-mail da conta (4 operações) | Mobile | Não | Fora | — | Idem | — |
+| MOB-4 | Pedido de desbanimento | Mobile | Não | Fora | — | Fora do espírito do projeto; documentar o processo manual no guia de banimentos | — |
+
+### 2.4 Mensagens (Z-API: Messages)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| MSG-1 | Texto | Enviar texto | Sim — `SendMessage` (send.go) | Pronto — `POST /messages` `type:text` (fila, `?wait=true`, idempotência, `expires_after`) | — | | M2 |
+| MSG-2 | Atraso e "digitando" por mensagem | `delayMessage`, `delayTyping` | Sim — `SendChatPresence` (presence.go) | Parcial — ritmo e `typing_simulation` por instância, não por mensagem | S | Aceitar `delay_ms`/`typing_ms` por mensagem, sem furar os pisos de ritmo | M6 |
+| MSG-3 | Link com prévia | Enviar link | Manual — `ExtendedTextMessage` com `Title`, `Description`, `MatchedText`, `JPEGThumbnail`; whatsmeow não gera prévia | Falta | M | Buscar Open Graph reaproveitando o fetcher com proteção SSRF de `media`; prévia opcional (`link_preview: auto\|off\|custom`) | M6 |
+| MSG-4 | Imagem | Enviar imagem | Sim — `Upload`/`UploadReader` (upload.go) + `ImageMessage` | Pronto — `type:image` por URL ou base64 | — | | M2 |
+| MSG-5 | Áudio e voz (PTT) | Enviar áudio | Sim | Pronto — `type:audio`, `ptt:true` | — | Voz exige OGG/Opus; conversão automática não existe (incerto se a Z-API converte) | M2 |
+| MSG-6 | Vídeo | Enviar vídeo | Sim | Pronto — `type:video` | — | | M2 |
+| MSG-7 | Vídeo redondo (PTV) | Enviar PTV | Manual — campo `Message.PtvMessage` (`VideoMessage`) em waE2E | Falta | S | | M6 |
+| MSG-8 | Documento | Enviar documento | Sim | Pronto — `type:document` | — | | M2 |
+| MSG-9 | Figurinha | Enviar sticker | Manual — `StickerMessage` + `Upload(MediaImage)` | Falta (recebe e registra) | S | WebP 512×512; já listado no M2b | M6 (M2b) |
+| MSG-10 | GIF | Enviar GIF | Manual — `VideoMessage.GifPlayback=true` (MP4) | Falta | S | | M6 |
+| MSG-11 | Localização | Enviar localização | Manual — `LocationMessage` | Falta (recebe) | S | Já listado no M2b | M6 (M2b) |
+| MSG-12 | Contato (vCard) | Enviar contato | Manual — `ContactMessage{Vcard}` | Falta (recebe) | S | Já listado no M2b | M6 (M2b) |
+| MSG-13 | Vários contatos | Enviar vários contatos | Manual — `ContactsArrayMessage` | Falta | S | | M6 |
+| MSG-14 | Reação e remoção de reação | Enviar / remover reação | Sim — `BuildReaction` (send.go) | Pronto — `type:reaction` (`emoji:""` remove) + evento `message.reaction` | — | | M2 |
+| MSG-15 | Responder citando | Responder mensagem | Manual — `ContextInfo{StanzaID, Participant, QuotedMessage}` | Falta | M | Precisa da mensagem original (texto/tipo) do log; spec M2b item 6 | M6 |
+| MSG-16 | Menções (membro, todos, grupo) | Mencionar membro / todos / grupo | Manual — `ContextInfo.MentionedJID`, `ContextInfo.GroupMentions` | Falta | S | "Mencionar todos" exige `GetGroupInfo`; risco de spam em grupos grandes | M6 |
+| MSG-17 | Editar mensagem enviada | `editMessageId` no envio | Sim — `BuildEdit` (send.go) | Falta | S | WhatsApp limita a edição a ~15 min (incerto: janela atual) | M6 |
+| MSG-18 | Apagar para todos (inclusive admin apagando de outro) | Apagar mensagens | Sim — `RevokeMessage`, `BuildRevoke` (send.go) | Falta | S | Janela de revogação do WhatsApp (~2 dias, incerto) | M6 |
+| MSG-19 | Encaminhar | Encaminhar mensagem | Manual — reenviar o `waE2E.Message` original com `ContextInfo.IsForwarded` | Falta | M | O log não guarda o proto bruto; guardar o proto (ou reconstruir a partir de `media_json`) | M6 |
+| MSG-20 | Marcar como lidas | Ler mensagens | Sim — `MarkRead` (receipt.go) | Pronto — `POST /chats/{jid}/read` | — | | M2 |
+| MSG-21 | Fixar / desafixar mensagem | Fixar mensagens | Manual — `PinInChatMessage` via `SendMessage` | Falta | S | Duração e regras de grupo (incerto) | M6 |
+| MSG-22 | Enquete | Enviar enquete | Sim — `BuildPollCreation` (msgsecret.go) | Falta | S | | M6 |
+| MSG-23 | Votar em enquete e receber votos | Enviar voto | Sim — `BuildPollVote`, `DecryptPollVote` (msgsecret.go) | Falta | M | Votos chegam cifrados; precisa do segredo da enquete (o whatsmeow guarda no store) e de evento `message.poll_vote` | M6 |
+| MSG-24 | Eventos (criar, editar, responder) | Enviar / editar / responder evento | Manual — `EventMessage`, `EncEventResponseMessage` (waE2E) | Falta | M | Recurso recente (incerto em contas comuns) | M10 |
+| MSG-25 | Botões de ação, lista de botões, com imagem, com vídeo | 4 páginas | Manual — `ButtonsMessage`/`TemplateMessage`; o whatsmeow já anexa o nó `biz` (send.go, `getButtonTypeFromMessage`) | Falta | M | **Instável**: a própria Z-API mantém uma página sobre a instabilidade, exige aceite de termos e, na versão de 27/08/2024, o resumo diz que só lista de opções em chat individual é confiável (a tabela da mesma página diz que tudo funciona — contraditório). Pode quebrar a cada versão do WhatsApp | Exp |
+| MSG-26 | Lista de opções | Enviar lista de opções | Manual — `ListMessage` (nó `biz` com `v=2` e tipo, send.go `getButtonAttributes`) | Falta | M | Mesma instabilidade; é o tipo interativo menos instável | Exp |
+| MSG-27 | Botão OTP (copiar código) e botão PIX | 2 páginas | Manual — `InteractiveMessage` com native flow (incerto) | Falta | M | Instável; PIX é específico do Brasil | Exp |
+| MSG-28 | Carrossel | Enviar carrossel | Manual — `InteractiveMessage` carrossel (incerto) | Falta | L | Instável | Exp |
+| MSG-29 | Receber respostas de botões/listas | Responder botão / ação / lista | Sim — chegam em `events.Message` (`ButtonsResponseMessage`, `ListResponseMessage`, `InteractiveResponseMessage`) | Falta — registradas como `unknown` | S | Útil mesmo sem enviar botões (clientes de outras ferramentas respondem) | M7 |
+| MSG-30 | Produto e catálogo como mensagem | Enviar produto / catálogo | Manual — `ProductMessage` (exige catálogo existente na conta business) | Falta | M | Sem API de catálogo no whatsmeow (BUS-1); só reencaminhar produto existente (incerto) | M10 |
+| MSG-31 | Pedido + atualizar status/pagamento do pedido | 3 páginas | Parcial — `OrderMessage` (proto) e `GetOrderDetails` (business.go) só leitura | Falta | L | Fluxo de pagamentos do WhatsApp Business no Brasil; incerto | Avaliar |
+| MSG-32 | Convite de admin de canal | Enviar convite de admin de canal | Manual — `NewsletterAdminInviteMessage` (waE2E) | Falta | M | Aceitar/revogar não têm função (CHN-11) | Avaliar |
+| MSG-33 | Conversar com a Meta AI | Meta AI | Parcial — `types.MetaAIJID`, `GetBotListV2` (user.go); envio comum ao JID do bot (incerto) | Falta | M | Valor baixo para atendimento | Avaliar |
+
+### 2.5 Privacidade (Z-API: Privacy)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| PRV-1 | Visto por último, foto, recado, quem adiciona em grupos, online, confirmação de leitura | 6 páginas | Sim — `SetPrivacySetting`, `GetPrivacySettings`, `TryFetchPrivacySettings` (privacysettings.go); tipos `last`, `profile`, `status`, `groupadd`, `online`, `readreceipts`, `calladd`, `messages` (types/user.go) | Falta | S | | M9 |
+| PRV-2 | Duração padrão de mensagens temporárias | Mensagens temporárias | Sim — `SetDefaultDisappearingTimer` (privacysettings.go) | Falta | S | | M9 |
+| PRV-3 | Listar contatos excluídos de uma regra ("meus contatos, exceto…") | Contatos não permitidos | Parcial — só `GetStatusPrivacy` (broadcast.go) para status; demais listas sem função (incerto) | Falta | M | | M9 |
+
+### 2.6 Contatos (Z-API: Contacts)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| CON-1 | Listar contatos | Pegar contatos | Sim — `Store.Contacts.GetAllContacts` (store) | Pronto — `GET /contacts` | — | | M2 |
+| CON-2 | Adicionar / remover contato na agenda | Adicionar / remover contatos | Parcial — existe a ação de app state `contact` (evento `events.Contact`), sem builder em appstate/encode.go (incerto) | Falta | M | | M9 |
+| CON-3 | Metadados do contato (nome, recado, business) | Metadata do contato | Sim — `GetUserInfo`, `GetBusinessProfile` (user.go) | Parcial — `GET /contacts/{jid}` do store (nome, push name, business name) | S | Consultar a rede só sob demanda (`?refresh=1`) com cota | M9 |
+| CON-4 | Foto de perfil do contato | Pegar imagem do contato | Sim — `GetProfilePictureInfo` (user.go) | Falta | S | Cache + URL assinada como mídia | M9 |
+| CON-5 | Número tem WhatsApp? | Número com WhatsApp | Sim — `IsOnWhatsApp` (user.go) | Pronto — `POST /check-numbers` (cache 30d/24h, cota própria) | — | | M2 |
+| CON-6 | Verificação em lote | Validação em lote | Sim | Pronto — mesmo endpoint, com ritmo e limite diário | — | Raspagem de números é gatilho de banimento; LiteZap limita de propósito | M2 |
+| CON-7 | Bloquear / desbloquear | Bloquear contato | Sim — `UpdateBlocklist`, `GetBlocklist` (user.go) | Falta | S | | M9 |
+| CON-8 | Denunciar contato | Denunciar contato | Não (sem função) | Fora | — | | — |
+
+### 2.7 Chats (Z-API: Chats)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| CHT-1 | Listar chats | Pegar chats | Parcial — não há lista de chats; vem do history sync e das mensagens | Pronto — `GET /chats` (do log, ordenado por última mensagem) | — | Chats sem mensagem no log não aparecem | M2 |
+| CHT-2 | Metadados do chat | Metadata do chat | Parcial | Parcial — campos na lista; sem `GET /chats/{jid}` | S | Incluir arquivado/fixado/silenciado (vindos do app state) | M9 |
+| CHT-3 | Ler / marcar como não lido | Ler chats | Sim — `MarkRead` e `appstate.BuildMarkChatAsRead` (appstate/encode.go) | Parcial — ler sim; não lido não | S | | M9 |
+| CHT-4 | Arquivar / desarquivar | Arquivar chat | Sim — `appstate.BuildArchive` + `SendAppState` (appstate.go) | Falta | S | | M9 |
+| CHT-5 | Fixar chat | Fixar chat | Sim — `appstate.BuildPin` | Falta | S | | M9 |
+| CHT-6 | Silenciar | Silenciar chat | Sim — `appstate.BuildMute`, `BuildMuteAbs` | Falta | S | | M9 |
+| CHT-7 | Limpar conversa | Limpar chat | Parcial — índice `clearChat` (appstate/keys.go) e evento `ClearChat`, sem builder | Falta | M | Montar a mutação à mão (incerto) | M9 |
+| CHT-8 | Apagar chat | Deletar chat | Sim — `appstate.BuildDeleteChat` | Falta | S | Também apagar do log local? (decidir: só flag) | M9 |
+| CHT-9 | Mensagens temporárias do chat | Expiração do chat | Sim — `SetDisappearingTimer` (send.go) | Falta | S | | M9 |
+| CHT-10 | Histórico de mensagens do chat | (não há) | N/A | Pronto — `GET /chats/{jid}/messages` com cursor | — | Vantagem LiteZap | M2 |
+| CHT-11 | Busca full-text | (não há) | N/A | Falta — planejado | S | `GET /messages/search` (FTS5) | M2b |
+
+### 2.8 Chamadas (Z-API: Calls)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| CAL-1 | Fazer chamada, "chamada de atenção", áudio na chamada | Fazer ligação | Não — whatsmeow não implementa VoIP/mídia de chamada | Fora | — | A Z-API vende instância com chamadas como plano à parte | — |
+| CAL-2 | Token de chamada / SIP | 3 páginas | Não | Fora | — | | — |
+| CAL-3 | Eventos de chamada (oferta, aceite, término, rejeição) | via webhooks de mensagem | Sim — `CallOffer`, `CallAccept`, `CallTerminate`, `CallReject`, `CallOfferNotice` (types/events/call.go) | Falta | S | Evento `call.received` / `call.ended` | M7 |
+
+### 2.9 Grupos (Z-API: Groups)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| GRP-1 | Listar grupos | Buscar grupos | Sim — `GetJoinedGroups` (group.go) | Falta | S | | M8 |
+| GRP-2 | Criar grupo | Criar grupo | Sim — `CreateGroup` | Falta | S | Criar grupos adicionando desconhecidos é gatilho de banimento; limitar por dia | M8 |
+| GRP-3 | Nome, foto, descrição | 3 páginas | Sim — `SetGroupName`, `SetGroupPhoto` (JPEG), `SetGroupDescription`/`SetGroupTopic` | Falta | S | | M8 |
+| GRP-4 | Adicionar / remover participantes | 2 páginas | Sim — `UpdateGroupParticipants` (add/remove) | Falta | S | Quem restringe "quem me adiciona" gera erro 403 com convite; devolver por participante | M8 |
+| GRP-5 | Aprovar / rejeitar pedidos de entrada | 2 páginas | Sim — `GetGroupRequestParticipants`, `UpdateGroupRequestParticipants` | Falta | S | | M8 |
+| GRP-6 | Promover / rebaixar admin | 2 páginas | Sim — `UpdateGroupParticipants` (promote/demote) | Falta | S | | M8 |
+| GRP-7 | Sair do grupo | Sair do grupo | Sim — `LeaveGroup` | Falta | S | | M8 |
+| GRP-8 | Metadados (completo e leve) | 2 páginas | Sim — `GetGroupInfo` | Falta | S | Também preenche o nome dos chats de grupo no log (M2b item 6) | M8 |
+| GRP-9 | Metadados por link de convite | Metadata pelo convite | Sim — `GetGroupInfoFromLink` | Falta | S | | M8 |
+| GRP-10 | Configurações (só admins enviam, editam, aprovação, quem adiciona) | Configurações do grupo | Sim — `SetGroupAnnounce`, `SetGroupLocked`, `SetGroupJoinApprovalMode`, `SetGroupMemberAddMode` | Falta | S | | M8 |
+| GRP-11 | Link de convite (obter / redefinir) | 2 páginas | Sim — `GetGroupInviteLink(reset)` | Falta | S | | M8 |
+| GRP-12 | Entrar por convite | Aceitar convite | Sim — `JoinGroupWithLink`, `JoinGroupWithInvite` | Falta | S | | M8 |
+| GRP-13 | Eventos de grupo (entrou, saiu, promovido, nome/descrição mudou) | (webhook de recebimento) | Sim — `events.GroupInfo`, `events.JoinedGroup` | Falta — `group.updated` adiado no M3 | S | | M8 |
+
+### 2.10 Comunidades (Z-API: Communities)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| COM-1 | Criar comunidade | Criar comunidade | Sim — `CreateGroup` com `IsParent` (group.go) | Falta | S | | M8 |
+| COM-2 | Listar comunidades | Listar comunidades | Sim — `GetJoinedGroups` filtrando `IsParent` | Falta | S | | M8 |
+| COM-3 | Vincular / desvincular grupos | 2 páginas | Sim — `LinkGroup`, `UnlinkGroup` | Falta | S | | M8 |
+| COM-4 | Metadados | Metadata da comunidade | Sim — `GetGroupInfo`, `GetSubGroups`, `GetLinkedGroupsParticipants` | Falta | S | | M8 |
+| COM-5 | Redefinir link | Redefinir link | Sim — `GetGroupInviteLink(reset=true)` | Falta | S | | M8 |
+| COM-6 | Participantes e admins | 4 páginas | Sim — `UpdateGroupParticipants` no grupo pai/avisos (incerto: semântica exata em comunidades) | Falta | M | | M8 |
+| COM-7 | Configurações e descrição | 2 páginas | Sim — mesmas funções de grupo aplicadas ao pai (incerto) | Falta | S | | M8 |
+| COM-8 | Desativar comunidade | Desativar | Não — sem função pública | Falta | — | Avaliar engenharia reversa | Avaliar |
+
+### 2.11 Canais (Z-API: Newsletter)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| CHN-1 | Criar canal | Criar canal | Sim — `CreateNewsletter` (newsletter.go) | Falta | S | | M10 |
+| CHN-2 | Atualizar nome, descrição, foto | 3 páginas | Não — sem função; exigiria query MEX via `DangerousInternals` (frágil) | Falta | L | | Avaliar |
+| CHN-3 | Seguir / deixar de seguir | 2 páginas | Sim — `FollowNewsletter`, `UnfollowNewsletter` | Falta | S | | M10 |
+| CHN-4 | Silenciar / reativar | 2 páginas | Sim — `NewsletterToggleMute` | Falta | S | | M10 |
+| CHN-5 | Apagar canal | Deletar canal | Não | Falta | — | | Avaliar |
+| CHN-6 | Metadados (por JID ou convite) | Metadata do canal | Sim — `GetNewsletterInfo`, `GetNewsletterInfoWithInvite` | Falta | S | | M10 |
+| CHN-7 | Listar assinantes | Listar inscritos | Não | Falta | — | | Avaliar |
+| CHN-8 | Listar canais seguidos | Listar canais | Sim — `GetSubscribedNewsletters` | Falta | S | | M10 |
+| CHN-9 | Buscar canais (diretório) | Buscar canais | Não | Falta | — | | Avaliar |
+| CHN-10 | Configurações do canal (reações) | Configurações | Não | Falta | — | | Avaliar |
+| CHN-11 | Admins: aceitar convite, remover, revogar convite, transferir posse | 4 páginas | Não | Falta | — | | Avaliar |
+| CHN-12 | Publicar no canal (texto e mídia) | (via endpoints de mensagem) | Sim — `SendMessage` para JID `@newsletter` + `UploadNewsletter` (upload.go) | Falta — worker ignora JIDs de canal | M | Mídia de canal não é cifrada (upload próprio) | M10 |
+| CHN-13 | Reagir, marcar visto, ler mensagens do canal | (não há) | Sim — `NewsletterSendReaction`, `NewsletterMarkViewed`, `GetNewsletterMessages` | Falta | S | | M10 |
+
+### 2.12 Listas de transmissão (Z-API: Transmission List)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| BRD-1 | Criar, atualizar, listar, apagar lista e enviar para ela | 4 páginas | Não — `ErrBroadcastListUnsupported` (broadcast.go) | Fora | — | Envio em massa é o principal gatilho de banimento; já fora do escopo no spec do motor | — |
+
+### 2.13 Status / Stories (Z-API: Status)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| STA-1 | Status de texto | Enviar status de texto | Manual — `ExtendedTextMessage` (cor de fundo, fonte) para `types.StatusBroadcastJID`; destinatários resolvidos por `getStatusBroadcastRecipients` (broadcast.go) | Falta | S | Envio cifrado para todos os contatos: lento com agendas grandes | M10 |
+| STA-2 | Status de imagem | Enviar status de imagem | Manual — idem com `ImageMessage` | Falta | S | | M10 |
+| STA-3 | Status de vídeo | Enviar status de vídeo | Manual — idem com `VideoMessage` | Falta | S | | M10 |
+| STA-4 | Responder status (texto, GIF, figurinha) | 3 páginas | Manual — mensagem ao autor com `ContextInfo` citando o status (`RemoteJID` `status@broadcast`) | Falta | S | Depende de MSG-15 | M10 |
+| STA-5 | Receber status dos contatos | (webhook) | Sim — `events.Message` com chat `status@broadcast` | Falta — worker descarta (messaging.go, filtro de `BroadcastServer`) | S | Evento `status.received`; desligado por padrão (volume) | M10 |
+| STA-6 | Privacidade do status | (não há) | Sim — `GetStatusPrivacy` (broadcast.go) | Falta | S | | M10 |
+
+### 2.14 Fila de mensagens (Z-API: Message Queue)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| QUE-1 | Fila persistente, ordem por destinatário, envio após reconexão | Introdução da fila | N/A | Pronto — `outbound_queue`, TTL (`expires_after`), retry, rampa, janela, verificação de número | — | LiteZap vai além: rampa para números novos, janela de horário, pisos de ritmo | M2 |
+| QUE-2 | Listar fila | Fila | N/A | Falta — só `GET /messages/{id}` | S | `GET /instances/{id}/queue?status=queued` com cursor | M6 |
+| QUE-3 | Apagar a fila inteira | Apagar fila | N/A | Falta | S | Importante antes de reconectar uma instância parada há dias | M6 |
+| QUE-4 | Apagar um item da fila | Apagar mensagem da fila | N/A | Falta | S | `DELETE /instances/{id}/messages/{msg_id}` se ainda `queued` | M6 |
+| QUE-5 | Configurar a fila (intervalos) | Atualizar config da fila | N/A | Pronto — `PUT /settings` (`min_interval_ms`, `jitter_ms`, `max_per_minute`, rampa, janela) | — | | M2 |
+
+### 2.15 WhatsApp Business (Z-API: WhatsApp Business)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| BUS-1 | Produtos: criar/editar, listar (várias versões), obter, apagar | 7 páginas | Não — não há API de catálogo (só `GetOrderDetails`, business.go) | Fora (por ora) | L | Exigiria engenharia reversa do protocolo de catálogo | Avaliar |
+| BUS-2 | Coleções: criar, listar, editar, apagar, produtos da coleção | 7 páginas | Não | Fora (por ora) | L | | Avaliar |
+| BUS-3 | Configuração do catálogo | Config do catálogo | Não | Fora (por ora) | — | | Avaliar |
+| BUS-4 | Etiquetas: listar, cores, criar, editar, apagar | 5 páginas | Parcial — `appstate.BuildLabelEdit` (criar/editar/apagar); lista vem dos eventos `LabelEdit` do app state; cores são índices fixos | Falta | M | Só contas Business; guardar etiquetas no store a partir do sync | M10 |
+| BUS-5 | Atribuir / remover etiqueta de chat | 2 páginas | Sim — `appstate.BuildLabelChat` (+ `BuildLabelMessage`) | Falta | S | Evento `label.updated` | M10 |
+| BUS-6 | Notas no chat | Notas | Não (incerto) | Fora | — | | — |
+| BUS-7 | Perfil comercial: descrição, e-mail, endereço, sites, horário, categorias (editar) | 7 páginas | Não — só leitura | Fora (por ora) | L | | Avaliar |
+| BUS-8 | Ler perfil comercial | Dados da conta business | Sim — `GetBusinessProfile` (user.go) | Falta | S | | M10 |
+
+### 2.16 Perfil da conta (Z-API: dentro de Instance)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| PRF-1 | Nome do perfil | Atualizar nome do perfil | Sim — `appstate.BuildSettingPushName` + `SendAppState` | Falta | S | | M9 |
+| PRF-2 | Recado (About) | Atualizar descrição do perfil | Sim — `SetStatusMessage` (user.go) | Falta | S | | M9 |
+| PRF-3 | Foto do perfil | Atualizar foto do perfil | Parcial — `SetGroupPhoto` com o próprio JID como alvo (namespace `w:profile:picture`, group.go); uso comum na comunidade, sem helper dedicado (incerto) | Falta | S | JPEG; testar em E2E | M9 |
+
+### 2.17 Webhooks e eventos (Z-API: Webhooks)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| WHK-1 | Mensagem recebida | Ao receber | Sim — `events.Message` | Pronto — `message.received` (+ `message.reaction`) | — | | M3 |
+| WHK-2 | Mensagem enviada (API e celular, "enviadas por mim") | Ao enviar; Notificar enviadas por mim | Sim | Pronto — `message.sent` com `source: api\|device` | — | | M3 |
+| WHK-3 | Status da mensagem (enviada, entregue, lida, tocada, apagada) | Status da mensagem | Sim — `events.Receipt` (inclui `played`) | Parcial — `sent`/`delivered`/`read`/`failed`; falta `played` (o worker já recebe) e `revoked` | S | | M7 |
+| WHK-4 | Conectou / desconectou | Ao conectar; Ao desconectar | Sim — `Connected`, `Disconnected`, `LoggedOut`, `TemporaryBan`… | Pronto — `instance.status` para toda transição | — | | M3 |
+| WHK-5 | Presença do chat (digitando, gravando, online, visto por último) | Status do chat | Sim — `events.ChatPresence`, `events.Presence` + `SubscribePresence` (presence.go) | Falta — `chat.presence` adiado no M3 | M | Presença exige assinatura por contato e a própria instância "online" (`SendPresence`); volume alto | M7 |
+| WHK-6 | Mensagem apagada / editada | (no recebimento) | Sim — `ProtocolMessage` REVOKE/EDIT em `events.Message` | Falta — `message.revoked` adiado; log não atualiza | S | Base em M2b item 5 | M7 |
+| WHK-7 | URLs por tipo e "atualizar todos" | Atualizar todos os webhooks | N/A | Pronto — vários webhooks, globais ou por instância, com filtro de tipos (`message.*`) | — | Superconjunto | M3 |
+| WHK-8 | Filtros por tipo de mensagem (grupo, privado, texto, imagem…) | Filtros de webhook | N/A | Falta — só filtro por tipo de evento | S | Campo `filters` no webhook (`chat: group\|direct`, `message_types`) | M7 |
+| WHK-9 | Webhook de falha de proxy | Webhook de falha de proxy | N/A | Falta | S | Evento `instance.proxy_failed` (o estado `reconnecting` com motivo já aparece) | M11 |
+| WHK-10 | Assinatura HMAC, anti-replay, retry 24h, dead-letter, SSE | (não há) | N/A | Pronto | — | Vantagem LiteZap | M3 |
+
+### 2.18 Parceiros e multi-instância (Z-API: Partners)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| PAR-1 | Criar instância por API | Criar instância | N/A | Pronto — `POST /instances` (admin) | — | | M1 |
+| PAR-2 | Assinar / cancelar / atualizar assinatura | 3 páginas | N/A | Fora do motor | — | É cobrança: control plane da nuvem (peça #3) | — |
+| PAR-3 | Apagar instância (uma e em lote) | 2 páginas | N/A | Parcial — `DELETE /instances/{id}`; sem lote | S | | M11 |
+| PAR-4 | Listar instâncias | Listar instâncias | N/A | Pronto — `GET /instances` | — | Falta paginação/filtro por estado | M1 |
+| PAR-5 | Proxy por instância | Configurar proxy | Sim — `SetProxyAddress` (client.go) | Pronto — `proxy_url` (admin) | — | | M2 |
+| PAR-6 | Componente de conexão embutível (modal de QR para o software do parceiro) | SDK de conexão; Gerar token do SDK | N/A | Falta | M | Página de pareamento hospedada com token de uso único e curto (link assinado) + web component | M11 |
+| PAR-7 | Conexão por extensão para parceiros | Extensão para parceiros | N/A | Fora | — | | — |
+
+### 2.19 IA (Z-API: MCP Server)
+
+| ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
+|---|---|---|---|---|---|---|---|
+| AI-1 | Servidor MCP | MCP Server (introdução, como conectar) | N/A | Falta — em planejamento (`feat/m4-mcp` sem código ainda) | M | LiteZap terá HTTP e stdio | M4 |
+| AI-2 | Agente que responde mensagens (hook) | (não há) | N/A | Falta | M | Vantagem LiteZap planejada | M5 |
+
+## 3. Contagens
+
+Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-API; as ~250 páginas de referência viram 159 linhas).
+
+| | Linhas |
+|---|---|
+| **Total de recursos** | **159** |
+| Recursos de protocolo (dependem do whatsmeow) | 132 |
+| — whatsmeow `Sim` | 78 |
+| — whatsmeow `Manual` (proto existe, sem helper) | 23 |
+| — whatsmeow `Parcial` | 10 |
+| — whatsmeow `Não` | 21 |
+| Recursos só da camada LiteZap (`N/A`) | 27 |
+| **LiteZap `Pronto`** | **31** |
+| LiteZap `Parcial` | 8 |
+| LiteZap `Falta` | 103 |
+| LiteZap `Fora` | 17 |
+
+Viáveis com whatsmeow (`Sim` + `Manual` + `Parcial`): **111 de 132** recursos de protocolo. Os 21 inviáveis hoje: INS-11 (extensão, produto próprio da Z-API), MOB-1…4 (registro como aparelho principal), CON-8 (denúncia), CAL-1/2 (chamadas de voz e SIP), COM-8 (desativar comunidade), CHN-2/5/7/9/10/11 (administração avançada de canais), BRD-1 (listas de transmissão), BUS-1/2/3/6/7 (catálogo, coleções, notas, perfil comercial editável).
+
+Várias linhas `Pronto` são recursos em que o LiteZap já vai além da Z-API (rotação de token, máquina de estados, histórico por chat, fila com rampa/janela, webhooks assinados com dead-letter, SSE, vários webhooks com filtro por tipo).
+
+As contagens vêm do script do anexo A (lê a coluna de status de cada linha); rode de novo ao editar a matriz.
+
+## 4. Roadmap proposto (depois do M4 MCP e do app local)
+
+Premissas: M2b (complementos), M3 (eventos), M4 (MCP), M5 (hook de agente) e a peça #2 (app local) seguem como estão. Os marcos novos começam em M6 e são ordenados por **valor para quem migra da Z-API**: primeiro o que quebra integrações existentes (tipos de mensagem e eventos), depois gestão (grupos, chats, perfil), por último o que tem uso de nicho ou suporte frágil no protocolo.
+
+Diferença em relação à ordem sugerida no pedido: eventos e chamadas sobem para **M7** (antes de grupos), porque CRMs e atendentes da Z-API dependem de webhooks de presença, apagadas/editadas, respostas de botões e rejeição de chamadas para funcionar; gestão de grupos é usada por menos clientes.
+
+Regras que valem para todos os marcos: cada recurso novo sai na REST, no OpenAPI, no MCP (quando fizer sentido para IA), na referência da documentação (anatomia da seção 4 do spec de arquitetura de docs) e com teste de contrato via `httptest` + worker falso. Operações que mudam algo no WhatsApp passam pela fila quando são mensagens; operações de gestão (grupos, chats, perfil) são síncronas com timeout e cota por minuto por instância.
+
+### M6 — Mensagens completas
+
+Escopo: MSG-2, 3, 7, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 21, 22, 23; QUE-2, 3, 4. Absorve o item 2 (sticker/location/contact) e o item 6 parte "respostas citadas" do M2b se ainda não tiverem saído.
+
+- Novos `type`: `sticker`, `gif`, `ptv`, `location`, `contact` (um ou vários), `poll`, `edit`, `revoke`, `pin`, `forward`.
+- Campos transversais: `reply_to` (id LiteZap ou WhatsApp), `mentions` (lista ou `"all"`), `link_preview`, `delay_ms`, `typing_ms`.
+- Fila visível: listar, cancelar item, esvaziar.
+- Votos de enquete: evento `message.poll_vote` com opções decifradas.
+
+Aceite:
+
+1. Cada tipo é enviado e aparece corretamente num celular real (roteiro E2E com número de teste, `-tags=e2e`), em chat direto e em grupo.
+2. `reply_to` de uma mensagem que não está no log responde `validation_failed`; com mensagem do log, o celular mostra a citação.
+3. Editar/apagar só funcionam em mensagens `from_me` (apagar de outro só em grupo onde a instância é admin); fora da janela do WhatsApp o erro é estável (`edit_window_expired`/`revoke_window_expired`).
+4. Prévia de link usa o mesmo filtro SSRF da mídia (teste com URL privada recusada) e nunca atrasa o envio além de 5s (sem prévia em caso de timeout).
+5. `DELETE` de item `queued` o remove sem enviar; item `in_flight` responde `conflict`.
+6. Pisos de ritmo continuam valendo com `delay_ms` (teste com relógio falso).
+
+### M7 — Eventos completos e chamadas
+
+Escopo: WHK-3 (`played`, `revoked`), WHK-5, WHK-6, WHK-8, MSG-29, CAL-3, INS-14, INS-15. Fecha os eventos adiados do M3 (`message.revoked`, `chat.presence`) — `group.updated` fica no M8, junto dos grupos.
+
+- Novos eventos: `message.revoked`, `message.edited`, `message.button_reply`, `chat.presence`, `call.received`, `call.ended`.
+- Setting `calls: {auto_reject: bool, reject_message: string}`.
+- Filtros no webhook: `filters.chat` (`direct|group`), `filters.message_types`, `filters.from_me`.
+- Rota `POST /instances/{id}/presence/subscribe` (ou assinatura automática dos chats ativos, com limite).
+
+Aceite:
+
+1. Apagar/editar no celular do contato atualiza o log (texto antigo guardado em histórico de edição) e emite o evento uma única vez.
+2. Chamada recebida com `auto_reject` é rejeitada em < 3s, gera `call.received` com `rejected: true` e a mensagem de rejeição sai pela fila.
+3. `chat.presence` respeita filtro e não derruba o SSE em rajada (teste de carga com 1.000 eventos/s no worker falso).
+4. Webhook com `filters.chat=direct` nunca recebe mensagem de grupo (teste de contrato).
+5. Catálogo de eventos do README, do OpenAPI e da docs atualizados no mesmo PR.
+
+### M8 — Grupos e comunidades
+
+Escopo: GRP-1…13, COM-1…7, SEC-6, nome de grupos no log (M2b item 6).
+
+- Recurso REST `/instances/{id}/groups` (listar, criar, `GET/PATCH /groups/{jid}`, participantes, admins, pedidos, convite, sair, entrar) e `/communities`.
+- Evento `group.updated` (participantes, admins, nome, descrição, configurações).
+- Setting opcional `announcement_guard` (SEC-6).
+
+Aceite:
+
+1. CRUD completo validado em E2E num grupo de teste; erros por participante (`not_on_whatsapp`, `privacy_invite_required`) devolvidos em lista, sem falhar o lote inteiro.
+2. Criação de grupos limitada por dia por instância (padrão conservador, configurável; acima responde `rate_limited`).
+3. Chats de grupo no log passam a ter nome correto após mensagem ao vivo.
+4. `group.updated` emitido para entradas/saídas feitas no celular.
+
+### M9 — Chats, contatos, perfil, privacidade e conta
+
+Escopo: CHT-2…9, CON-2, 3, 4, 7, PRF-1…3, PRV-1…3, INS-4, 8, 10, 12.
+
+- Ações de chat: `archive`, `pin`, `mute`, `unread`, `clear`, `delete`, `disappearing`.
+- Contatos: foto de perfil (com cache e URL assinada), metadados atualizados sob demanda, bloquear/desbloquear, lista de bloqueados.
+- Perfil: nome, recado, foto. Privacidade: ler e alterar todas as configurações.
+- Leitura automática (`auto_read`) e passkey no pareamento.
+
+Aceite:
+
+1. Cada ação de chat reflete no celular em < 10s (E2E) e nos campos de `GET /chats/{jid}`.
+2. Mudanças feitas no celular (arquivar, fixar, silenciar) chegam pelo app state e atualizam o log (evento `chat.updated`).
+3. Foto de perfil inexistente responde `404 not_found`, nunca `502`.
+4. Consultas de rede de contato têm cota por minuto (reuso do mecanismo de `check-numbers`).
+
+### M10 — Status, canais e Business
+
+Escopo: STA-1…6, INS-13, CHN-1, 3, 4, 6, 8, 12, 13, BUS-4, 5, 8, MSG-24, MSG-30.
+
+- Status: publicar texto/imagem/vídeo, responder, receber (`status.received`, desligado por padrão).
+- Canais: criar, seguir, silenciar, metadados, publicar, reagir.
+- Business: etiquetas (CRUD + atribuição + evento `label.updated`), ler perfil comercial.
+
+Aceite:
+
+1. Status publicado aparece para um contato de teste; `status.received` só sai com o tipo assinado explicitamente.
+2. Publicação em canal criado pela instância funciona com texto e imagem.
+3. Rotas de etiqueta em conta não-Business respondem `business_account_required` (409).
+
+### M11 — Plataforma e parceiros
+
+Escopo: SEC-4, INS-9, PAR-3, PAR-6, WHK-9.
+
+- Allowlist de IP por token, renomear instância, exclusão em lote, paginação de instâncias, evento `instance.proxy_failed`.
+- Página de pareamento hospedada (link assinado de uso único, curto) e web component para o parceiro embutir o QR no próprio software.
+
+Aceite:
+
+1. Token com allowlist recusa IP fora da lista com `403 forbidden`, respeitando `trusted_proxies`.
+2. Link de pareamento expira em 10 min ou no primeiro pareamento concluído; nunca expõe o token da instância.
+
+### Fora da trilha principal
+
+- **Experimental (`Exp`)**: botões, listas, OTP/PIX, carrossel (MSG-25…28) atrás de `interactive_messages: experimental` no setting da instância, com aviso na docs de que podem parar de funcionar a qualquer atualização do WhatsApp. Só depois do M10 e só se houver demanda.
+- **Avaliar** (exigem engenharia reversa ou têm valor baixo): catálogo/coleções/perfil comercial editável, administração avançada de canais, pedidos/pagamentos, Meta AI, desativar comunidade.
+- **Fora** (decisão de produto ou impossível com whatsmeow): registro mobile, chamadas de voz/SIP, listas de transmissão, denúncia de contato, extensão de navegador, cobrança (vai para a nuvem).
+
+## 5. Top 10 lacunas por valor
+
+1. Responder citando + menções (MSG-15, MSG-16) — M6
+2. Figurinha, GIF, localização, contato(s), PTV (MSG-7, 9–13) — M6
+3. Editar e apagar mensagens + eventos de apagada/editada (MSG-17, 18, WHK-6) — M6/M7
+4. Prévia de link (MSG-3) — M6
+5. Eventos de presença, chamadas e rejeição automática (WHK-5, CAL-3, INS-14/15) — M7
+6. Gestão de grupos e evento `group.updated` (GRP-1…13) — M8
+7. Enquetes com votos (MSG-22, 23) — M6
+8. Fila visível e cancelável + atraso por mensagem (QUE-2…4, MSG-2) — M6
+9. Ações de chat: arquivar, fixar, silenciar, não lido, apagar (CHT-3…8) — M9
+10. Perfil (nome, recado, foto) e contatos (foto, bloqueio) (PRF-1…3, CON-4, CON-7) — M9
+
+O MCP (AI-1) também é lacuna frente à Z-API, mas já está no M4.
+
+## Anexo A — script de contagem
+
+As contagens da seção 3 vêm deste comando (rodar na raiz do repositório); ele lê a 4ª e a 5ª colunas de toda linha de tabela cujo ID segue o padrão `XXX-n`:
+
+```bash
+awk -F'|' '/^\| [A-Z]+-[0-9]+ \|/ {
+  n++; split($5,w," "); split($6,l," ");
+  W[w[1]]++; L[l[1]]++
+} END {
+  print "total", n;
+  for (k in W) print "whatsmeow", k, W[k];
+  for (k in L) print "litezap", k, L[k]
+}' docs/superpowers/specs/2026-10-17-zapi-parity.md
+```
