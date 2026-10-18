@@ -254,6 +254,15 @@ func accountErr(err error) error {
 	return sendErr(err)
 }
 
+// loggedIn fails fast before the account calls: while pairing the socket is up but
+// WhatsApp never answers these queries (they would hang until the RPC deadline).
+func (w *Whatsmeow) loggedIn() error {
+	if w.cli == nil || w.cli.Store == nil || w.cli.Store.ID == nil {
+		return grpcErr(codes.FailedPrecondition, "logged_out", "session is not logged in")
+	}
+	return nil
+}
+
 // parseUser parses a contact JID (phone-number or LID user, no device).
 func parseUser(raw string) (types.JID, error) {
 	jid, err := types.ParseJID(raw)
@@ -332,6 +341,9 @@ func messageKey(target types.JID, ref *workerv1.MessageRef) (time.Time, *waCommo
 }
 
 func (w *Whatsmeow) ChatAction(ctx context.Context, req *workerv1.ChatActionRequest) error {
+	if err := w.loggedIn(); err != nil {
+		return err
+	}
 	chat, err := parseChat(req.Chat)
 	if err != nil {
 		return err
@@ -438,6 +450,9 @@ func (w *Whatsmeow) pictureTarget(raw string) (types.JID, error) {
 }
 
 func (w *Whatsmeow) pictureInfo(ctx context.Context, raw string, preview bool) (*types.ProfilePictureInfo, error) {
+	if err := w.loggedIn(); err != nil {
+		return nil, err
+	}
 	jid, err := w.pictureTarget(raw)
 	if err != nil {
 		return nil, err
@@ -518,6 +533,9 @@ func (w *Whatsmeow) DownloadProfilePicture(ctx context.Context, jid string, prev
 }
 
 func (w *Whatsmeow) UserInfo(ctx context.Context, raw string, business bool) (*workerv1.GetUserInfoResponse, error) {
+	if err := w.loggedIn(); err != nil {
+		return nil, err
+	}
 	jid, err := parseUser(raw)
 	if err != nil {
 		return nil, err
@@ -570,6 +588,9 @@ func (w *Whatsmeow) blockedJIDs(bl *types.Blocklist) []string {
 }
 
 func (w *Whatsmeow) Blocklist(ctx context.Context) ([]string, error) {
+	if err := w.loggedIn(); err != nil {
+		return nil, err
+	}
 	bl, err := w.hooks().getBlocklist(ctx, "")
 	if err != nil {
 		return nil, accountErr(err)
@@ -578,6 +599,9 @@ func (w *Whatsmeow) Blocklist(ctx context.Context) ([]string, error) {
 }
 
 func (w *Whatsmeow) UpdateBlocklist(ctx context.Context, raw string, block bool) ([]string, error) {
+	if err := w.loggedIn(); err != nil {
+		return nil, err
+	}
 	jid, err := parseUser(raw)
 	if err != nil {
 		return nil, err
@@ -720,6 +744,9 @@ func ValidPrivacy(name, value string) bool {
 }
 
 func (w *Whatsmeow) Privacy(ctx context.Context) (map[string]string, error) {
+	if err := w.loggedIn(); err != nil {
+		return nil, err
+	}
 	p, err := w.hooks().privacy(ctx, true)
 	if err != nil {
 		return nil, accountErr(err)
@@ -728,6 +755,9 @@ func (w *Whatsmeow) Privacy(ctx context.Context) (map[string]string, error) {
 }
 
 func (w *Whatsmeow) SetPrivacy(ctx context.Context, req *workerv1.SetPrivacyRequest) (map[string]string, error) {
+	if err := w.loggedIn(); err != nil {
+		return nil, err
+	}
 	h := w.hooks()
 	if req.SetDefaultDisappearing {
 		switch req.DefaultDisappearingSeconds {

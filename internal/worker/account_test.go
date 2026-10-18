@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waSyncAction"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/grpc/codes"
@@ -304,5 +306,21 @@ func TestStarOwnMessageIndex(t *testing.T) {
 		if i[3] != "1" || i[4] != "0" {
 			t.Fatalf("index = %v", i)
 		}
+	}
+}
+
+// While pairing (no session) the account calls fail at once instead of hanging.
+func TestAccountNeedsLogin(t *testing.T) {
+	w := NewWhatsmeow(whatsmeow.NewClient(&store.Device{}, nil), slog.New(slog.DiscardHandler))
+	w.sink = &dataRec{}
+	_, err := w.Privacy(context.Background())
+	if c, code := codeOf(err); c != codes.FailedPrecondition || code != "logged_out" {
+		t.Fatalf("privacy = %v", err)
+	}
+	if c, _ := codeOf(w.ChatAction(context.Background(), &workerv1.ChatActionRequest{Chat: "5511888887777@s.whatsapp.net", Action: "pin"})); c != codes.FailedPrecondition {
+		t.Fatal("chat action without session must fail fast")
+	}
+	if _, err := w.ProfilePicture(context.Background(), "5511888887777@s.whatsapp.net", false); err == nil {
+		t.Fatal("picture without session must fail fast")
 	}
 }
