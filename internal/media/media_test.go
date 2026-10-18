@@ -255,3 +255,17 @@ func TestSignatureIsUnambiguous(t *testing.T) {
 		t.Fatal("signature of a/b + c accepted for a + b/c")
 	}
 }
+
+func TestSafeTransportBlocksLoopback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer srv.Close()
+	_, err := (&http.Client{Transport: SafeTransport(false)}).Get(srv.URL)
+	if !errors.Is(err, ErrBlocked) {
+		t.Fatalf("loopback dial: %v, want ErrBlocked", err)
+	}
+	resp, err := (&http.Client{Transport: SafeTransport(true)}).Get(srv.URL)
+	if err != nil {
+		t.Fatalf("allowed private: %v", err)
+	}
+	resp.Body.Close()
+}

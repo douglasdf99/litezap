@@ -123,6 +123,20 @@ func (f *Fetcher) dial(ctx context.Context, network, address string) (net.Conn, 
 	return d.DialContext(ctx, network, netip.AddrPortFrom(ips[0], uint16(p)).String())
 }
 
+// SafeTransport is an HTTP transport for user-supplied URLs (webhooks): no environment
+// proxy, and only public unicast addresses (unless allowPrivate), checked after DNS
+// resolution on every connection. Blocked dials fail with an error wrapping ErrBlocked.
+func SafeTransport(allowPrivate bool) *http.Transport {
+	f := &Fetcher{AllowPrivate: allowPrivate}
+	return &http.Transport{
+		Proxy:               nil,
+		DialContext:         f.dial,
+		TLSHandshakeTimeout: 10 * time.Second,
+		MaxIdleConnsPerHost: 4,
+		IdleConnTimeout:     90 * time.Second,
+	}
+}
+
 func (f *Fetcher) httpClient() *http.Client {
 	f.clientOnce.Do(f.initClient)
 	return f.client
