@@ -116,6 +116,18 @@ tags:
       Mídia recebida é baixada sob demanda na primeira leitura e guardada em `data/media/`. Para repassar
       um arquivo a outro serviço sem entregar seu token, gere uma URL assinada que vale 1 hora.
     x-concept: /docs/conceitos/midia/
+  - name: Atendente IA
+    description: Hook de agente (externo ou embutido) e o Atendente LiteZap — agentes treinados com o contexto do negócio.
+    x-slug: atendente-ia
+    x-intro: |
+      O hook de agente entrega cada mensagem recebida a um atendente de IA e envia a resposta pela fila normal
+      (ritmo, janela, rampa, suspensão), com pausa quando um humano responde, proteção contra loop e um chat por
+      vez. O destino é a sua URL (`target: url`, POST assinado) ou o **Atendente LiteZap** embutido
+      (`target: builtin`): a IA roda dentro do motor, com agentes por instância (modo vendedor, facilitador de
+      pedido, SDR/agendamento ou suporte), base de conhecimento, transcrição de áudio, imagens para o modelo e
+      resposta em voz opcional. O provedor (Anthropic ou OpenAI-compatível) e as chaves são do admin; as chaves
+      ficam cifradas e nunca voltam na API. O passo a passo está em [Atendente IA](/docs/guias/atendimento-ia/).
+    x-concept: /docs/guias/atendimento-ia/
   - name: Webhooks
     description: Cadastrar endpoints que recebem eventos assinados, com retry e dead-letter.
     x-slug: webhooks
@@ -1477,6 +1489,361 @@ paths:
               example: { error: { code: forbidden, message: "invalid or expired media URL", retryable: false } }
         "404": { $ref: "#/components/responses/NotFound" }
         "410": { $ref: "#/components/responses/MediaUnavailable" }
+
+  /v1/instances/{id}/agent-hook:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Atendente IA]
+      operationId: getAgentHook
+      x-litezap-milestone: M5
+      summary: Ler hook de agente
+      x-litezap-scope: instancia
+      description: "Configuração do hook (o segredo nunca volta; `secret_set` diz se existe). Sem configuração, devolve os padrões com `configured: false`."
+      responses:
+        "200":
+          description: Configuração.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentHook" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+    put:
+      tags: [Atendente IA]
+      operationId: putAgentHook
+      x-litezap-milestone: M5
+      summary: Configurar hook de agente
+      x-litezap-scope: instancia
+      x-litezap-events: [agent.failed, agent.handoff, agent.lead, agent.appointment_requested, agent.order_draft]
+      description: |
+        Atualização parcial (cria se não existir). `target: "builtin"` usa o Atendente LiteZap embutido (sem
+        URL); `target: "url"` (padrão) faz um `POST` assinado para `url`. Um `secret` ausente é gerado e
+        aparece só nesta resposta. Campos desconhecidos são recusados.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentHookPatch" }
+            examples:
+              embutido: { summary: Atendente LiteZap, value: { target: builtin, enabled: true } }
+              externo: { summary: Agente externo, value: { target: url, url: "https://meu-agente.exemplo.com/litezap", enabled: true } }
+      responses:
+        "200":
+          description: Configuração salva (`secret` só quando acabou de ser gerado).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentHook" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+    delete:
+      tags: [Atendente IA]
+      operationId: deleteAgentHook
+      x-litezap-milestone: M5
+      summary: Remover hook de agente
+      x-litezap-scope: instancia
+      description: Remove a configuração (o atendente para); as regras por conversa continuam.
+      responses:
+        "204": { description: Removido. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/chats/{jid}/agent:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }, { $ref: "#/components/parameters/ChatJID" }]
+    put:
+      tags: [Atendente IA]
+      operationId: putChatAgent
+      x-litezap-milestone: M5
+      summary: Ligar ou desligar o atendente numa conversa
+      x-litezap-scope: instancia
+      description: '`{"enabled": true | false | null}`; `null` herda o padrão da instância. `true` e `null` também encerram uma pausa (após handoff ou resposta humana).'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [enabled], properties: { enabled: { type: [boolean, "null"] } } }
+            example: { enabled: false }
+      responses:
+        "200":
+          description: Estado do atendente na conversa.
+          content:
+            application/json:
+              schema: { type: object, properties: { jid: { type: string }, name: { type: string }, is_group: { type: boolean }, enabled: { type: [boolean, "null"] }, paused_until: { type: string, format: date-time } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+  /v1/instances/{id}/agent-hook/calls:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Atendente IA]
+      operationId: listAgentCalls
+      x-litezap-milestone: M5
+      summary: Últimas chamadas do atendente
+      x-litezap-scope: instancia
+      description: "Log das chamadas (`ok`, `failed`, `skipped`, `discarded`, `paused`), com motivo e duração. Motivos do embutido: `not_configured`, `daily_cap`, `llm_error`, `invalid_response`."
+      parameters: [{ $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200":
+          description: Chamadas, mais recente primeiro.
+          content:
+            application/json:
+              schema: { type: object, properties: { calls: { type: array, items: { type: object } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+  /v1/instances/{id}/attendant:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Atendente IA]
+      operationId: getAttendant
+      x-litezap-milestone: M5b
+      summary: Ler o Atendente LiteZap
+      x-litezap-scope: instancia
+      description: Provedor, modelo, limites e uso de hoje. As chaves nunca voltam (`api_key_set`, `audio_api_key_set`).
+      responses:
+        "200":
+          description: Configuração do atendente embutido.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AttendantSettings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+    put:
+      tags: [Atendente IA]
+      operationId: putAttendant
+      x-litezap-milestone: M5b
+      summary: Configurar provedor do atendente
+      x-litezap-scope: admin
+      x-litezap-notes: "Cada mensagem atendida é uma chamada paga ao provedor: mantenha daily_call_cap."
+      description: |
+        Só o token admin. Atualização parcial: `provider` (`anthropic` | `openai`, qualquer servidor
+        OpenAI-compatível), `model` (padrão `claude-sonnet-5-5`), `base_url`, `api_key` (cifrada em
+        repouso com `data/attendant_key`; `""` remove), `daily_call_cap` (padrão 300 chamadas/dia, inclui
+        transcrição e voz), `max_tokens`, `vision`, `audio` (servidor OpenAI-compatível de
+        `/audio/transcriptions` e `/audio/speech`) e preços para o log de custo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AttendantSettingsPatch" }
+            examples:
+              anthropic: { summary: Claude (padrão), value: { provider: anthropic, api_key: "sk-ant-...", daily_call_cap: 300 } }
+              local: { summary: Servidor local (Ollama), value: { provider: openai, base_url: "http://127.0.0.1:11434/v1", model: "llama3.1" } }
+      responses:
+        "200":
+          description: Configuração salva (sem as chaves).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AttendantSettings" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+  /v1/instances/{id}/attendant/presets:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Atendente IA]
+      operationId: attendantPresets
+      x-litezap-milestone: M5b
+      summary: Modos prontos do atendente
+      x-litezap-scope: instancia
+      description: "Objetivo, roteiro, tom, critérios de passagem para humano e ações de cada modo: `vendedor`, `pedido`, `sdr`, `suporte`, `custom`."
+      responses:
+        "200":
+          description: Presets por modo.
+          content:
+            application/json:
+              schema: { type: object, properties: { presets: { type: object, additionalProperties: { $ref: "#/components/schemas/AttendantProfile" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/instances/{id}/attendant/agents:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Atendente IA]
+      operationId: listAttendantAgents
+      x-litezap-milestone: M5b
+      summary: Listar agentes
+      x-litezap-scope: instancia
+      description: Agentes da instância; `active` marca o que responde (o escolhido, senão o primeiro criado).
+      responses:
+        "200":
+          description: Agentes.
+          content:
+            application/json:
+              schema: { type: object, properties: { agents: { type: array, items: { $ref: "#/components/schemas/AttendantAgent" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+    post:
+      tags: [Atendente IA]
+      operationId: createAttendantAgent
+      x-litezap-milestone: M5b
+      summary: Criar agente
+      x-litezap-scope: instancia
+      description: Campos de roteiro ausentes vêm do preset do modo; tudo é editável depois. Até 20 agentes por instância.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AttendantProfile" }
+            example:
+              name: Bia da Pizzaria
+              mode: pedido
+              business: "Pizzaria do Zé, Rua A 10, Centro. Entrega em até 40 min. Pix ou cartão na entrega."
+              knowledge:
+                - { kind: product, title: Pizza Margherita, price: 45.0, content: "8 fatias" }
+                - { kind: hours, title: Seg a Dom, content: "18h às 23h" }
+                - { kind: faq, title: "Tem opção sem glúten?", content: "Sim, massa sem glúten por +R$ 8." }
+      responses:
+        "201":
+          description: Agente criado.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AttendantAgent" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+  /v1/instances/{id}/attendant/agents/{agent_id}:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: agent_id, in: path, required: true, description: "Id do agente (`agt_...`).", schema: { type: string } }
+    get:
+      tags: [Atendente IA]
+      operationId: getAttendantAgent
+      x-litezap-milestone: M5b
+      summary: Ler agente
+      x-litezap-scope: instancia
+      responses:
+        "200":
+          description: Agente.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AttendantAgent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Atendente IA]
+      operationId: updateAttendantAgent
+      x-litezap-milestone: M5b
+      summary: Alterar agente
+      x-litezap-scope: instancia
+      description: Substitui o perfil inteiro (um roteiro vazio fica vazio).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AttendantProfile" }
+      responses:
+        "200":
+          description: Agente alterado.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AttendantAgent" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Atendente IA]
+      operationId: deleteAttendantAgent
+      x-litezap-milestone: M5b
+      summary: Excluir agente
+      x-litezap-scope: instancia
+      responses:
+        "204": { description: Excluído. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/attendant/agents/{agent_id}/activate:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: agent_id, in: path, required: true, description: "Id do agente (`agt_...`).", schema: { type: string } }
+    post:
+      tags: [Atendente IA]
+      operationId: activateAttendantAgent
+      x-litezap-milestone: M5b
+      summary: Ativar agente
+      x-litezap-scope: instancia
+      description: Faz este agente responder as conversas da instância.
+      responses:
+        "200":
+          description: Agente ativo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AttendantAgent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/attendant/simulate:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Atendente IA]
+      operationId: simulateAttendant
+      x-litezap-milestone: M5b
+      summary: Simular conversa
+      x-litezap-scope: instancia
+      description: |
+        Roda um agente (salvo, o ativo, ou um perfil ainda não salvo em `agent`) contra mensagens de exemplo
+        **sem enviar nada**. `from`: `customer` (padrão), `agent`, `human`, `automatic`. A última mensagem
+        precisa ser do cliente (ou use `trigger: "call"` para a mensagem pós-ligação). É uma chamada real ao
+        provedor e conta no limite diário.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                agent_id: { type: string }
+                agent: { $ref: "#/components/schemas/AttendantProfile" }
+                messages: { type: array, maxItems: 50, items: { type: object, properties: { from: { type: string, enum: [customer, agent, human, automatic] }, text: { type: string } } } }
+                trigger: { type: string, enum: [call] }
+                contact_name: { type: string }
+            example: { messages: [{ from: automatic, text: "Não atendemos ligações, mande mensagem." }, { text: "quero 2 margheritas pra Rua B 5" }] }
+      responses:
+        "200":
+          description: O que o agente faria.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reply: { type: string }
+                  voice: { type: boolean }
+                  handoff: { type: boolean }
+                  handoff_note: { type: string }
+                  events: { type: array, items: { type: object } }
+                  model: { type: string }
+                  usage: { type: object, properties: { input_tokens: { type: integer }, output_tokens: { type: integer }, cost_usd: { type: number } } }
+              example: { reply: "Resumo: 2x Pizza Margherita (R$ 90,00), entrega na Rua B, 5. Confirma?", voice: false, handoff: false, events: [{ type: agent.order_draft, items: [{ name: Pizza Margherita, quantity: 2, unit_price: 45, subtotal: 90, in_catalog: true }], total: 90, currency: BRL, address: "Rua B, 5" }], model: claude-sonnet-5-5, usage: { input_tokens: 1830, output_tokens: 120, cost_usd: 0.00486 } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/attendant/usage:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Atendente IA]
+      operationId: attendantUsage
+      x-litezap-milestone: M5b
+      summary: Uso e custo do atendente
+      x-litezap-scope: instancia
+      description: Chamadas ao provedor, tokens e custo estimado (US$) por dia UTC, mais recente primeiro.
+      parameters: [{ name: days, in: query, description: "Dias (padrão 7, máximo 90).", schema: { type: integer, minimum: 1, maximum: 90 } }]
+      responses:
+        "200":
+          description: Uso por dia.
+          content:
+            application/json:
+              schema: { type: object, properties: { usage: { type: array, items: { type: object, properties: { day: { type: string }, calls: { type: integer }, input_tokens: { type: integer }, output_tokens: { type: integer }, cost_usd: { type: number } } } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
 
   /v1/webhooks:
     post:
@@ -3337,6 +3704,120 @@ components:
             description: { type: string }
         timestamp: { type: string, format: date-time }
 
+    AgentHook:
+      type: object
+      properties:
+        configured: { type: boolean }
+        target: { type: string, enum: [url, builtin], description: "url: POST assinado para `url`; builtin: Atendente LiteZap embutido." }
+        url: { type: string }
+        enabled: { type: boolean }
+        timeout: { type: string, example: 30s }
+        context_messages: { type: integer }
+        groups_enabled: { type: boolean }
+        human_pause: { type: string, example: 30m0s }
+        pause_on_api_send: { type: boolean }
+        ignore: { type: array, items: { type: string } }
+        max_replies_per_window: { type: integer }
+        reply_window: { type: string }
+        secret_set: { type: boolean }
+        secret: { type: string, description: Só quando acabou de ser gerado. }
+    AgentHookPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        target: { type: string, enum: [url, builtin] }
+        url: { type: string }
+        secret: { type: string }
+        enabled: { type: boolean }
+        timeout: { type: string }
+        context_messages: { type: integer, minimum: 0, maximum: 100 }
+        groups_enabled: { type: boolean }
+        human_pause: { type: string }
+        pause_on_api_send: { type: boolean }
+        ignore: { type: array, items: { type: string } }
+        max_replies_per_window: { type: integer }
+        reply_window: { type: string }
+    AttendantAudio:
+      type: object
+      properties:
+        base_url: { type: string, description: "Servidor OpenAI-compatível; vazio com provider openai = o mesmo servidor." }
+        transcription_model: { type: string, description: "Ex.: whisper-1; vazio desliga a transcrição." }
+        speech_model: { type: string, description: "Ex.: gpt-4o-mini-tts; vazio desliga a voz." }
+        voice: { type: string }
+    AttendantSettings:
+      type: object
+      properties:
+        configured: { type: boolean }
+        provider: { type: string, enum: [anthropic, openai] }
+        model: { type: string, example: claude-sonnet-5-5 }
+        base_url: { type: string }
+        max_tokens: { type: integer }
+        daily_call_cap: { type: integer }
+        active_agent_id: { type: string }
+        vision: { type: boolean }
+        audio: { $ref: "#/components/schemas/AttendantAudio" }
+        price_input_per_mtok: { type: number }
+        price_output_per_mtok: { type: number }
+        api_key_set: { type: boolean }
+        audio_api_key_set: { type: boolean }
+        ready: { type: boolean }
+        not_ready: { type: string }
+        transcription: { type: boolean }
+        speech: { type: boolean }
+        today: { type: object, properties: { day: { type: string }, calls: { type: integer }, input_tokens: { type: integer }, output_tokens: { type: integer }, cost_usd: { type: number } } }
+    AttendantSettingsPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        provider: { type: string, enum: [anthropic, openai] }
+        model: { type: string }
+        base_url: { type: string }
+        max_tokens: { type: integer, minimum: 64, maximum: 8192 }
+        daily_call_cap: { type: integer, minimum: 0 }
+        vision: { type: boolean }
+        audio: { $ref: "#/components/schemas/AttendantAudio" }
+        price_input_per_mtok: { type: number }
+        price_output_per_mtok: { type: number }
+        api_key: { type: string, writeOnly: true }
+        audio_api_key: { type: string, writeOnly: true }
+    AttendantProfile:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 80 }
+        mode: { type: string, enum: [vendedor, pedido, sdr, suporte, custom] }
+        objective: { type: string }
+        steps: { type: array, items: { type: string } }
+        tone: { type: string }
+        handoff_criteria: { type: array, items: { type: string } }
+        actions: { type: array, items: { type: string, enum: [handoff, lead, appointment, order_draft] } }
+        business: { type: string, description: Contexto do negócio (texto livre, confiável). }
+        knowledge:
+          type: array
+          maxItems: 300
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [faq, product, hours, policy, info] }
+              title: { type: string }
+              content: { type: string }
+              price: { type: number }
+        language: { type: string, default: pt-BR }
+        currency: { type: string, default: BRL }
+        voice_reply: { type: string, enum: ["off", when_audio, always], default: "off" }
+        call_followup: { type: boolean }
+        call_hint: { type: string }
+        max_reply_chars: { type: integer, minimum: 50, maximum: 4000, default: 1000 }
+        hide_contact_name: { type: boolean }
+    AttendantAgent:
+      allOf:
+        - { $ref: "#/components/schemas/AttendantProfile" }
+        - type: object
+          properties:
+            id: { type: string }
+            active: { type: boolean }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
   responses:
     InstanceOK:
       description: A instância logo após a ação (o estado pode ainda ser o anterior).
@@ -3968,5 +4449,127 @@ webhooks:
           application/json:
             schema: { $ref: "#/components/schemas/Envelope" }
             example: { id: evt_8c2f6a0d4e1b3957, type: instance.paired, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T16:58:03.120Z", data: { phone: "5511999999999", via_link: true } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  agent.failed:
+    post:
+      summary: Atendente IA falhou
+      x-slug: agent-failed
+      x-litezap-milestone: M5
+      x-zapi: (sem equivalente)
+      description: |
+        Uma chamada do hook de agente falhou e nada foi enviado (falha fechada), ou a proteção contra loop pausou
+        o chat. Motivos do agente externo: `timeout`, `http_error`, `network_error`, `invalid_response`,
+        `send_failed`, `loop_guard`, `internal`. Do Atendente LiteZap: também `not_configured`, `daily_cap`
+        (limite diário de chamadas atingido) e `llm_error` (o provedor falhou).
+      x-related: [agent.handoff]
+      x-fields:
+        - [chat, string, "Chat da mensagem."]
+        - [message_id, string, "Id LiteZap da mensagem (ausente no follow-up de ligação)."]
+        - [reason, string, "Código estável do motivo."]
+        - [error, string, "Detalhe (opcional, sem chaves)."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_5f1c9a3e7d2b4086, type: agent.failed, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T19:02:11.020Z", data: { chat: "5511999999999@s.whatsapp.net", message_id: msg_1a2b3c4d5e6f7a8b, reason: daily_cap, error: "daily limit of 300 provider calls reached (daily_call_cap)" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  agent.handoff:
+    post:
+      summary: Atendente passou para humano
+      x-slug: agent-handoff
+      x-litezap-milestone: M5
+      x-zapi: (sem equivalente)
+      description: O agente passou o chat para uma pessoa; ele fica desligado no chat até ser reativado.
+      x-related: [agent.failed]
+      x-fields:
+        - [chat, string, "Chat."]
+        - [message_id, string, "Mensagem que disparou (opcional)."]
+        - [note, string, "Nota do agente para a equipe (opcional)."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_7a3c1e9f5d2b4068, type: agent.handoff, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T19:05:40.100Z", data: { chat: "5511999999999@s.whatsapp.net", message_id: msg_1a2b3c4d5e6f7a8b, note: "cliente quer negociar desconto" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  agent.lead:
+    post:
+      summary: Lead qualificado pelo atendente
+      x-slug: agent-lead
+      x-litezap-milestone: M5b
+      x-zapi: (sem equivalente)
+      description: |
+        O Atendente LiteZap (ação `lead` permitida, ex.: modo SDR ou vendedor) entendeu a necessidade do
+        cliente. Leve para o CRM com um webhook ou n8n. Repetições idênticas no mesmo chat em 24h não são
+        reemitidas. O telefone não passa pela IA: use `chat`.
+      x-related: [agent.appointment_requested, agent.order_draft]
+      x-fields:
+        - [chat, string, "Chat do cliente."]
+        - [message_id, string, "Mensagem que disparou."]
+        - [agent_id, string, "Agente que atendeu."]
+        - [agent_name, string, "Nome do agente."]
+        - [mode, string, "Modo do agente."]
+        - [customer_name, string, "Nome informado (pode ser vazio)."]
+        - [need, string, "Necessidade do cliente."]
+        - [notes, string, "Observações."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_2b8d4f0a6c1e3957, type: agent.lead, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T19:10:00.000Z", data: { chat: "5511999999999@s.whatsapp.net", message_id: msg_1a2b3c4d5e6f7a8b, agent_id: agt_3c9e1a7f5d2b4086, agent_name: Sara, mode: sdr, customer_name: Rui, need: "limpeza de pele", notes: "" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  agent.appointment_requested:
+    post:
+      summary: Pedido de agendamento
+      x-slug: agent-appointment-requested
+      x-litezap-milestone: M5b
+      x-zapi: (sem equivalente)
+      description: |
+        O Atendente LiteZap (modo SDR/agendamento) coletou nome, necessidade e horário de preferência. Nenhum
+        calendário é tocado: confirme pela sua agenda (webhook, n8n) e responda o cliente.
+      x-related: [agent.lead]
+      x-fields:
+        - [chat, string, "Chat do cliente."]
+        - [message_id, string, "Mensagem que disparou."]
+        - [agent_id, string, "Agente."]
+        - [customer_name, string, "Nome."]
+        - [need, string, "Necessidade."]
+        - [preferred_time, string, "Dia e horário como o cliente disse (com data ISO quando clara)."]
+        - [notes, string, "Observações."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_9d3f5b1a7e2c4068, type: agent.appointment_requested, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T19:12:00.000Z", data: { chat: "5511999999999@s.whatsapp.net", message_id: msg_1a2b3c4d5e6f7a8b, agent_id: agt_3c9e1a7f5d2b4086, agent_name: Sara, mode: sdr, customer_name: Rui, need: "limpeza de pele", preferred_time: "terça 15h (2026-10-20)", notes: "" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  agent.order_draft:
+    post:
+      summary: Rascunho de pedido
+      x-slug: agent-order-draft
+      x-litezap-milestone: M5b
+      x-zapi: (sem equivalente)
+      description: |
+        O Atendente LiteZap (modo facilitador de pedido) montou o pedido e pediu confirmação ao cliente. Os preços
+        unitários vêm do catálogo do agente quando o nome bate (`in_catalog: true`) e o total é recalculado pelo
+        motor; itens fora do catálogo vêm com o preço citado pela IA (`all_items_in_catalog: false`: confira).
+        A confirmação do cliente é a próxima mensagem dele.
+      x-related: [agent.lead]
+      x-fields:
+        - [chat, string, "Chat do cliente."]
+        - [items, array, "name, quantity, unit_price, subtotal, in_catalog."]
+        - [total, number, "Total recalculado."]
+        - [currency, string, "Moeda do agente (BRL)."]
+        - [all_items_in_catalog, boolean, "Todos os itens casaram com o catálogo."]
+        - [address, string, "Endereço (ou retirada)."]
+        - [notes, string, "Observações."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_4e0a2c8f6b1d3957, type: agent.order_draft, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T19:20:00.000Z", data: { chat: "5511999999999@s.whatsapp.net", message_id: msg_1a2b3c4d5e6f7a8b, agent_id: agt_5b1d3f9a7c2e4086, agent_name: Bia, mode: pedido, items: [{ name: Pizza Margherita, quantity: 2, unit_price: 45, subtotal: 90, in_catalog: true }], total: 90, currency: BRL, all_items_in_catalog: true, address: "Rua B, 5", notes: "sem cebola", customer_name: Ana } }
       responses:
         "2XX": { description: Qualquer 2xx confirma a entrega. }

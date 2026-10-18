@@ -1,6 +1,7 @@
 // "Atendente IA" tab: agent hook config (spec 4.3), per-chat override, recent calls.
 import * as api from './api.js';
 import { h, mount, clear, toast, errMsg, modal, secretBox, field, fmtTime, phoneOf, confirmDanger } from './ui.js';
+import { attendantPanel } from './attendant.js';
 
 const STATUS_CLASS = { ok: 'd-delivered', failed: 'd-failed' };
 const STATUS_LABEL = { ok: 'ok', failed: 'falhou', skipped: 'pulada', discarded: 'descartada', paused: 'pausa (humano)' };
@@ -24,6 +25,10 @@ export function agentPanel(ctx) {
 
   // ---------- config ----------
   const renderConfig = (c) => {
+    const target = h('select', null,
+      h('option', { value: 'builtin' }, 'Atendente LiteZap (embutido, configurado abaixo)'),
+      h('option', { value: 'url' }, 'Meu agente externo (URL)'));
+    target.value = c.target || 'url';
     const url = h('input', { type: 'url', class: 'mono', value: c.url, placeholder: 'https://meu-agente.exemplo.com/litezap' });
     const enabled = h('input', { type: 'checkbox', checked: c.enabled });
     const groups = h('input', { type: 'checkbox', checked: c.groups_enabled });
@@ -62,7 +67,7 @@ export function agentPanel(ctx) {
         ev.preventDefault();
         const num = (input) => Number(input.value);
         const p = {
-          url: url.value.trim(), enabled: enabled.checked, groups_enabled: groups.checked,
+          target: target.value, url: url.value.trim(), enabled: enabled.checked, groups_enabled: groups.checked,
           timeout: `${num(timeout)}s`, context_messages: num(contextN), human_pause: `${num(pause)}m`,
           pause_on_api_send: apiPause.checked,
           max_replies_per_window: num(maxReplies), reply_window: `${num(windowMin)}m`,
@@ -83,7 +88,8 @@ export function agentPanel(ctx) {
       '(X-LiteZap-Signature, igual aos webhooks) para a URL do seu agente; a resposta { reply, actions } ',
       'sai pela fila normal, com ritmo, janela e rampa. Erro, timeout ou resposta inválida não enviam nada.'),
     h('fieldset', null, h('legend', null, 'Agente'),
-      field('URL do agente', url, 'Só http(s). Endereços locais (127.0.0.1, rede interna) exigem webhook_allow_private_urls no servidor.'),
+      field('Quem responde', target, 'Embutido: a IA roda dentro do LiteZap (provedor e agentes abaixo). Externo: POST assinado para a sua URL.'),
+      field('URL do agente (só destino externo)', url, 'Só http(s). Endereços locais (127.0.0.1, rede interna) exigem webhook_allow_private_urls no servidor.'),
       h('div', { class: 'row' },
         h('label', { class: 'check' }, enabled, ' Responder automaticamente (padrão para todas as conversas)'),
         h('label', { class: 'check' }, groups, ' Também em grupos')),
@@ -194,8 +200,10 @@ export function agentPanel(ctx) {
   loadConfig();
   loadChats();
   loadCalls();
+  const att = attendantPanel(ctx);
   const el = h('div', { class: 'agent' },
     cfgBox,
+    att.el,
     chatsBox,
     h('div', { class: 'card' },
       h('div', { class: 'row' }, h('h2', null, 'Chamadas recentes'),
@@ -205,5 +213,5 @@ export function agentPanel(ctx) {
           h('thead', null, h('tr', null, h('th', null, 'Quando'), h('th', null, 'Conversa'), h('th', null, 'Status'),
             h('th', null, 'Motivo'), h('th', null, 'Ações'), h('th', null, 'Detalhe'))),
           callsBody))));
-  return { el, cleanup() { alive = false; off(); clearTimeout(timer); } };
+  return { el, cleanup() { alive = false; off(); clearTimeout(timer); att.cleanup(); } };
 }

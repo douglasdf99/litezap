@@ -117,7 +117,7 @@ export default defineConfig({
 						'docs/guias/automacao',
 						'docs/guias/solucao-de-problemas',
 						{ slug: 'docs/guias/multi-instancia', badge: { text: 'Parcial', variant: 'tip' } },
-						soonPage('docs/guias/atendimento-ia', 'M5'),
+						{ slug: 'docs/guias/atendimento-ia', badge: { text: 'Novo', variant: 'success' } },
 						'docs/guias/grupos',
 						{ slug: 'docs/guias/mensagens-interativas', badge: exp },
 					],
@@ -173,7 +173,7 @@ export default defineConfig({
 				{
 					label: 'MCP e IA',
 					collapsed: true,
-					items: ['docs/mcp', 'docs/mcp/ferramentas', soonPage('docs/mcp/hook-de-agente', 'M5')],
+					items: ['docs/mcp', 'docs/mcp/ferramentas', 'docs/mcp/hook-de-agente'],
 				},
 				{
 					label: 'SDKs e ferramentas',

@@ -354,8 +354,11 @@ Adicionar campos em `data` não muda a versão; remover ou mudar o sentido de um
 | `group.updated` | mudança num grupo em que o número está (feita no celular, por outro membro ou pela API); um evento por tipo de mudança | `{chat, kind, actor?, participants?, reason?, name?, description?, removed?, settings?, group?, timestamp}`. `kind`: `participants_added` (`reason: "invite"` = entrou por link), `participants_removed`, `participants_promoted`, `participants_demoted`, `join_request` (pedido de entrada com aprovação), `join_request_revoked` (pedido cancelado ou recusado), `subject` (`name`), `description` (`""` = removida), `photo` (`removed`), `settings` (`settings {announce?, locked?, approval_required?, ephemeral_seconds?}`; uma mudança na aprovação de entrada sai depois, com o valor lido do grupo, ou `approval_mode_changed: true` se a leitura falhar), `invite_link_reset`, `joined` (o número foi adicionado ou criou o grupo; `name`), `deleted`, `suspended`/`unsuspended`, `community_linked`/`community_unlinked` (`group`). `filters.chat: "group"` casa com ele |
 | `chat.updated` | chat arquivado/desarquivado, fixado, silenciado, marcado como (não) lido, apagado ou limpo, ou mensagem favoritada, pela API (`source: "api"`) ou em qualquer aparelho da conta (`source: "device"`); uma vez por mudança (o eco do WhatsApp para ações da API não duplica) | `{chat, is_group?, changed: [archived\|pinned\|muted\|unread\|deleted\|cleared\|starred], archived, pinned, muted, muted_until?, unread, deleted?, cleared?, message_id?, wa_message_id?, starred?, source, timestamp}` (`muted` sem `muted_until` = até reativar) |
 | `history.synced` | fim da ingestão de um history sync (um evento por sync, 15s depois do último bloco) | `{chats, messages, new_messages}` |
-| `agent.failed` | uma chamada do hook de agente falhou (nada foi enviado) ou o limite de respostas pausou o chat | `{chat, message_id, wa_message_id, reason, error?, http_status?}`; `reason`: `timeout`, `http_error`, `network_error`, `invalid_response`, `send_failed`, `loop_guard`, `internal` |
+| `agent.failed` | uma chamada do hook de agente falhou (nada foi enviado) ou o limite de respostas pausou o chat | `{chat, message_id, wa_message_id, reason, error?, http_status?}`; `reason`: `timeout`, `http_error`, `network_error`, `invalid_response`, `send_failed`, `loop_guard`, `internal`; do atendente embutido também `not_configured`, `daily_cap`, `llm_error` |
 | `agent.handoff` | o agente passou o chat para um humano (ação `handoff`) | `{chat, message_id, wa_message_id, note?}` |
+| `agent.lead` | o atendente embutido qualificou um lead (ação `lead`) | `{chat, message_id, agent_id, agent_name, mode, customer_name, need, notes}` |
+| `agent.appointment_requested` | o atendente embutido coletou um pedido de agendamento (nenhuma agenda é tocada) | `{chat, message_id, agent_id, agent_name, mode, customer_name, need, preferred_time, notes}` |
+| `agent.order_draft` | o atendente embutido montou um pedido e pediu confirmação | `{chat, message_id, agent_id, agent_name, mode, items[{name, quantity, unit_price, subtotal, in_catalog}], total, currency, all_items_in_catalog, address, notes, customer_name}` |
 | `instance.proxy_failed` | a instância não alcança o WhatsApp pelo proxy (entra em `reconnecting`/`proxy_unreachable`), repetido a cada 5 min enquanto durar; a volta é o próximo `instance.status` | `{reason, since, duration_seconds, outages_last_hour, repeat, error?}` (`error` = último erro de conexão do worker, sem usuário/senha do proxy, telefones nem tokens) |
 | `instance.paired` | pareamento concluído (a instância esperava QR/código e conectou); não sai em reconexões | `{phone, via_link}` (`via_link: true` = um link de pareamento hospedado foi consumido) |
 
@@ -470,6 +473,7 @@ curl -s $LZ/v1/instances/$ID/agent-hook/calls -H "Authorization: Bearer $TOK"   
 
 | Campo | Padrão | |
 |---|---|---|
+| `target` | `url` | `url` (POST assinado para `url`) ou `builtin` ([Atendente LiteZap embutido](#atendente-litezap-embutido), sem URL) |
 | `url` | — | `http(s)`; endereços privados/loopback só com `webhook_allow_private_urls` |
 | `secret` | gerado | 16–256 caracteres; assina como os webhooks (`X-LiteZap-Signature`) |
 | `enabled` | `false` | padrão para conversas sem regra própria |
@@ -489,7 +493,7 @@ curl -s $LZ/v1/instances/$ID/agent-hook/calls -H "Authorization: Bearer $TOK"   
  "context":[{"id":"msg_...","wa_message_id":"...","sender":"...","from_me":false,"source":"contact","type":"text","text":"oi","timestamp":"..."}]}
 ```
 
-`context` termina com a própria mensagem; `from_me` com `source: api` são respostas do robô, `source: device` são de um humano no celular.
+`context` termina com a própria mensagem. `origin` diz quem escreveu cada uma: `contact` (cliente), `agent` (respostas do próprio agente), `human` (alguém no celular), `automatic` (mensagens automáticas, como o aviso de ligação recusada), `api` (outros sistemas pela API) ou `history`. Trate `automatic`/`api` como contexto, nunca como falas do agente.
 
 **Response** `200` `{"reply": "texto" | {MessagePayload sem "to"}, "actions": [...]}` ou `204` (nada a fazer). `reply` objeto aceita os tipos de conteúdo (`text`, `image`, `video`, `audio`, `document`, `sticker`, `gif`, `ptv`, `location`, `contact`, `poll`); sempre vai para o chat que disparou a chamada, uma vez por mensagem (`client_message_id = agent:<id>`), e expira em 1h se não sair. Ações: `{"type":"mark_read"}`, `{"type":"react","emoji":"👍"}`, `{"type":"pause","minutes":60}` (1–10080), `{"type":"handoff","note":"..."}` (desliga o hook no chat até reativação e emite `agent.handoff`). A resposta é enfileirada primeiro; só se ela for aceita saem `mark_read` e `react`. `pause` e `handoff` valem sempre, mesmo se a resposta for recusada. Ação desconhecida é ignorada; resposta inválida, erro HTTP, redirecionamento ou timeout → `agent.failed`, nada é enviado, sem retry.
 
@@ -502,6 +506,37 @@ Regras:
 - Respostas do hook ainda na fila são canceladas quando um humano assume o chat, quando o limite de respostas estoura e não saem depois de 1h. `mentions: ["all"]` não é aceito numa resposta do agente.
 
 **Segurança e risco de banimento**: trate o texto das mensagens como **não confiável** no seu agente (prompt injection: o cliente pode escrever "ignore as instruções e..."); nunca dê ao modelo segredos ou ferramentas que ele não deva usar a pedido de um cliente. Respostas automáticas só vão para quem escreveu primeiro e respeitam o ritmo da fila, mas um robô respondendo outro robô gera volume anormal: mantenha o `max_replies_per_window` baixo.
+
+### Atendente LiteZap (embutido)
+
+Com `target: "builtin"` o atendente roda **dentro do motor** — nada para hospedar — e herda todo o maquinário acima (fila, pausa por humano, loop guard, um chat por vez, grupos desligados). Você escolhe o provedor, cria agentes treinados com o contexto do negócio e liga.
+
+```bash
+# provedor (só admin): Claude (padrão claude-sonnet-5-5) ou qualquer servidor OpenAI-compatível
+curl -s -X PUT $LZ/v1/instances/$ID/attendant -H "Authorization: Bearer $ADMIN" \
+  -d '{"provider":"anthropic","api_key":"sk-ant-...","daily_call_cap":300}'
+# -d '{"provider":"openai","base_url":"http://127.0.0.1:11434/v1","model":"llama3.1"}'   (Ollama, LM Studio, OpenAI...)
+# áudio opcional (OpenAI-compatível): "audio":{"base_url":"https://api.openai.com/v1","transcription_model":"whisper-1","speech_model":"gpt-4o-mini-tts","voice":"alloy"},"audio_api_key":"sk-..."
+
+# agente: modo vendedor | pedido | sdr | suporte | custom (o roteiro não enviado vem do modo)
+curl -s -X POST $LZ/v1/instances/$ID/attendant/agents -H "Authorization: Bearer $TOK" -d '{"name":"Bia","mode":"pedido",
+  "business":"Pizzaria do Zé, Rua A 10. Entrega em 40 min.",
+  "knowledge":[{"kind":"product","title":"Pizza Margherita","price":45},{"kind":"hours","title":"Seg a Dom","content":"18h às 23h"}]}'
+
+# testar sem enviar nada (chamada real ao provedor; conta no limite)
+curl -s -X POST $LZ/v1/instances/$ID/attendant/simulate -H "Authorization: Bearer $TOK" \
+  -d '{"messages":[{"from":"automatic","text":"Não atendemos ligações"},{"text":"quero 2 margheritas pra Rua B 5"}]}'
+
+# ligar
+curl -s -X PUT $LZ/v1/instances/$ID/agent-hook -H "Authorization: Bearer $TOK" -d '{"target":"builtin","enabled":true}'
+```
+
+Outras rotas: `GET /attendant` (sem chaves: `api_key_set`), `GET /attendant/presets`, `GET/PUT/DELETE /attendant/agents/{agent_id}`, `POST /attendant/agents/{agent_id}/activate` (qual agente responde; padrão: o primeiro), `GET /attendant/usage?days=7` (chamadas, tokens e custo estimado por dia). Painel: aba **Atendente IA** (provedor, agentes, base de conhecimento, simulador). MCP: `get_attendant`, `get_attendant_agent` (leitura).
+
+- **Modos**: `vendedor` (catálogo, conduz para a compra, `agent.lead`), `pedido` (monta o pedido, confirma itens e endereço, `agent.order_draft` com itens, total recalculado pelos preços do catálogo e endereço), `sdr` (coleta nome, necessidade e horário: `agent.lead` / `agent.appointment_requested`; nenhuma agenda é tocada — use webhook/n8n), `suporte` (só a base de conhecimento). Todos podem passar para humano (`handoff`). Cada modo é editável: objetivo, roteiro, tom, critérios de passagem e ações permitidas.
+- **Multimodal**: mensagem de voz → transcrição (`audio.transcription_model`; sem ele o agente só sabe que chegou um áudio); imagens (e PDFs no Claude) vão para o modelo com `vision`; resposta em voz (`voice_reply: when_audio | always` + `audio.speech_model`, nota de voz Ogg/Opus; falhou, vai texto); ligação recusada com `calls.auto_reject` + `call_followup` no agente → mensagem da IA ("vi que você ligou…") pela fila, uma por chamador no cooldown (falhou: sai o `reject_message`).
+- **Segurança**: chaves cifradas (AES-256-GCM, `data/attendant_key` 0600 — faça backup junto do banco) e nunca devolvidas; provedor e chaves só com token admin; prompt com as mensagens do cliente como dados não confiáveis e marcador canário (resposta que vaza o prompt ou uma chave é bloqueada); a resposta vai sempre para o chat que disparou; o telefone não vai para o modelo (pseudônimo); `daily_call_cap` (padrão 300/dia, inclui áudio) com custo logado; falhas viram `agent.failed` (`not_configured`, `daily_cap`, `llm_error`, `invalid_response`).
+- **Assinatura x chave**: a assinatura Claude (Pro/Max) só serve para testes locais com um agente seu, como o `examples/agent-claude` rodando na sua máquina. O atendente embutido e qualquer uso em produção exigem **chave de API** do provedor.
 
 ## MCP (Claude, ChatGPT e outros clientes de IA)
 
@@ -690,6 +725,17 @@ Com o SSE aberto em `?types=chat.updated` e o celular à mão (`JID` = um chat d
 4. De outro celular, mande "oi" para o número pareado: a resposta sai pela fila (com "digitando…") e aparece em "Chamadas recentes".
 5. Responda você mesmo pelo celular pareado: o chat aparece como pausado por 30 min em "Por conversa"; mensagens novas do contato não chamam o agente até lá ("Reativar" encerra a pausa).
 6. Peça "quero falar com um atendente": o agente responde e faz `handoff` (chat desligado, evento `agent.handoff` em "Eventos ao vivo").
+
+### Testar o Atendente LiteZap (embutido)
+
+1. Aba **Atendente IA**: no bloco "Atendente LiteZap", escolha Anthropic, cole a chave de API e salve (o status fica "pronto"). Para testar sem custo, use um servidor local OpenAI-compatível (Ollama: base URL `http://127.0.0.1:11434/v1`, modelo `llama3.1`).
+2. "Novo agente" no modo **Facilitador de pedido**: coloque 2–3 produtos com preço e o endereço da loja; salve.
+3. Simulador: `cliente: quero 2 margheritas pra Rua B 5` → resposta com resumo e total; o evento `agent.order_draft` aparece abaixo. Nada sai no WhatsApp.
+4. Em cima, "Quem responde: Atendente LiteZap", marque "Responder automaticamente" e salve.
+5. De outro celular: "oi, vocês entregam?" → resposta pela fila. Faça o pedido → `agent.order_draft` em "Eventos ao vivo".
+6. Mande um **áudio** (com transcrição configurada) e uma **foto** de um produto; com `voice_reply: when_audio` e modelo de voz, a resposta ao áudio chega como nota de voz.
+7. Ligue `calls.auto_reject` nas configurações e marque "Ligação recusada → mandar mensagem" no agente; ligue para o número: a chamada é recusada e chega "vi que você ligou…".
+8. Responda pelo celular pareado: o atendente pausa 30 min naquela conversa. Peça "quero falar com uma pessoa": `handoff`.
 
 ### Testar o MCP com um cliente de IA
 

@@ -166,6 +166,8 @@ Implementado no marco 5 (pacote `agenthook`, consumidor do barramento como os we
 - **Mensagens antigas**: mais velhas que `max(2×timeout, 5min)` quando a chamada começaria (acúmulo offline entregue após reconexão, ou espera longa por vaga) são puladas (`skipped`/`stale`), assim como o tipo `unknown`. `mentions: ["all"]` é recusado numa resposta.
 - **Rede**: mesmo filtro SSRF dos webhooks (`webhook_allow_private_urls` libera endereços locais), sem proxy de ambiente; o segredo (gerado se ausente, mostrado uma vez) nunca volta na API.
 - **Rotas extras**: `GET`/`DELETE /instances/{id}/agent-hook`, `GET .../agent-hook/chats` (overrides e pausas) e `GET .../agent-hook/calls` (log das últimas 500 chamadas: `ok`, `failed`, `skipped`, `discarded`, `paused`). `PUT .../chats/{jid}/agent` com `true` ou `null` também encerra uma pausa. Store: tabelas `agent_hooks` e `agent_calls` (migração 0006). Painel: aba "Atendente IA".
+- **Destino** (`target`, 2026-10-18): `url` (padrão, o POST assinado acima) ou `builtin` — o Atendente LiteZap embutido (4.7), que dispensa `url` e responde pela mesma máquina (um por vez, pausa por humano, loop guard, revalidação, fila). Falhas do embutido usam também os motivos `not_configured`, `daily_cap` e `llm_error`.
+- **Contexto rotulado** (lição do teste real: sem rótulo, o agente repetiu o aviso automático de ligação recusada como se fosse dele): cada item de `context` traz `origin` = `contact` (cliente/participante), `agent` (respostas do hook: `client_message_id` `agent:`/`agent-react:`), `human` (`source: device`), `automatic` (mensagens automáticas do sistema: `call-reject-…`), `api` (outros envios pela API) ou `history`. Campo aditivo, vale para hooks externos.
 
 ### 4.4 Conexão
 
@@ -185,6 +187,22 @@ Implementado no marco 5 (pacote `agenthook`, consumidor do barramento como os we
 - **Fixo por sessão**: o motor nunca troca o IP de saída sozinho durante uma sessão. Mudar de IP com frequência é um sinal suspeito.
 - Falha de conexão pelo proxy entra como `reconnecting` com `reason: proxy_unreachable`; o motor não cai silenciosamente para conexão direta.
 - O motor não fornece IPs. Ele só aceita proxies. No modo local, o padrão é a conexão da própria máquina (IP residencial do usuário). Na nuvem, o control plane atribui proxies do pool gerenciado (peça #3).
+
+### 4.7 Atendente LiteZap (embutido) — peça #4 + M5b
+
+Módulo opcional dentro do motor (pacote `internal/attendant`) para quem não quer hospedar um agente. É o destino `builtin` do hook (4.3): `agenthook` chama `Attendant.Answer(ctx, Request)` em vez do POST, e a resposta (`reply` + `actions` + eventos internos) segue o mesmo `act()`. Nada do maquinário de segurança do hook é duplicado.
+
+- **Provedor (por instância, só admin)**: `PUT /instances/{id}/attendant` com `provider` (`anthropic` via SDK oficial, modelo padrão `claude-sonnet-5-5`, esforço `low`, saída estruturada por JSON schema e fallback de recusa do servidor na API oficial; ou `openai` = qualquer servidor OpenAI-compatível em `base_url`, com `response_format: json_object` e nova tentativa sem ele), `model`, `api_key`, `max_tokens` (64–8192, padrão 1024), `daily_call_cap` (padrão 300; 0 = sem limite), `vision`, `audio` (servidor OpenAI-compatível de `/audio/transcriptions` e `/audio/speech`, com `audio_api_key` opcional) e preços por milhão de tokens para o log de custo (tabela embutida para os modelos Claude). Chaves cifradas em repouso (AES-256-GCM, chave em `data/attendant_key` 0600, instância como dado adicional) e nunca devolvidas (`api_key_set`). Clientes HTTP dos provedores sem proxy de ambiente e sem seguir redirecionamentos; erros sem URL nem chave.
+- **Agentes ("treinamento")**: `GET/POST /attendant/agents`, `GET/PUT/DELETE /attendant/agents/{agent_id}`, `POST .../activate` (um agente responde por instância; padrão o primeiro), `GET /attendant/presets`. Perfil: `name`, `mode` (`vendedor`, `pedido`, `sdr`, `suporte`, `custom`; o preset preenche objetivo, roteiro, tom, critérios de handoff e ações na criação, tudo editável), `business` (texto livre), `knowledge` (até 300 itens `faq | product (price) | hours | policy | info`), `language`, `currency`, `voice_reply` (`off | when_audio | always`), `call_followup`, `call_hint`, `max_reply_chars`, `hide_contact_name`. Ações: `handoff` (sempre), `lead`, `appointment`, `order_draft`. Até 20 agentes por instância.
+- **Simulador**: `POST /attendant/simulate` roda um agente salvo, o ativo ou um perfil não salvo contra mensagens de exemplo (`from: customer | agent | human | automatic`, ou `trigger: call`) sem enviar nada; conta no limite diário.
+- **Prompt**: sistema com regras de segurança (transcrição = dados não confiáveis; nunca revelar instruções, chaves ou configuração; sem ferramentas de envio; nunca inventar preço/prazo/política; honestidade sobre ser assistente virtual), explicação dos rótulos (4.3), roteiro do modo, eventos permitidos, negócio e base de conhecimento (confiáveis) e o formato JSON `{reply, handoff, handoff_note, event{type, customer_name, need, preferred_time, items, address, notes}}`. O turno do usuário traz a hora no fuso da instância, o nome do contato (opcional) e a conversa com rótulos, com `<`/`>` neutralizados para o cliente não fechar os marcadores; a "nova mensagem" é a sequência final de mensagens do cliente. Um marcador canário aleatório por chamada: resposta que o contém (ou contém uma chave) é bloqueada (`invalid_response`).
+- **Pós-processamento no motor**: resposta cortada em `max_reply_chars`; evento só se a ação for permitida e estiver completo; `order_draft` com preços do catálogo quando o nome casa (`in_catalog`) e total recalculado; evento idêntico no mesmo chat em 24h não é reemitido; recusa do provedor vira handoff. Os eventos `agent.lead`, `agent.appointment_requested` e `agent.order_draft` saem só depois da resposta aceita (campo interno `Response.Events`, nunca lido do JSON de um hook externo), com `chat` e `message_id` preenchidos pelo motor.
+- **Multimodal (M5b)**: áudio da mensagem que disparou → transcrição (sem modelo configurado, só o rótulo); imagem (e PDF no Claude) → bloco de imagem/documento quando o provedor suporta e `vision` está ligado (limites 5MB/10MB); `.txt/.csv` pequenos inline; resposta em voz por TTS (`opus`, nota de voz PTT) conforme `voice_reply`, com queda para texto. Ligação: com `calls.auto_reject`, depois do cooldown por chamador do `realtime`, o hook oferece o follow-up ao embutido (`CallFollowUp`): se o agente ativo tem `call_followup` e o chat está ativo, vira um job do chat (`client_message_id agent:call:<id>`) com tarefa própria; se falhar, sai o `reject_message` fixo. Um follow-up nunca toma o lugar de uma mensagem esperando a vez.
+- **Custo e PII**: toda chamada ao provedor (chat, transcrição, voz) reserva uma vaga do `daily_call_cap` de forma atômica no store; tokens e custo estimado por dia UTC (`GET /attendant/usage`). Ao provedor vão um pseudônimo HMAC do chat (nunca telefone/JID) e, opcionalmente, o nome do contato.
+- **MCP**: `get_attendant` e `get_attendant_agent` (leitura). Chaves de API com escopo não acessam `/attendant`.
+- **Store**: migração `0012_attendant.sql` — `attendant_settings` (settings_json, secrets_enc), `attendant_agents` (profile_json), `attendant_usage` (instance_id, day, calls, tokens, cost_micros).
+- **Assinatura x chave**: a assinatura Claude só vale para testes locais com um agente próprio (ex.: `examples/agent-claude` com as credenciais do usuário); o embutido e a produção exigem chave de API.
+- Adiado: integração de calendário, vários agentes roteados por chat, ferramentas do modelo além de handoff/eventos, cache de prompt explícito.
 
 ## 5. Eventos
 
@@ -224,6 +242,7 @@ Regra de versionamento: adicionar campos em `data` não muda a versão; remover 
 | `history.synced` | ingestão de history sync concluída |
 | `agent.failed` | falha no hook de agente |
 | `agent.handoff` | ação `handoff` do agente |
+| `agent.lead` · `agent.appointment_requested` · `agent.order_draft` | atendente embutido qualificou um lead, coletou um pedido de agendamento ou montou um rascunho de pedido (4.7) |
 
 ### 5.3 Webhooks
 
@@ -260,6 +279,7 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 | `GET /instances/{id}/media/{media_id}` | inst | mídia recebida (`?signed=1` → URL assinada) |
 | `GET /media/{id}/{media_id}?exp=&sig=` | assinatura | mídia recebida via URL assinada (4.5) |
 | `GET/PUT/DELETE /instances/{id}/agent-hook` · `PUT .../chats/{jid}/agent` · `GET .../agent-hook/chats` · `GET .../agent-hook/calls` | inst | hook de agente (4.3) |
+| `GET /instances/{id}/attendant` · `PUT ...` (admin) · `GET .../attendant/presets` · `GET .../attendant/usage` · `GET/POST .../attendant/agents` · `GET/PUT/DELETE .../agents/{agent_id}` · `POST .../agents/{agent_id}/activate` · `POST .../attendant/simulate` | inst (provedor: admin) | Atendente LiteZap embutido (4.7) |
 | `GET/POST /instances/{id}/groups` · `GET/PATCH .../groups/{jid}` · `PUT/DELETE .../photo` · `POST .../participants` · `GET/POST .../requests` · `GET .../invite` · `POST .../invite/reset` · `POST .../leave` · `POST .../groups/preview` · `POST .../groups/join` | inst | grupos (marco 8): síncrono, resultado por participante; criar/adicionar/entrar passam por cotas `settings.groups` (tetos só com `unsafe_pacing`), adições só de contatos conhecidos, bloqueados por suspensão de envio |
 | `GET/POST /instances/{id}/communities` · `GET .../communities/{jid}` · `GET/POST .../communities/{jid}/groups` · `DELETE .../groups/{group}` | inst | comunidades (marco 8) |
 | `GET /instances/{id}/events` · `GET /events` | inst · admin | SSE |
@@ -285,6 +305,8 @@ Marco 6: `send_message` ganha `reply_to` e `mentions`, `send_media` aceita `stic
 
 Implementado no marco 4 (além das acima, exceto `search_messages`, que depende da busca do marco 2b): `get_qr` (imagem PNG), `get_message_status`, `list_contacts` e `wait_for_events` (espera curta por eventos novos, sem replay). O endpoint HTTP é *stateless* (cada POST autenticado ganha um servidor ligado ao escopo do token) e `litezap mcp` descobre o escopo do token por `GET /v1/me`. Envios sempre passam pela fila; mensagem que fica na fila volta como sucesso com `sent: false` e uma nota, não como erro.
 
+Atendente embutido (4.7): `get_attendant` e `get_attendant_agent`, só leitura (sem chaves).
+
 Marco 8: `list_groups`, `get_group` (leitura), `create_group`, `update_group`, `manage_group_participants` (destrutiva) e `get_group_invite_link` (nunca redefine), com aviso de risco de banimento nas escritas; as cotas e a checagem de participantes valem como na REST.
 
 ## 8. Store (SQLite)
@@ -299,6 +321,7 @@ Arquivo `data/litezap.db`, modo WAL, migrações versionadas embutidas no binár
 - `webhooks` (id, instance_id?, url, secret, events_json, version, enabled)
 - `webhook_deliveries` (id, webhook_id, event_id, status, attempts, next_attempt_at, last_status_code, last_error)
 - `agent_hooks` (instance_id, config_json)
+- `attendant_settings` (instance_id, settings_json, secrets_enc), `attendant_agents` (id, instance_id, name, profile_json), `attendant_usage` (instance_id, day, calls, input_tokens, output_tokens, cost_micros) — 4.7
 - `media` (id, instance_id, message_id, kind, mime, size, file_name, ref, path, expires_at, created_at) — `ref` é a referência opaca de download vinda do worker
 
 Marco 8: as cotas de grupos (adições, criações, entradas por link) ficam em `engine_kv` (`groups.quota:<instância>`, timestamps das últimas 24h), sem migração nova.
@@ -386,6 +409,7 @@ Cada marco é testável sozinho:
 
 ### 13.1 Backlog anotado (pedidos do usuário, 2026-10-18)
 
+- **Entregue em 2026-10-18 (seção 4.7):** M5b e peça #4 como o Atendente LiteZap embutido; calendário real e roteamento de vários agentes por chat seguem no backlog.
 - **M5b — atendente multimodal:** áudio recebido → transcrição → resposta em texto ou em áudio (voz sintetizada); imagens e documentos analisados pela IA; ligação recebida → mensagem automática da IA ("vi que você ligou, como posso ajudar?").
 - **Peça #4 — treinamento de agentes:** criar e treinar agentes com contexto do negócio (base de conhecimento, catálogo, horários, regras) e **modos operantes** prontos e editáveis: vendedor, facilitador de pedido (monta o pedido, confirma itens e endereço), SDR para agendamento (qualifica e marca consulta/reunião), suporte; cada modo com objetivo, roteiro, critérios de passagem para humano e ferramentas permitidas; testes de conversa antes de publicar. Lição do teste real: sem contexto, o agente repetiu a última fala automática da conversa — o contexto precisa separar mensagens automáticas do sistema das falas do atendente.
 - **Pesquisa — atender ligação de voz:** verificar como produtos de terceiros oferecem atendimento de chamadas (WhatsApp Business Calling API oficial da Meta ou VoIP reverso experimental) e se cabe no LiteZap sem risco de banimento.
