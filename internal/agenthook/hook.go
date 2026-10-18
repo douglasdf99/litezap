@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/douglasdf99/litezap/internal/apierr"
 	"github.com/douglasdf99/litezap/internal/clock"
 	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/media"
@@ -30,6 +31,8 @@ import (
 type Messenger interface {
 	Send(ctx context.Context, instanceID string, in service.SendInput, wait time.Duration) (service.MessageView, error)
 	MarkRead(ctx context.Context, instanceID, chat string) error
+	// CancelAgentReplies drops the hook's replies still queued for a chat.
+	CancelAgentReplies(ctx context.Context, instanceID, chat, reason string) (int, error)
 }
 
 type Options struct {
@@ -238,8 +241,11 @@ func (h *Hook) router() {
 		}
 		switch e.Type {
 		case events.TypeMessageSent:
-			if m.Source == "device" { // a from_me message LiteZap did not send: a human answered
-				h.humanReply(e.InstanceID, m)
+			switch m.Source {
+			case "device": // a from_me message LiteZap did not send: a human answered
+				h.humanReply(e.InstanceID, m, "human_reply")
+			case "api": // a human through another API client (CRM, MCP), when configured
+				h.apiSend(e.InstanceID, m)
 			}
 		case events.TypeMessageReceived:
 			if !m.FromMe {
@@ -254,14 +260,22 @@ func skipChat(jid string) bool {
 	return jid == "status@broadcast" || strings.HasSuffix(jid, "@broadcast") || strings.HasSuffix(jid, "@newsletter")
 }
 
-// humanReply pauses the hook in the chat for human_pause and drops a message waiting there.
-func (h *Hook) humanReply(instanceID string, m events.Message) {
+// humanReply pauses the hook in the chat for human_pause, drops a message waiting there
+// and cancels the hook's replies still in the send queue (the bot never talks over a
+// human).
+func (h *Hook) humanReply(instanceID string, m events.Message, reason string) {
 	ctx := h.ctx
 	cfg, ok := h.config(ctx, instanceID)
 	if !ok || cfg.HumanPause <= 0 {
 		return
 	}
+	ca, err := h.chatAgent(ctx, instanceID, m.Chat)
+	if err != nil {
+		h.log.Error("agent hook: load chat", "instance_id", instanceID, "chat", m.Chat, "err", err)
+		return
+	}
 	now := h.opt.Clock.Now()
+	wasActive := active(cfg, ca, now)
 	if err := h.st.PauseChatAgent(ctx, instanceID, m.Chat, now.Add(cfg.HumanPause.D())); err != nil {
 		h.log.Error("agent hook: human pause", "instance_id", instanceID, "chat", m.Chat, "err", err)
 		return
@@ -271,8 +285,42 @@ func (h *Hook) humanReply(instanceID string, m events.Message) {
 		cs.pending = nil
 	}
 	h.mu.Unlock()
-	h.record(store.AgentCall{InstanceID: instanceID, ChatJID: m.Chat, MessageID: m.ID, Status: "paused",
-		Reason: "human_reply", Detail: "paused for " + cfg.HumanPause.D().String()})
+	canceled := h.cancelQueued(instanceID, m.Chat, "a human answered in the chat")
+	if wasActive || canceled > 0 { // the log shows pauses that changed something
+		detail := "paused for " + cfg.HumanPause.D().String()
+		if canceled > 0 {
+			detail += "; " + itoa(canceled) + " queued agent repl(ies) canceled"
+		}
+		h.record(store.AgentCall{InstanceID: instanceID, ChatJID: m.Chat, MessageID: m.ID, Status: "paused",
+			Reason: reason, Detail: detail})
+	}
+}
+
+// apiSend treats an API send that is not the hook's own reply as a human reply when
+// pause_on_api_send is on (an inbox or CRM on top of LiteZap).
+func (h *Hook) apiSend(instanceID string, m events.Message) {
+	cfg, ok := h.config(h.ctx, instanceID)
+	if !ok || !cfg.PauseOnAPISend {
+		return
+	}
+	o, err := h.st.GetOutbound(h.ctx, instanceID, m.ID)
+	if err != nil || strings.HasPrefix(o.ClientMessageID, "agent:") || strings.HasPrefix(o.ClientMessageID, "agent-react:") {
+		return
+	}
+	h.humanReply(instanceID, m, "api_send")
+}
+
+// cancelQueued cancels the hook's queued replies in a chat and returns how many.
+func (h *Hook) cancelQueued(instanceID, chat, reason string) int {
+	msgr := h.messenger()
+	if msgr == nil {
+		return 0
+	}
+	n, err := msgr.CancelAgentReplies(h.ctx, instanceID, chat, reason)
+	if err != nil {
+		h.log.Error("agent hook: cancel queued replies", "instance_id", instanceID, "chat", chat, "err", err)
+	}
+	return n
 }
 
 // dispatch runs the job on the chat's goroutine, starting one if needed; a job arriving
@@ -360,10 +408,15 @@ func (h *Hook) handle(instanceID string, j job) {
 	now := h.opt.Clock.Now()
 	isGroup := m.IsGroup || ca.IsGroup || strings.HasSuffix(m.Chat, "@g.us")
 	switch {
-	case isGroup && !cfg.GroupsEnabled, cfg.ignores(m.Chat, m.Sender), !active(cfg, ca, now):
+	case isGroup && !cfg.GroupsEnabled, cfg.ignores(m.Chat, m.Sender), !active(cfg, ca, now), m.Type == "unknown":
 		return
 	}
 	base := store.AgentCall{InstanceID: instanceID, ChatJID: m.Chat, MessageID: m.ID}
+	if h.stale(cfg, m, now) {
+		base.Status, base.Reason, base.Detail = "skipped", "stale", "message received "+now.Sub(m.Timestamp).Round(time.Second).String()+" ago (offline backlog)"
+		h.record(base)
+		return
+	}
 	if h.opt.Held != nil && h.opt.Held(instanceID) {
 		base.Status, base.Reason, base.Detail = "skipped", "sending_suspended", "sending is suspended by the operator"
 		h.record(base)
@@ -374,21 +427,19 @@ func (h *Hook) handle(instanceID string, j job) {
 		h.log.Error("agent hook: count replies", "instance_id", instanceID, "err", err)
 		return
 	} else if n >= cfg.MaxRepliesPerWindow {
-		pause := cfg.HumanPause.D()
-		if pause <= 0 {
-			pause = cfg.ReplyWindow.D()
-		}
-		if err := h.st.PauseChatAgent(ctx, instanceID, m.Chat, now.Add(pause)); err != nil {
-			h.log.Error("agent hook: loop guard pause", "instance_id", instanceID, "err", err)
-		}
-		msg := fmt.Sprintf("%d replies in %s; hook paused in this chat for %s", n, cfg.ReplyWindow.D(), pause)
-		h.fail(base, j, "loop_guard", msg, 0)
+		h.loopGuard(ctx, cfg, base, j, n, now)
 		return
 	}
 
 	select {
 	case h.slots <- struct{}{}:
 	case <-ctx.Done():
+		return
+	}
+	if h.stale(cfg, m, h.opt.Clock.Now()) { // waited too long for a slot
+		<-h.slots
+		base.Status, base.Reason, base.Detail = "skipped", "stale", "waited too long for a free call slot"
+		h.record(base)
 		return
 	}
 	res := h.call(ctx, cfg, instanceID, ca, j)
@@ -402,6 +453,45 @@ func (h *Hook) handle(instanceID string, j job) {
 		return
 	}
 	h.act(ctx, cfg, base, j, res.resp)
+}
+
+// staleAfter is how old a message may be when its call starts: older ones are an offline
+// backlog delivered after a reconnection, and a reply hours late does more harm than good.
+func staleAfter(cfg Config) time.Duration { return max(2*cfg.Timeout.D(), 5*time.Minute) }
+
+func (h *Hook) stale(cfg Config, m events.Message, now time.Time) bool {
+	return !m.Timestamp.IsZero() && now.Sub(m.Timestamp) > staleAfter(cfg)
+}
+
+// loopGuard pauses a chat that got too many replies; a second trip within 24h hands the
+// chat over to a human for good (two bots would otherwise resume after every pause).
+func (h *Hook) loopGuard(ctx context.Context, cfg Config, base store.AgentCall, j job, n int, now time.Time) {
+	m := j.msg
+	trips, err := h.st.CountAgentCalls(ctx, base.InstanceID, m.Chat, "failed", "loop_guard", now.Add(-store.AgentCallsMinAge))
+	if err != nil {
+		h.log.Error("agent hook: count loop guard trips", "instance_id", base.InstanceID, "err", err)
+	}
+	var msg string
+	if trips > 0 {
+		off := false
+		if err := h.st.SetChatAgent(ctx, base.InstanceID, m.Chat, &off, false); err != nil {
+			h.log.Error("agent hook: loop guard handoff", "instance_id", base.InstanceID, "err", err)
+		}
+		msg = fmt.Sprintf("%d replies in %s again within 24h; hook turned off in this chat (handoff)", n, cfg.ReplyWindow.D())
+		h.publish(base.InstanceID, events.TypeAgentHandoff, events.AgentHandoff{Chat: m.Chat, MessageID: m.ID,
+			WAMessageID: m.WAMessageID, Note: "loop_guard: too many automatic replies; check this chat"})
+	} else {
+		pause := cfg.HumanPause.D()
+		if pause <= 0 {
+			pause = cfg.ReplyWindow.D()
+		}
+		if err := h.st.PauseChatAgent(ctx, base.InstanceID, m.Chat, now.Add(pause)); err != nil {
+			h.log.Error("agent hook: loop guard pause", "instance_id", base.InstanceID, "err", err)
+		}
+		msg = fmt.Sprintf("%d replies in %s; hook paused in this chat for %s", n, cfg.ReplyWindow.D(), pause)
+	}
+	h.cancelQueued(base.InstanceID, m.Chat, "agent hook loop guard")
+	h.fail(base, j, "loop_guard", msg, 0)
 }
 
 // fail logs a failed call and publishes agent.failed.
@@ -603,6 +693,11 @@ func plan(resp Response, chat, messageID string) (*service.SendInput, []action, 
 			if !replyTypes[in.Type] {
 				return nil, nil, nil, fmt.Errorf("reply type %q is not allowed", in.Type)
 			}
+			for _, mt := range in.Mentions {
+				if mt == "all" {
+					return nil, nil, nil, errors.New(`mentions ["all"] is not allowed in agent replies`)
+				}
+			}
 			reply = &in
 		default:
 			return nil, nil, nil, errors.New("reply must be a string or a message object")
@@ -644,8 +739,10 @@ func plan(resp Response, chat, messageID string) (*service.SendInput, []action, 
 	return reply, acts, unknown, nil
 }
 
-// act executes a successful response: mark_read and react first, then the reply, then
-// pause/handoff. A human taking over during the call discards everything.
+// act executes a successful response: the reply first (it is validated by the send path,
+// so a rejected reply leaves nothing else sent), then mark_read and react, then
+// pause/handoff, which always apply (they only make the hook safer). A human taking over
+// during the call discards everything.
 func (h *Hook) act(ctx context.Context, cfg Config, c store.AgentCall, j job, resp Response) {
 	m := j.msg
 	reply, acts, unknown, err := plan(resp, m.Chat, m.ID)
@@ -677,33 +774,39 @@ func (h *Hook) act(ctx context.Context, cfg Config, c store.AgentCall, j job, re
 		return
 	}
 	var done, notes []string
-	for _, a := range acts {
-		switch a.Type {
-		case "mark_read":
-			if err := msgr.MarkRead(ctx, c.InstanceID, m.Chat); err != nil {
-				notes = append(notes, "mark_read: "+err.Error())
-				continue
-			}
-		case "react":
-			if _, err := msgr.Send(ctx, c.InstanceID, service.SendInput{To: m.Chat, Type: "reaction",
-				Reaction: &service.ReactionInput{MessageID: m.ID, Emoji: a.Emoji}, ClientMessageID: "agent-react:" + m.ID,
-				ExpiresAfter: "1h"}, 0); err != nil {
-				notes = append(notes, "react: "+err.Error())
-				continue
-			}
-		default:
-			continue
-		}
-		done = append(done, a.Type)
-	}
+	failReason, failErr := "", ""
 	if reply != nil {
 		v, err := msgr.Send(ctx, c.InstanceID, *reply, 0)
 		if err != nil {
-			c.Actions = strings.Join(done, ",")
-			h.fail(c, j, "send_failed", err.Error(), c.HTTPStatus)
-			return
+			failReason, failErr = "send_failed", err.Error()
+			var ae *apierr.Error
+			if errors.As(err, &ae) && ae.Status == http.StatusBadRequest {
+				failReason = "invalid_response" // the reply payload itself is invalid
+			}
+		} else {
+			c.Replied, c.ReplyID = true, v.ID
 		}
-		c.Replied, c.ReplyID = true, v.ID
+	}
+	if failReason == "" {
+		for _, a := range acts {
+			switch a.Type {
+			case "mark_read":
+				if err := msgr.MarkRead(ctx, c.InstanceID, m.Chat); err != nil {
+					notes = append(notes, "mark_read: "+err.Error())
+					continue
+				}
+			case "react":
+				if _, err := msgr.Send(ctx, c.InstanceID, service.SendInput{To: m.Chat, Type: "reaction",
+					Reaction: &service.ReactionInput{MessageID: m.ID, Emoji: a.Emoji}, ClientMessageID: "agent-react:" + m.ID,
+					ExpiresAfter: "1h"}, 0); err != nil {
+					notes = append(notes, "react: "+err.Error())
+					continue
+				}
+			default:
+				continue
+			}
+			done = append(done, a.Type)
+		}
 	}
 	now := h.opt.Clock.Now()
 	for _, a := range acts {
@@ -726,6 +829,11 @@ func (h *Hook) act(ctx context.Context, cfg Config, c store.AgentCall, j job, re
 		}
 		done = append(done, a.Type)
 	}
-	c.Status, c.Actions, c.Detail = "ok", strings.Join(done, ","), strings.Join(notes, "; ")
+	c.Actions = strings.Join(done, ",")
+	if failReason != "" {
+		h.fail(c, j, failReason, failErr, c.HTTPStatus)
+		return
+	}
+	c.Status, c.Detail = "ok", strings.Join(notes, "; ")
 	h.record(c)
 }

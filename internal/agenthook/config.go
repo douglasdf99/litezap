@@ -55,6 +55,10 @@ type Config struct {
 	// HumanPause pauses the hook in a chat after a human answers from the phone (default
 	// 30m; 0 disables the pause).
 	HumanPause Duration `json:"human_pause"`
+	// PauseOnAPISend also pauses on messages sent through the API that are not the hook's
+	// own replies (a human answering from an inbox or CRM on top of LiteZap). Off by
+	// default: automated API sends would pause the agent too.
+	PauseOnAPISend bool `json:"pause_on_api_send"`
 	// Ignore lists chat (or sender) JIDs the hook never handles.
 	Ignore []string `json:"ignore"`
 	// Loop guard: at most MaxRepliesPerWindow replies per chat in ReplyWindow; beyond that
@@ -88,6 +92,7 @@ type Patch struct {
 	ContextMessages     *int      `json:"context_messages"`
 	GroupsEnabled       *bool     `json:"groups_enabled"`
 	HumanPause          *Duration `json:"human_pause"`
+	PauseOnAPISend      *bool     `json:"pause_on_api_send"`
 	Ignore              *[]string `json:"ignore"`
 	MaxRepliesPerWindow *int      `json:"max_replies_per_window"`
 	ReplyWindow         *Duration `json:"reply_window"`
@@ -116,6 +121,9 @@ func (p Patch) Apply(c Config) Config {
 	}
 	if p.HumanPause != nil {
 		c.HumanPause = *p.HumanPause
+	}
+	if p.PauseOnAPISend != nil {
+		c.PauseOnAPISend = *p.PauseOnAPISend
 	}
 	if p.Ignore != nil {
 		c.Ignore = append([]string{}, (*p.Ignore)...)

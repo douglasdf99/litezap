@@ -20,7 +20,7 @@ type AgentFailed struct {
 	MessageID   string `json:"message_id,omitempty"` // LiteZap id of the triggering message
 	WAMessageID string `json:"wa_message_id,omitempty"`
 	// Reason is a stable code: timeout | http_error | network_error | invalid_response |
-	// send_failed | loop_guard.
+	// send_failed | loop_guard | internal.
 	Reason     string `json:"reason"`
 	Error      string `json:"error,omitempty"`
 	HTTPStatus int    `json:"http_status,omitempty"`

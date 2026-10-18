@@ -129,8 +129,13 @@ type AgentCall struct {
 	CreatedAt  time.Time
 }
 
-// agentCallsKept bounds the log per instance.
+// agentCallsKept bounds the log per instance; rows younger than AgentCallsMinAge are
+// always kept (the loop guard counts them).
 const agentCallsKept = 500
+
+// AgentCallsMinAge is how long every call row is kept regardless of agentCallsKept: the
+// longest reply_window and the loop guard's escalation lookback.
+const AgentCallsMinAge = 24 * time.Hour
 
 // InsertAgentCall logs a call and prunes the instance's log to the newest entries.
 func (s *Store) InsertAgentCall(ctx context.Context, c AgentCall) error {
@@ -146,10 +151,43 @@ func (s *Store) InsertAgentCall(ctx context.Context, c AgentCall) error {
 	if err != nil || seq%50 != 0 { // prune now and then
 		return nil
 	}
-	_, err = s.db.ExecContext(ctx, `DELETE FROM agent_calls WHERE instance_id = ? AND seq <= (
+	_, err = s.db.ExecContext(ctx, `DELETE FROM agent_calls WHERE instance_id = ? AND created_at < ? AND seq <= (
 		SELECT seq FROM agent_calls WHERE instance_id = ? ORDER BY seq DESC LIMIT 1 OFFSET ?)`,
-		c.InstanceID, c.InstanceID, agentCallsKept)
+		c.InstanceID, fmtTS(c.CreatedAt.Add(-AgentCallsMinAge)), c.InstanceID, agentCallsKept)
 	return err
+}
+
+// CountAgentCalls counts a chat's calls with the given status and reason since t (loop
+// guard escalation).
+func (s *Store) CountAgentCalls(ctx context.Context, instanceID, chatJID, status, reason string, since time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_calls
+		WHERE instance_id = ? AND chat_jid = ? AND status = ? AND reason = ? AND created_at >= ?`,
+		instanceID, chatJID, status, reason, fmtTS(since)).Scan(&n)
+	return n, err
+}
+
+// QueuedAgentItems returns the ids of a chat's queued items sent by the agent hook
+// (client_message_id "agent:..." or "agent-react:..."), to cancel them when a human
+// takes over.
+func (s *Store) QueuedAgentItems(ctx context.Context, instanceID, chatJID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM outbound_queue
+		WHERE instance_id = ? AND chat_jid = ? AND status = 'queued'
+		  AND (client_message_id LIKE 'agent:%' OR client_message_id LIKE 'agent-react:%')
+		ORDER BY seq`, instanceID, chatJID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // ListAgentCalls returns an instance's most recent calls, newest first.

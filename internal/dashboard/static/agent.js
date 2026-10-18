@@ -30,6 +30,7 @@ export function agentPanel(ctx) {
     const timeout = h('input', { type: 'number', min: 1, max: 120, value: durSeconds(c.timeout) });
     const contextN = h('input', { type: 'number', min: 0, max: 100, value: c.context_messages });
     const pause = h('input', { type: 'number', min: 0, max: 10080, value: durSeconds(c.human_pause) / 60 });
+    const apiPause = h('input', { type: 'checkbox', checked: c.pause_on_api_send });
     const maxReplies = h('input', { type: 'number', min: 1, max: 1000, value: c.max_replies_per_window });
     const windowMin = h('input', { type: 'number', min: 1, max: 1440, value: durSeconds(c.reply_window) / 60 });
     const ignore = h('textarea', { rows: 3, class: 'mono', placeholder: 'um número ou JID por linha' });
@@ -63,6 +64,7 @@ export function agentPanel(ctx) {
         const p = {
           url: url.value.trim(), enabled: enabled.checked, groups_enabled: groups.checked,
           timeout: `${num(timeout)}s`, context_messages: num(contextN), human_pause: `${num(pause)}m`,
+          pause_on_api_send: apiPause.checked,
           max_replies_per_window: num(maxReplies), reply_window: `${num(windowMin)}m`,
           ignore: ignore.value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean),
         };
@@ -90,7 +92,8 @@ export function agentPanel(ctx) {
       h('div', { class: 'grid3' },
         field('Timeout (s)', timeout, 'Sem resposta nesse prazo: nada é enviado.'),
         field('Mensagens de contexto', contextN, 'Últimas N mensagens do chat enviadas junto.'),
-        field('Pausa quando um humano responde (min)', pause, 'Você respondeu pelo celular: o agente para nesse chat. 0 = não pausar.')),
+        field('Pausa quando um humano responde (min)', pause, 'Você respondeu pelo celular: o agente para nesse chat e respostas dele ainda na fila são canceladas. 0 = não pausar.')),
+      h('label', { class: 'check' }, apiPause, ' Pausar também quando alguém envia pela API (CRM, painel, MCP); respostas do próprio agente não contam'),
       h('div', { class: 'grid3' },
         field('Máx. respostas por chat', maxReplies, 'Proteção contra loop entre robôs.'),
         field('… em quantos minutos', windowMin, 'Estourou: o chat é pausado e um agent.failed (loop_guard) é emitido.')),
@@ -177,10 +180,15 @@ export function agentPanel(ctx) {
 
   // Live refresh: hook outcomes and incoming messages change the call log.
   let timer = null;
+  let chatsDirty = false; // sticks until the debounced refresh runs
   const off = ctx.on((type) => {
     if (!type.startsWith('agent.') && type !== 'message.received' && type !== 'message.sent') return;
+    if (type !== 'message.received') chatsDirty = true;
     clearTimeout(timer);
-    timer = setTimeout(() => { loadCalls(); if (type !== 'message.received') loadChats(); }, 800);
+    timer = setTimeout(() => {
+      loadCalls();
+      if (chatsDirty) { chatsDirty = false; loadChats(); }
+    }, 800);
   });
 
   loadConfig();

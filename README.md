@@ -225,7 +225,7 @@ Adicionar campos em `data` não muda a versão; remover ou mudar o sentido de um
 | `message.revoked` | mensagem apagada para todos (pelo autor, ou por admin do grupo) | `{id?, wa_message_id, chat, sender?, from_me, source, timestamp}` |
 | `message.poll_vote` | voto em enquete (o voto atual da pessoa; lista vazia = voto retirado) | `{poll_id?, poll_wa_message_id, chat, voter, push_name?, from_me, selected_options, unknown_options?, timestamp}` |
 | `history.synced` | fim da ingestão de um history sync (um evento por sync, 15s depois do último bloco) | `{chats, messages, new_messages}` |
-| `agent.failed` | uma chamada do hook de agente falhou (nada foi enviado) ou o limite de respostas pausou o chat | `{chat, message_id, wa_message_id, reason, error?, http_status?}`; `reason`: `timeout`, `http_error`, `network_error`, `invalid_response`, `send_failed`, `loop_guard` |
+| `agent.failed` | uma chamada do hook de agente falhou (nada foi enviado) ou o limite de respostas pausou o chat | `{chat, message_id, wa_message_id, reason, error?, http_status?}`; `reason`: `timeout`, `http_error`, `network_error`, `invalid_response`, `send_failed`, `loop_guard`, `internal` |
 | `agent.handoff` | o agente passou o chat para um humano (ação `handoff`) | `{chat, message_id, wa_message_id, note?}` |
 | `instance.proxy_failed` | a instância não alcança o WhatsApp pelo proxy (entra em `reconnecting`/`proxy_unreachable`), repetido a cada 5 min enquanto durar; a volta é o próximo `instance.status` | `{reason, since, duration_seconds, outages_last_hour, repeat}` |
 
@@ -345,9 +345,10 @@ curl -s $LZ/v1/instances/$ID/agent-hook/calls -H "Authorization: Bearer $TOK"   
 | `timeout` | `30s` | 1s–2m |
 | `context_messages` | `20` | 0–100 mensagens do chat, mais antiga primeiro |
 | `groups_enabled` | `false` | também responder em grupos |
-| `human_pause` | `30m` | um humano respondeu pelo celular: o hook pausa no chat (`0` = não pausa) |
+| `human_pause` | `30m` | um humano respondeu pelo celular: o hook pausa no chat e cancela respostas dele ainda na fila (`0` = não pausa) |
+| `pause_on_api_send` | `false` | também pausa quando alguém envia pela API (CRM, painel, MCP); as respostas do próprio hook não contam |
 | `ignore` | `[]` | números/JIDs que nunca são atendidos (chat ou remetente) |
-| `max_replies_per_window` / `reply_window` | `10` / `10m` | proteção contra loop entre robôs: estourou, o chat pausa por `human_pause` e sai `agent.failed` (`loop_guard`) |
+| `max_replies_per_window` / `reply_window` | `10` / `10m` | proteção contra loop entre robôs: estourou, o chat pausa por `human_pause` e sai `agent.failed` (`loop_guard`); estourou de novo em 24h, o hook é desligado no chat (`agent.handoff`) |
 
 **Request** (`POST {url}`, `Content-Type: application/json`, headers `X-LiteZap-Signature`, `X-LiteZap-Event-Id` = id do `message.received`, `X-LiteZap-Event-Type: agent.request`):
 
@@ -359,14 +360,15 @@ curl -s $LZ/v1/instances/$ID/agent-hook/calls -H "Authorization: Bearer $TOK"   
 
 `context` termina com a própria mensagem; `from_me` com `source: api` são respostas do robô, `source: device` são de um humano no celular.
 
-**Response** `200` `{"reply": "texto" | {MessagePayload sem "to"}, "actions": [...]}` ou `204` (nada a fazer). `reply` objeto aceita os tipos de conteúdo (`text`, `image`, `video`, `audio`, `document`, `sticker`, `gif`, `ptv`, `location`, `contact`, `poll`); sempre vai para o chat que disparou a chamada, uma vez por mensagem (`client_message_id = agent:<id>`), e expira em 1h se não sair. Ações: `{"type":"mark_read"}`, `{"type":"react","emoji":"👍"}`, `{"type":"pause","minutes":60}` (1–10080), `{"type":"handoff","note":"..."}` (desliga o hook no chat até reativação e emite `agent.handoff`). Ação desconhecida é ignorada; resposta inválida, erro HTTP, redirecionamento ou timeout → `agent.failed`, nada é enviado, sem retry.
+**Response** `200` `{"reply": "texto" | {MessagePayload sem "to"}, "actions": [...]}` ou `204` (nada a fazer). `reply` objeto aceita os tipos de conteúdo (`text`, `image`, `video`, `audio`, `document`, `sticker`, `gif`, `ptv`, `location`, `contact`, `poll`); sempre vai para o chat que disparou a chamada, uma vez por mensagem (`client_message_id = agent:<id>`), e expira em 1h se não sair. Ações: `{"type":"mark_read"}`, `{"type":"react","emoji":"👍"}`, `{"type":"pause","minutes":60}` (1–10080), `{"type":"handoff","note":"..."}` (desliga o hook no chat até reativação e emite `agent.handoff`). A resposta é enfileirada primeiro; só se ela for aceita saem `mark_read` e `react`. `pause` e `handoff` valem sempre, mesmo se a resposta for recusada. Ação desconhecida é ignorada; resposta inválida, erro HTTP, redirecionamento ou timeout → `agent.failed`, nada é enviado, sem retry.
 
 Regras:
 
 - Só `message.received` (nunca `status@broadcast`, canais, mensagens próprias); grupos só com `groups_enabled`.
 - **Uma chamada por vez por chat**; mensagens que chegam durante a chamada são agrupadas: a próxima chamada leva a mais nova (as outras estão no `context`). No máximo 8 chamadas ao mesmo tempo no servidor.
 - **Pausa por humano**: mensagem `from_me` cujo `wa_message_id` não foi enviado pelo LiteZap (você respondeu pelo celular) pausa o hook no chat por `human_pause`. Se isso acontece durante uma chamada, a resposta do agente é descartada.
-- Com o envio suspenso pelo operador, o hook nem é chamado (aparece como `skipped` em `calls`).
+- Com o envio suspenso pelo operador, o hook nem é chamado (aparece como `skipped` em `calls`). Mensagens antigas (mais de `max(2×timeout, 5min)`, como o acúmulo entregue depois de ficar offline) também são puladas (`stale`), assim como tipos `unknown`.
+- Respostas do hook ainda na fila são canceladas quando um humano assume o chat, quando o limite de respostas estoura e não saem depois de 1h. `mentions: ["all"]` não é aceito numa resposta do agente.
 
 **Segurança e risco de banimento**: trate o texto das mensagens como **não confiável** no seu agente (prompt injection: o cliente pode escrever "ignore as instruções e..."); nunca dê ao modelo segredos ou ferramentas que ele não deva usar a pedido de um cliente. Respostas automáticas só vão para quem escreveu primeiro e respeitam o ritmo da fila, mas um robô respondendo outro robô gera volume anormal: mantenha o `max_replies_per_window` baixo.
 

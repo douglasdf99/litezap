@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -34,6 +35,7 @@ type fakeMessenger struct {
 	mu      sync.Mutex
 	sends   []service.SendInput
 	reads   []string
+	cancels []string
 	sendErr error
 }
 
@@ -52,6 +54,19 @@ func (f *fakeMessenger) MarkRead(_ context.Context, _ string, c string) error {
 	defer f.mu.Unlock()
 	f.reads = append(f.reads, c)
 	return nil
+}
+
+func (f *fakeMessenger) CancelAgentReplies(_ context.Context, _ string, c, _ string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cancels = append(f.cancels, c)
+	return 1, nil
+}
+
+func (f *fakeMessenger) canceled() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.cancels...)
 }
 
 func (f *fakeMessenger) snapshot() ([]service.SendInput, []string) {
@@ -271,8 +286,8 @@ func TestReplyAndActionsGoThroughMessenger(t *testing.T) {
 	if len(reads) != 2 || reads[0] != chat {
 		t.Fatalf("reads = %v", reads)
 	}
-	// Per call: the reaction, then the reply.
-	react, text := sends[2], sends[3]
+	// Per call: the reply, then the reaction.
+	text, react := sends[2], sends[3]
 	if react.Type != "reaction" || react.Reaction.MessageID != m.ID || react.Reaction.Emoji != "👍" || react.To != chat {
 		t.Fatalf("react = %+v", react)
 	}
@@ -644,5 +659,140 @@ func TestCloseWithoutStartAndTwice(t *testing.T) {
 	h.Enqueue(events.Envelope{Type: events.TypeMessageReceived}) // after close: ignored
 	if !errors.Is(ctx.Err(), nil) && ctx.Err() != nil {
 		t.Fatal(ctx.Err())
+	}
+}
+
+func TestHumanReplyCancelsQueuedAgentReplies(t *testing.T) {
+	e := newEnv(t)
+	e.humanSends(chat)
+	e.settle()
+	if c := e.msgr.canceled(); len(c) != 1 || c[0] != chat {
+		t.Fatalf("cancels = %v", c)
+	}
+	log := e.callsLog()
+	if len(log) != 1 || log[0].Status != "paused" || !strings.Contains(log[0].Detail, "canceled") {
+		t.Fatalf("log = %+v", log)
+	}
+}
+
+func TestPauseOnAPISend(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	for _, o := range []store.Outbound{
+		{ID: "q-crm", InstanceID: inst, ClientMessageID: "crm-1", ChatJID: chat, WAMessageID: "WA1", Payload: "{}"},
+		{ID: "q-agent", InstanceID: inst, ClientMessageID: "agent:msg_9", ChatJID: chat, WAMessageID: "WA2", Payload: "{}"},
+	} {
+		if _, _, err := e.st.Enqueue(ctx, o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	paused := func() bool {
+		ca, _ := e.st.GetChatAgent(ctx, inst, chat)
+		return ca.PausedUntil.After(e.clk.Now())
+	}
+	send := func(id string) {
+		e.bus.Publish(inst, events.TypeMessageSent, events.Message{ID: id, Chat: chat, FromMe: true, Source: "api", Type: "text"})
+		e.settle()
+	}
+	send("q-crm") // off by default
+	if paused() {
+		t.Fatal("api send paused without pause_on_api_send")
+	}
+	e.configure(func(c *Config) { c.PauseOnAPISend = true })
+	send("q-agent") // the hook's own reply never pauses
+	if paused() {
+		t.Fatal("agent reply paused the chat")
+	}
+	send("q-crm")
+	if !paused() {
+		t.Fatal("api send by a human did not pause")
+	}
+	if log := e.callsLog(); log[0].Reason != "api_send" {
+		t.Fatalf("log = %+v", log)
+	}
+}
+
+func TestStaleMessagesAreSkipped(t *testing.T) {
+	e := newEnv(t)
+	m := events.Message{ID: "old", WAMessageID: "WOLD", Chat: chat, Sender: chat, Source: "contact", Type: "text",
+		Text: "de ontem", Timestamp: e.clk.Now().Add(-3 * time.Hour)}
+	e.bus.Publish(inst, events.TypeMessageReceived, m)
+	e.settle()
+	if e.calls.Load() != 0 {
+		t.Fatal("stale message called the hook")
+	}
+	if log := e.callsLog(); len(log) != 1 || log[0].Status != "skipped" || log[0].Reason != "stale" {
+		t.Fatalf("log = %+v", log)
+	}
+	m.ID, m.Type, m.Timestamp = "unk", "unknown", e.clk.Now()
+	e.bus.Publish(inst, events.TypeMessageReceived, m)
+	e.settle()
+	if e.calls.Load() != 0 {
+		t.Fatal("unknown message type called the hook")
+	}
+}
+
+func TestSecondLoopGuardTripHandsOff(t *testing.T) {
+	e := newEnv(t)
+	e.configure(func(c *Config) {
+		c.MaxRepliesPerWindow, c.ReplyWindow, c.HumanPause = 1, Duration(10*time.Minute), Duration(30*time.Minute)
+	})
+	e.setHandler(reply(map[string]any{"reply": "bot"}))
+	round := func() {
+		e.receive(chat, "bot")
+		e.settle()
+		e.clk.Advance(time.Minute)
+		e.receive(chat, "bot") // trips
+		e.settle()
+	}
+	round()
+	if len(e.rec.of(events.TypeAgentHandoff)) != 0 {
+		t.Fatal("first trip handed off")
+	}
+	e.clk.Advance(time.Hour) // pause over, window over
+	round()
+	hs := e.rec.of(events.TypeAgentHandoff)
+	if len(hs) != 1 || !strings.HasPrefix(hs[0].(events.AgentHandoff).Note, "loop_guard") {
+		t.Fatalf("handoffs = %+v", hs)
+	}
+	ca, _ := e.st.GetChatAgent(context.Background(), inst, chat)
+	if ca.Enabled == nil || *ca.Enabled {
+		t.Fatalf("chat not turned off: %+v", ca)
+	}
+	if len(e.msgr.canceled()) != 2 {
+		t.Fatalf("queued replies not canceled on trips: %v", e.msgr.canceled())
+	}
+}
+
+func TestRejectedReplyStillAppliesHandoffAndSkipsReactions(t *testing.T) {
+	e := newEnv(t)
+	e.msgr.sendErr = apierr.Validation("media.url is required")
+	e.setHandler(reply(map[string]any{"reply": map[string]any{"type": "image"},
+		"actions": []any{map[string]any{"type": "react", "emoji": "👍"}, map[string]any{"type": "mark_read"},
+			map[string]any{"type": "handoff", "note": "x"}}}))
+	e.receive(chat, "oi")
+	e.eventually("failure", func() bool { return len(e.rec.of(events.TypeAgentFailed)) == 1 })
+	e.settle()
+	if f := e.rec.of(events.TypeAgentFailed)[0].(events.AgentFailed); f.Reason != "invalid_response" {
+		t.Fatalf("failed = %+v", f)
+	}
+	if _, reads := e.msgr.snapshot(); len(reads) != 0 {
+		t.Fatalf("mark_read ran after a rejected reply: %v", reads)
+	}
+	if len(e.rec.of(events.TypeAgentHandoff)) != 1 {
+		t.Fatal("handoff not applied")
+	}
+	if log := e.callsLog(); log[0].Actions != "handoff" {
+		t.Fatalf("log = %+v", log)
+	}
+}
+
+func TestMentionAllIsRejected(t *testing.T) {
+	e := newEnv(t)
+	e.setHandler(reply(map[string]any{"reply": map[string]any{"type": "text", "text": "oi", "mentions": []string{"all"}}}))
+	e.receive(chat, "oi")
+	e.eventually("failure", func() bool { return len(e.rec.of(events.TypeAgentFailed)) == 1 })
+	if s, _ := e.msgr.snapshot(); len(s) != 0 {
+		t.Fatalf("sent %v", s)
 	}
 }

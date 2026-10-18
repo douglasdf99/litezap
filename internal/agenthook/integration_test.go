@@ -122,11 +122,28 @@ func TestEndToEndReplyGoesThroughTheQueue(t *testing.T) {
 	if ca, _ := st.GetChatAgent(ctx, inst, chat); ca.PausedUntil.After(time.Now()) {
 		t.Fatalf("own replies paused the chat: %+v", ca)
 	}
-	// A human answers from the phone: the hook pauses in the chat.
+	// The connection drops: the next reply waits in the queue.
+	fake.EmitConn("reconnecting", "test")
+	wait("reconnecting", func() bool { in, _ := st.GetInstance(ctx, inst); return in.State == instance.Reconnecting })
+	fake.EmitMessage(&workerv1.Message{Id: "INC", Chat: chat, Sender: chat, Type: "text", Text: "alguém?",
+		PushName: "Ana", TimestampMs: time.Now().UnixMilli()})
+	var queued []string
+	wait("reply queued", func() bool { queued, _ = st.QueuedAgentItems(ctx, inst, chat); return len(queued) == 1 })
+	// A human answers from the phone: the hook pauses in the chat and the queued reply is
+	// canceled, so it never lands after the human's message.
 	fake.EmitMessage(&workerv1.Message{Id: "PHONE1", Chat: chat, Sender: "5511000000000@s.whatsapp.net", FromMe: true,
 		Type: "text", Text: "deixa comigo", TimestampMs: time.Now().UnixMilli()})
 	wait("human pause", func() bool {
 		ca, _ := st.GetChatAgent(ctx, inst, chat)
 		return ca.PausedUntil.After(time.Now().Add(29 * time.Minute))
 	})
+	wait("queued reply canceled", func() bool {
+		o, _ := st.GetOutbound(ctx, inst, queued[0])
+		return o.Status == store.OutFailed && queue.Canceled(o.LastError)
+	})
+	fake.Emit("connected")
+	time.Sleep(300 * time.Millisecond)
+	if n := len(fake.WA.Sent()); n != 2 {
+		t.Fatalf("sent %d messages after the human took over", n)
+	}
 }

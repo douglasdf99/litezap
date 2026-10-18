@@ -24,6 +24,7 @@ type View struct {
 	ContextMessages     int      `json:"context_messages"`
 	GroupsEnabled       bool     `json:"groups_enabled"`
 	HumanPause          Duration `json:"human_pause"`
+	PauseOnAPISend      bool     `json:"pause_on_api_send"`
 	Ignore              []string `json:"ignore"`
 	MaxRepliesPerWindow int      `json:"max_replies_per_window"`
 	ReplyWindow         Duration `json:"reply_window"`
@@ -34,7 +35,7 @@ type View struct {
 func view(c Config, configured bool) View {
 	return View{Configured: configured, URL: c.URL, Enabled: c.Enabled, Timeout: c.Timeout,
 		ContextMessages: c.ContextMessages, GroupsEnabled: c.GroupsEnabled, HumanPause: c.HumanPause,
-		Ignore: c.Ignore, MaxRepliesPerWindow: c.MaxRepliesPerWindow, ReplyWindow: c.ReplyWindow,
+		PauseOnAPISend: c.PauseOnAPISend, Ignore: c.Ignore, MaxRepliesPerWindow: c.MaxRepliesPerWindow, ReplyWindow: c.ReplyWindow,
 		SecretSet: c.Secret != ""}
 }
 

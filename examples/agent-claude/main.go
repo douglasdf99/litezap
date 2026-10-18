@@ -122,9 +122,10 @@ type Answer struct {
 	Note    string
 }
 
-// Model answers a conversation (claudeModel in production, a fake in tests).
+// Model answers a conversation (claudeModel in production, a fake in tests); user is a
+// pseudonymous id of the chat.
 type Model interface {
-	Answer(ctx context.Context, chat string, turns []Turn) (Answer, error)
+	Answer(ctx context.Context, user string, turns []Turn) (Answer, error)
 }
 
 type server struct {
@@ -166,12 +167,15 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
-	turns := conversation(req)
+	turns := conversation(req, s.secret)
 	if len(turns) == 0 || turns[len(turns)-1].Assistant {
 		w.WriteHeader(http.StatusNoContent) // nothing new from the customer
 		return
 	}
-	ans, err := s.model.Answer(r.Context(), chatLabel(req), turns)
+	// LiteZap waits 30s by default: give up (with retries) before that.
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+	ans, err := s.model.Answer(ctx, pseudonym(s.secret, req.Chat.JID), turns)
 	if err != nil {
 		// LiteZap is fail-closed: an error status sends nothing and emits agent.failed.
 		s.log.Error("model call failed", "chat", req.Chat.JID, "err", err)
@@ -251,7 +255,7 @@ func verify(secret, header string, body []byte, now time.Time) error {
 // conversation turns the context into alternating user/assistant turns. Messages from
 // the customer (or, in groups, from participants) are user turns; messages sent by this
 // number (the agent's replies or a human operator) are assistant turns.
-func conversation(req Request) []Turn {
+func conversation(req Request, key string) []Turn {
 	ctxMsgs := req.Context
 	if len(ctxMsgs) == 0 || ctxMsgs[len(ctxMsgs)-1].ID != req.Message.ID {
 		ctxMsgs = append(ctxMsgs, req.Message) // context_messages may be 0
@@ -265,8 +269,8 @@ func conversation(req Request) []Turn {
 		assistant := m.FromMe
 		if !assistant && req.Chat.IsGroup {
 			who := m.PushName
-			if who == "" {
-				who = m.Sender
+			if who == "" { // never send a participant's phone number to the model
+				who = "participante " + pseudonym(key, m.Sender)[:6]
 			}
 			text = who + ": " + text
 		}
@@ -300,11 +304,13 @@ func describe(m ContextMessage) string {
 	}
 }
 
-func chatLabel(req Request) string {
-	if req.Chat.Name != "" {
-		return req.Chat.Name
-	}
-	return req.Chat.JID
+// pseudonym is a stable, non-reversible id for a JID (HMAC with the hook secret): used as
+// the end-user id sent to the API (abuse monitoring) and to label group participants,
+// instead of phone numbers.
+func pseudonym(key, jid string) string {
+	m := hmac.New(sha256.New, []byte(key))
+	m.Write([]byte(jid))
+	return hex.EncodeToString(m.Sum(nil))[:16]
 }
 
 // ---------- Claude ----------
@@ -340,6 +346,7 @@ type claudeModel struct {
 const handoffTool = "handoff_to_human"
 
 func (c *claudeModel) Answer(ctx context.Context, chat string, turns []Turn) (Answer, error) {
+	// chat is already a pseudonym (see pseudonym).
 	msgs := make([]anthropic.BetaMessageParam, 0, len(turns))
 	for _, t := range turns {
 		role := anthropic.BetaMessageParamRoleUser
@@ -364,7 +371,7 @@ func (c *claudeModel) Answer(ctx context.Context, chat string, turns []Turn) (An
 		Messages:     msgs,
 		Tools:        []anthropic.BetaToolUnionParam{tool},
 		OutputConfig: anthropic.BetaOutputConfigParam{Effort: anthropic.BetaOutputConfigEffort(c.effort)},
-		Metadata:     anthropic.BetaMetadataParam{UserID: anthropic.String(hashID(chat))},
+		Metadata:     anthropic.BetaMetadataParam{UserID: anthropic.String(chat)},
 	}
 	if c.fallback {
 		// A refused request is re-served by a fallback model chosen by the API.
@@ -400,11 +407,4 @@ func (c *claudeModel) Answer(ctx context.Context, chat string, turns []Turn) (An
 		ans.Reply = "Vou chamar uma pessoa da nossa equipe para continuar o atendimento. Só um instante!"
 	}
 	return ans, nil
-}
-
-// hashID gives the API a stable, non-identifying end-user id (abuse monitoring) instead
-// of the phone number.
-func hashID(s string) string {
-	h := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(h[:8])
 }

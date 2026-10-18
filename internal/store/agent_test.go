@@ -112,15 +112,20 @@ func TestAgentCallsLogAndReplyCount(t *testing.T) {
 	ctx := context.Background()
 	s := agentStore(t)
 	t0 := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	// 540 old rows (two days ago), then 20 recent ones.
 	for i := 0; i < agentCallsKept+60; i++ {
+		at := t0.Add(-48*time.Hour + time.Duration(i)*time.Second)
+		if i >= 540 {
+			at = t0.Add(time.Duration(i) * time.Second)
+		}
 		c := AgentCall{ID: fmt.Sprintf("c%d", i), InstanceID: "i1", ChatJID: "a@s.whatsapp.net", Status: "ok",
-			Replied: i%2 == 0, CreatedAt: t0.Add(time.Duration(i) * time.Second)}
+			Replied: i%2 == 0, CreatedAt: at}
 		if err := s.InsertAgentCall(ctx, c); err != nil {
 			t.Fatal(err)
 		}
 	}
 	list, err := s.ListAgentCalls(ctx, "i1", 1000)
-	if err != nil || len(list) > agentCallsKept+50 || len(list) < agentCallsKept {
+	if err != nil || len(list) != agentCallsKept+10 {
 		t.Fatalf("kept %d %v", len(list), err)
 	}
 	if list[0].ID != fmt.Sprintf("c%d", agentCallsKept+59) || !list[0].CreatedAt.Equal(t0.Add(time.Duration(agentCallsKept+59)*time.Second)) {
@@ -132,5 +137,37 @@ func TestAgentCallsLogAndReplyCount(t *testing.T) {
 	}
 	if n, _ := s.CountAgentReplies(ctx, "i1", "b@s.whatsapp.net", t0); n != 0 {
 		t.Fatalf("other chat = %d", n)
+	}
+	if n, err := s.CountAgentCalls(ctx, "i1", "a@s.whatsapp.net", "ok", "", t0); err != nil || n != 20 {
+		t.Fatalf("count calls = %d %v", n, err)
+	}
+}
+
+func TestAgentCallsYoungRowsAreNeverPruned(t *testing.T) {
+	ctx := context.Background()
+	s := agentStore(t)
+	t0 := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < agentCallsKept+60; i++ {
+		_ = s.InsertAgentCall(ctx, AgentCall{ID: fmt.Sprintf("c%d", i), InstanceID: "i1", ChatJID: "a@s.whatsapp.net",
+			Status: "ok", Replied: true, CreatedAt: t0.Add(time.Duration(i) * time.Second)})
+	}
+	if n, _ := s.CountAgentReplies(ctx, "i1", "a@s.whatsapp.net", t0); n != agentCallsKept+60 {
+		t.Fatalf("young rows pruned: %d", n)
+	}
+}
+
+func TestQueuedAgentItems(t *testing.T) {
+	ctx := context.Background()
+	s := agentStore(t)
+	t0 := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	jid := "a@s.whatsapp.net"
+	enqueue(t, s, "q1", jid, "agent:msg_1", t0)
+	enqueue(t, s, "q2", jid, "agent-react:msg_1", t0)
+	enqueue(t, s, "q3", jid, "crm-1", t0)
+	enqueue(t, s, "q4", jid, "", t0)
+	enqueue(t, s, "q5", "b@s.whatsapp.net", "agent:msg_2", t0)
+	ids, err := s.QueuedAgentItems(ctx, "i1", jid)
+	if err != nil || fmt.Sprint(ids) != "[q1 q2]" {
+		t.Fatalf("ids = %v %v", ids, err)
 	}
 }

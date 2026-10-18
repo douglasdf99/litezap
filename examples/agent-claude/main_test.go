@@ -119,8 +119,8 @@ func TestGroupTurnsNameTheSender(t *testing.T) {
 	req.Chat.IsGroup = true
 	req.Message = ContextMessage{ID: "b", Sender: "x@s.whatsapp.net", PushName: "Bia", Type: "text", Text: "e aí?"}
 	req.Context = []ContextMessage{{ID: "a", Sender: "y@s.whatsapp.net", Type: "text", Text: "oi"}}
-	turns := conversation(req)
-	if len(turns) != 1 || turns[0].Text != "y@s.whatsapp.net: oi\nBia: e aí?" {
+	turns := conversation(req, secret)
+	if len(turns) != 1 || turns[0].Text != "participante "+pseudonym(secret, "y@s.whatsapp.net")[:6]+": oi\nBia: e aí?" {
 		t.Fatalf("turns = %+v", turns)
 	}
 }
