@@ -1,6 +1,5 @@
 ---
-// Diagrama: supervisor + um worker por número. Cores vêm das variáveis da página
-// (landing) ou do Starlight (docs).
+// Diagrama: supervisor + um worker por número. Cores vêm de src/styles/tokens.css.
 ---
 
 <figure class="lz-arch">
@@ -71,37 +70,37 @@
 		width: 100%;
 		height: auto;
 		display: block;
-		font-family: inherit;
+		font-family: var(--lz-font);
 	}
 	.box {
-		fill: var(--card, var(--sl-color-black));
-		stroke: var(--line, var(--sl-color-gray-5));
+		fill: var(--lz-surface);
+		stroke: var(--lz-line-strong);
 		stroke-width: 1.2;
 	}
 	.box-accent {
-		stroke: var(--accent, var(--sl-color-accent));
+		stroke: var(--lz-primary);
 		stroke-width: 1.6;
-		fill: var(--bg-2, var(--sl-color-gray-6));
+		fill: var(--lz-primary-bg);
 	}
 	.box-worker {
-		stroke: var(--accent, var(--sl-color-accent));
+		stroke: var(--lz-primary);
 	}
 	.box-wa {
 		stroke-dasharray: 4 4;
 	}
 	.chip {
-		fill: var(--card, var(--sl-color-black));
-		stroke: var(--line, var(--sl-color-gray-5));
+		fill: var(--lz-surface);
+		stroke: var(--lz-line-strong);
 	}
 	.edge {
-		stroke: var(--muted, var(--sl-color-gray-3));
+		stroke: var(--lz-text-muted);
 		stroke-width: 1.4;
 	}
 	.edge-dash {
 		stroke-dasharray: 4 3;
 	}
 	.a-fill {
-		fill: var(--muted, var(--sl-color-gray-3));
+		fill: var(--lz-text-muted);
 	}
 	text {
 		text-anchor: middle;
@@ -110,26 +109,26 @@
 		text-anchor: start;
 	}
 	.t-strong {
-		fill: var(--text, var(--sl-color-white));
+		fill: var(--lz-text);
 		font-size: 14px;
 		font-weight: 650;
 	}
 	.t-muted {
-		fill: var(--muted, var(--sl-color-gray-3));
+		fill: var(--lz-text-muted);
 		font-size: 12px;
 	}
 	.t-chip {
-		fill: var(--text, var(--sl-color-white));
+		fill: var(--lz-text);
 		font-size: 13px;
 	}
 	.t-label {
-		fill: var(--muted, var(--sl-color-gray-3));
+		fill: var(--lz-text-muted);
 		font-size: 11.5px;
 	}
 	figcaption {
 		margin-top: 0.75rem;
 		font-size: 0.85rem;
-		color: var(--muted, var(--sl-color-gray-3));
+		color: var(--lz-text-muted);
 		text-align: center;
 	}
 </style>

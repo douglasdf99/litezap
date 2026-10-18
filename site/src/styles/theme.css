@@ -1,40 +1,156 @@
-/* Identidade LiteZap: violeta "tinta" com o amarelo do raio como destaque. */
+/* Tema do Starlight com a identidade LiteZap (tokens em tokens.css). */
+@import './tokens.css';
+
 :root {
-	--sl-color-accent-low: #1e1846;
-	--sl-color-accent: #7b61ff;
-	--sl-color-accent-high: #d4ccff;
+	--sl-font: var(--lz-font);
+	--sl-font-mono: var(--lz-font-mono);
+
+	--sl-color-accent-low: #0e2150;
+	--sl-color-accent: #5e95fc;
+	--sl-color-accent-high: #c4d8ff;
+
 	--sl-color-white: #ffffff;
-	--sl-color-gray-1: #eceaf5;
-	--sl-color-gray-2: #c4c0d8;
-	--sl-color-gray-3: #9590b0;
-	--sl-color-gray-4: #5f5a7a;
-	--sl-color-gray-5: #3e3a57;
-	--sl-color-gray-6: #26233a;
-	--sl-color-black: #15131f;
-	--lz-zap: #ffc53d;
+	--sl-color-gray-1: #e8eef8;
+	--sl-color-gray-2: #bcc6d8;
+	--sl-color-gray-3: #8c98af;
+	--sl-color-gray-4: #5c6880;
+	--sl-color-gray-5: #2e3b58;
+	--sl-color-gray-6: #141d31;
+	--sl-color-black: #0a0f1c;
+
+	--sl-color-hairline: var(--lz-line);
+	--sl-color-hairline-light: var(--lz-line);
+	--sl-color-bg-nav: rgba(10, 15, 28, 0.85);
+	--sl-color-bg-sidebar: var(--lz-bg);
+	--sl-color-bg-inline-code: var(--lz-surface-2);
+	--sl-color-text-accent: var(--lz-link);
+	/* Aside "tip" usa roxo no Starlight; aqui vira o ciano da marca. */
+	--sl-color-purple-low: #0b2e3a;
+	--sl-color-purple: #1bbcd8;
+	--sl-color-purple-high: #b5ecf6;
+	--sl-color-blue-low: #0e2150;
+	--sl-color-blue: #377afb;
+	--sl-color-blue-high: #c4d8ff;
+	--sl-nav-height: 3.75rem;
+	--sl-content-width: 46rem;
 }
 
 :root[data-theme='light'] {
-	--sl-color-accent-low: #e6e0ff;
-	--sl-color-accent: #5a3fe0;
-	--sl-color-accent-high: #2c1c86;
-	--sl-color-white: #15131f;
-	--sl-color-gray-1: #26233a;
-	--sl-color-gray-2: #3e3a57;
-	--sl-color-gray-3: #5f5a7a;
-	--sl-color-gray-4: #9590b0;
-	--sl-color-gray-5: #c4c0d8;
-	--sl-color-gray-6: #eceaf5;
-	--sl-color-gray-7: #f6f5fb;
+	--sl-color-accent-low: #dce8ff;
+	--sl-color-accent: #1f5fe6;
+	--sl-color-accent-high: #12357f;
+
+	--sl-color-white: #0d1526;
+	--sl-color-gray-1: #18223a;
+	--sl-color-gray-2: #2e3b58;
+	--sl-color-gray-3: #4e5d75;
+	--sl-color-gray-4: #7a879c;
+	--sl-color-gray-5: #cfd8e6;
+	--sl-color-gray-6: #eef2f8;
+	--sl-color-gray-7: #f7f9fc;
 	--sl-color-black: #ffffff;
-	--lz-zap: #b7791f;
+
+	--sl-color-purple-low: #ddf5fa;
+	--sl-color-purple: #0e8fa8;
+	--sl-color-purple-high: #0b4f5e;
+	--sl-color-blue-low: #dce8ff;
+	--sl-color-blue: #1f5fe6;
+	--sl-color-blue-high: #12357f;
+
+	--sl-color-bg-nav: rgba(255, 255, 255, 0.85);
+	--sl-color-bg-sidebar: var(--lz-bg-soft);
+	--sl-color-bg-inline-code: var(--lz-surface-2);
 }
 
-/* Referência da API gerada do OpenAPI */
+/* Cabeçalho translúcido, logo nítido */
+.header {
+	backdrop-filter: saturate(160%) blur(10px);
+	border-bottom: 1px solid var(--lz-line);
+}
+.site-title img {
+	height: 1.85rem;
+	width: auto;
+}
+
+/* Tipografia */
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+h1#_top {
+	letter-spacing: -0.02em;
+	font-weight: 700;
+}
+.sl-markdown-content h2 {
+	margin-top: 2.5rem;
+}
+.sl-markdown-content {
+	line-height: 1.75;
+}
+.sl-markdown-content :not(pre) > code {
+	border: 1px solid var(--lz-line);
+	border-radius: 0.35rem;
+	padding: 0.1em 0.35em;
+	font-size: 0.86em;
+}
+
+/* Barra lateral */
+nav.sidebar .large {
+	font-weight: 600;
+	font-size: var(--sl-text-sm);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--lz-text-subtle);
+}
+nav.sidebar a[aria-current='page'],
+nav.sidebar a[aria-current='page']:hover {
+	background: var(--lz-primary-bg);
+	color: var(--sl-color-accent-high);
+	font-weight: 600;
+	border-radius: 0.4rem;
+}
+:root[data-theme='light'] nav.sidebar a[aria-current='page'] {
+	color: var(--lz-blue-700);
+}
+
+/* Tabelas */
+.sl-markdown-content table {
+	border-collapse: separate;
+	border-spacing: 0;
+	border: 1px solid var(--lz-line);
+	border-radius: 0.6rem;
+	overflow: hidden;
+}
+.sl-markdown-content th {
+	background: var(--lz-bg-soft);
+	font-weight: 600;
+}
+.sl-markdown-content th,
+.sl-markdown-content td {
+	border-bottom: 1px solid var(--lz-line);
+}
+.sl-markdown-content tr:last-child td {
+	border-bottom: 0;
+}
+
+/* Cards e botões do Starlight */
+.card {
+	border-radius: 0.75rem;
+	border-color: var(--lz-line) !important;
+	background: var(--lz-surface);
+}
+.sl-link-card {
+	border-radius: 0.75rem;
+	border-color: var(--lz-line);
+}
+.sl-link-card:hover {
+	border-color: var(--lz-primary);
+}
+
+/* ---------- Referência da API (gerada do OpenAPI) ---------- */
 .lz-op {
 	margin-top: 3rem;
-	padding-top: 1.5rem;
-	border-top: 1px solid var(--sl-color-hairline);
+	padding-top: 2rem;
+	border-top: 1px solid var(--lz-line);
 }
 .lz-op:first-of-type {
 	border-top: 0;
@@ -46,49 +162,58 @@
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 0.5rem;
+	padding: 0.5rem;
+	border: 1px solid var(--lz-line);
+	border-radius: 0.6rem;
+	background: var(--lz-bg-soft);
 	font-family: var(--sl-font-mono);
 	font-size: var(--sl-text-sm);
 }
-.lz-endpoint code {
-	background: var(--sl-color-gray-6);
-	padding: 0.2rem 0.5rem;
-	border-radius: 0.375rem;
+.sl-markdown-content .lz-endpoint code {
+	background: transparent;
+	border: 0;
+	padding: 0 0.25rem;
 	word-break: break-all;
+	color: var(--sl-color-white);
 }
 .lz-method {
 	font-weight: 700;
-	font-size: 0.75rem;
+	font-size: 0.72rem;
 	letter-spacing: 0.04em;
-	padding: 0.2rem 0.55rem;
-	border-radius: 0.375rem;
-	color: #fff;
+	padding: 0.2rem 0.5rem;
+	border-radius: 0.35rem;
 }
-.lz-method--get { background: #2f7de1; }
-.lz-method--post { background: #1f9d6b; }
-.lz-method--put { background: #c27c0e; }
-.lz-method--delete { background: #d6455d; }
+.lz-method--get { background: var(--lz-primary-bg); color: var(--lz-link); }
+.lz-method--post { background: var(--lz-success-bg); color: var(--lz-success); }
+.lz-method--put { background: var(--lz-warning-bg); color: var(--lz-warning); }
+.lz-method--delete { background: var(--lz-danger-bg); color: var(--lz-danger); }
 .lz-scope {
+	margin-left: auto;
 	font-family: var(--sl-font);
-	font-size: 0.75rem;
-	padding: 0.15rem 0.5rem;
+	font-size: 0.72rem;
+	padding: 0.15rem 0.55rem;
 	border-radius: 999px;
-	border: 1px solid var(--sl-color-gray-5);
-	color: var(--sl-color-gray-2);
+	border: 1px solid var(--lz-line-strong);
+	color: var(--lz-text-muted);
 }
-.lz-scope--admin { border-color: #d6455d; color: #d6455d; }
+.lz-scope--admin { border-color: var(--lz-danger); color: var(--lz-danger); }
 .lz-status {
 	font-family: var(--sl-font-mono);
 	font-weight: 700;
+	font-size: 0.85em;
+	padding: 0.1rem 0.4rem;
+	border-radius: 0.3rem;
 }
-.lz-status--ok { color: #1f9d6b; }
-.lz-status--err { color: #d6455d; }
+.lz-status--ok { color: var(--lz-success); background: var(--lz-success-bg); }
+.lz-status--err { color: var(--lz-danger); background: var(--lz-danger-bg); }
 .sl-markdown-content table.lz-table {
 	display: table;
 	width: 100%;
 	font-size: var(--sl-text-sm);
 }
 .lz-req {
-	font-size: 0.7rem;
-	color: #d6455d;
-	margin-left: 0.25rem;
+	font-size: 0.68rem;
+	font-weight: 600;
+	color: var(--lz-danger);
+	margin-left: 0.35rem;
 }

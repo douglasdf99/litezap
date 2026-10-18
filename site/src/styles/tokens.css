@@ -1,0 +1,81 @@
+/*
+ * Tokens de marca do LiteZap, compartilhados pela landing e pelo tema do Starlight.
+ * Primária #377AFB (identidade atual); gradiente amostrado do logo: ciano #1BBCD8 → azul #1A8CD5 → azul profundo #1731D2.
+ * Convenção de tema igual à do Starlight: :root é escuro, :root[data-theme='light'] é claro.
+ */
+:root {
+	--lz-font: 'Public Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+	--lz-font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+	/* Marca */
+	--lz-primary: #377afb;
+	--lz-cyan: #1bbcd8;
+	--lz-blue: #1a8cd5;
+	--lz-blue-deep: #1731d2;
+	--lz-gradient: linear-gradient(120deg, #1bbcd8 0%, #1a8cd5 45%, #1731d2 100%);
+	--lz-gradient-button: linear-gradient(180deg, #4a88fc 0%, #2f6ef0 100%);
+
+	/* Escala de azul (500 = primária) */
+	--lz-blue-50: #eef4ff;
+	--lz-blue-100: #dce8ff;
+	--lz-blue-200: #b9d1fe;
+	--lz-blue-300: #8db3fd;
+	--lz-blue-400: #5e95fc;
+	--lz-blue-500: #377afb;
+	--lz-blue-600: #1f5fe6;
+	--lz-blue-700: #1a4bc2;
+	--lz-blue-800: #1a3e9a;
+	--lz-blue-900: #1a3579;
+	--lz-blue-950: #0e2150;
+
+	/* Escuro (padrão) */
+	--lz-bg: #0a0f1c;
+	--lz-bg-soft: #0e1525;
+	--lz-surface: #111a2c;
+	--lz-surface-2: #172138;
+	--lz-line: #212c44;
+	--lz-line-strong: #2e3b58;
+	--lz-text: #e8eef8;
+	--lz-text-muted: #9aa6bc;
+	--lz-text-subtle: #6b7891;
+	--lz-link: #6ea2ff;
+	--lz-gradient-text: linear-gradient(95deg, #4fd3ec 0%, #5e95fc 55%, #7a8cff 100%);
+	--lz-glow: rgba(55, 122, 251, 0.28);
+	--lz-code-bg: #0d1424;
+
+	--lz-success: #3dd9a4;
+	--lz-warning: #ffc045;
+	--lz-danger: #ff6369;
+	--lz-success-bg: rgba(61, 217, 164, 0.12);
+	--lz-warning-bg: rgba(255, 192, 69, 0.12);
+	--lz-danger-bg: rgba(255, 99, 105, 0.12);
+	--lz-primary-bg: rgba(55, 122, 251, 0.14);
+
+	color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+	--lz-bg: #ffffff;
+	--lz-bg-soft: #f7f9fc;
+	--lz-surface: #ffffff;
+	--lz-surface-2: #f2f5fa;
+	--lz-line: #e4e9f1;
+	--lz-line-strong: #cfd8e6;
+	--lz-text: #0d1526;
+	--lz-text-muted: #4e5d75;
+	--lz-text-subtle: #7a879c;
+	--lz-link: #1f5fe6;
+	--lz-gradient-text: linear-gradient(95deg, #1bbcd8 0%, #1a8cd5 40%, #1731d2 100%);
+	--lz-glow: rgba(55, 122, 251, 0.18);
+	--lz-code-bg: #f7f9fc;
+
+	--lz-success: #0f9f74;
+	--lz-warning: #b7791f;
+	--lz-danger: #d93a40;
+	--lz-success-bg: rgba(15, 159, 116, 0.1);
+	--lz-warning-bg: rgba(245, 159, 0, 0.12);
+	--lz-danger-bg: rgba(217, 58, 64, 0.08);
+	--lz-primary-bg: rgba(55, 122, 251, 0.1);
+
+	color-scheme: light;
+}
