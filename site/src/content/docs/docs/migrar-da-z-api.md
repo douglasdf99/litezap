@@ -122,7 +122,7 @@ Legenda: <span class="lz-badge lz-badge--ok">Disponível</span> já funciona;
 | Configurar proxy | `proxy_url` em [`PUT /settings`](/docs/api/configuracoes/alterar-configuracoes/) (admin) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Assinaturas e cobrança | — (é da nuvem, não do motor) | <span class="lz-badge lz-badge--no">Fora</span> |
 | Componente de conexão embutível | — | <span class="lz-badge lz-badge--soon">M11</span> |
-| MCP Server | — | <span class="lz-badge lz-badge--soon">M4</span> |
+| MCP Server | [`/mcp` e `litezap mcp`](/docs/mcp/), 13 ferramentas | <span class="lz-badge lz-badge--ok">Disponível</span> |
 
 ## Roteiro de migração
 

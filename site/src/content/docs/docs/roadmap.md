@@ -13,26 +13,22 @@ prometidas; a ordem é.
 | M1 | Esqueleto: binário, config, banco, supervisor + worker por número, estados, pareamento por QR e código | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | M2 | Mensagens: fila com ritmo, rampa, janela e verificação de número; recebimento, chats, histórico; mídia; proxy por instância | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | M3 | Eventos: envelope v1, webhooks assinados com retry e dead-letter, SSE | <span class="lz-badge lz-badge--ok">Entregue</span> |
+| M4 | MCP: `/mcp` (HTTP) e `litezap mcp` (stdio), 13 ferramentas, `GET /v1/me` | <span class="lz-badge lz-badge--ok">Entregue</span> |
+| App local v1 | Painel web em `/app/` e app de bandeja `litezap-app` com login em um clique | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | M2b | Complementos: busca full-text, retenção e limpeza de mídia, `/metrics`, watchdog de conexão, nome de grupos | <span class="lz-badge lz-badge--soon">Planejado</span> |
-| M4 | MCP: `/mcp` (HTTP) e `litezap mcp` (stdio) | <span class="lz-badge lz-badge--soon">Próximo</span> |
-| M5 | Hook de agente (atendente IA) com pausa por humano | <span class="lz-badge lz-badge--soon">Planejado</span> |
+| M5 | Hook de agente (atendente IA) com pausa por humano | <span class="lz-badge lz-badge--soon">Próximo</span> |
 | M6 | Mensagens completas | <span class="lz-badge lz-badge--soon">Planejado</span> |
 | M7 | Eventos completos e chamadas | <span class="lz-badge lz-badge--soon">Planejado</span> |
 | M8 | Grupos e comunidades | <span class="lz-badge lz-badge--soon">Planejado</span> |
 | M9 | Chats, contatos, perfil, privacidade e conta | <span class="lz-badge lz-badge--soon">Planejado</span> |
 | M10 | Status, canais e Business | <span class="lz-badge lz-badge--soon">Planejado</span> |
 | M11 | Plataforma e parceiros | <span class="lz-badge lz-badge--soon">Planejado</span> |
-| App local | App desktop: bandeja, tela de QR, atualização automática, túnel opcional | <span class="lz-badge lz-badge--soon">Planejado</span> |
+| App local v2 | Instaladores, assinatura de código, atualização automática, iniciar com o sistema, túnel opcional | <span class="lz-badge lz-badge--soon">Planejado</span> |
 | Nuvem | Projeto pré-instalado por cliente, IPs gerenciados, backups e upgrades | <span class="lz-badge lz-badge--soon">Planejado</span> |
 
 Status da nuvem (uptime, incidentes): a página pública de status será publicada junto com a nuvem LiteZap.
 
 ## Próximos marcos
-
-### M4: MCP
-
-Servidor MCP embutido e ponte stdio, com ferramentas para instâncias, envio, chats, histórico, contatos e números.
-Veja [MCP e IA](/docs/mcp/).
 
 ### M5: hook de agente
 

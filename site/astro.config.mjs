@@ -176,7 +176,7 @@ export default defineConfig({
 				{
 					label: 'MCP e IA',
 					collapsed: true,
-					items: [soonPage('docs/mcp', 'M4'), soonPage('docs/mcp/hook-de-agente', 'M5')],
+					items: ['docs/mcp', 'docs/mcp/ferramentas', soonPage('docs/mcp/hook-de-agente', 'M5')],
 				},
 				{
 					label: 'SDKs e ferramentas',

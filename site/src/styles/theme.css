@@ -62,6 +62,13 @@
 	--sl-color-bg-inline-code: var(--lz-surface-2);
 }
 
+/* Código sem ligaduras (=> e != aparecem como digitados) */
+code,
+pre,
+.expressive-code {
+	font-variant-ligatures: none;
+}
+
 /* Cabeçalho translúcido, logo nítido */
 .header {
 	backdrop-filter: saturate(160%) blur(10px);

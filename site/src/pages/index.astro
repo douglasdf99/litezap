@@ -21,11 +21,11 @@ const features = [
 	{ icon: 'shield', title: 'Anti-ban por padrão', text: 'Ritmo com variação aleatória, rampa para números novos, janela de envio para contatos frios e verificação do número antes do primeiro envio.' },
 	{ icon: 'globe', title: 'Proxy por instância', text: 'HTTP, HTTPS ou SOCKS5 por número, fixo durante a sessão. Se o proxy cai, a instância espera: nunca vaza pela conexão direta.' },
 	{ icon: 'webhook', title: 'Webhooks e SSE', text: 'Eventos com envelope único, assinados com HMAC, retry por 24h e dead-letter, além de streams SSE ao vivo.' },
-	{ icon: 'sparkles', title: 'MCP e atendente IA', text: 'Servidor MCP para Claude e outros clientes, e um hook de agente para respostas automáticas com pausa quando um humano assume.', soon: true },
+	{ icon: 'sparkles', title: 'MCP para IA', text: 'Claude, ChatGPT e outros clientes leem conversas e enviam mensagens pelo servidor MCP, sempre pela mesma fila anti-ban. Atendente automático (hook de agente) em breve.' },
 ] as const;
 
 const modes = [
-	{ icon: 'laptop', title: 'No seu PC', text: 'Rode o binário na sua máquina, com o seu IP residencial. API só em localhost por padrão.', tag: 'Disponível', note: 'app desktop em breve', href: '/docs/app-local/' },
+	{ icon: 'laptop', title: 'No seu PC', text: 'App de bandeja com painel web: pareie, converse e configure sem terminal. Seu IP residencial, API só em localhost.', tag: 'Disponível', note: 'instaladores em breve', href: '/docs/app-local/' },
 	{ icon: 'server', title: 'No seu servidor', text: 'VPS ou servidor próprio com Docker ou systemd, atrás de um proxy reverso com TLS.', tag: 'Disponível', href: '/docs/self-hosted/' },
 	{ icon: 'cloud', title: 'Na nuvem LiteZap', text: 'Um projeto pré-instalado só seu, com upgrades, backups, monitoramento e IPs gerenciados.', tag: 'Em breve', soon: true, href: '#precos' },
 ] as const;
@@ -104,7 +104,7 @@ const breadth: { group: string; href: string; items: [string, true | string][] }
 			['Multi-instância com token por número', true],
 			['Proxy por instância', true],
 			['Docker, systemd, app local', true],
-			['MCP para Claude e outros', 'M4'],
+			['MCP para Claude e outros', true],
 			['Atendente IA (hook de agente)', 'M5'],
 			['Pareamento hospedado para parceiros', 'M11'],
 		],

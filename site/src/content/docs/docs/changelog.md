@@ -5,6 +5,30 @@ description: O que mudou em cada marco do LiteZap.
 
 As versões seguem os marcos do motor. Mudanças que quebram compatibilidade são marcadas com **Quebra**.
 
+## App local v1
+
+**Novo**
+
+- Painel web embutido em `/app/` (`/` redireciona): instâncias com estado ao vivo, pareamento por QR e código,
+  conversas e envio com explicação da fila, configurações, webhooks com entregas e reenvio, eventos ao vivo.
+- App de bandeja `litezap-app`: motor no próprio processo, pasta de dados por usuário, login no painel em um clique
+  (código de uso único, só em loopback), Abrir pasta de dados, Ver log e Sair gracioso.
+- Configuração `disable_dashboard` (`LITEZAP_DISABLE_DASHBOARD`).
+
+**Ainda não**: instaladores, assinatura de código, atualização automática, iniciar com o sistema, túnel.
+
+## Marco 4: MCP (v0.4)
+
+**Novo**
+
+- Servidor MCP em `/mcp` (streamable HTTP, *stateless*, com os mesmos tokens da API) e ponte stdio `litezap mcp`
+  (`LITEZAP_URL`, `LITEZAP_TOKEN`).
+- 13 ferramentas: `list_instances`, `get_instance_status`, `get_qr`, `send_message`, `send_media`,
+  `get_message_status`, `list_chats`, `get_messages`, `mark_read`, `list_contacts`, `get_contact`, `check_numbers`,
+  `wait_for_events`.
+- `GET /v1/me`: escopo do token (`admin`, `instance_id`).
+- Proteção contra DNS rebinding no `/mcp` em loopback, com exceção para o host de `public_url`.
+
 ## Marco 3: eventos (v0.3)
 
 **Novo**

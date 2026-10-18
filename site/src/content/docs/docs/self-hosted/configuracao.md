@@ -20,6 +20,7 @@ variáveis `LITEZAP_*`, que **têm precedência** sobre o arquivo. Arquivo ausen
 | `webhook_allow_private_urls` | `LITEZAP_WEBHOOK_ALLOW_PRIVATE_URLS` | `false` | Libera webhooks para `127.0.0.1`, rede local etc. Só para uso local. |
 | `webhook_retention_days` | só no arquivo | `7` | Dias que entregas de webhook concluídas ficam guardadas. |
 | `webhook_failed_retention_days` | só no arquivo | `30` | Dias que a dead-letter fica guardada. |
+| `disable_dashboard` | `LITEZAP_DISABLE_DASHBOARD` | `false` | `true` desliga o painel web em `/app/`; a API continua igual. |
 | `instance_defaults` | só no arquivo | veja abaixo | Padrões de envio de toda instância. |
 
 ## Exemplo completo
@@ -39,6 +40,9 @@ media_allow_private_urls: false
 webhook_allow_private_urls: false
 webhook_retention_days: 7
 webhook_failed_retention_days: 30
+
+# Painel web em /app/ (pede o token admin). true desliga o painel; a API continua.
+disable_dashboard: false
 
 # Padrões de envio por instância (cada instância pode sobrescrever via PUT /settings).
 # Pisos: min_interval_ms >= 1000 e max_per_minute <= 60, salvo unsafe_pacing: true.

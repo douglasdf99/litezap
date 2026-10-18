@@ -20,9 +20,11 @@ go test -race ./...
 
 | Pasta | O quê |
 |---|---|
-| `cmd/litezap` | Binário (`serve`, `worker`, `version`) |
+| `cmd/litezap` | Binário (`serve`, `worker`, `mcp`, `version`) |
 | `internal/api` | REST (rotas chi, autenticação) |
-| `internal/service` | Casos de uso compartilhados por REST e (em breve) MCP |
+| `internal/service` | Casos de uso compartilhados por REST e MCP |
+| `internal/mcp` | Servidor MCP (`/mcp`) e ponte stdio (`litezap mcp`) |
+| `internal/dashboard`, `cmd/litezap-app` | Painel web em `/app/` e app de bandeja |
 | `internal/manager`, `internal/spawner` | Ciclo de vida das instâncias e processos worker |
 | `internal/worker` | Worker com whatsmeow, falando gRPC com o supervisor |
 | `internal/queue`, `internal/lookup` | Fila de envio, ritmo e verificação de números |

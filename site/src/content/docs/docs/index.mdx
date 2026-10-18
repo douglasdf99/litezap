@@ -33,7 +33,7 @@ O mesmo binário roda de três formas:
 - Os workers encerram sozinhos se o supervisor morrer, mesmo à força. No próximo `serve`, as instâncias voltam sem
   novo QR e a fila continua de onde parou.
 
-## O que já funciona (marco 3)
+## O que já funciona (marco 4 e app local v1)
 
 <CardGrid>
 	<Card title="Instâncias e pareamento" icon="phone">
@@ -51,12 +51,15 @@ O mesmo binário roda de três formas:
 	<Card title="Webhooks e SSE" icon="seti:pipeline">
 		Eventos com envelope único, webhooks assinados com retry por 24h e dead-letter, e streams SSE ao vivo.
 	</Card>
-	<Card title="Auto-hospedável" icon="laptop">
-		Binário único sem dependências: no seu PC, com Docker ou systemd. Sem lock-in: a pasta `data/` é tudo.
+	<Card title="MCP para IA" icon="random">
+		Claude, ChatGPT e outros clientes usam o WhatsApp por 13 ferramentas MCP, pela mesma fila anti-ban.
+	</Card>
+	<Card title="Painel e app local" icon="laptop">
+		Painel web em `/app/` e app de bandeja: pareie, converse e configure sem terminal. Ou Docker/systemd no servidor.
 	</Card>
 </CardGrid>
 
-Grupos, perfil, status, canais, MCP e mais estão no [roadmap](/docs/roadmap/), com páginas marcadas como
+Grupos, perfil, status, canais, atendente IA e mais estão no [roadmap](/docs/roadmap/), com páginas marcadas como
 **Em breve** na documentação. Vindo de outra API? Veja [Migrar da Z-API](/docs/migrar-da-z-api/).
 
 ## Próximos passos

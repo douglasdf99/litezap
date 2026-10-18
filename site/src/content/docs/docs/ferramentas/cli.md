@@ -10,7 +10,8 @@ O LiteZap é um binário único com subcomandos.
 | `litezap serve [--config litezap.yaml]` | Sobe o supervisor: API, banco, fila, eventos e workers. | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | `litezap version` | Mostra a versão (definida no build com `-ldflags "-X main.version=..."`). | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | `litezap worker ...` | Worker de uma instância. **Interno**: iniciado pelo supervisor, nunca à mão. | <span class="lz-badge lz-badge--ok">Interno</span> |
-| `litezap mcp` | Ponte MCP via stdio para clientes de IA. | <span class="lz-badge lz-badge--soon">Em breve · M4</span> |
+| `litezap mcp` | Ponte MCP via stdio para clientes de IA (`LITEZAP_URL`, `LITEZAP_TOKEN`). Veja [MCP](/docs/mcp/). | <span class="lz-badge lz-badge--ok">Disponível</span> |
+| `litezap-app [--no-browser]` | App de bandeja com painel (binário separado, `./cmd/litezap-app`). Veja [App local](/docs/app-local/). | <span class="lz-badge lz-badge--ok">Disponível</span> |
 
 ## `serve`
 

@@ -1,12 +1,12 @@
 openapi: 3.1.0
 info:
   title: LiteZap API
-  version: "0.3.0"
+  version: "0.4.0"
   summary: API de WhatsApp não oficial, open source, que roda local, no seu servidor ou na nuvem.
   description: |
-    Referência da API REST do motor LiteZap (marco 3: instâncias, pareamento, envio com fila
+    Referência da API REST do motor LiteZap (marco 4: instâncias, pareamento, envio com fila
     persistente, recebimento, chats, contatos, verificação de números, mídia, proxy por instância,
-    webhooks assinados e eventos em tempo real por SSE). Os eventos entregues por webhook estão
+    webhooks assinados, eventos em tempo real por SSE e servidor MCP em `/mcp`). Os eventos entregues por webhook estão
     descritos na seção `webhooks` deste arquivo.
 
     Autenticação: `Authorization: Bearer <token>`. O token admin acessa tudo; o token de instância
@@ -112,8 +112,17 @@ tags:
       Os mesmos eventos dos webhooks, ao vivo por Server-Sent Events, sem precisar de um servidor público.
       Não há replay: eventos de quando o cliente estava desconectado não voltam (para isso, use webhooks).
     x-concept: /docs/guias/sse/
+  - name: MCP
+    description: Servidor Model Context Protocol para assistentes de IA.
+    x-slug: mcp
+    x-intro: |
+      O LiteZap expõe as mesmas operações da API como ferramentas MCP, para assistentes de IA (Claude,
+      ChatGPT e outros) lerem conversas e enviarem mensagens pelo seu número, sempre pela mesma fila e com as
+      mesmas proteções. O endpoint fala o protocolo MCP (JSON-RPC sobre streamable HTTP), não REST: use um
+      cliente MCP. A lista de ferramentas e a configuração dos clientes estão em [MCP e IA](/docs/mcp/).
+    x-concept: /docs/mcp/
   - name: Operação
-    description: Saúde do processo e prontidão.
+    description: Saúde do processo, prontidão e identidade do token.
     x-slug: operacao
     x-intro: |
       Rotas para monitoramento e orquestradores. São públicas quando o servidor escuta em loopback e
@@ -1210,6 +1219,69 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+
+  /mcp:
+    post:
+      tags: [MCP]
+      operationId: mcpEndpoint
+      x-litezap-milestone: M4
+      x-zapi: "MCP Server"
+      x-litezap-sample: { headers: { Accept: "application/json, text/event-stream" } }
+      summary: Endpoint MCP
+      x-litezap-scope: instancia
+      description: |
+        Endpoint MCP (streamable HTTP, *stateless*: sem `Mcp-Session-Id`, cada requisição é autenticada de novo)
+        com o mesmo `Authorization: Bearer` da API. Com token de instância, as ferramentas operam só naquela
+        instância. O corpo é uma mensagem JSON-RPC do protocolo MCP (`initialize`, `tools/list`,
+        `tools/call`...); o cliente precisa aceitar `application/json` e `text/event-stream`.
+
+        Num `listen_addr` de loopback, pedidos com `Host` que não é loopback são recusados (proteção contra DNS
+        rebinding), exceto o host de `public_url`, para um proxy reverso na mesma máquina. Clientes na nuvem
+        (ChatGPT, OpenAI) precisam do servidor publicado com TLS. Para clientes locais que iniciam um processo,
+        use `litezap mcp` (stdio).
+      x-litezap-notes: "Todo envio feito pelo assistente passa pela mesma fila (ritmo, rampa, janela). Prefira clientes que pedem aprovação antes de enviar: mensagens de terceiros podem conter prompt injection."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: Mensagem JSON-RPC 2.0 do protocolo MCP. }
+            example: { jsonrpc: "2.0", id: 1, method: "tools/list" }
+      responses:
+        "200":
+          description: Resposta JSON-RPC (a lista de ferramentas, no exemplo).
+          content:
+            application/json:
+              example: { jsonrpc: "2.0", id: 1, result: { tools: [ { name: list_instances, description: "..." }, { name: send_message, description: "..." } ] } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/me:
+    get:
+      tags: [Operação]
+      operationId: me
+      x-litezap-milestone: M4
+      x-zapi: "(sem equivalente)"
+      summary: Identidade do token
+      x-litezap-scope: qualquer
+      description: Diz quem é o token que fez a chamada. `admin` é `true` para o token admin; com token de instância vem também o `instance_id`. Útil para clientes descobrirem o próprio escopo (o `litezap mcp` usa esta rota).
+      responses:
+        "200":
+          description: Escopo do token.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  admin: { type: boolean }
+                  instance_id: { type: string, description: Só com token de instância. }
+              examples:
+                instancia:
+                  summary: Token de instância
+                  value: { admin: false, instance_id: inst_7f3a9c2e5b1d4086 }
+                admin:
+                  summary: Token admin
+                  value: { admin: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /healthz:
     get:

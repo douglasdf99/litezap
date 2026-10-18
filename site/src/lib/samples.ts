@@ -73,10 +73,12 @@ export function samples(op: Operation, body?: unknown): Sample[] {
 	const json = body !== undefined ? JSON.stringify(body, null, 2) : undefined;
 	const binary: string | undefined = s.binary;
 	const sse = !!s.sse;
+	const extra: [string, string][] = Object.entries(s.headers ?? {}).map(([k, v]) => [k, String(v)]);
 
 	// curl
 	const curl: string[] = [`curl -s${sse ? 'N' : ''}${op.method === 'get' ? '' : ` -X ${M}`} "$LITEZAP_URL${shellPath}${qs}"`];
 	if (auth) curl.push(`  -H "Authorization: Bearer $${tok}"`);
+	for (const [k, v] of extra) curl.push(`  -H "${k}: ${v}"`);
 	if (json) curl.push(`  -d '${JSON.stringify(body)}'`);
 	if (binary) curl.push(`  -o ${binary}`);
 
@@ -86,6 +88,7 @@ export function samples(op: Operation, body?: unknown): Sample[] {
 	const nodeHeaders = [
 		auth ? `Authorization: \`Bearer \${process.env.${tok}}\`` : '',
 		json ? `"Content-Type": "application/json"` : '',
+		...extra.map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`),
 	].filter(Boolean);
 	if (nodeHeaders.length) nodeOpts.push(`  headers: { ${nodeHeaders.join(', ')} },`);
 	if (json) nodeOpts.push(`  body: JSON.stringify(${json.replace(/\n/g, '\n  ')}),`);
@@ -105,7 +108,10 @@ for (;;) {
 
 	// Python
 	const pyArgs = [`    "${BASE}${path}",`];
-	if (auth) pyArgs.push(`    headers={"Authorization": f"Bearer {os.environ['${tok}']}"},`);
+	if (auth)
+		pyArgs.push(
+			`    headers={"Authorization": f"Bearer {os.environ['${tok}']}"${extra.map(([k, v]) => `, ${JSON.stringify(k)}: ${JSON.stringify(v)}`).join('')}},`,
+		);
 	if (Object.keys(query).length) pyArgs.push(`    params=${toPython(query, 1)},`);
 	if (body !== undefined) pyArgs.push(`    json=${toPython(body, 1)},`);
 	if (sse) pyArgs.push('    stream=True,', '    timeout=None,');
@@ -133,7 +139,7 @@ ${goImports.map((i) => `\t${i}`).join('\n')}
 
 func main() {
 \treq, _ := http.NewRequest("${M}", "${url}", ${goBody})
-${auth ? `\treq.Header.Set("Authorization", "Bearer "+os.Getenv("${tok}"))\n` : ''}${json ? '\treq.Header.Set("Content-Type", "application/json")\n' : ''}\tresp, err := http.DefaultClient.Do(req)
+${auth ? `\treq.Header.Set("Authorization", "Bearer "+os.Getenv("${tok}"))\n` : ''}${json ? '\treq.Header.Set("Content-Type", "application/json")\n' : ''}${extra.map(([k, v]) => `\treq.Header.Set(${JSON.stringify(k)}, ${JSON.stringify(v)})\n`).join('')}\tresp, err := http.DefaultClient.Do(req)
 \tif err != nil {
 \t\tpanic(err)
 \t}
@@ -160,7 +166,10 @@ curl_setopt_array($ch, [
 curl_exec($ch);`;
 	} else {
 		const opts: string[] = [];
-		if (auth) opts.push(`    'headers' => ['Authorization' => 'Bearer ' . getenv('${tok}')],`);
+		if (auth)
+			opts.push(
+				`    'headers' => ['Authorization' => 'Bearer ' . getenv('${tok}')${extra.map(([k, v]) => `, ${phpStr(k)} => ${phpStr(v)}`).join('')}],`,
+			);
 		if (Object.keys(query).length) opts.push(`    'query' => ${toPhp(query, 1)},`);
 		if (body !== undefined) opts.push(`    'json' => ${toPhp(body, 1)},`);
 		if (binary) opts.push(`    'sink' => '${binary}',`);

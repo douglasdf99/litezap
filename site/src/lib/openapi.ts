@@ -157,6 +157,7 @@ export const scopeLabel: Record<string, string> = {
 	instancia: 'token da instância ou admin',
 	assinatura: 'sem token (URL assinada)',
 	operacao: 'público em loopback; admin fora dele',
+	qualquer: 'qualquer token válido',
 };
 
 export const scopeText: Record<string, string> = {
@@ -168,6 +169,7 @@ export const scopeText: Record<string, string> = {
 		'Não usa token: a URL assinada (`exp` e `sig`) é a credencial e vale 1 hora. Assinatura inválida ou expirada responde `403 forbidden`.',
 	operacao:
 		'Pública quando o servidor escuta em loopback (`127.0.0.1`/`localhost`). Em qualquer outro `listen_addr` exige o **token admin**.',
+	qualquer: 'Aceita **qualquer token válido** (admin ou de instância). Sem token ou com token inválido: `401 unauthorized`.',
 };
 
 /** Códigos de erro: retentável e ação recomendada. */
