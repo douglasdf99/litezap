@@ -10,7 +10,6 @@ catálogo, com payload e exemplos, quando o marco for entregue. Os nomes são a 
 
 | Tipo | Quando será emitido | Marco |
 |---|---|---|
-| `group.updated` | Entradas, saídas, promoções, nome e descrição de grupos | M8 |
 | `chat.updated` | Chat arquivado, fixado ou silenciado (inclusive pelo celular) | M9 |
 | `status.received` | Status publicado por um contato (desligado por padrão) | M10 |
 | `label.updated` | Etiqueta criada, alterada ou atribuída (Business) | M10 |

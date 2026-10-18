@@ -54,9 +54,10 @@ Cada entrega é um `POST` com o envelope como corpo (`Content-Type: application/
 | [`call.received`](/docs/eventos/call-received/) | Chamada tocando (e se foi rejeitada automaticamente) | M7 |
 | [`call.accepted`](/docs/eventos/call-accepted/) | Chamada atendida num aparelho da conta | M7 |
 | [`call.ended`](/docs/eventos/call-ended/) | Chamada encerrada (`missed` quando perdida) | M7 |
+| [`group.updated`](/docs/eventos/group-updated/) | Mudança num grupo (participantes, nome, descrição, foto, configurações, convite), um evento por `kind` | M8 |
 | [`history.synced`](/docs/eventos/history-synced/) | Fim da sincronização de histórico | M3 |
 
-Tipos planejados (`group.updated`, `chat.updated`...) estão em
+Tipos planejados (`chat.updated`...) estão em
 [Eventos em breve](/docs/eventos/em-breve/).
 
 ## Filtros

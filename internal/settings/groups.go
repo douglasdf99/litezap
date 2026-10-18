@@ -39,6 +39,17 @@ func (g Groups) Limits() Groups {
 	}
 }
 
+// Clamped bounds the limits by the ceilings unless unsafe is set (a guard on top of
+// validation: limits stored before a ceiling changed never exceed it).
+func (g Groups) Clamped(unsafe bool) Groups {
+	if unsafe {
+		return g
+	}
+	g.MaxAddsPerHour, g.MaxAddsPerDay = min(g.MaxAddsPerHour, MaxAddsPerHour), min(g.MaxAddsPerDay, MaxAddsPerDay)
+	g.MaxCreatesPerDay, g.MaxJoinsPerDay = min(g.MaxCreatesPerDay, MaxCreatesPerDay), min(g.MaxJoinsPerDay, MaxJoinsPerDay)
+	return g
+}
+
 func (g Groups) validate(unsafe bool) error {
 	l := g.Limits()
 	for _, c := range []struct {

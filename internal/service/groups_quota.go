@@ -90,6 +90,52 @@ func rateLimited(msg string) error {
 	return apierr.New(http.StatusTooManyRequests, "rate_limited", msg, true)
 }
 
+// evaluate prunes q to the last 24h and checks count creates/joins (kind) plus adds
+// participants against the limits. Any batch with participants is paced (addGap since
+// the last one), whatever its kind.
+func evaluate(q *quotaState, now time.Time, lim settings.Groups, kind quotaKind, count, adds int) error {
+	day, hour := now.Add(-24*time.Hour).UnixNano(), now.Add(-time.Hour).UnixNano()
+	q.Adds, q.Creates, q.Joins = prune(q.Adds, day), prune(q.Creates, day), prune(q.Joins, day)
+	switch kind {
+	case quotaCreate:
+		if len(q.Creates)+count > lim.MaxCreatesPerDay {
+			return rateLimited(fmt.Sprintf("group creation limit reached: at most %d per day per instance (settings.groups.max_creates_per_day)", lim.MaxCreatesPerDay))
+		}
+	case quotaJoin:
+		if len(q.Joins)+count > lim.MaxJoinsPerDay {
+			return rateLimited(fmt.Sprintf("group join limit reached: at most %d per day per instance (settings.groups.max_joins_per_day)", lim.MaxJoinsPerDay))
+		}
+	}
+	if adds == 0 {
+		return nil
+	}
+	if q.LastAdd > 0 && now.Sub(time.Unix(0, q.LastAdd)) < addGap {
+		return rateLimited(fmt.Sprintf("participant adds are paced: wait %s between batches", addGap))
+	}
+	if n := countSince(q.Adds, hour); n+adds > lim.MaxAddsPerHour {
+		return rateLimited(fmt.Sprintf("participant add limit reached: at most %d per hour per instance (%d left; settings.groups.max_adds_per_hour)",
+			lim.MaxAddsPerHour, max(lim.MaxAddsPerHour-n, 0)))
+	}
+	if len(q.Adds)+adds > lim.MaxAddsPerDay {
+		return rateLimited(fmt.Sprintf("participant add limit reached: at most %d per day per instance (%d left; settings.groups.max_adds_per_day)",
+			lim.MaxAddsPerDay, max(lim.MaxAddsPerDay-len(q.Adds), 0)))
+	}
+	return nil
+}
+
+// check is reserve without counting anything: it runs before the participant lookups,
+// so a request that the quotas would refuse spends no lookup.
+func (gq *groupQuota) check(ctx context.Context, st *store.Store, instanceID string, now time.Time, lim settings.Groups,
+	kind quotaKind, count, adds int) error {
+	gq.mu.Lock()
+	defer gq.mu.Unlock()
+	q, err := loadQuota(ctx, st, instanceID)
+	if err != nil {
+		return err
+	}
+	return evaluate(&q, now, lim, kind, count, adds)
+}
+
 // reserve checks the instance's quotas for count creates/joins (kind) plus adds
 // participants, and counts them when they fit; otherwise it answers rate_limited.
 func (gq *groupQuota) reserve(ctx context.Context, st *store.Store, instanceID string, now time.Time, lim settings.Groups,
@@ -100,36 +146,16 @@ func (gq *groupQuota) reserve(ctx context.Context, st *store.Store, instanceID s
 	if err != nil {
 		return reservation{}, err
 	}
+	if err := evaluate(&q, now, lim, kind, count, adds); err != nil {
+		return reservation{}, err
+	}
 	at := now.UnixNano()
-	day, hour := now.Add(-24*time.Hour).UnixNano(), now.Add(-time.Hour).UnixNano()
-	q.Adds, q.Creates, q.Joins = prune(q.Adds, day), prune(q.Creates, day), prune(q.Joins, day)
-	switch kind {
-	case quotaCreate:
-		if len(q.Creates)+count > lim.MaxCreatesPerDay {
-			return reservation{}, rateLimited(fmt.Sprintf("group creation limit reached: at most %d per day per instance (settings.groups.max_creates_per_day)", lim.MaxCreatesPerDay))
-		}
-	case quotaJoin:
-		if len(q.Joins)+count > lim.MaxJoinsPerDay {
-			return reservation{}, rateLimited(fmt.Sprintf("group join limit reached: at most %d per day per instance (settings.groups.max_joins_per_day)", lim.MaxJoinsPerDay))
-		}
-	case quotaAdd:
-		if q.LastAdd > 0 && now.Sub(time.Unix(0, q.LastAdd)) < addGap {
-			return reservation{}, rateLimited(fmt.Sprintf("participant adds are paced: wait %s between batches", addGap))
-		}
-	}
-	if adds > 0 {
-		if n := countSince(q.Adds, hour); n+adds > lim.MaxAddsPerHour {
-			return reservation{}, rateLimited(fmt.Sprintf("participant add limit reached: at most %d per hour per instance (%d left; settings.groups.max_adds_per_hour)",
-				lim.MaxAddsPerHour, max(lim.MaxAddsPerHour-n, 0)))
-		}
-		if len(q.Adds)+adds > lim.MaxAddsPerDay {
-			return reservation{}, rateLimited(fmt.Sprintf("participant add limit reached: at most %d per day per instance (%d left; settings.groups.max_adds_per_day)",
-				lim.MaxAddsPerDay, max(lim.MaxAddsPerDay-len(q.Adds), 0)))
-		}
-	}
 	r := reservation{kind: kind, at: at, count: count, adds: adds, prev: q.LastAdd}
 	for range adds {
 		q.Adds = append(q.Adds, at)
+	}
+	if adds > 0 {
+		q.LastAdd = at
 	}
 	switch kind {
 	case quotaCreate:
@@ -140,8 +166,6 @@ func (gq *groupQuota) reserve(ctx context.Context, st *store.Store, instanceID s
 		for range count {
 			q.Joins = append(q.Joins, at)
 		}
-	case quotaAdd:
-		q.LastAdd = at
 	}
 	if err := saveQuota(ctx, st, instanceID, q); err != nil {
 		return reservation{}, err
@@ -149,8 +173,20 @@ func (gq *groupQuota) reserve(ctx context.Context, st *store.Store, instanceID s
 	return r, nil
 }
 
-// refund gives back a reservation whose request failed before reaching WhatsApp (or
-// was refused as a whole). Best effort.
+// cooldown restarts the pacing gap after WhatsApp itself rate-limited the instance.
+func (gq *groupQuota) cooldown(ctx context.Context, st *store.Store, instanceID string, now time.Time) {
+	gq.mu.Lock()
+	defer gq.mu.Unlock()
+	q, err := loadQuota(ctx, st, instanceID)
+	if err != nil {
+		return
+	}
+	q.LastAdd = now.UnixNano()
+	_ = saveQuota(context.WithoutCancel(ctx), st, instanceID, q)
+}
+
+// refund gives back a reservation whose request certainly never reached WhatsApp (see
+// notSent). Best effort.
 func (gq *groupQuota) refund(ctx context.Context, st *store.Store, instanceID string, r reservation) {
 	if r.at == 0 {
 		return
@@ -176,10 +212,9 @@ func (gq *groupQuota) refund(ctx context.Context, st *store.Store, instanceID st
 		q.Creates = drop(q.Creates, r.count)
 	case quotaJoin:
 		q.Joins = drop(q.Joins, r.count)
-	case quotaAdd:
-		if q.LastAdd == r.at {
-			q.LastAdd = r.prev
-		}
+	}
+	if r.adds > 0 && q.LastAdd == r.at {
+		q.LastAdd = r.prev
 	}
 	_ = saveQuota(context.WithoutCancel(ctx), st, instanceID, q)
 }

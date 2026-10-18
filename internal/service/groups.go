@@ -181,12 +181,44 @@ func groupErr(err error) error {
 		return apierr.New(http.StatusBadRequest, "invite_invalid", "the invite link is not valid", false)
 	case st.Code() == codes.PermissionDenied:
 		return apierr.New(http.StatusForbidden, "group_forbidden", redact(detail), false)
-	case st.Code() == codes.ResourceExhausted:
+	case st.Code() == codes.ResourceExhausted && code == "rate_limited":
 		return apierr.New(http.StatusTooManyRequests, "rate_limited", "WhatsApp rate limit reached; slow down", true)
 	case st.Code() == codes.Unimplemented:
 		return apierr.New(http.StatusNotImplemented, "not_implemented", "this worker does not support groups", false)
 	}
 	return mapErr(err)
+}
+
+// notSent reports whether a failed Groups RPC certainly never reached WhatsApp, so its
+// quota can be given back: the worker was down or not connected, or it refused the
+// request itself. Timeouts, WhatsApp refusals and rate limits keep what was counted.
+func notSent(err error) bool {
+	if errors.Is(err, manager.ErrNotRunning) || errors.Is(err, manager.ErrNoGroups) {
+		return true
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	code, _, _ := strings.Cut(st.Message(), ": ")
+	switch st.Code() {
+	case codes.Unavailable, codes.FailedPrecondition, codes.Unimplemented:
+		return true
+	case codes.InvalidArgument:
+		return code == "validation_failed" || code == "invite_invalid"
+	}
+	return false
+}
+
+// failed handles a failed quota-counted RPC: the reservation is given back when the
+// request never reached WhatsApp, and a WhatsApp rate limit restarts the pacing gap.
+func (g *Groups) failed(ctx context.Context, instanceID string, res reservation, err error) error {
+	if notSent(err) {
+		g.quota.refund(ctx, g.Store, instanceID, res)
+	} else if status.Code(err) == codes.ResourceExhausted {
+		g.quota.cooldown(ctx, g.Store, instanceID, g.now())
+	}
+	return groupErr(err)
 }
 
 func (g *Groups) client(ctx context.Context, instanceID string) (workerv1.GroupsClient, error) {
@@ -216,7 +248,7 @@ func (g *Groups) limits(ctx context.Context, instanceID string) (settings.Groups
 	if err != nil {
 		return settings.Groups{}, err
 	}
-	return set.Groups.Limits(), nil
+	return set.Groups.Limits().Clamped(set.UnsafePacing), nil
 }
 
 // GroupJID normalizes a group id: "<id>@g.us" or the bare id.
@@ -376,6 +408,21 @@ type addable struct {
 	send    []string // participant JIDs to send to WhatsApp
 	request []string // the participant as requested, for each send entry
 	skipped []ParticipantResultView
+	dupOf   map[string]string // requested participant -> the request it resolved to as well
+}
+
+// add queues jid for requested, unless another request already resolved to it.
+func (a *addable) add(jid, requested string) {
+	for i, s := range a.send {
+		if s == jid {
+			if a.dupOf == nil {
+				a.dupOf = map[string]string{}
+			}
+			a.dupOf[requested] = a.request[i]
+			return
+		}
+	}
+	a.send, a.request = append(a.send, jid), append(a.request, requested)
 }
 
 // checkAddable keeps only participants the instance knows: a chat in its log, or (phone
@@ -387,7 +434,7 @@ func (g *Groups) checkAddable(ctx context.Context, instanceID string, jids []str
 	var lookupPhones []string
 	for _, jid := range jids {
 		if _, err := g.Store.GetChat(ctx, instanceID, jid); err == nil {
-			a.send, a.request = append(a.send, jid), append(a.request, jid)
+			a.add(jid, jid)
 			continue
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return a, err
@@ -427,7 +474,7 @@ func (g *Groups) checkAddable(ctx context.Context, instanceID string, jids []str
 		if jid == "" {
 			jid = requested
 		}
-		a.send, a.request = append(a.send, jid), append(a.request, requested)
+		a.add(jid, requested)
 	}
 	return a, nil
 }
@@ -453,6 +500,10 @@ func mergeResults(order []string, a addable, sent []*workerv1.ParticipantResult)
 	for _, p := range order {
 		if r, ok := byReq[p]; ok {
 			out = append(out, r)
+		} else if canon, ok := a.dupOf[p]; ok && byReq[canon].Status != "" {
+			r := byReq[canon]
+			r.Participant = p
+			out = append(out, r)
 		} else {
 			out = append(out, ParticipantResultView{Participant: p, Status: "unknown"})
 		}
@@ -472,6 +523,9 @@ func (g *Groups) Create(ctx context.Context, instanceID string, in CreateGroupIn
 	}
 	if utf8.RuneCountInString(in.Description) > maxGroupDesc {
 		return CreateGroupResult{}, apierr.Validation("description is limited to 2048 characters")
+	}
+	if in.Community && len(in.Participants) > 0 {
+		return CreateGroupResult{}, apierr.Validation("a community is created without participants; add them to its groups")
 	}
 	var parent string
 	if in.Parent != "" {
@@ -502,6 +556,10 @@ func (g *Groups) Create(ctx context.Context, instanceID string, in CreateGroupIn
 	if err != nil {
 		return CreateGroupResult{}, err
 	}
+	// The quotas first: a request they refuse spends no number lookup.
+	if err := g.quota.check(ctx, g.Store, instanceID, g.now(), lim, quotaCreate, 1, len(jids)); err != nil {
+		return CreateGroupResult{}, err
+	}
 	var a addable
 	if len(jids) > 0 {
 		if a, err = g.checkAddable(ctx, instanceID, jids); err != nil {
@@ -525,13 +583,14 @@ func (g *Groups) Create(ctx context.Context, instanceID string, in CreateGroupIn
 	defer cancel()
 	created, err := cli.CreateGroup(c, req)
 	if err != nil {
-		g.quota.refund(ctx, g.Store, instanceID, res)
-		return CreateGroupResult{}, groupErr(err)
+		return CreateGroupResult{}, g.failed(ctx, instanceID, res, err)
 	}
 	out := CreateGroupResult{Group: groupView(created.Group, true), Results: mergeResults(jids, a, created.Results)}
 	if in.Description != "" {
 		d := in.Description
-		if _, err := cli.UpdateGroup(c, &workerv1.UpdateGroupRequest{Jid: created.Group.Jid, Description: &d}); err != nil {
+		dc, dcancel := groupCtx(ctx)
+		defer dcancel()
+		if _, err := cli.UpdateGroup(dc, &workerv1.UpdateGroupRequest{Jid: created.Group.Jid, Description: &d}); err != nil {
 			out.Warning = "group created, but setting the description failed: " + groupErr(err).Error()
 		} else {
 			out.Group.Description = d
@@ -677,6 +736,9 @@ func (g *Groups) Participants(ctx context.Context, instanceID, groupRaw, action 
 		if err != nil {
 			return nil, err
 		}
+		if err := g.quota.check(ctx, g.Store, instanceID, g.now(), lim, quotaAdd, 0, len(jids)); err != nil {
+			return nil, err
+		}
 		if a, err = g.checkAddable(ctx, instanceID, jids); err != nil {
 			return nil, err
 		}
@@ -691,8 +753,10 @@ func (g *Groups) Participants(ctx context.Context, instanceID, groupRaw, action 
 	defer cancel()
 	out, err := cli.UpdateParticipants(c, &workerv1.UpdateParticipantsRequest{Jid: jid, Action: action, Participants: a.send})
 	if err != nil {
-		g.quota.refund(ctx, g.Store, instanceID, res)
-		return nil, groupErr(err)
+		if action != "add" {
+			return nil, groupErr(err)
+		}
+		return nil, g.failed(ctx, instanceID, res, err)
 	}
 	return mergeResults(jids, a, out.Results), nil
 }
@@ -729,6 +793,11 @@ func (g *Groups) DecideJoinRequests(ctx context.Context, instanceID, groupRaw st
 	jids, err := participantJIDs(participants, maxParticipantOps)
 	if err != nil {
 		return nil, err
+	}
+	if approve { // approving adds members: not while the operator suspends sending
+		if err := g.checkSending(instanceID); err != nil {
+			return nil, err
+		}
 	}
 	cli, err := g.client(ctx, instanceID)
 	if err != nil {
@@ -815,8 +884,7 @@ func (g *Groups) JoinInvite(ctx context.Context, instanceID, code string) (JoinR
 	defer cancel()
 	out, err := cli.JoinInvite(c, &workerv1.JoinInviteRequest{Code: code})
 	if err != nil {
-		g.quota.refund(ctx, g.Store, instanceID, res)
-		return JoinResult{}, groupErr(err)
+		return JoinResult{}, g.failed(ctx, instanceID, res, err)
 	}
 	return JoinResult{JID: out.Jid, Pending: out.Pending}, nil
 }

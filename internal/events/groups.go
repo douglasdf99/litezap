@@ -20,10 +20,13 @@ const (
 	GroupSettings             = "settings"
 	GroupInviteLinkReset      = "invite_link_reset"
 	GroupJoinRequest          = "join_request"
+	GroupJoinRequestRevoked   = "join_request_revoked"
 	GroupJoined               = "joined"
 	GroupDeleted              = "deleted"
 	GroupCommunityLinked      = "community_linked"
 	GroupCommunityUnlinked    = "community_unlinked"
+	GroupSuspended            = "suspended"
+	GroupUnsuspended          = "unsuspended"
 )
 
 // GroupSettingsChange carries the settings a "settings" change set (others are nil).
@@ -32,6 +35,8 @@ type GroupSettingsChange struct {
 	Locked           *bool   `json:"locked,omitempty"`
 	ApprovalRequired *bool   `json:"approval_required,omitempty"`
 	EphemeralSeconds *uint32 `json:"ephemeral_seconds,omitempty"`
+	// ApprovalModeChanged: the approval mode changed and the new value could not be read.
+	ApprovalModeChanged bool `json:"approval_mode_changed,omitempty"`
 }
 
 // GroupUpdate is the data of group.updated.
@@ -40,7 +45,7 @@ type GroupUpdate struct {
 	Kind string `json:"kind"`
 	// Actor made the change (phone-number JID when known); empty when WhatsApp omits it.
 	Actor string `json:"actor,omitempty"`
-	// Participants affected (participants_*, join_request), phone-number JIDs when known.
+	// Participants affected (participants_*, join_request*), phone-number JIDs when known.
 	Participants []string `json:"participants,omitempty"`
 	// Reason: participants_added "invite" (joined by link); joined "invite" or "".
 	Reason      string               `json:"reason,omitempty"`

@@ -176,7 +176,7 @@ type groupInput struct {
 type createGroupInput struct {
 	InstanceID   string   `json:"instance_id,omitempty" jsonschema:"Instance that creates the group"`
 	Name         string   `json:"name" jsonschema:"Group name (up to 100 characters)."`
-	Participants []string `json:"participants,omitempty" jsonschema:"Up to 10 phone numbers (with country code) to add. Only people the user named, who already talk to this number; unknown numbers are checked and skipped."`
+	Participants []string `json:"participants,omitempty" jsonschema:"Up to 10 phone numbers (with country code) to add. Only people the user named, who already talk to this number; numbers without a chat are looked up and skipped when not on WhatsApp (LiteZap cannot tell a stranger from a friend: that is your job)."`
 	Description  string   `json:"description,omitempty" jsonschema:"Group description."`
 	Announce     bool     `json:"announce,omitempty" jsonschema:"Only admins can send messages."`
 }
@@ -293,7 +293,7 @@ func (t *tools) registerGroups(s *sdk.Server) {
 		Title: "Add, remove, promote or demote group participants",
 		Description: "Adds, removes, promotes (to admin) or demotes group participants; the number must be a group admin. " +
 			"ADDING PEOPLE IS A BAN-RISK ACTION: never add strangers or lists of numbers; only add the few people the user explicitly named, who already talk to this number. " +
-			"LiteZap enforces this: participants without a chat must be confirmed on WhatsApp by a lookup (unknown ones are skipped with not_on_whatsapp/unknown_contact), adds are capped at 10 per call, paced (10s between batches) and limited per hour and per day (rate_limited: stop, do not retry). " +
+			"LiteZap only partly enforces this: a participant without a chat with this number must at least be confirmed on WhatsApp by a lookup (else skipped with not_on_whatsapp/unknown_contact; a stranger who has WhatsApp still passes), adds are capped at 10 per call, paced (10s between batches) and limited per hour and per day (rate_limited: stop, do not retry). " +
 			"Removing someone is visible to the whole group: confirm with the user first. Each participant gets its own result.",
 		InputSchema: schema[participantsInput](map[string]func(*jsonschema.Schema){
 			"instance_id": instID, "group": groupID, "action": enum("add", "remove", "promote", "demote"), "participants": items(1, 50),

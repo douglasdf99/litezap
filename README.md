@@ -76,6 +76,10 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `GET /v1/instances/{id}/media/{media_id}[?signed=1]` | instância ou admin (`?signed=1` exige `public_url` se o `listen_addr` não for loopback) |
 | `GET /media/{id}/{media_id}?exp=&sig=` (URL assinada, vale 1h) | nenhum |
 | `POST /v1/instances/{id}/presence/subscribe` `{"to"}` (presença online/offline de um contato; exige `presence.online`) | instância ou admin |
+| `GET\|POST /v1/instances/{id}/groups` · `GET\|PATCH /groups/{jid}` · `PUT\|DELETE /groups/{jid}/photo` (seção "Grupos e comunidades") | instância ou admin |
+| `POST /groups/{jid}/participants` `{"action","participants"}` · `GET\|POST /groups/{jid}/requests` · `GET /groups/{jid}/invite` · `POST /groups/{jid}/invite/reset` · `POST /groups/{jid}/leave` | instância ou admin |
+| `POST /groups/preview` `{"code"}` · `POST /groups/join` `{"code"}` | instância ou admin |
+| `GET\|POST /v1/instances/{id}/communities` · `GET /communities/{jid}` · `GET\|POST /communities/{jid}/groups` · `DELETE /communities/{jid}/groups/{group}` | instância ou admin |
 | `GET /v1/instances/{id}/events[?types=]` (SSE) | instância ou admin |
 | `GET /v1/events[?types=]` (SSE, todas as instâncias) | admin |
 | `POST /v1/webhooks` · `GET /v1/webhooks[?instance_id=]` | admin (global ou de uma instância) ou instância (só a própria) |
@@ -166,6 +170,8 @@ Campos ausentes mantêm o valor atual. `GET /settings` esconde a senha do `proxy
 
 **Chamadas** (`calls`): com `auto_reject` toda chamada individual recebida é rejeitada assim que toca (em menos de 3s) e gera `call.received` com `rejected: true`. `reject_message` (até 1000 bytes) é mandada ao autor pela fila normal (ritmo, janela, rampa e suspensão do operador valem), no máximo uma vez por contato a cada 10 min; se não sair em 1h (janela fechada, fila longa) falha como `expired` em vez de chegar horas depois. Chamadas em grupo e ofertas com mais de 1 min (entregues depois de uma reconexão) só geram eventos: não são rejeitadas nem respondidas.
 
+**Grupos** (`groups`): `max_adds_per_hour` (padrão 10, teto 30), `max_adds_per_day` (50, teto 200), `max_creates_per_day` (3, teto 10) e `max_joins_per_day` (10, teto 30) por instância; os tetos só sobem com `unsafe_pacing` (admin). Ex.: `{"groups":{"max_adds_per_hour":5}}`. Ver "Grupos e comunidades".
+
 **Presença** (`presence.online`, desligado por padrão): marca a conta como "disponível" a cada conexão. Só assim o WhatsApp manda "digitando…/gravando" (`chat.presence`) e aceita `POST /presence/subscribe` (online/visto por último de um contato; até 20 assinaturas por minuto e 200 por dia por instância, recusadas enquanto o operador suspende envios; valem até a conexão cair). Presença que ainda chegue com a setting desligada é descartada. **Contrapartida**: enquanto a conta está disponível num aparelho conectado, o WhatsApp trata esse aparelho como ativo e o celular deixa de mostrar notificações. Ligue só em números atendidos pela API, não no celular de quem atende pessoalmente.
 
 Erros: `{"error":{"code","message","retryable"}}`. Códigos:
@@ -188,7 +194,12 @@ Erros: `{"error":{"code","message","retryable"}}`. Códigos:
 | `edit_window_expired` · `revoke_window_expired` | 409 | edição depois de 15 minutos · apagar para todos depois de 48h |
 | `media_too_large` | 413 | mídia acima do limite do tipo, ou corpo do envio acima de 140MB |
 | `media_fetch_failed` | 422 | `media.url` não pôde ser baixada (`retryable`) |
-| `rate_limited` | 429 | muitas consultas de números por minuto em `check-numbers` (cota própria, separada da fila) (`retryable`) |
+| `rate_limited` | 429 | muitas consultas de números por minuto em `check-numbers` (cota própria, separada da fila); cotas de grupos (adições, criações, entradas por link, 10s entre lotes de adição) (`retryable`) |
+| `group_not_found` | 404 | grupo inexistente ou a instância não participa dele |
+| `group_forbidden` | 403 | o WhatsApp recusou a operação no grupo (a instância não é admin ou não participa) |
+| `invite_invalid` · `invite_revoked` | 400 · 410 | link de convite malformado · revogado |
+| `sending_suspended` | 403 | envios suspensos pelo operador (também recusa criar grupo, adicionar participantes e entrar por link) |
+| `not_implemented` | 501 | o worker não oferece grupos (versão antiga) |
 | `rate_limited` | 503 | muitos envios com corpo/mídia grande ao mesmo tempo e a requisição desistiu de esperar vaga (`retryable`) |
 | `worker_error` | 502 | o worker da instância recusou ou falhou a operação (`retryable`) |
 | `worker_timeout` | 504 | o worker da instância não respondeu a tempo (`retryable`) |
@@ -198,6 +209,30 @@ Erros: `{"error":{"code","message","retryable"}}`. Códigos:
 ### Fila de envio
 
 `GET /queue` lista os itens ainda não enviados (`queued` e `in_flight`), do mais antigo ao mais novo; `?status=` filtra (`queued`, `in_flight`, `sent`, `failed`, `all`) e `next_cursor` pagina (`limit` padrão 50, máx. 200). `DELETE /queue/{msg_id}` remove um item `queued` sem enviar: ele termina como `failed` com `error: "canceled: ..."`, o arquivo de mídia preparado é apagado e sai `message.status` `failed`; um item `in_flight` (sendo enviado agora) ou já terminado responde `409 conflict`. `DELETE /queue` cancela todos os `queued` de uma vez (os `in_flight` terminam normalmente) e devolve `{"canceled": n}`. Útil antes de reconectar uma instância que ficou parada com mensagens velhas na fila.
+
+### Grupos e comunidades
+
+Gestão síncrona (timeout de 30s; a instância precisa estar conectada). `{jid}` é o JID do grupo (`120363…@g.us`); participantes aceitam número com DDI ou JID (`…@s.whatsapp.net` ou `…@lid`).
+
+```bash
+G=localhost:8787/v1/instances/$ID/groups
+curl -s $G -H "Authorization: Bearer $TOK"                                  # grupos em que o número está (sem participantes)
+curl -s -X POST $G -H "Authorization: Bearer $TOK" \
+  -d '{"name":"Equipe","participants":["5511988887777"],"description":"…","settings":{"announce":false,"ephemeral_seconds":0}}'
+curl -s $G/120363000000000001@g.us -H "Authorization: Bearer $TOK"          # metadados + participantes (admin/super_admin)
+curl -s -X PATCH $G/120363000000000001@g.us -H "Authorization: Bearer $TOK" \
+  -d '{"name":"Novo nome","description":"","settings":{"locked":true,"approval_required":true}}'
+curl -s -X POST $G/120363000000000001@g.us/participants -H "Authorization: Bearer $TOK" \
+  -d '{"action":"promote","participants":["5511988887777"]}'                 # add | remove | promote | demote
+curl -s $G/120363000000000001@g.us/invite -H "Authorization: Bearer $TOK"   # {"link":"https://chat.whatsapp.com/…"}
+curl -s -X POST $G/join -H "Authorization: Bearer $TOK" -d '{"code":"https://chat.whatsapp.com/AbC…"}'
+```
+
+- **Configurações** (`settings`): `announce` (só admins enviam), `locked` (só admins editam dados), `approval_required` (entrada com aprovação; pedidos em `GET /requests`, decididos com `POST /requests {"action":"approve|reject","participants":[…]}`), `admins_add_members` (só admins adicionam), `ephemeral_seconds` (`0`, `86400`, `604800` ou `7776000`). `PATCH` aceita os campos soltos ou dentro de `settings`; aplica na ordem nome, descrição, configurações e para na primeira falha (as anteriores ficam). Foto: `PUT /photo {"base64"|"url"}` (JPEG até 2MB), `DELETE /photo` remove.
+- **Resultado por participante**: criar, `participants` e `requests` respondem `results: [{participant, jid, status, code?, invite_code?}]`, um por pessoa pedida; uma falha nunca derruba o lote. `status`: `ok`, `not_on_whatsapp`, `unknown_contact` (sem conversa e não verificável), `privacy_invite_required` (a pessoa só aceita convite; `invite_code` vem preenchido, mas o convite por mensagem ainda não é enviado: mande o link), `recently_left`, `already_participant`, `not_participant`, `group_full`, `error_<código>` ou `unknown` (o WhatsApp não respondeu por ela). Os códigos vêm do WhatsApp e o mapeamento é de melhor esforço.
+- **Anti-ban** (adicionar desconhecidos em grupos é dos gatilhos de banimento mais rápidos): só são adicionadas pessoas que **já têm conversa no log** da instância ou que a **consulta de números** confirma no WhatsApp (gasta a cota do `check-numbers`); `@lid` sem conversa é recusado. A checagem não distingue um desconhecido que tem WhatsApp de um amigo: escolher quem adicionar continua sendo responsabilidade de quem chama. No máximo 10 por requisição (também ao criar), 10s entre lotes (criar com participantes também conta), e as cotas `groups.*` por hora/dia (persistidas: reiniciar não zera); as cotas são conferidas antes de gastar qualquer consulta. Criar grupo/comunidade e entrar por link têm cota diária. A cota só volta quando a requisição comprovadamente não chegou ao WhatsApp (worker parado ou desconectado); timeouts e recusas do WhatsApp contam, e um limite do próprio WhatsApp reinicia o intervalo de 10s. Com envios suspensos pelo operador, criar, adicionar, aprovar pedidos e entrar respondem `sending_suspended`; listar, ler e remover continuam.
+- **Comunidades**: `POST /communities {"name"}` cria, sem participantes (o WhatsApp cria o grupo de avisos sozinho); `GET /communities/{jid}` traz a comunidade e seus grupos (`announcement_group: true` no de avisos); `POST /communities/{jid}/groups {"group"}` vincula um grupo existente, `DELETE …/groups/{group}` desvincula; para criar um grupo já dentro da comunidade use `POST /groups` com `"parent"`. Configurações, descrição, link e participantes de uma comunidade usam as rotas de `/groups/{jid}` (semântica do WhatsApp nesses casos não verificada em aparelho real). Desativar comunidade não existe no whatsmeow.
+- O nome dos chats de grupo no log é preenchido ao chegar a primeira mensagem (o LiteZap consulta o grupo em segundo plano) e acompanha as mudanças de nome.
 
 ### Verificar números
 
@@ -241,6 +276,7 @@ Adicionar campos em `data` não muda a versão; remover ou mudar o sentido de um
 | `call.received` | chamada tocando (individual ou em grupo) | `{call_id, chat, caller, is_group?, media?: audio\|video, rejected?, timestamp}` (`rejected: true` = rejeitada por `calls.auto_reject`; só chamadas individuais ao vivo) |
 | `call.accepted` | chamada atendida num aparelho da conta | mesmos campos |
 | `call.ended` | chamada encerrada (uma vez por chamada) | mesmos campos + `reason` e `missed`. `reason`: `caller_hangup` (tocou sem atender até quem ligou desistir; `missed: true`), `accepted_elsewhere` (atendida no celular ou outro aparelho da conta; vem logo depois de `call.accepted`, no momento do atendimento, porque o aparelho vinculado não é avisado do fim da conversa), `ended` (encerrada depois de atendida), `rejected` (por `calls.auto_reject`), `rejected_by_peer` (o outro lado rejeitou e nenhum fim chegou em 5s), `timeout` (nenhum sinal em 2 min; `missed` se ninguém atendeu) ou outro motivo enviado pelo WhatsApp. O "reject" que um aparelho hospedado do WhatsApp (`hosted.lid`) manda logo após toda oferta é ignorado |
+| `group.updated` | mudança num grupo em que o número está (feita no celular, por outro membro ou pela API); um evento por tipo de mudança | `{chat, kind, actor?, participants?, reason?, name?, description?, removed?, settings?, group?, timestamp}`. `kind`: `participants_added` (`reason: "invite"` = entrou por link), `participants_removed`, `participants_promoted`, `participants_demoted`, `join_request` (pedido de entrada com aprovação), `join_request_revoked` (pedido cancelado ou recusado), `subject` (`name`), `description` (`""` = removida), `photo` (`removed`), `settings` (`settings {announce?, locked?, approval_required?, ephemeral_seconds?}`; uma mudança na aprovação de entrada sai depois, com o valor lido do grupo, ou `approval_mode_changed: true` se a leitura falhar), `invite_link_reset`, `joined` (o número foi adicionado ou criou o grupo; `name`), `deleted`, `suspended`/`unsuspended`, `community_linked`/`community_unlinked` (`group`). `filters.chat: "group"` casa com ele |
 | `history.synced` | fim da ingestão de um history sync (um evento por sync, 15s depois do último bloco) | `{chats, messages, new_messages}` |
 | `agent.failed` | uma chamada do hook de agente falhou (nada foi enviado) ou o limite de respostas pausou o chat | `{chat, message_id, wa_message_id, reason, error?, http_status?}`; `reason`: `timeout`, `http_error`, `network_error`, `invalid_response`, `send_failed`, `loop_guard`, `internal` |
 | `agent.handoff` | o agente passou o chat para um humano (ação `handoff`) | `{chat, message_id, wa_message_id, note?}` |
@@ -248,8 +284,7 @@ Adicionar campos em `data` não muda a versão; remover ou mudar o sentido de um
 
 Mensagem: `{id, wa_message_id, chat, sender, from_me, is_group, push_name, source, type, text, media?, reaction_to?, timestamp}` mais o conteúdo estruturado quando houver: `reply_to` (wa id citado), `mentions`, `forwarded`, `location {latitude, longitude, name, address, url}`, `contacts [{display_name, vcard}]`, `poll {name, options, selectable}` e `link_preview {url, title, description}`; os mesmos campos de `GET /messages/{id}`. Tipos recebidos: os de envio, mais `unknown`. Votos chegam cifrados e só são decifrados para enquetes cujo segredo a sessão conhece (criadas ou recebidas depois do pareamento); as opções são casadas pelo SHA-256 contra as opções guardadas no log (`unknown_options` conta as que não casaram). `media` traz `{id, kind, mime, size, file_name, seconds, ptt, url}`; `url` é a rota autenticada de download (`GET /v1/instances/{id}/media/{media_id}`). Mensagens de history sync não geram eventos individuais (só o `history.synced`); uma mensagem que chega duas vezes (reconexão do worker) gera um único evento.
 
-Ainda não emitidos (o worker não reporta esses fatos): `chat.presence`, `group.updated`.
-Ainda não emitido: `group.updated` (marco 8, com a gestão de grupos). `agent.failed` e `agent.handoff` chegam com o hook de agente (marco 5).
+`agent.failed` e `agent.handoff` chegam com o hook de agente (marco 5).
 
 ### SSE
 
@@ -417,6 +452,10 @@ O LiteZap expõe as mesmas operações como ferramentas do [Model Context Protoc
 | `list_contacts` / `get_contact` | contatos da sessão (filtro `query`, `limit`) |
 | `check_numbers` | até 10 números por chamada; respeita o cache e a cota de consultas da instância |
 | `wait_for_events` | espera até 55s por eventos novos da instância (ex.: `message.received`), sem replay |
+| `list_groups` · `get_group` | grupos (ou comunidades) do número; metadados com participantes e admins |
+| `create_group` · `update_group` | cria um grupo (até 10 participantes) · muda nome, descrição e configurações; com aviso de risco de banimento |
+| `manage_group_participants` | adiciona, remove, promove ou rebaixa (destrutiva; adições só de contatos conhecidos, com cotas e ritmo) |
+| `get_group_invite_link` | link de convite (nunca redefine) |
 
 `instance_id` é opcional com token de instância (é sempre a dela) e com token admin quando só existe uma instância. A busca de mensagens fica para o marco 2b.
 
@@ -531,6 +570,18 @@ Com a instância conectada (passos acima):
    - Ligue `{"presence":{"online":true}}` (o celular conectado para de mostrar notificações enquanto estiver ligado) e comece a digitar ou gravar áudio no chat do contato: `chat.presence` com `composing`/`recording`/`paused`. `POST /presence/subscribe {"to":"<número>"}` passa a mandar `online`/`offline` (com `last_seen` quando o contato mostra).
    - Mande um áudio de voz pela API e ouça no celular do contato: `message.status` com `played`.
 
+### Testar grupos
+
+Com a instância conectada e o contato de teste já tendo conversado com o número (assim ele passa na checagem anti-ban sem gastar consulta), e o SSE aberto em `?types=group.*`:
+
+1. Crie um grupo com o contato: `POST /groups {"name":"Teste LiteZap","participants":["<número do contato>"]}`. O celular do contato mostra o grupo; a resposta traz `results[0].status: "ok"` e sai `group.updated` `joined`.
+2. Leia e mude: `GET /groups/<jid>` (participantes com o número como admin/`super_admin`), `PATCH` com `name`, `description` e `settings` (`announce`, `locked`, `ephemeral_seconds: 86400`) e confira no celular; mude o nome pelo celular: `group.updated` `subject` e o chat em `GET /chats` com o nome novo.
+3. Participantes: promova e rebaixe o contato (`participants_promoted`/`_demoted` no SSE), remova e adicione de novo (um segundo lote em menos de 10s responde `429`). Peça para o contato sair pelo celular: `participants_removed` com o `actor` dele.
+4. Link: `GET /invite`, `POST /invite/reset`, `POST /groups/preview {"code":"<link antigo>"}` → `410 invite_revoked`. Com `approval_required: true`, entre pelo link novo do celular do contato: `group.updated` `join_request` e `GET /requests`; aprove com `POST /requests`.
+5. Foto: `PUT /photo {"url":"https://…/foto.jpg"}` e `DELETE /photo` (`group.updated` `photo`).
+6. Comunidade (opcional): `POST /communities {"name":"Teste"}`, `POST /communities/<cjid>/groups {"group":"<jid>"}` e `GET /communities/<cjid>`.
+7. Por último, `POST /groups/<jid>/leave`.
+
 ### Testar o atendente IA
 
 1. Libere destinos locais (`webhook_allow_private_urls: true`) e reinicie o `serve`.
@@ -560,6 +611,7 @@ Com a instância conectada (passos acima):
 - **Conversas**: lista de chats, histórico, envio de texto com status ao vivo (`na fila` → `enviada` → `entregue` → `lida`). Quando o envio fica na fila, o painel explica por quê: carência de 15–30s após conectar, ritmo, rampa e janela de envio (com o horário atual no fuso da instância).
 - **Configurações**: ritmo, rampa, janela, fuso, proxy e ritmo inseguro (só são enviados os campos alterados; a senha mascarada do proxy nunca é reenviada).
 - **Atendente IA**: configurar o hook de agente (URL, segredo, timeout, contexto, pausa por humano, limite de respostas, ignorados), ligar/desligar por conversa, reativar chats pausados e ver as chamadas recentes com motivo das falhas.
+- **Grupos**: grupos do número, metadados e configurações, participantes (promover, rebaixar, remover, adicionar com os limites anti-ban), link de convite (mostrar, copiar, redefinir), criar grupo e sair.
 - **Webhooks**: criar (o segredo aparece uma vez), ligar/desligar, excluir, ver entregas por status e reenviar as da dead-letter. Há também a página de webhooks globais.
 - **Eventos ao vivo**: os mesmos eventos dos webhooks, com o JSON de cada um.
 
@@ -633,7 +685,8 @@ Com Docker, o mesmo arquivo vai em `docker run --env-file /etc/litezap/env --sto
 
 ## Limitações conhecidas
 
-- Eventos ainda não emitidos: `chat.presence` e `group.updated` (o worker não os reporta). SSE não tem replay (`Last-Event-ID` é ignorado).
+- SSE não tem replay (`Last-Event-ID` é ignorado).
+- Grupos: convite por mensagem para quem só aceita convite (`privacy_invite_required`) não é enviado; desativar comunidade e listar participantes de todos os grupos da comunidade não existem; pedidos de entrada (`join_request`/`join_request_revoked`) dependem de notificações que o whatsmeow não interpreta (lidas pelos nomes que outros clientes documentam); o valor da aprovação de entrada num evento vem de uma consulta ao grupo (o whatsmeow não diz se ligou ou desligou); um `PATCH` que falha no meio não diz quais campos já foram aplicados (consulte o grupo); `pending` ao entrar por link é deduzido da prévia (o grupo exige aprovação); o código de erro por participante segue o que os clientes do WhatsApp documentam, sem garantia.
 - A garantia "pelo menos uma vez" vale a partir do outbox. Antes dele o evento passa por um buffer em memória (até 10.000): um crash do supervisor entre gravar a mensagem no log e gravar a entrega, ou um buffer cheio (logado), perde o evento para os webhooks. Um shutdown normal grava o buffer antes de sair.
 - `wait_for_events` (MCP) só vê eventos publicados enquanto espera; para o que chegou antes, use `get_messages`.
 - Streams SSE checam o token só na conexão: um stream aberto continua depois de o token ser rotacionado (reconecte para aplicar).

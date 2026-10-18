@@ -28,6 +28,8 @@ type fakeGroups struct {
 	err      error
 	failAt   string
 	joined   string
+	requests []types.GroupParticipantRequest
+	reqSent  []types.JID
 }
 
 func (f *fakeGroups) GetGroupInfo(_ context.Context, jid types.JID) (*types.GroupInfo, error) {
@@ -65,6 +67,15 @@ func (f *fakeGroups) SetDisappearingTimer(_ context.Context, _ types.JID, d time
 func (f *fakeGroups) UpdateGroupParticipants(_ context.Context, _ types.JID, changes []types.JID, action whatsmeow.ParticipantChange) ([]types.GroupParticipant, error) {
 	f.sent, f.action = changes, action
 	return f.answers, f.err
+}
+
+func (f *fakeGroups) GetGroupRequestParticipants(context.Context, types.JID) ([]types.GroupParticipantRequest, error) {
+	return f.requests, nil
+}
+
+func (f *fakeGroups) UpdateGroupRequestParticipants(_ context.Context, _ types.JID, changes []types.JID, _ whatsmeow.ParticipantRequestChange) ([]types.GroupParticipant, error) {
+	f.reqSent = changes
+	return nil, nil
 }
 
 func (f *fakeGroups) GetGroupInfoFromLink(_ context.Context, code string) (*types.GroupInfo, error) {
@@ -272,9 +283,12 @@ func TestGroupEvents(t *testing.T) {
 		Topic:     &types.GroupTopic{Topic: "old", TopicDeleted: true},
 		Ephemeral: &types.GroupEphemeral{IsEphemeral: false},
 		UnknownChanges: []*waBinary.Node{
-			{Tag: "membership_approval_request", Attrs: waBinary.Attrs{"jid": pnB}},
+			{Tag: "created_membership_requests", Content: []waBinary.Node{{Tag: "requested_user", Attrs: waBinary.Attrs{"jid": pnB}}}},
+			{Tag: "revoked_membership_requests", Content: []waBinary.Node{{Tag: "requested_user", Attrs: waBinary.Attrs{"jid": pnA}}}},
 			{Tag: "mystery"},
 		},
+		MembershipApprovalMode: &types.GroupMembershipApprovalMode{IsJoinApprovalRequired: true},
+		Suspended:              true,
 	})
 	w.handle(&events.JoinedGroup{Reason: "invite", GroupInfo: types.GroupInfo{JID: grp, GroupName: types.GroupName{Name: "G"}}})
 	w.handle(&events.Picture{JID: grp, Author: pnA, Remove: true})
@@ -287,7 +301,8 @@ func TestGroupEvents(t *testing.T) {
 	if u.Actor != pnA.String() || u.GetName() != "Novo nome" || u.Description == nil || u.GetDescription() != "" ||
 		u.EphemeralSeconds == nil || u.GetEphemeralSeconds() != 0 || len(u.Joined) != 1 || u.Joined[0] != pnB.String() ||
 		len(u.Promoted) != 1 || u.TimestampMs != ts.UnixMilli() || len(u.JoinRequests) != 1 || u.JoinRequests[0] != pnB.String() ||
-		len(u.Unknown) != 1 || u.Unknown[0] != "mystery" || u.Announce != nil {
+		len(u.Unknown) != 1 || u.Unknown[0] != "mystery" || u.Announce != nil || !u.ApprovalModeChanged || u.ApprovalRequired != nil ||
+		len(u.JoinRequestsRevoked) != 1 || u.JoinRequestsRevoked[0] != pnA.String() || !u.Suspended {
 		t.Fatalf("update = %+v", u)
 	}
 	if !got[1].JoinedSelf || got[1].Info.GetName() != "G" || got[1].JoinReason != "invite" {
@@ -295,5 +310,37 @@ func TestGroupEvents(t *testing.T) {
 	}
 	if !got[2].PhotoRemoved || got[2].Actor != pnA.String() {
 		t.Fatalf("photo = %+v", got[2])
+	}
+}
+
+// Members are named as the server's participant list has them, even without a LID
+// mapping in the local store; requesters as the pending request list has them.
+func TestMembersAndRequestersResolvedFromServerLists(t *testing.T) {
+	f := &fakeGroups{info: &types.GroupInfo{JID: grp, AddressingMode: types.AddressingModeLID,
+		Participants: []types.GroupParticipant{{JID: lidA, LID: lidA, PhoneNumber: pnA}}},
+		requests: []types.GroupParticipantRequest{{JID: lidA}}}
+	w := newGroupAdapter(t, f)
+	if _, err := w.UpdateParticipants(context.Background(), grp.String(), "demote", []string{pnA.String(), pnB.String()}); err != nil {
+		t.Fatal(err)
+	}
+	if f.sent[0] != lidA || f.sent[1] != pnB {
+		t.Fatalf("sent = %v", f.sent)
+	}
+	// The request list names lidA; asking by its LID works.
+	if _, err := w.UpdateJoinRequests(context.Background(), grp.String(), true, []string{lidA.String()}); err != nil {
+		t.Fatal(err)
+	}
+	if f.reqSent[0] != lidA {
+		t.Fatalf("approve sent = %v", f.reqSent)
+	}
+}
+
+// A description update keeps the group error codes (whatsmeow would wrap them).
+func TestDescriptionKeepsErrorCode(t *testing.T) {
+	f := &fakeGroups{err: whatsmeow.ErrIQForbidden}
+	w := newGroupAdapter(t, f)
+	_, err := w.UpdateGroup(context.Background(), &workerv1.UpdateGroupRequest{Jid: grp.String(), Description: proto.String("x")})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("err = %v", err)
 	}
 }

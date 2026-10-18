@@ -6,9 +6,11 @@ option go_package = "github.com/douglasdf99/litezap/gen/worker/v1;workerv1";
 
 // Groups is served by `litezap worker` next to Worker, on the same socket (marco 8).
 // Error codes follow worker.proto (the status message starts with a stable code):
-// NotFound "group_not_found", PermissionDenied "forbidden" (not an admin / not a member),
-// InvalidArgument "validation_failed" / "invite_invalid", FailedPrecondition
-// "invite_revoked", Unavailable "instance_not_connected".
+// NotFound "group_not_found" / "invite_revoked", PermissionDenied "forbidden" (not an
+// admin / not a member / locked), InvalidArgument "validation_failed" (refused by the
+// worker before reaching WhatsApp) / "invite_invalid" / "not_acceptable" (refused by
+// WhatsApp), ResourceExhausted "rate_limited" (WhatsApp), Unavailable
+// "instance_not_connected".
 //
 // Participant JIDs are reported as phone-number JIDs when known (lid holds the LID);
 // requests accept phone-number JIDs or LIDs.
@@ -58,7 +60,7 @@ message GroupInfo {
   int64 name_set_ms = 18;
 }
 
-message ListGroupsRequest {}
+message ListGroupsRequest {} // groups come without participants (participant_count only)
 message ListGroupsResponse {
   repeated GroupInfo groups = 1;
 }
@@ -196,7 +198,7 @@ message GroupUpdate {
   optional string description = 5;
   optional bool announce = 6;
   optional bool locked = 7;
-  optional bool approval_required = 8;
+  optional bool approval_required = 8; // unused: see approval_mode_changed
   optional uint32 ephemeral_seconds = 9;
   repeated string joined = 10;
   repeated string left = 11;
@@ -214,4 +216,10 @@ message GroupUpdate {
   bool joined_self = 22;
   GroupInfo info = 23;
   repeated string unknown = 24; // tags of changes not understood
+  // The join approval mode changed; whatsmeow does not tell on or off (the supervisor
+  // looks the group up).
+  bool approval_mode_changed = 25;
+  repeated string join_requests_revoked = 26; // requests cancelled or rejected
+  bool suspended = 27;
+  bool unsuspended = 28;
 }

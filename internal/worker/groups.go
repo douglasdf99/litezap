@@ -260,7 +260,9 @@ func groupErr(err error) error {
 	case errors.Is(err, whatsmeow.ErrInvalidDisappearingTimer):
 		return grpcErr(codes.InvalidArgument, "validation_failed", "unsupported disappearing messages timer")
 	case errors.Is(err, whatsmeow.ErrIQNotAcceptable), errors.Is(err, whatsmeow.ErrIQBadRequest):
-		return grpcErr(codes.InvalidArgument, "validation_failed", "WhatsApp refused the request (value not accepted)")
+		return grpcErr(codes.InvalidArgument, "not_acceptable", "WhatsApp refused the request (value not accepted)")
+	case errors.Is(err, whatsmeow.ErrIQLocked):
+		return grpcErr(codes.PermissionDenied, "forbidden", "WhatsApp refused: the group is locked")
 	case errors.Is(err, whatsmeow.ErrIQRateOverLimit), errors.Is(err, whatsmeow.ErrIQResourceLimit):
 		return grpcErr(codes.ResourceExhausted, "rate_limited", "WhatsApp rate limit reached; slow down")
 	}
@@ -298,7 +300,14 @@ func (w *Whatsmeow) participantView(p types.GroupParticipant) (jid, lid string) 
 	return pn.ToNonAD().String(), lid
 }
 
+// toGroupInfo converts group metadata with its participants.
 func (w *Whatsmeow) toGroupInfo(gi *types.GroupInfo) *workerv1.GroupInfo {
+	return w.convertGroup(gi, true)
+}
+
+// convertGroup converts group metadata; without participants it only counts them (each
+// participant may cost a LID lookup).
+func (w *Whatsmeow) convertGroup(gi *types.GroupInfo, withParticipants bool) *workerv1.GroupInfo {
 	if gi == nil {
 		return nil
 	}
@@ -327,12 +336,14 @@ func (w *Whatsmeow) toGroupInfo(gi *types.GroupInfo) *workerv1.GroupInfo {
 	if !gi.LinkedParentJID.IsEmpty() {
 		out.Parent = gi.LinkedParentJID.ToNonAD().String()
 	}
-	for _, p := range gi.Participants {
-		jid, lid := w.participantView(p)
-		out.Participants = append(out.Participants, &workerv1.GroupParticipant{Jid: jid, Lid: lid, Admin: p.IsAdmin, SuperAdmin: p.IsSuperAdmin})
+	if withParticipants {
+		for _, p := range gi.Participants {
+			jid, lid := w.participantView(p)
+			out.Participants = append(out.Participants, &workerv1.GroupParticipant{Jid: jid, Lid: lid, Admin: p.IsAdmin, SuperAdmin: p.IsSuperAdmin})
+		}
 	}
 	if out.ParticipantCount == 0 {
-		out.ParticipantCount = int32(len(out.Participants))
+		out.ParticipantCount = int32(len(gi.Participants))
 	}
 	return out
 }
@@ -345,7 +356,7 @@ func (w *Whatsmeow) ListGroups(ctx context.Context) ([]*workerv1.GroupInfo, erro
 	out := make([]*workerv1.GroupInfo, 0, len(list))
 	for _, gi := range list {
 		if gi != nil && !gi.JID.IsEmpty() {
-			out = append(out, w.toGroupInfo(gi))
+			out = append(out, w.convertGroup(gi, false))
 		}
 	}
 	return out, nil
@@ -501,7 +512,19 @@ func (w *Whatsmeow) UpdateGroup(ctx context.Context, req *workerv1.UpdateGroupRe
 		fn   func() error
 	}{
 		{"name", req.Name != nil, func() error { return g.SetGroupName(ctx, jid, req.GetName()) }},
-		{"description", req.Description != nil, func() error { return g.SetGroupTopic(ctx, jid, "", "", req.GetDescription()) }},
+		{"description", req.Description != nil, func() error {
+			// SetGroupTopic would look the previous topic up itself, wrapping its error
+			// with %v (errors.Is would no longer see not-found / forbidden).
+			gi, err := g.GetGroupInfo(ctx, jid)
+			if err != nil {
+				return err
+			}
+			prev := ""
+			if gi != nil {
+				prev = gi.TopicID
+			}
+			return g.SetGroupTopic(ctx, jid, prev, "", req.GetDescription())
+		}},
 		{"announce", req.Announce != nil, func() error { return g.SetGroupAnnounce(ctx, jid, req.GetAnnounce()) }},
 		{"locked", req.Locked != nil, func() error { return g.SetGroupLocked(ctx, jid, req.GetLocked()) }},
 		{"approval_required", req.ApprovalRequired != nil, func() error { return g.SetGroupJoinApprovalMode(ctx, jid, req.GetApprovalRequired()) }},
@@ -565,16 +588,60 @@ func (w *Whatsmeow) UpdateParticipants(ctx context.Context, raw, action string, 
 		return nil, err
 	}
 	if change != whatsmeow.ParticipantChangeAdd {
-		// Existing members are named the way the group addresses them (LID groups).
-		for i, p := range parts {
-			parts[i] = w.groupParticipant(ctx, jid, p)
-		}
+		parts = w.memberJIDs(ctx, jid, parts)
 	}
 	answers, err := w.groups().UpdateGroupParticipants(ctx, jid, parts, change)
 	if err != nil {
 		return nil, groupErr(err)
 	}
 	return w.matchResults(participants, parts, answers, action), nil
+}
+
+// memberJIDs names existing members exactly as the group lists them (phone number or
+// LID, from the server's participant list); one the list does not have falls back to
+// the LID store conversion.
+func (w *Whatsmeow) memberJIDs(ctx context.Context, group types.JID, parts []types.JID) []types.JID {
+	out := make([]types.JID, len(parts))
+	gi, err := w.groups().GetGroupInfo(ctx, group)
+	for i, p := range parts {
+		out[i] = p
+		found := false
+		if err == nil && gi != nil {
+			for _, m := range gi.Participants {
+				if sameUser(p, m.JID) || sameUser(p, m.PhoneNumber) || sameUser(p, m.LID) {
+					out[i], found = m.JID.ToNonAD(), true
+					break
+				}
+			}
+		}
+		if !found {
+			out[i] = w.groupParticipant(ctx, group, p)
+		}
+	}
+	return out
+}
+
+// requesterJIDs names join requesters exactly as the pending request list does.
+func (w *Whatsmeow) requesterJIDs(ctx context.Context, group types.JID, parts []types.JID) []types.JID {
+	out := make([]types.JID, len(parts))
+	reqs, err := w.groups().GetGroupRequestParticipants(ctx, group)
+	for i, p := range parts {
+		out[i] = p
+		if err != nil {
+			continue
+		}
+		for _, r := range reqs {
+			if sameUser(p, r.JID) || sameUser(p, w.phoneJID(r.JID, types.EmptyJID, nil)) {
+				out[i] = r.JID.ToNonAD()
+				break
+			}
+		}
+	}
+	return out
+}
+
+func sameUser(a, b types.JID) bool {
+	return !a.IsEmpty() && !b.IsEmpty() && a.User == b.User && a.Server == b.Server
 }
 
 func (w *Whatsmeow) ListJoinRequests(ctx context.Context, raw string) ([]*workerv1.JoinRequest, error) {
@@ -609,9 +676,7 @@ func (w *Whatsmeow) UpdateJoinRequests(ctx context.Context, raw string, approve 
 	if err != nil {
 		return nil, err
 	}
-	for i, p := range parts {
-		parts[i] = w.groupParticipant(ctx, jid, p)
-	}
+	parts = w.requesterJIDs(ctx, jid, parts)
 	action, name := whatsmeow.ParticipantChangeReject, "reject"
 	if approve {
 		action, name = whatsmeow.ParticipantChangeApprove, "approve"
@@ -793,9 +858,9 @@ func (w *Whatsmeow) toGroupUpdate(e *events.GroupInfo) *workerv1.GroupUpdate {
 	if e.Locked != nil {
 		u.Locked = &e.Locked.IsLocked
 	}
-	if e.MembershipApprovalMode != nil {
-		u.ApprovalRequired = &e.MembershipApprovalMode.IsJoinApprovalRequired
-	}
+	// whatsmeow reports any approval mode change as "required" (it drops the state).
+	u.ApprovalModeChanged = e.MembershipApprovalMode != nil
+	u.Suspended, u.Unsuspended = e.Suspended, e.Unsuspended
 	if e.Ephemeral != nil {
 		s := uint32(0)
 		if e.Ephemeral.IsEphemeral {
@@ -816,15 +881,19 @@ func (w *Whatsmeow) toGroupUpdate(e *events.GroupInfo) *workerv1.GroupUpdate {
 		if n == nil {
 			continue
 		}
-		if strings.Contains(n.Tag, "membership") && strings.Contains(n.Tag, "request") {
+		// Not parsed by whatsmeow; tag names as other WhatsApp clients document them.
+		switch n.Tag {
+		case "created_membership_requests":
 			reqs := w.joinRequesters(n)
 			if len(reqs) == 0 && u.Actor != "" {
 				reqs = []string{u.Actor}
 			}
 			u.JoinRequests = append(u.JoinRequests, reqs...)
-			continue
+		case "revoked_membership_requests":
+			u.JoinRequestsRevoked = append(u.JoinRequestsRevoked, w.joinRequesters(n)...)
+		default:
+			u.Unknown = append(u.Unknown, n.Tag)
 		}
-		u.Unknown = append(u.Unknown, n.Tag)
 	}
 	return u
 }
@@ -843,7 +912,7 @@ func (w *Whatsmeow) onGroup(evt any) bool {
 			return true
 		}
 		u = &workerv1.GroupUpdate{Group: e.JID.ToNonAD().String(), Actor: w.actor(e.Sender, e.SenderPN),
-			JoinedSelf: true, Info: w.toGroupInfo(&e.GroupInfo), JoinReason: e.Reason, TimestampMs: time.Now().UnixMilli()}
+			JoinedSelf: true, Info: w.convertGroup(&e.GroupInfo, false), JoinReason: e.Reason, TimestampMs: time.Now().UnixMilli()}
 	case *events.Picture:
 		if e.JID.Server != types.GroupServer {
 			return false

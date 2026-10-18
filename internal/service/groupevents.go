@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -96,7 +97,7 @@ func (o *GroupEvents) onUpdate(instanceID string, u *workerv1.GroupUpdate) {
 	}{
 		{events.GroupParticipantsAdded, u.Joined}, {events.GroupParticipantsRemoved, u.Left},
 		{events.GroupParticipantsPromoted, u.Promoted}, {events.GroupParticipantsDemoted, u.Demoted},
-		{events.GroupJoinRequest, u.JoinRequests},
+		{events.GroupJoinRequest, u.JoinRequests}, {events.GroupJoinRequestRevoked, u.JoinRequestsRevoked},
 	} {
 		if len(p.list) == 0 {
 			continue
@@ -120,11 +121,31 @@ func (o *GroupEvents) onUpdate(instanceID string, u *workerv1.GroupUpdate) {
 	if u.PhotoChanged || u.PhotoRemoved {
 		emit(events.GroupPhoto, func(e *events.GroupUpdate) { e.Removed = u.PhotoRemoved })
 	}
-	if u.Announce != nil || u.Locked != nil || u.ApprovalRequired != nil || u.EphemeralSeconds != nil {
+	if u.Announce != nil || u.Locked != nil || u.EphemeralSeconds != nil {
 		emit(events.GroupSettings, func(e *events.GroupUpdate) {
-			e.Settings = &events.GroupSettingsChange{Announce: u.Announce, Locked: u.Locked,
-				ApprovalRequired: u.ApprovalRequired, EphemeralSeconds: u.EphemeralSeconds}
+			e.Settings = &events.GroupSettingsChange{Announce: u.Announce, Locked: u.Locked, EphemeralSeconds: u.EphemeralSeconds}
 		})
+	}
+	if u.ApprovalModeChanged {
+		// WhatsApp says the approval mode changed but not to what: ask the group.
+		o.lookup(instanceID, u.Group, func(gi *workerv1.GroupInfo, err error) {
+			e := base
+			e.Kind = events.GroupSettings
+			e.Settings = &events.GroupSettingsChange{}
+			if err == nil {
+				v := gi.GetApprovalRequired()
+				e.Settings.ApprovalRequired = &v
+			} else {
+				e.Settings.ApprovalModeChanged = true
+			}
+			o.publish(instanceID, e)
+		})
+	}
+	if u.Suspended {
+		emit(events.GroupSuspended, nil)
+	}
+	if u.Unsuspended {
+		emit(events.GroupUnsuspended, nil)
 	}
 	if u.InviteLinkReset {
 		emit(events.GroupInviteLinkReset, nil)
@@ -154,6 +175,30 @@ func (o *GroupEvents) setName(instanceID, group, name string) {
 	}
 }
 
+// lookup fetches the group in the background (bounded, waited for by Close) and calls
+// done with the result; nothing happens when the observer is closed.
+func (o *GroupEvents) lookup(instanceID, group string, done func(*workerv1.GroupInfo, error)) {
+	o.mu.Lock()
+	if o.closed || o.Workers == nil {
+		o.mu.Unlock()
+		return
+	}
+	o.wg.Add(1)
+	o.mu.Unlock()
+	go func() {
+		defer o.wg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cli, err := o.Workers.Groups(instanceID)
+		if err != nil {
+			done(nil, err)
+			return
+		}
+		gi, err := cli.GetGroup(ctx, &workerv1.GetGroupRequest{Jid: group})
+		done(gi, err)
+	}()
+}
+
 // ensureName looks the group up in the background when its chat has no name yet.
 func (o *GroupEvents) ensureName(instanceID, group string) {
 	if o.Workers == nil {
@@ -174,11 +219,14 @@ func (o *GroupEvents) ensureName(instanceID, group string) {
 		o.mu.Unlock()
 		return
 	}
-	if len(o.tried) > 10000 { // bounded memory: forget old attempts
+	if len(o.tried) > 10000 { // bounded memory: forget old attempts (all, if none is old)
 		for k, t := range o.tried {
 			if now.Sub(t) >= nameRetry {
 				delete(o.tried, k)
 			}
+		}
+		if len(o.tried) > 10000 {
+			clear(o.tried)
 		}
 	}
 	select {
@@ -196,6 +244,12 @@ func (o *GroupEvents) ensureName(instanceID, group string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		c, err := o.Store.GetChat(ctx, instanceID, group)
+		if errors.Is(err, store.ErrNotFound) { // not logged yet: try again on the next message
+			o.mu.Lock()
+			delete(o.tried, key)
+			o.mu.Unlock()
+			return
+		}
 		if err != nil || c.Name != "" {
 			return
 		}

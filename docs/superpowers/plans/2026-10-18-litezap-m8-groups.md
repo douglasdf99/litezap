@@ -32,3 +32,14 @@ Data: 2026-10-18 · Branch: `feat/m8-groups` (a partir de `main`) · Spec: `2026
 5. API `/instances/{id}/groups…` e `/communities…`; testes de contrato (`httptest` + fake), escopo do token.
 6. MCP, painel, README, OpenAPI, spec.
 7. gofmt, vet, `go test -p 2 -race ./...`; revisão independente; smoke em 127.0.0.1:18798.
+
+## Revisão independente (feita) e correções
+
+- Cota devolvida só quando a requisição comprovadamente não chegou ao WhatsApp (worker parado, desconectado ou recusa local); timeouts, recusas e limites do WhatsApp contam, e um `rate-overlimit` do WhatsApp reinicia o intervalo de 10s.
+- Criar com participantes respeita e marca o intervalo de 10s entre lotes; as cotas são conferidas antes das consultas de números (uma requisição recusada não gasta consulta).
+- Membros a remover/promover/rebaixar são nomeados como a lista de participantes do servidor os tem (sem depender do mapeamento LID local); pedidos de entrada, como a lista de pedidos.
+- Mudança de aprovação de entrada: o whatsmeow descarta o estado, então o worker só sinaliza (`approval_mode_changed`) e o supervisor consulta o grupo antes de publicar `settings`.
+- Pedidos de entrada pelos nomes exatos `created_membership_requests` (→ `join_request`) e `revoked_membership_requests` (→ `join_request_revoked`); `suspended`/`unsuspended` publicados.
+- Descrição: o worker busca o tópico anterior ele mesmo, mantendo os códigos de erro (o whatsmeow os embrulhava com `%v`).
+- Menores: listar grupos sem montar participantes; `JoinedGroup` sem consultas LID no handler; `ResourceExhausted` só vira `rate_limited` com esse código; `423 locked` mapeado; comunidade sem participantes; limites com teto mesmo se gravados antes; aprovar pedidos recusado com envios suspensos; prazo próprio para a descrição ao criar; participantes que resolvem para a mesma conta enviados uma vez; textos do MCP não prometem mais "só quem já conversa".
+- Não feito: apagar a chave de cota ao apagar a instância; devolver os campos aplicados num `PATCH` que falha no meio (documentado).

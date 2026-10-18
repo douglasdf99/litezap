@@ -1763,7 +1763,7 @@ type GroupUpdate struct {
 	Description      *string  `protobuf:"bytes,5,opt,name=description,proto3,oneof" json:"description,omitempty"`
 	Announce         *bool    `protobuf:"varint,6,opt,name=announce,proto3,oneof" json:"announce,omitempty"`
 	Locked           *bool    `protobuf:"varint,7,opt,name=locked,proto3,oneof" json:"locked,omitempty"`
-	ApprovalRequired *bool    `protobuf:"varint,8,opt,name=approval_required,json=approvalRequired,proto3,oneof" json:"approval_required,omitempty"`
+	ApprovalRequired *bool    `protobuf:"varint,8,opt,name=approval_required,json=approvalRequired,proto3,oneof" json:"approval_required,omitempty"` // unused: see approval_mode_changed
 	EphemeralSeconds *uint32  `protobuf:"varint,9,opt,name=ephemeral_seconds,json=ephemeralSeconds,proto3,oneof" json:"ephemeral_seconds,omitempty"`
 	Joined           []string `protobuf:"bytes,10,rep,name=joined,proto3" json:"joined,omitempty"`
 	Left             []string `protobuf:"bytes,11,rep,name=left,proto3" json:"left,omitempty"`
@@ -1778,11 +1778,17 @@ type GroupUpdate struct {
 	UnlinkedGroup    string   `protobuf:"bytes,20,opt,name=unlinked_group,json=unlinkedGroup,proto3" json:"unlinked_group,omitempty"`
 	JoinRequests     []string `protobuf:"bytes,21,rep,name=join_requests,json=joinRequests,proto3" json:"join_requests,omitempty"` // participants asking to join (approval mode)
 	// joined_self: the account was added to (or created) the group; info is its metadata.
-	JoinedSelf    bool       `protobuf:"varint,22,opt,name=joined_self,json=joinedSelf,proto3" json:"joined_self,omitempty"`
-	Info          *GroupInfo `protobuf:"bytes,23,opt,name=info,proto3" json:"info,omitempty"`
-	Unknown       []string   `protobuf:"bytes,24,rep,name=unknown,proto3" json:"unknown,omitempty"` // tags of changes not understood
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	JoinedSelf bool       `protobuf:"varint,22,opt,name=joined_self,json=joinedSelf,proto3" json:"joined_self,omitempty"`
+	Info       *GroupInfo `protobuf:"bytes,23,opt,name=info,proto3" json:"info,omitempty"`
+	Unknown    []string   `protobuf:"bytes,24,rep,name=unknown,proto3" json:"unknown,omitempty"` // tags of changes not understood
+	// The join approval mode changed; whatsmeow does not tell on or off (the supervisor
+	// looks the group up).
+	ApprovalModeChanged bool     `protobuf:"varint,25,opt,name=approval_mode_changed,json=approvalModeChanged,proto3" json:"approval_mode_changed,omitempty"`
+	JoinRequestsRevoked []string `protobuf:"bytes,26,rep,name=join_requests_revoked,json=joinRequestsRevoked,proto3" json:"join_requests_revoked,omitempty"` // requests cancelled or rejected
+	Suspended           bool     `protobuf:"varint,27,opt,name=suspended,proto3" json:"suspended,omitempty"`
+	Unsuspended         bool     `protobuf:"varint,28,opt,name=unsuspended,proto3" json:"unsuspended,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *GroupUpdate) Reset() {
@@ -1983,6 +1989,34 @@ func (x *GroupUpdate) GetUnknown() []string {
 	return nil
 }
 
+func (x *GroupUpdate) GetApprovalModeChanged() bool {
+	if x != nil {
+		return x.ApprovalModeChanged
+	}
+	return false
+}
+
+func (x *GroupUpdate) GetJoinRequestsRevoked() []string {
+	if x != nil {
+		return x.JoinRequestsRevoked
+	}
+	return nil
+}
+
+func (x *GroupUpdate) GetSuspended() bool {
+	if x != nil {
+		return x.Suspended
+	}
+	return false
+}
+
+func (x *GroupUpdate) GetUnsuspended() bool {
+	if x != nil {
+		return x.Unsuspended
+	}
+	return false
+}
+
 var File_worker_v1_groups_proto protoreflect.FileDescriptor
 
 const file_worker_v1_groups_proto_rawDesc = "" +
@@ -2110,7 +2144,7 @@ const file_worker_v1_groups_proto_rawDesc = "" +
 	"\x14ListSubGroupsRequest\x12\x1c\n" +
 	"\tcommunity\x18\x01 \x01(\tR\tcommunity\"D\n" +
 	"\x15ListSubGroupsResponse\x12+\n" +
-	"\x06groups\x18\x01 \x03(\v2\x13.worker.v1.SubGroupR\x06groups\"\x82\a\n" +
+	"\x06groups\x18\x01 \x03(\v2\x13.worker.v1.SubGroupR\x06groups\"\xaa\b\n" +
 	"\vGroupUpdate\x12\x14\n" +
 	"\x05group\x18\x01 \x01(\tR\x05group\x12\x14\n" +
 	"\x05actor\x18\x02 \x01(\tR\x05actor\x12!\n" +
@@ -2138,7 +2172,11 @@ const file_worker_v1_groups_proto_rawDesc = "" +
 	"\vjoined_self\x18\x16 \x01(\bR\n" +
 	"joinedSelf\x12(\n" +
 	"\x04info\x18\x17 \x01(\v2\x14.worker.v1.GroupInfoR\x04info\x12\x18\n" +
-	"\aunknown\x18\x18 \x03(\tR\aunknownB\a\n" +
+	"\aunknown\x18\x18 \x03(\tR\aunknown\x122\n" +
+	"\x15approval_mode_changed\x18\x19 \x01(\bR\x13approvalModeChanged\x122\n" +
+	"\x15join_requests_revoked\x18\x1a \x03(\tR\x13joinRequestsRevoked\x12\x1c\n" +
+	"\tsuspended\x18\x1b \x01(\bR\tsuspended\x12 \n" +
+	"\vunsuspended\x18\x1c \x01(\bR\vunsuspendedB\a\n" +
 	"\x05_nameB\x0e\n" +
 	"\f_descriptionB\v\n" +
 	"\t_announceB\t\n" +

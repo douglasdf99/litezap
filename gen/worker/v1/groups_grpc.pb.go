@@ -41,9 +41,11 @@ const (
 //
 // Groups is served by `litezap worker` next to Worker, on the same socket (marco 8).
 // Error codes follow worker.proto (the status message starts with a stable code):
-// NotFound "group_not_found", PermissionDenied "forbidden" (not an admin / not a member),
-// InvalidArgument "validation_failed" / "invite_invalid", FailedPrecondition
-// "invite_revoked", Unavailable "instance_not_connected".
+// NotFound "group_not_found" / "invite_revoked", PermissionDenied "forbidden" (not an
+// admin / not a member / locked), InvalidArgument "validation_failed" (refused by the
+// worker before reaching WhatsApp) / "invite_invalid" / "not_acceptable" (refused by
+// WhatsApp), ResourceExhausted "rate_limited" (WhatsApp), Unavailable
+// "instance_not_connected".
 //
 // Participant JIDs are reported as phone-number JIDs when known (lid holds the LID);
 // requests accept phone-number JIDs or LIDs.
@@ -219,9 +221,11 @@ func (c *groupsClient) ListSubGroups(ctx context.Context, in *ListSubGroupsReque
 //
 // Groups is served by `litezap worker` next to Worker, on the same socket (marco 8).
 // Error codes follow worker.proto (the status message starts with a stable code):
-// NotFound "group_not_found", PermissionDenied "forbidden" (not an admin / not a member),
-// InvalidArgument "validation_failed" / "invite_invalid", FailedPrecondition
-// "invite_revoked", Unavailable "instance_not_connected".
+// NotFound "group_not_found" / "invite_revoked", PermissionDenied "forbidden" (not an
+// admin / not a member / locked), InvalidArgument "validation_failed" (refused by the
+// worker before reaching WhatsApp) / "invite_invalid" / "not_acceptable" (refused by
+// WhatsApp), ResourceExhausted "rate_limited" (WhatsApp), Unavailable
+// "instance_not_connected".
 //
 // Participant JIDs are reported as phone-number JIDs when known (lid holds the LID);
 // requests accept phone-number JIDs or LIDs.
