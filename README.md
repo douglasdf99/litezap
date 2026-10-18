@@ -5,14 +5,43 @@ Cada número roda em um processo worker isolado, supervisionado com heartbeat, r
 
 Licença: Apache-2.0. Roda no seu PC, no seu servidor ou na nuvem gerenciada do LiteZap.
 
+> [!WARNING]
+> **Projeto não oficial.** O LiteZap não tem vínculo, autorização ou endosso do WhatsApp nem da Meta; "WhatsApp" é marca registrada dos respectivos donos. Ele usa o protocolo do WhatsApp Web via [whatsmeow](https://github.com/tulir/whatsmeow), e o WhatsApp pode **banir ou restringir números** que usam clientes não oficiais, principalmente com envio em massa ou mensagens não solicitadas. Você é o único responsável pelo uso e por cumprir os [Termos de Serviço](https://www.whatsapp.com/legal/terms-of-service) e as políticas do WhatsApp e as leis aplicáveis (ex.: LGPD). Use por sua conta e risco; o software é fornecido "no estado em que se encontra", sem garantias (veja a [licença](LICENSE)).
+
 > Status: marco 4 (envio com fila persistente, recebimento, chats, histórico, mídia, proxy por instância, eventos com webhooks assinados e SSE, servidor MCP em `/mcp` e `litezap mcp`) + app local v1 (painel web embutido e lançador de bandeja) + marco 5 (hook de agente para atendente de IA, com o exemplo `examples/agent-claude`).
 > Status: marco 4 (envio com fila persistente, recebimento, chats, histórico, mídia, proxy por instância, eventos com webhooks assinados e SSE, servidor MCP em `/mcp` e `litezap mcp`) + app local v1 (painel web embutido e lançador de bandeja) + marcos 6 (mensagens completas) e 7 (eventos de chamada, presença, `played`, respostas de botão, filtros de webhook). O hook de agente vem no próximo marco.
 > Design: `docs/superpowers/specs/2026-10-17-litezap-engine-design.md`
 
+## Instalar
+
+Binários para Linux e macOS (amd64/arm64) e Windows (amd64). Só o `litezap`; o [app de bandeja](#app-de-bandeja-litezap-app) por enquanto se compila a partir do código.
+
+**Script** (Linux e macOS; detecta SO e arquitetura, confere o sha256 com `checksums.txt` e instala em `~/.local/bin` se estiver no `PATH`, senão em `/usr/local/bin`, pedindo `sudo` só se precisar):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/douglasdf99/litezap/main/scripts/install.sh | sh
+# versão específica ou outro diretório:
+curl -fsSL https://raw.githubusercontent.com/douglasdf99/litezap/main/scripts/install.sh | LITEZAP_VERSION=v0.1.0 LITEZAP_INSTALL_DIR=~/bin sh
+```
+
+**Docker** (imagem multi-arch `linux/amd64` e `linux/arm64`; veja [Docker](#docker)):
+
+```bash
+docker run -d --name litezap -p 127.0.0.1:8787:8787 -v litezap-data:/data ghcr.io/douglasdf99/litezap:latest
+```
+
+**go install** (Go da versão em `go.mod`; `litezap version` mostra `dev`):
+
+```bash
+go install github.com/douglasdf99/litezap/cmd/litezap@latest
+```
+
+**Releases**: baixe o `.tar.gz` (ou `.zip` no Windows) em [github.com/douglasdf99/litezap/releases](https://github.com/douglasdf99/litezap/releases) e confira com `sha256sum -c checksums.txt --ignore-missing`.
+
 ## Rodar
 
 ```bash
-go build -o litezap ./cmd/litezap
+go build -o litezap ./cmd/litezap   # ou use um binário instalado acima
 ./litezap serve            # usa litezap.yaml se existir; veja litezap.example.yaml
 ```
 
@@ -918,6 +947,8 @@ A lista completa do que foi adiado para o marco 2b (busca, retenção, confirma�
 docker compose up -d --build   # imagem distroless, binário estático, usuário não root, volume /data
 ```
 
+Imagens prontas de cada release: `ghcr.io/douglasdf99/litezap:<versão>` e `:latest` (troque `build: .` por `image: ghcr.io/douglasdf99/litezap:latest` no `docker-compose.yml`). A imagem não tem `HEALTHCHECK` (sem shell nem cliente HTTP); aponte o probe do orquestrador para `/healthz` com o token admin ou para `LITEZAP_OPS_LISTEN_ADDR`.
+
 Dentro do container o servidor escuta em `0.0.0.0:8787` (a porta é publicada só em `127.0.0.1` do host): `/healthz` e `/readyz` exigem o token admin e URLs assinadas exigem `LITEZAP_PUBLIC_URL`. Detalhes em `site/src/content/docs/docs/self-hosted/docker.md`.
 
 ## Site e docs
@@ -937,3 +968,5 @@ pnpm build   # gera site/dist (estático)
 go test -race ./...
 go tool buf generate   # após mudar proto/
 ```
+
+Como contribuir: [CONTRIBUTING.md](CONTRIBUTING.md). Segurança: [SECURITY.md](SECURITY.md). Releases saem por tag `v*` (GitHub Actions + GoReleaser, `.goreleaser.yaml`).

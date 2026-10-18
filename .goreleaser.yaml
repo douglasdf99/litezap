@@ -1,0 +1,87 @@
+# GoReleaser: binários, checksums e imagem Docker multi-arch do LiteZap.
+# Testar localmente: goreleaser release --snapshot --clean
+#
+# Só o binário `litezap` (./cmd/litezap) é publicado: ele não usa CGO (modernc.org/sqlite),
+# então compila para todos os alvos com CGO_ENABLED=0. O app de bandeja (./cmd/litezap-app)
+# fica de fora porque o fyne.io/systray precisa de CGO no macOS; compile-o a partir do código
+# (veja "App de bandeja" no README).
+version: 2
+
+project_name: litezap
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: litezap
+    main: ./cmd/litezap
+    binary: litezap
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: litezap
+    ids: [litezap]
+    # Sem a versão no nome: scripts/install.sh baixa de releases/latest/download/.
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - litezap.example.yaml
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+dockers_v2:
+  - id: litezap
+    ids: [litezap]
+    dockerfile: Dockerfile.release
+    images:
+      - ghcr.io/douglasdf99/litezap
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.description: "API de WhatsApp não oficial baseada em whatsmeow"
+      org.opencontainers.image.source: https://github.com/douglasdf99/litezap
+      org.opencontainers.image.licenses: Apache-2.0
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs"
+      - "^test"
+      - "^chore"
+
+release:
+  github:
+    owner: douglasdf99
+    name: litezap
+  prerelease: auto
+  footer: |
+    Imagem Docker: `docker pull ghcr.io/douglasdf99/litezap:{{ .Version }}`
+
+    LiteZap é um projeto não oficial, sem vínculo com o WhatsApp ou a Meta. Use por sua conta e risco.

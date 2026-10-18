@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Reportar falha de segurança
+    url: https://github.com/douglasdf99/litezap/security/advisories/new
+    about: Reporte vulnerabilidades em privado, nunca em issue pública.
