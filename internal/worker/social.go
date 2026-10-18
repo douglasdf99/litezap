@@ -12,6 +12,7 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waSyncAction"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/grpc/codes"
@@ -29,7 +30,8 @@ type SocialClient interface {
 	ChannelAction(ctx context.Context, jid, action string) error
 	ChannelMessages(ctx context.Context, jid string, count int, before int64) ([]*workerv1.ChannelPost, error)
 	ChannelReact(ctx context.Context, jid string, serverID int64, emoji string) error
-	LabelAction(ctx context.Context, req *workerv1.LabelActionRequest) error
+	// LabelAction returns the chat (chat/message kinds) as label events name it.
+	LabelAction(ctx context.Context, req *workerv1.LabelActionRequest) (string, error)
 	BusinessProfile(ctx context.Context, jid string) (*workerv1.BusinessProfileInfo, error)
 }
 
@@ -127,10 +129,11 @@ func (g *SocialServer) LabelAction(ctx context.Context, req *workerv1.LabelActio
 	if err != nil {
 		return nil, err
 	}
-	if err := c.LabelAction(ctx, req); err != nil {
+	chat, err := c.LabelAction(ctx, req)
+	if err != nil {
 		return nil, err
 	}
-	return &workerv1.LabelActionResponse{}, nil
+	return &workerv1.LabelActionResponse{Chat: chat}, nil
 }
 
 func (g *SocialServer) GetBusinessProfile(ctx context.Context, req *workerv1.GetBusinessProfileRequest) (*workerv1.BusinessProfileInfo, error) {
@@ -159,6 +162,8 @@ type socialHooks struct {
 	// business reports whether the account is a WhatsApp Business account (the pairing
 	// stored a business name).
 	business func() bool
+	// resyncRegular fetches the "regular" app state collection again (full sync).
+	resyncRegular func(context.Context) error
 }
 
 func (w *Whatsmeow) socialAPI() socialHooks {
@@ -198,6 +203,11 @@ func (w *Whatsmeow) socialAPI() socialHooks {
 	}
 	if h.bizProfile == nil {
 		h.bizProfile = w.cli.GetBusinessProfile
+	}
+	if h.resyncRegular == nil {
+		h.resyncRegular = func(ctx context.Context) error {
+			return w.cli.FetchAppState(ctx, appstate.WAPatchRegular, true, false)
+		}
 	}
 	if h.business == nil {
 		h.business = func() bool { return w.cli.Store != nil && w.cli.Store.BusinessName != "" }
@@ -322,7 +332,7 @@ func (w *Whatsmeow) Channel(ctx context.Context, jid, invite string) (*workerv1.
 		m, err = h.channelInfo(ctx, j)
 	} else {
 		code := strings.TrimSpace(invite)
-		code = strings.TrimPrefix(strings.TrimPrefix(code, "https://"), "whatsapp.com/channel/")
+		code = strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(code, "https://"), "www."), "whatsapp.com/channel/")
 		if code == "" || strings.ContainsAny(code, "/?# ") {
 			return nil, invalid("invalid channel invite")
 		}
@@ -449,45 +459,74 @@ func (w *Whatsmeow) ChannelReact(ctx context.Context, raw string, serverID int64
 	return nil
 }
 
-func (w *Whatsmeow) LabelAction(ctx context.Context, req *workerv1.LabelActionRequest) error {
+func (w *Whatsmeow) LabelAction(ctx context.Context, req *workerv1.LabelActionRequest) (string, error) {
 	if err := w.loggedIn(); err != nil {
-		return err
+		return "", err
 	}
-	if !w.socialAPI().business() {
-		return grpcErr(codes.FailedPrecondition, "business_account_required", "labels need a WhatsApp Business account")
+	h := w.socialAPI()
+	if !h.business() {
+		return "", grpcErr(codes.FailedPrecondition, "business_account_required", "labels need a WhatsApp Business account")
+	}
+	if req.Kind == "resync" {
+		// Labels only reach us through the app state; a session paired before they were
+		// stored (or whose first sync is incomplete) gets them again from a full fetch.
+		if err := h.resyncRegular(ctx); err != nil {
+			return "", socialErr(err)
+		}
+		return "", nil
 	}
 	id := strings.TrimSpace(req.LabelId)
 	if id == "" || strings.ContainsAny(id, " \x00") {
-		return invalid("label_id is required")
+		return "", invalid("label_id is required")
 	}
 	var patch appstate.PatchInfo
+	var chatOut string
 	switch req.Kind {
 	case "edit":
 		if !req.Deleted && strings.TrimSpace(req.Name) == "" {
-			return invalid("label name is required")
+			return "", invalid("label name is required")
 		}
 		patch = appstate.BuildLabelEdit(id, req.Name, req.Color, req.Deleted)
 	case "chat", "message":
 		chat, err := parseChat(req.Chat)
 		if err != nil {
-			return err
+			return "", err
 		}
 		target := w.appStateJID(ctx, chat)
+		chatOut = w.chatUpdateJID(target)
 		if req.Kind == "chat" {
 			patch = appstate.BuildLabelChat(target, id, req.Labeled)
-		} else {
-			if req.MessageId == "" {
-				return invalid("message_id is required")
-			}
-			patch = appstate.BuildLabelMessage(target, id, req.MessageId, req.Labeled)
+			break
 		}
+		if req.MessageId == "" {
+			return "", invalid("message_id is required")
+		}
+		// Like the star index: chat, id, from me ("1"/"0"), and the author of others'
+		// messages in groups ("0" otherwise). appstate.BuildLabelMessage always writes
+		// "0", "0", which only matches received direct messages.
+		fromMe, participant := "0", "0"
+		if req.FromMe {
+			fromMe = "1"
+		} else if target.Server == types.GroupServer {
+			snd, err := types.ParseJID(req.Sender)
+			if err != nil || snd.User == "" {
+				return "", invalid("labeling a group message needs its sender")
+			}
+			participant = w.groupParticipant(ctx, target, snd.ToNonAD()).String()
+		}
+		labeled := req.Labeled
+		patch = appstate.PatchInfo{Type: appstate.WAPatchRegular, Mutations: []appstate.MutationInfo{{
+			Index:   []string{appstate.IndexLabelAssociationMessage, id, target.String(), req.MessageId, fromMe, participant},
+			Version: 3,
+			Value:   &waSyncAction.SyncActionValue{LabelAssociationAction: &waSyncAction.LabelAssociationAction{Labeled: &labeled}},
+		}}}
 	default:
-		return invalid("kind must be edit, chat or message")
+		return "", invalid("kind must be edit, chat, message or resync")
 	}
 	if err := w.hooks().sendAppState(ctx, patch); err != nil {
-		return socialErr(err)
+		return "", socialErr(err)
 	}
-	return nil
+	return chatOut, nil
 }
 
 func (w *Whatsmeow) BusinessProfile(ctx context.Context, raw string) (*workerv1.BusinessProfileInfo, error) {

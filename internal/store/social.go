@@ -39,7 +39,14 @@ func (s *Store) UpsertLabel(ctx context.Context, instanceID string, l Label) (bo
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if l.Deleted {
-			return false, nil // deleting a label we never knew
+			// A label we never knew, deleted: kept as a deleted row so its id is never
+			// handed out again (NextLabelID), but nothing changed for consumers.
+			_, err := tx.ExecContext(ctx, `INSERT INTO labels (instance_id, label_id, name, color, predefined_id, deleted, updated_at)
+				VALUES (?, ?, ?, ?, ?, 1, ?)`, instanceID, l.ID, l.Name, l.Color, l.PredefinedID, now())
+			if err != nil {
+				return false, err
+			}
+			return false, tx.Commit()
 		}
 	case err != nil:
 		return false, err
@@ -201,11 +208,20 @@ func (s *Store) NextLabelID(ctx context.Context, instanceID string) (string, err
 	return strconv.FormatInt(max(maxID.Int64, 0)+1, 10), nil
 }
 
-// CountOutboundSince counts the instance's queued, in-flight and sent items to chat
-// created since t (failed ones are not counted).
-func (s *Store) CountOutboundSince(ctx context.Context, instanceID, chat string, t time.Time) (int, error) {
+// HasLabels reports whether any label (deleted ones included) was ever stored for the
+// instance: business accounts always have WhatsApp's built-in labels once synced.
+func (s *Store) HasLabels(ctx context.Context, instanceID string) (bool, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM outbound_queue WHERE instance_id = ? AND chat_jid = ?
-		AND status <> 'failed' AND created_at >= ?`, instanceID, chat, fmtTS(t)).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM labels WHERE instance_id = ?`, instanceID).Scan(&n)
+	return n > 0, err
+}
+
+// CountPostsSince counts the instance's queued, in-flight and sent posts (not revokes)
+// to the chats matching the LIKE pattern chat, created since t; failed ones do not count.
+func (s *Store) CountPostsSince(ctx context.Context, instanceID, chat string, t time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM outbound_queue WHERE instance_id = ? AND chat_jid LIKE ?
+		AND status <> 'failed' AND created_at >= ? AND COALESCE(json_extract(payload_json, '$.type'), '') <> 'revoke'`,
+		instanceID, chat, fmtTS(t)).Scan(&n)
 	return n, err
 }

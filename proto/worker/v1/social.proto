@@ -97,7 +97,9 @@ message ChannelReactRequest {
 message ChannelReactResponse {}
 
 message LabelActionRequest {
-  // edit (create, rename, recolor, delete) | chat (label/unlabel a chat) | message
+  // edit (create, rename, recolor, delete) | chat (label/unlabel a chat) | message |
+  // resync (fetch the regular app state collection again, where labels live: the stored
+  // labels arrive again as full-sync LabelUpdate events)
   string kind = 1;
   string label_id = 2;
   string name = 3;
@@ -106,8 +108,13 @@ message LabelActionRequest {
   string chat = 6;
   string message_id = 7;
   bool labeled = 8;
+  // message: whether the message is ours and, in groups, its author
+  bool from_me = 9;
+  string sender = 10;
 }
-message LabelActionResponse {}
+message LabelActionResponse {
+  string chat = 1; // chat | message: the chat as events name it (phone-number JID when known)
+}
 
 message GetBusinessProfileRequest {
   string jid = 1; // empty: the account itself (must be a business account)

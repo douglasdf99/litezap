@@ -371,6 +371,11 @@ func (s *Messaging) send(ctx context.Context, instanceID string, in SendInput, c
 		return MessageView{}, apierr.Validation("client_message_id is limited to 128 characters")
 	}
 	hash := requestHash(in)
+	if in.statusStyle != nil || in.statusQuote != nil { // unexported: not in requestHash
+		b, _ := json.Marshal([]any{hash, in.statusStyle, in.statusQuote})
+		sum := sha256.Sum256(b)
+		hash = hex.EncodeToString(sum[:])
+	}
 	if in.ClientMessageID != "" { // idempotency before any download
 		if o, err := s.Store.OutboundByClientID(ctx, instanceID, in.ClientMessageID); err == nil {
 			if o.RequestHash != hash {
@@ -393,6 +398,11 @@ func (s *Messaging) send(ctx context.Context, instanceID string, in SendInput, c
 	if chat == "" {
 		if chat, err = s.resolveChat(ctx, instanceID, in); err != nil {
 			return MessageView{}, err
+		}
+		// An edit/revoke/pin resolved from a status or channel post: those have their own
+		// routes (the worker would refuse it after the queue's pacing).
+		if chat == store.StatusChat || strings.HasSuffix(chat, "@newsletter") {
+			return MessageView{}, apierr.Validation("status and channel posts are managed by the /status and /channels routes")
 		}
 	}
 	id := secure.NewID("msg_")

@@ -156,7 +156,7 @@ tags:
     x-intro: |
       Status de texto, imagem ou vídeo (marco 10). Os destinatários são os da privacidade do status do
       celular: o WhatsApp não permite escolher por envio. Publicar passa pela fila de envio (ritmo,
-      janela, rampa) e tem teto de 30 por dia por instância. Os status dos contatos ficam no log e saem
+      janela, rampa) e tem teto de 10 por dia por instância. Os status dos contatos ficam no log e saem
       no evento opt-in `status.received`.
     x-concept: /docs/conceitos/limites/
   - name: Canais
@@ -164,8 +164,8 @@ tags:
     x-slug: canais
     x-intro: |
       Canais são listas públicas de mão única (marco 10). Seguir e deixar de seguir têm limite de 3 por
-      minuto e 30 por dia; criar, 2 por dia; reagir, 30 por minuto. Publicar só como dono ou admin, pela
-      fila de envio. Editar o canal, apagar, listar inscritos e buscar no diretório não existem no
+      minuto, 10 por hora e 30 por dia; criar, 2 por dia; reagir, 30 por minuto. Publicar só como dono ou
+      admin, pela fila de envio, até 20 publicações por dia. Editar o canal, apagar, listar inscritos e buscar no diretório não existem no
       whatsmeow.
     x-concept: /docs/conceitos/limites/
   - name: Etiquetas e Business
@@ -2421,16 +2421,16 @@ paths:
       x-litezap-milestone: M10
       x-zapi: "Enviar status de texto / imagem / vídeo"
       x-litezap-events: [message.sent, message.status]
-      x-litezap-notes: "Vai para todos os contatos permitidos pela privacidade do status: fila de envio e no máximo 30 por dia."
+      x-litezap-notes: "Vai para todos os contatos permitidos pela privacidade do status: fila de envio e no máximo 10 por dia."
       summary: Publicar status
       x-litezap-scope: instancia
       description: |
         Publica um status (story) de texto, imagem ou vídeo. Os destinatários são os da privacidade do
         status configurada no celular (veja `GET /status/privacy`); o WhatsApp não permite escolher por
         envio. Passa pela fila de envio como `POST /messages` (ritmo, janela de horário, rampa,
-        suspensão do operador, `client_message_id`, `?wait=true`) e tem teto de 30 status por dia por
+        suspensão do operador, `client_message_id`, `?wait=true`) e tem teto de 10 status por dia por
         instância (`429 rate_limited`). Texto: até 700 caracteres, `background_color`/`text_color`
-        `#RRGGBB` e `font` 0–9.
+        `#RRGGBB` e `font` 0, 1, 2, 6, 7, 8, 9 ou 10.
       parameters:
         - { name: wait, in: query, schema: { type: boolean }, description: "Espera o envio (até `timeout`, padrão 30s)." }
         - { name: timeout, in: query, schema: { type: string, example: 30s } }
@@ -2663,7 +2663,7 @@ paths:
       x-litezap-scope: instancia
       description: |
         `follow`, `unfollow`, `mute` ou `unmute` (o celular acompanha). Seguir e deixar de seguir têm
-        limite de 3 por minuto e 30 por dia por instância e são recusados com envios suspensos pelo
+        limite de 3 por minuto, 10 por hora e 30 por dia por instância e são recusados com envios suspensos pelo
         operador.
       responses:
         "204": { description: Feito. }
@@ -3514,7 +3514,7 @@ components:
         media: { $ref: "#/components/schemas/MediaInput" }
         background_color: { type: string, example: "#1E6E4F", description: "text: cor de fundo #RRGGBB." }
         text_color: { type: string, example: "#FFFFFF" }
-        font: { type: integer, minimum: 0, maximum: 9 }
+        font: { type: integer, enum: [0, 1, 2, 6, 7, 8, 9, 10] }
         client_message_id: { type: string }
         expires_after: { type: string, example: 2h }
     StatusPrivacy:
@@ -3794,11 +3794,11 @@ components:
 
 # Eventos entregues por webhook e SSE (catálogo v1). Fonte no motor: internal/events.
     SocialRateLimited:
-      description: "`rate_limited`: limite da instância (30 status/dia; seguir canais 3/min e 30/dia; criar canal 2/dia; reagir 30/min)."
+      description: "`rate_limited`: limite da instância (10 status/dia; 20 publicações em canal/dia; seguir canais 3/min, 10/h e 30/dia; silenciar 10/min; criar canal 2/dia; reagir 30/min; etiquetas 30/min)."
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
-          example: { error: { code: rate_limited, message: "daily status (30 per day) limit reached for this instance; try again later", retryable: true } }
+          example: { error: { code: rate_limited, message: "daily status (10 per day) limit reached for this instance; try again later", retryable: true } }
     BusinessRequired:
       description: "`business_account_required`: só contas WhatsApp Business; ou `app_state_not_synced` logo após parear."
       content:

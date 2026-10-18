@@ -185,7 +185,7 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 |---|---|---|---|---|---|---|---|
 | CHN-1 | Criar canal | Criar canal | Sim — `CreateNewsletter` (newsletter.go) | Pronto — `POST /channels` (com foto), 2/dia (M10) | S | | M10 |
 | CHN-2 | Atualizar nome, descrição, foto | 3 páginas | Não — sem função; exigiria query MEX via `DangerousInternals` (frágil) | Falta | L | | Avaliar |
-| CHN-3 | Seguir / deixar de seguir | 2 páginas | Sim — `FollowNewsletter`, `UnfollowNewsletter` | Pronto — `POST /channels/{jid}/follow` e `/unfollow`, 3/min e 30/dia (M10) | S | | M10 |
+| CHN-3 | Seguir / deixar de seguir | 2 páginas | Sim — `FollowNewsletter`, `UnfollowNewsletter` | Pronto — `POST /channels/{jid}/follow` e `/unfollow`, 3/min, 10/h e 30/dia (M10) | S | | M10 |
 | CHN-4 | Silenciar / reativar | 2 páginas | Sim — `NewsletterToggleMute` | Pronto — `POST /channels/{jid}/mute` e `/unmute` (M10) | S | | M10 |
 | CHN-5 | Apagar canal | Deletar canal | Não | Falta | — | | Avaliar |
 | CHN-6 | Metadados (por JID ou convite) | Metadata do canal | Sim — `GetNewsletterInfo`, `GetNewsletterInfoWithInvite` | Pronto — `GET /channels/{jid}` e `POST /channels/preview {"invite"}` (M10) | S | | M10 |
@@ -207,7 +207,7 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 
 | ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
 |---|---|---|---|---|---|---|---|
-| STA-1 | Status de texto | Enviar status de texto | Manual — `ExtendedTextMessage` (cor de fundo, fonte) para `types.StatusBroadcastJID`; destinatários resolvidos por `getStatusBroadcastRecipients` (broadcast.go) | Pronto — `POST /status {"type":"text"}` (fundo, cor do texto, fonte) pela fila, 30/dia (M10) | S | Envio cifrado para todos os contatos: lento com agendas grandes | M10 |
+| STA-1 | Status de texto | Enviar status de texto | Manual — `ExtendedTextMessage` (cor de fundo, fonte) para `types.StatusBroadcastJID`; destinatários resolvidos por `getStatusBroadcastRecipients` (broadcast.go) | Pronto — `POST /status {"type":"text"}` (fundo, cor do texto, fonte) pela fila, 10/dia (M10) | S | Envio cifrado para todos os contatos: lento com agendas grandes | M10 |
 | STA-2 | Status de imagem | Enviar status de imagem | Manual — idem com `ImageMessage` | Pronto — `POST /status {"type":"image"}` (M10) | S | | M10 |
 | STA-3 | Status de vídeo | Enviar status de vídeo | Manual — idem com `VideoMessage` | Pronto — `POST /status {"type":"video"}` (M10) | S | | M10 |
 | STA-4 | Responder status (texto, GIF, figurinha) | 3 páginas | Manual — mensagem ao autor com `ContextInfo` citando o status (`RemoteJID` `status@broadcast`) | Parcial — `POST /status/{msg_id}/reply` só texto (GIF/figurinha não) (M10) | S | Depende de MSG-15 | M10 |
@@ -391,7 +391,7 @@ Escopo: STA-1…6, INS-13, CHN-1, 3, 4, 6, 8, 12, 13, BUS-4, 5, 8, MSG-24, MSG-3
 - Canais: criar, seguir, silenciar, metadados, publicar, reagir.
 - Business: etiquetas (CRUD + atribuição + evento `label.updated`), ler perfil comercial.
 
-Entregue em 2026-10-18 (plano `docs/superpowers/plans/2026-10-18-litezap-m10-status-channels.md`): serviço gRPC `Social` no worker, status e posts de canal pela fila de envio (30 status/dia), status recebidos no log (`status@broadcast`, fora de `GET /chats`), eventos `status.received` e `channel.message` (opt-in) e `label.updated`, etiquetas em tabelas próprias, cotas de canal (seguir 3/min e 30/dia, criar 2/dia, reagir 30/min), MCP (leitura + `follow_channel`, `label_chat`) e abas Status, Canais e Etiquetas no painel. Adiados: INS-13, MSG-24, MSG-30, mídia de canais recebida, marcar visto em canal.
+Entregue em 2026-10-18 (plano `docs/superpowers/plans/2026-10-18-litezap-m10-status-channels.md`): serviço gRPC `Social` no worker, status e posts de canal pela fila de envio (10 status/dia, 20 publicações em canal/dia), status recebidos no log (`status@broadcast`, fora de `GET /chats`), eventos `status.received` e `channel.message` (opt-in) e `label.updated`, etiquetas em tabelas próprias, cotas de canal e etiquetas (seguir 3/min, 10/h e 30/dia, criar 2/dia, reagir 30/min, etiquetar 30/min), MCP (leitura + `follow_channel`, `label_chat`) e abas Status, Canais e Etiquetas no painel. Adiados: INS-13, MSG-24, MSG-30, mídia de canais recebida, marcar visto em canal.
 
 Aceite:
 

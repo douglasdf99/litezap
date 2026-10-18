@@ -13,8 +13,17 @@ func TestLabels(t *testing.T) {
 	if id, err := s.NextLabelID(ctx, "i1"); err != nil || id != "1" {
 		t.Fatalf("first id = %q, %v", id, err)
 	}
+	if has, _ := s.HasLabels(ctx, "i1"); has {
+		t.Fatal("no labels yet")
+	}
 	if ch, err := s.UpsertLabel(ctx, "i1", Label{ID: "9", Deleted: true}); err != nil || ch {
 		t.Fatalf("deleting an unknown label = %v, %v", ch, err)
+	}
+	if id, _ := s.NextLabelID(ctx, "i1"); id != "10" {
+		t.Fatalf("an unknown deleted id is not reused: next = %q", id)
+	}
+	if has, _ := s.HasLabels(ctx, "i1"); !has {
+		t.Fatal("a deleted label counts as synced")
 	}
 	for _, l := range []Label{{ID: "5", Name: "Novo", Color: 1}, {ID: "12", Name: "VIP", Color: 3}} {
 		if ch, err := s.UpsertLabel(ctx, "i1", l); err != nil || !ch {
@@ -79,7 +88,10 @@ func TestStatusChatHiddenAndCounted(t *testing.T) {
 	if err := s.MarkFailed(ctx, "q2", 1, "x"); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.CountOutboundSince(ctx, "i1", StatusChat, time.Now().Add(-time.Hour)); err != nil || n != 1 {
-		t.Fatalf("count = %d, %v", n, err)
+	if _, _, err := s.Enqueue(ctx, Outbound{ID: "q3", InstanceID: "i1", ChatJID: StatusChat, WAMessageID: "Wq3", Payload: `{"type":"revoke"}`}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.CountPostsSince(ctx, "i1", StatusChat, time.Now().Add(-time.Hour)); err != nil || n != 1 {
+		t.Fatalf("count = %d, %v (failed items and revokes do not count)", n, err)
 	}
 }

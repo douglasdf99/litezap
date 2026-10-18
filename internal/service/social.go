@@ -42,10 +42,59 @@ type Social struct {
 	// Now is the clock of the quotas (tests); nil means time.Now.
 	Now func() time.Time
 
-	quota    slidingQuota // per instance and kind (follow, create, react)
+	quota    windowQuota // per instance and kind (follow, create, react, label, mute)
 	bizMu    sync.Mutex
 	business map[string]bizEntry // instance -> whether it is a business account
-	labelMu  sync.Mutex          // label creation picks the next id
+	locks    sync.Map            // per instance: status cap check + enqueue; label creation
+	resynced sync.Map            // instance -> time of the last label resync request
+}
+
+// windowQuota counts calls per key over several sliding windows (in memory).
+type windowQuota struct {
+	mu   sync.Mutex
+	hits map[string][]time.Time
+}
+
+type window struct {
+	d time.Duration
+	n int
+}
+
+func (q *windowQuota) take(key string, now time.Time, ws ...window) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.hits == nil {
+		q.hits = map[string][]time.Time{}
+	}
+	longest := time.Duration(0)
+	for _, w := range ws {
+		longest = max(longest, w.d)
+	}
+	var keep []time.Time
+	for _, t := range q.hits[key] {
+		if now.Sub(t) < longest {
+			keep = append(keep, t)
+		}
+	}
+	for _, w := range ws {
+		n := 0
+		for _, t := range keep {
+			if now.Sub(t) < w.d {
+				n++
+			}
+		}
+		if n >= w.n {
+			q.hits[key] = keep
+			return false
+		}
+	}
+	q.hits[key] = append(keep, now)
+	return true
+}
+
+func (s *Social) lock(kind, instanceID string) *sync.Mutex {
+	mu, _ := s.locks.LoadOrStore(kind+"\x00"+instanceID, &sync.Mutex{})
+	return mu.(*sync.Mutex)
 }
 
 type bizEntry struct {
@@ -56,13 +105,9 @@ type bizEntry struct {
 // Limits (anti-ban). Statuses reach every contact: at most maxStatusPerDay per rolling
 // day, on top of the queue's pacing. Channel actions are counted per instance.
 const (
-	maxStatusPerDay      = 30
-	followsPerMinute     = 3
-	followsPerDay        = 30
-	createsPerMinute     = 1
-	createsPerDay        = 2
-	reactionsPerMinute   = 30
-	reactionsPerDay      = 500
+	maxStatusPerDay      = 10
+	maxChannelPostsDay   = 20
+	labelResyncEvery     = 10 * time.Minute
 	maxLabelName         = 100
 	maxLabelColor        = 19 // WhatsApp's palette has 20 colors (0-19)
 	maxChannelPicture    = maxPictureUpload
@@ -137,9 +182,21 @@ func (s *Social) checkSending(instanceID string) error {
 	return s.Sending.Check(instanceID)
 }
 
-func (s *Social) take(kind, instanceID string, perMinute, perDay int) bool {
-	return s.quota.take(kind+"\x00"+instanceID, s.now(), perMinute, perDay)
+// Quotas of the synchronous writes, per instance (in memory).
+var (
+	followQuota = []window{{time.Minute, 3}, {time.Hour, 10}, {24 * time.Hour, 30}}
+	createQuota = []window{{time.Minute, 1}, {24 * time.Hour, 2}}
+	reactQuota  = []window{{time.Minute, 30}, {24 * time.Hour, 500}}
+	muteQuota   = []window{{time.Minute, 10}, {24 * time.Hour, 100}}
+	labelQuota  = []window{{time.Minute, 30}, {24 * time.Hour, 1000}}
+)
+
+func (s *Social) take(kind, instanceID string, ws []window) bool {
+	return s.quota.take(kind+"\x00"+instanceID, s.now(), ws...)
 }
+
+// validFonts are the ExtendedTextMessage.FontType values WhatsApp defines.
+var validFonts = map[int]bool{0: true, 1: true, 2: true, 6: true, 7: true, 8: true, 9: true, 10: true}
 
 // ---- status ----
 
@@ -152,7 +209,7 @@ type StatusInput struct {
 	Media           *MediaInput `json:"media,omitempty"`
 	BackgroundColor string      `json:"background_color,omitempty"` // text: "#RRGGBB"
 	TextColor       string      `json:"text_color,omitempty"`       // text: "#RRGGBB"
-	Font            int         `json:"font,omitempty"`             // text: 0-9 (WhatsApp's fonts)
+	Font            int         `json:"font,omitempty"`             // text: 0, 1, 2, 6, 7, 8, 9 or 10 (WhatsApp's fonts)
 	ClientMessageID string      `json:"client_message_id,omitempty"`
 	ExpiresAfter    string      `json:"expires_after,omitempty"`
 }
@@ -173,7 +230,7 @@ func parseColor(c string) (uint32, error) {
 	return 0xFF000000 | uint32(v), nil
 }
 
-// PostStatus queues a status post (spec M10: paced like any send, at most 30 per day).
+// PostStatus queues a status post (spec M10: paced like any send, at most 10 per day).
 func (s *Social) PostStatus(ctx context.Context, instanceID string, in StatusInput, wait time.Duration) (MessageView, error) {
 	if err := s.checkSending(instanceID); err != nil {
 		return MessageView{}, err
@@ -202,8 +259,8 @@ func (s *Social) PostStatus(ctx context.Context, instanceID string, in StatusInp
 		if err != nil {
 			return MessageView{}, err
 		}
-		if in.Font < 0 || in.Font > 9 {
-			return MessageView{}, apierr.Validation("font must be between 0 and 9")
+		if !validFonts[in.Font] {
+			return MessageView{}, apierr.Validation("font must be 0, 1, 2, 6, 7, 8, 9 or 10")
 		}
 		if bg == 0 {
 			bg = defaultStatusBGColor
@@ -219,17 +276,27 @@ func (s *Social) PostStatus(ctx context.Context, instanceID string, in StatusInp
 	default:
 		return MessageView{}, apierr.Validation("type must be text, image or video")
 	}
-	// Idempotent retries return the existing item before the daily cap is checked.
+	// The cap check and the enqueue are one step per instance (concurrent posts cannot
+	// both pass at 9). Idempotent retries return the existing item before the check.
+	mu := s.lock("status", instanceID)
+	mu.Lock()
 	if in.ClientMessageID == "" || !s.knownClientID(ctx, instanceID, in.ClientMessageID) {
-		n, err := s.Store.CountOutboundSince(ctx, instanceID, store.StatusChat, s.now().Add(-24*time.Hour))
+		n, err := s.Store.CountPostsSince(ctx, instanceID, store.StatusChat, s.now().Add(-24*time.Hour))
 		if err != nil {
+			mu.Unlock()
 			return MessageView{}, err
 		}
 		if n >= maxStatusPerDay {
-			return MessageView{}, socialLimited("daily status (30 per day)")
+			mu.Unlock()
+			return MessageView{}, socialLimited("daily status (10 per day)")
 		}
 	}
-	return s.Messaging.send(ctx, instanceID, send, store.StatusChat, wait)
+	v, err := s.Messaging.send(ctx, instanceID, send, store.StatusChat, 0)
+	mu.Unlock()
+	if err != nil || wait <= 0 {
+		return v, err
+	}
+	return s.Messaging.Wait(ctx, instanceID, v.ID, wait)
 }
 
 func (s *Social) knownClientID(ctx context.Context, instanceID, id string) bool {
@@ -387,7 +454,7 @@ func (s *Social) Channel(ctx context.Context, instanceID, jidRaw, invite string)
 	req := &workerv1.GetChannelRequest{}
 	if invite != "" {
 		code := strings.TrimSpace(invite)
-		code = strings.TrimPrefix(strings.TrimPrefix(code, "https://"), "whatsapp.com/channel/")
+		code = strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(code, "https://"), "www."), "whatsapp.com/channel/")
 		if code == "" || len(code) > 64 || strings.ContainsAny(code, "/?#@ ") {
 			return ChannelView{}, apierr.Validation("invite must be a channel invite code or link")
 		}
@@ -438,7 +505,7 @@ func (s *Social) CreateChannel(ctx context.Context, instanceID string, in Create
 	if err != nil {
 		return ChannelView{}, err
 	}
-	if !s.take("channel_create", instanceID, createsPerMinute, createsPerDay) {
+	if !s.take("channel_create", instanceID, createQuota) {
 		return ChannelView{}, socialLimited("channel creation (2 per day)")
 	}
 	c, cancel := socialCtx(ctx)
@@ -491,7 +558,7 @@ func (s *Social) photo(ctx context.Context, in *PhotoInput) ([]byte, error) {
 }
 
 // ChannelAction follows, unfollows, mutes or unmutes a channel. Follows and unfollows
-// are rate limited (3 per minute, 30 per day).
+// are rate limited (3 per minute, 10 per hour, 30 per day); mutes, 10 per minute.
 func (s *Social) ChannelAction(ctx context.Context, instanceID, jidRaw, action string) error {
 	jid, err := ChannelJID(jidRaw)
 	if err != nil {
@@ -510,9 +577,11 @@ func (s *Social) ChannelAction(ctx context.Context, instanceID, jidRaw, action s
 		if err := s.checkSending(instanceID); err != nil {
 			return err
 		}
-		if !s.take("channel_follow", instanceID, followsPerMinute, followsPerDay) {
-			return socialLimited("channel follow (3 per minute, 30 per day)")
+		if !s.take("channel_follow", instanceID, followQuota) {
+			return socialLimited("channel follow (3 per minute, 10 per hour, 30 per day)")
 		}
+	} else if !s.take("channel_mute", instanceID, muteQuota) {
+		return socialLimited("channel mute (10 per minute)")
 	}
 	c, cancel := socialCtx(ctx)
 	defer cancel()
@@ -596,7 +665,7 @@ func (s *Social) ChannelReact(ctx context.Context, instanceID, jidRaw string, se
 	if err != nil {
 		return err
 	}
-	if !s.take("channel_react", instanceID, reactionsPerMinute, reactionsPerDay) {
+	if !s.take("channel_react", instanceID, reactQuota) {
 		return socialLimited("channel reaction (30 per minute)")
 	}
 	c, cancel := socialCtx(ctx)
@@ -645,7 +714,25 @@ func (s *Social) PublishChannel(ctx context.Context, instanceID, jidRaw string, 
 	}
 	send := SendInput{Type: in.Type, Text: in.Text, Caption: in.Caption, Media: in.Media,
 		ClientMessageID: in.ClientMessageID, ExpiresAfter: in.ExpiresAfter}
-	return s.Messaging.send(ctx, instanceID, send, jid, wait)
+	mu := s.lock("channel_post", instanceID)
+	mu.Lock()
+	if in.ClientMessageID == "" || !s.knownClientID(ctx, instanceID, in.ClientMessageID) {
+		n, err := s.Store.CountPostsSince(ctx, instanceID, "%@newsletter", s.now().Add(-24*time.Hour))
+		if err != nil {
+			mu.Unlock()
+			return MessageView{}, err
+		}
+		if n >= maxChannelPostsDay {
+			mu.Unlock()
+			return MessageView{}, socialLimited("daily channel post (20 per day)")
+		}
+	}
+	v, err := s.Messaging.send(ctx, instanceID, send, jid, 0)
+	mu.Unlock()
+	if err != nil || wait <= 0 {
+		return v, err
+	}
+	return s.Messaging.Wait(ctx, instanceID, v.ID, wait)
 }
 
 // ---- labels (WhatsApp Business) ----
@@ -710,6 +797,9 @@ func (s *Social) Labels(ctx context.Context, instanceID string) ([]LabelView, er
 	if err := s.requireBusiness(ctx, instanceID); err != nil {
 		return nil, err
 	}
+	if _, err := s.ensureLabels(ctx, instanceID); err != nil {
+		return nil, err
+	}
 	ls, err := s.Store.ListLabels(ctx, instanceID)
 	if err != nil {
 		return nil, err
@@ -737,22 +827,52 @@ func validLabel(name string, color int) error {
 	return nil
 }
 
-func (s *Social) labelAction(ctx context.Context, instanceID string, req *workerv1.LabelActionRequest) error {
+// labelAction sends a label change; it returns the chat as events name it (chat and
+// message kinds). Label writes are rate limited per instance.
+func (s *Social) labelAction(ctx context.Context, instanceID string, req *workerv1.LabelActionRequest) (string, error) {
 	cli, err := s.client(ctx, instanceID)
 	if err != nil {
-		return err
+		return "", err
+	}
+	if req.Kind != "resync" && !s.take("label", instanceID, labelQuota) {
+		return "", socialLimited("label change (30 per minute)")
 	}
 	c, cancel := socialCtx(ctx)
 	defer cancel()
-	if _, err := cli.LabelAction(c, req); err != nil {
+	resp, err := cli.LabelAction(c, req)
+	if err != nil {
 		if st, ok := status.FromError(err); ok && strings.HasPrefix(st.Message(), "business_account_required") {
 			s.bizMu.Lock()
 			delete(s.business, instanceID)
 			s.bizMu.Unlock()
 		}
-		return socialErr(err)
+		return "", socialErr(err)
 	}
-	return nil
+	return resp.GetChat(), nil
+}
+
+// ensureLabels asks the worker to fetch the labels again when none was ever stored
+// (a session paired before labels were kept, or a first sync still running), at most
+// every 10 minutes per instance. It reports whether labels are stored.
+func (s *Social) ensureLabels(ctx context.Context, instanceID string) (bool, error) {
+	has, err := s.Store.HasLabels(ctx, instanceID)
+	if err != nil || has {
+		return has, err
+	}
+	if last, ok := s.resynced.Load(instanceID); ok && s.now().Sub(last.(time.Time)) < labelResyncEvery {
+		return false, nil
+	}
+	s.resynced.Store(instanceID, s.now())
+	if _, err := s.labelAction(ctx, instanceID, &workerv1.LabelActionRequest{Kind: "resync"}); err != nil {
+		s.resynced.Delete(instanceID)
+		return false, err
+	}
+	return s.Store.HasLabels(ctx, instanceID)
+}
+
+func labelsSyncing() error {
+	return apierr.New(http.StatusConflict, "app_state_not_synced",
+		"the labels are being synced from the phone; try again in a few seconds", true)
 }
 
 func (s *Social) publishLabel(instanceID string, ev events.LabelUpdated) {
@@ -776,14 +896,22 @@ func (s *Social) CreateLabel(ctx context.Context, instanceID string, in LabelInp
 	if err := s.requireBusiness(ctx, instanceID); err != nil {
 		return LabelView{}, err
 	}
-	s.labelMu.Lock()
-	defer s.labelMu.Unlock()
+	// A new id must not collide with the phone's labels (business accounts always have the
+	// built-in ones): never create before they are stored.
+	if has, err := s.ensureLabels(ctx, instanceID); err != nil {
+		return LabelView{}, err
+	} else if !has {
+		return LabelView{}, labelsSyncing()
+	}
+	mu := s.lock("label", instanceID)
+	mu.Lock()
+	defer mu.Unlock()
 	id, err := s.Store.NextLabelID(ctx, instanceID)
 	if err != nil {
 		return LabelView{}, err
 	}
 	name := strings.TrimSpace(*in.Name)
-	if err := s.labelAction(ctx, instanceID, &workerv1.LabelActionRequest{Kind: "edit", LabelId: id, Name: name, Color: int32(color)}); err != nil {
+	if _, err := s.labelAction(ctx, instanceID, &workerv1.LabelActionRequest{Kind: "edit", LabelId: id, Name: name, Color: int32(color)}); err != nil {
 		return LabelView{}, err
 	}
 	l := store.Label{ID: id, Name: name, Color: color}
@@ -816,7 +944,7 @@ func (s *Social) UpdateLabel(ctx context.Context, instanceID, id string, in Labe
 	if err := validLabel(l.Name, l.Color); err != nil {
 		return LabelView{}, err
 	}
-	if err := s.labelAction(ctx, instanceID, &workerv1.LabelActionRequest{Kind: "edit", LabelId: id, Name: l.Name, Color: int32(l.Color)}); err != nil {
+	if _, err := s.labelAction(ctx, instanceID, &workerv1.LabelActionRequest{Kind: "edit", LabelId: id, Name: l.Name, Color: int32(l.Color)}); err != nil {
 		return LabelView{}, err
 	}
 	color := l.Color
@@ -840,7 +968,7 @@ func (s *Social) DeleteLabel(ctx context.Context, instanceID, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.labelAction(ctx, instanceID, &workerv1.LabelActionRequest{Kind: "edit", LabelId: id, Name: l.Name, Color: int32(l.Color), Deleted: true}); err != nil {
+	if _, err := s.labelAction(ctx, instanceID, &workerv1.LabelActionRequest{Kind: "edit", LabelId: id, Name: l.Name, Color: int32(l.Color), Deleted: true}); err != nil {
 		return err
 	}
 	if changed, err := s.Store.UpsertLabel(ctx, instanceID, store.Label{ID: id, Name: l.Name, Color: l.Color, Deleted: true}); err != nil {
@@ -865,8 +993,12 @@ func (s *Social) LabelChat(ctx context.Context, instanceID, id, chatRaw string, 
 	} else if err != nil {
 		return LabelView{}, err
 	}
-	if err := s.labelAction(ctx, instanceID, &workerv1.LabelActionRequest{Kind: "chat", LabelId: id, Chat: chat, Labeled: labeled}); err != nil {
+	canonical, err := s.labelAction(ctx, instanceID, &workerv1.LabelActionRequest{Kind: "chat", LabelId: id, Chat: chat, Labeled: labeled})
+	if err != nil {
 		return LabelView{}, err
+	}
+	if canonical != "" { // a LID is stored as the phone-number JID, like the phone's events
+		chat = canonical
 	}
 	if changed, err := s.Store.SetLabelChat(ctx, instanceID, id, chat, labeled); err != nil {
 		return LabelView{}, err
@@ -900,8 +1032,8 @@ func (s *Social) LabelMessage(ctx context.Context, instanceID, id, msgID string,
 	if m.WAMessageID == "" || m.Status == "pending" {
 		return apierr.Validation("the message has not been sent yet")
 	}
-	if err := s.labelAction(ctx, instanceID, &workerv1.LabelActionRequest{Kind: "message", LabelId: id, Chat: m.ChatJID,
-		MessageId: m.WAMessageID, Labeled: labeled}); err != nil {
+	if _, err := s.labelAction(ctx, instanceID, &workerv1.LabelActionRequest{Kind: "message", LabelId: id, Chat: m.ChatJID,
+		MessageId: m.WAMessageID, FromMe: m.FromMe, Sender: m.SenderJID, Labeled: labeled}); err != nil {
 		return err
 	}
 	if changed, err := s.Store.SetLabelMessage(ctx, instanceID, id, m.ChatJID, m.WAMessageID, labeled); err != nil {

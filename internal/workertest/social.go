@@ -28,6 +28,7 @@ type fakeSocial struct {
 	calls    []string
 	err      error
 	next     int
+	onResync func()
 }
 
 func (s *fakeSocial) init() {
@@ -206,17 +207,31 @@ func (f *FakeWA) ChannelReact(_ context.Context, jid string, serverID int64, emo
 	return err
 }
 
-func (f *FakeWA) LabelAction(_ context.Context, req *workerv1.LabelActionRequest) error {
+func (f *FakeWA) LabelAction(_ context.Context, req *workerv1.LabelActionRequest) (string, error) {
 	err := f.slock("label " + req.Kind + " " + req.LabelId)
 	defer f.soc.mu.Unlock()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !f.soc.business {
-		return status.Error(codes.FailedPrecondition, "business_account_required: labels need a WhatsApp Business account")
+		return "", status.Error(codes.FailedPrecondition, "business_account_required: labels need a WhatsApp Business account")
 	}
 	f.soc.labels = append(f.soc.labels, proto.Clone(req).(*workerv1.LabelActionRequest))
-	return nil
+	if req.Kind == "resync" && f.soc.onResync != nil {
+		f.soc.onResync() // synchronously, under the fake's lock: fn must not call the fake
+	}
+	chat := req.Chat
+	if strings.HasSuffix(chat, "@lid") { // the fake maps every LID to one phone number
+		chat = "5511977776666@s.whatsapp.net"
+	}
+	return chat, nil
+}
+
+// OnLabelResync runs fn when a label resync is requested.
+func (f *FakeWA) OnLabelResync(fn func()) {
+	f.soc.mu.Lock()
+	defer f.soc.mu.Unlock()
+	f.soc.onResync = fn
 }
 
 func (f *FakeWA) BusinessProfile(_ context.Context, jid string) (*workerv1.BusinessProfileInfo, error) {

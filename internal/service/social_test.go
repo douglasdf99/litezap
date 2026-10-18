@@ -76,7 +76,7 @@ func TestPostStatusGoesThroughTheQueue(t *testing.T) {
 		t.Fatalf("image = %+v, %v", v, err)
 	}
 	for _, bad := range []StatusInput{{Type: "poll"}, {Type: "image", Text: "x"}, {Type: "text", Text: "x", BackgroundColor: "red"},
-		{Type: "text", Text: "x", Font: 12}, {Type: "video", Font: 1}} {
+		{Type: "text", Text: "x", Font: 12}, {Type: "text", Text: "x", Font: 3}, {Type: "video", Font: 1}} {
 		if _, err := e.s.PostStatus(ctx, "i1", bad, 0); apiCode(err) != "validation_failed" {
 			t.Fatalf("%+v = %v", bad, err)
 		}
@@ -89,6 +89,10 @@ func TestPostStatusGoesThroughTheQueue(t *testing.T) {
 	chats, _ := e.svc.Chats(ctx, "i1", 10, "")
 	if len(chats.Chats) != 0 {
 		t.Fatalf("chats = %+v", chats.Chats)
+	}
+	// POST /messages cannot target a status (its routes do).
+	if _, err := e.svc.Send(ctx, "i1", SendInput{Type: "revoke", MessageID: page.Messages[1].ID}, 0); apiCode(err) != "validation_failed" {
+		t.Fatalf("revoke of a status by POST /messages = %v", err)
 	}
 	// Delete our text status for everyone.
 	if v, err := e.s.DeleteStatus(ctx, "i1", page.Messages[1].ID, 2*time.Second); err != nil || v.Type != "revoke" {
@@ -159,7 +163,7 @@ func TestChannels(t *testing.T) {
 	if _, err := e.s.Channel(ctx, "i1", "123@g.us", ""); apiCode(err) != "validation_failed" {
 		t.Fatalf("group JID = %v", err)
 	}
-	for i := 0; i < followsPerMinute; i++ {
+	for i := 0; i < 3; i++ {
 		if err := e.s.ChannelAction(ctx, "i1", "120363000000000002", "follow"); err != nil {
 			t.Fatal(i, err)
 		}
@@ -171,6 +175,21 @@ func TestChannels(t *testing.T) {
 		t.Fatalf("mute is not rate limited: %v", err)
 	}
 	e.advance(time.Minute)
+	if err := e.s.ChannelAction(ctx, "i1", other.Jid, "unfollow"); err != nil {
+		t.Fatal(err)
+	}
+	// 10 per hour: after 4, six more fit in the hour, then rate_limited until it passes.
+	for i := 0; i < 6; i++ {
+		e.advance(time.Minute)
+		if err := e.s.ChannelAction(ctx, "i1", other.Jid, "follow"); err != nil {
+			t.Fatal(i, err)
+		}
+	}
+	e.advance(time.Minute)
+	if err := e.s.ChannelAction(ctx, "i1", other.Jid, "unfollow"); apiCode(err) != "rate_limited" {
+		t.Fatalf("11th follow in an hour = %v", err)
+	}
+	e.advance(time.Hour)
 	if err := e.s.ChannelAction(ctx, "i1", other.Jid, "unfollow"); err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +228,7 @@ func TestChannels(t *testing.T) {
 		t.Fatalf("react without server id = %v", err)
 	}
 
-	for i := 0; i < createsPerDay; i++ {
+	for i := 0; i < 2; i++ {
 		e.advance(time.Minute)
 		if _, err := e.s.CreateChannel(ctx, "i1", CreateChannelInput{Name: fmt.Sprint("Canal ", i)}); err != nil {
 			t.Fatal(i, err)
@@ -315,5 +334,33 @@ func TestSocialRespectsSendingSuspension(t *testing.T) {
 	}
 	if err := e.s.ChannelAction(ctx, "i1", "120363000000000002@newsletter", "follow"); err == nil {
 		t.Fatal("follow while suspended")
+	}
+}
+
+// Labels never synced (a session paired before they were stored): creating one first asks
+// the worker for a full resync and refuses, so a new id cannot overwrite a phone label.
+func TestCreateLabelWaitsForTheSync(t *testing.T) {
+	e := newSocialEnv(t)
+	ctx := context.Background()
+	e.wa().SetProfile(&workerv1.GetProfileResponse{Jid: "5511999999999@s.whatsapp.net", BusinessName: "Loja X"})
+	e.wa().SetBusiness(true, nil)
+	name := "VIP"
+	if _, err := e.s.CreateLabel(ctx, "i1", LabelInput{Name: &name}); apiCode(err) != "app_state_not_synced" {
+		t.Fatalf("create before any label is stored = %v", err)
+	}
+	// The resync brings the phone's labels (full sync: stored without events).
+	e.obs.WorkerEvent("i1", &workerv1.Event{Kind: &workerv1.Event_Label{Label: &workerv1.LabelUpdate{Kind: "edit", LabelId: "1", Name: "Novo cliente", FullSync: true}}})
+	l, err := e.s.CreateLabel(ctx, "i1", LabelInput{Name: &name})
+	if err != nil || l.ID != "2" {
+		t.Fatalf("create after the sync = %+v, %v", l, err)
+	}
+	acts := e.wa().LabelActions()
+	if len(acts) != 2 || acts[0].Kind != "resync" || acts[1].LabelId != "2" {
+		t.Fatalf("actions = %+v", acts)
+	}
+	// A chat given by its LID is stored as the phone-number JID the phone's events use.
+	v, err := e.s.LabelChat(ctx, "i1", "2", "123456@lid", true)
+	if err != nil || len(v.Chats) != 1 || v.Chats[0] != "5511977776666@s.whatsapp.net" {
+		t.Fatalf("label by LID = %+v, %v", v, err)
 	}
 }

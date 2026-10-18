@@ -343,7 +343,7 @@ func (t *tools) registerSocial(s *sdk.Server) {
 		Name:  "follow_channel",
 		Title: "Follow or unfollow a channel",
 		Description: "Follows or unfollows a WhatsApp channel on the user's number (the phone follows too). Only when the user asks, for the channel they named. " +
-			"Limited to 3 per minute and 30 per day (rate_limited: stop, never retry in a loop).",
+			"Limited to 3 per minute, 10 per hour and 30 per day (rate_limited: stop, never retry in a loop).",
 		InputSchema: schema[followChannelInput](map[string]func(*jsonschema.Schema){"instance_id": instID}),
 		Annotations: &sdk.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(false), OpenWorldHint: ptr(true)},
 	}, func(ctx context.Context, in followChannelInput) (*sdk.CallToolResult, followOutput, error) {

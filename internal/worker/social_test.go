@@ -207,20 +207,32 @@ func TestLabelActionNeedsBusiness(t *testing.T) {
 		return types.LocalChatSettings{}, nil
 	}
 	req := &workerv1.LabelActionRequest{Kind: "chat", LabelId: "5", Chat: dm.String(), Labeled: true}
-	if c, code := codeOf(w.LabelAction(ctx, req)); c != codes.FailedPrecondition || code != "business_account_required" {
+	if c, code := codeOf(errOf(w.LabelAction(ctx, req))); c != codes.FailedPrecondition || code != "business_account_required" {
 		t.Fatalf("personal account = %v %v", c, code)
 	}
 	w.social.business = func() bool { return true }
-	if err := w.LabelAction(ctx, req); err != nil {
+	if chat, err := w.LabelAction(ctx, req); err != nil || chat != dm.String() {
+		t.Fatalf("chat = %q, %v", chat, err)
+	}
+	if _, err := w.LabelAction(ctx, &workerv1.LabelActionRequest{Kind: "edit", LabelId: "6", Name: "VIP", Color: 2}); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.LabelAction(ctx, &workerv1.LabelActionRequest{Kind: "edit", LabelId: "6", Name: "VIP", Color: 2}); err != nil {
+	if _, err := w.LabelAction(ctx, &workerv1.LabelActionRequest{Kind: "message", LabelId: "6", Chat: dm.String(), MessageId: "M1", Labeled: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.LabelAction(ctx, &workerv1.LabelActionRequest{Kind: "message", LabelId: "6", Chat: dm.String(), MessageId: "M1", Labeled: true}); err != nil {
+	if _, err := w.LabelAction(ctx, &workerv1.LabelActionRequest{Kind: "message", LabelId: "6", Chat: dm.String(), MessageId: "M2", FromMe: true, Labeled: true}); err != nil {
 		t.Fatal(err)
 	}
-	if len(sent) != 3 {
+	grp := types.NewJID("120363000000000009", types.GroupServer)
+	w.groupInfo = func(context.Context, types.JID) (*types.GroupInfo, error) { return &types.GroupInfo{}, nil }
+	if _, err := w.LabelAction(ctx, &workerv1.LabelActionRequest{Kind: "message", LabelId: "6", Chat: grp.String(), MessageId: "M3",
+		Sender: "5511777776666@s.whatsapp.net", Labeled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := codeOf(errOf(w.LabelAction(ctx, &workerv1.LabelActionRequest{Kind: "message", LabelId: "6", Chat: grp.String(), MessageId: "M4"}))); c != codes.InvalidArgument {
+		t.Fatal("a group message without its sender must be refused")
+	}
+	if len(sent) != 5 {
 		t.Fatalf("patches = %d", len(sent))
 	}
 	if idx := sent[0].Mutations[0].Index; idx[0] != appstate.IndexLabelAssociationChat || idx[1] != "5" || idx[2] != dm.String() {
@@ -229,11 +241,20 @@ func TestLabelActionNeedsBusiness(t *testing.T) {
 	if a := sent[1].Mutations[0].Value.GetLabelEditAction(); a.GetName() != "VIP" || a.GetColor() != 2 {
 		t.Fatalf("edit = %v", a)
 	}
-	if idx := sent[2].Mutations[0].Index; idx[0] != appstate.IndexLabelAssociationMessage || idx[3] != "M1" {
-		t.Fatalf("message index = %v", idx)
+	for i, want := range [][2]string{{"0", "0"}, {"1", "0"}, {"0", "5511777776666@s.whatsapp.net"}} {
+		idx := sent[2+i].Mutations[0].Index
+		if idx[0] != appstate.IndexLabelAssociationMessage || len(idx) != 6 || idx[4] != want[0] || idx[5] != want[1] ||
+			!sent[2+i].Mutations[0].Value.GetLabelAssociationAction().GetLabeled() {
+			t.Fatalf("message index %d = %v", i, idx)
+		}
 	}
-	if c, _ := codeOf(w.LabelAction(ctx, &workerv1.LabelActionRequest{Kind: "edit", LabelId: "7"})); c != codes.InvalidArgument {
+	if c, _ := codeOf(errOf(w.LabelAction(ctx, &workerv1.LabelActionRequest{Kind: "edit", LabelId: "7"}))); c != codes.InvalidArgument {
 		t.Fatal("a label without a name must be refused")
+	}
+	resynced := 0
+	w.social.resyncRegular = func(context.Context) error { resynced++; return nil }
+	if _, err := w.LabelAction(ctx, &workerv1.LabelActionRequest{Kind: "resync"}); err != nil || resynced != 1 {
+		t.Fatalf("resync = %d, %v", resynced, err)
 	}
 }
 

@@ -719,15 +719,20 @@ func (*ChannelReactResponse) Descriptor() ([]byte, []int) {
 
 type LabelActionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// edit (create, rename, recolor, delete) | chat (label/unlabel a chat) | message
-	Kind          string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
-	LabelId       string `protobuf:"bytes,2,opt,name=label_id,json=labelId,proto3" json:"label_id,omitempty"`
-	Name          string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	Color         int32  `protobuf:"varint,4,opt,name=color,proto3" json:"color,omitempty"`
-	Deleted       bool   `protobuf:"varint,5,opt,name=deleted,proto3" json:"deleted,omitempty"`
-	Chat          string `protobuf:"bytes,6,opt,name=chat,proto3" json:"chat,omitempty"`
-	MessageId     string `protobuf:"bytes,7,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
-	Labeled       bool   `protobuf:"varint,8,opt,name=labeled,proto3" json:"labeled,omitempty"`
+	// edit (create, rename, recolor, delete) | chat (label/unlabel a chat) | message |
+	// resync (fetch the regular app state collection again, where labels live: the stored
+	// labels arrive again as full-sync LabelUpdate events)
+	Kind      string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	LabelId   string `protobuf:"bytes,2,opt,name=label_id,json=labelId,proto3" json:"label_id,omitempty"`
+	Name      string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Color     int32  `protobuf:"varint,4,opt,name=color,proto3" json:"color,omitempty"`
+	Deleted   bool   `protobuf:"varint,5,opt,name=deleted,proto3" json:"deleted,omitempty"`
+	Chat      string `protobuf:"bytes,6,opt,name=chat,proto3" json:"chat,omitempty"`
+	MessageId string `protobuf:"bytes,7,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	Labeled   bool   `protobuf:"varint,8,opt,name=labeled,proto3" json:"labeled,omitempty"`
+	// message: whether the message is ours and, in groups, its author
+	FromMe        bool   `protobuf:"varint,9,opt,name=from_me,json=fromMe,proto3" json:"from_me,omitempty"`
+	Sender        string `protobuf:"bytes,10,opt,name=sender,proto3" json:"sender,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -818,8 +823,23 @@ func (x *LabelActionRequest) GetLabeled() bool {
 	return false
 }
 
+func (x *LabelActionRequest) GetFromMe() bool {
+	if x != nil {
+		return x.FromMe
+	}
+	return false
+}
+
+func (x *LabelActionRequest) GetSender() string {
+	if x != nil {
+		return x.Sender
+	}
+	return ""
+}
+
 type LabelActionResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Chat          string                 `protobuf:"bytes,1,opt,name=chat,proto3" json:"chat,omitempty"` // chat | message: the chat as events name it (phone-number JID when known)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -852,6 +872,13 @@ func (x *LabelActionResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use LabelActionResponse.ProtoReflect.Descriptor instead.
 func (*LabelActionResponse) Descriptor() ([]byte, []int) {
 	return file_worker_v1_social_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *LabelActionResponse) GetChat() string {
+	if x != nil {
+		return x.Chat
+	}
+	return ""
 }
 
 type GetBusinessProfileRequest struct {
@@ -1115,7 +1142,7 @@ const file_worker_v1_social_proto_rawDesc = "" +
 	"\x03jid\x18\x01 \x01(\tR\x03jid\x12\x1b\n" +
 	"\tserver_id\x18\x02 \x01(\x03R\bserverId\x12\x14\n" +
 	"\x05emoji\x18\x03 \x01(\tR\x05emoji\"\x16\n" +
-	"\x14ChannelReactResponse\"\xd4\x01\n" +
+	"\x14ChannelReactResponse\"\x85\x02\n" +
 	"\x12LabelActionRequest\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x19\n" +
 	"\blabel_id\x18\x02 \x01(\tR\alabelId\x12\x12\n" +
@@ -1125,8 +1152,12 @@ const file_worker_v1_social_proto_rawDesc = "" +
 	"\x04chat\x18\x06 \x01(\tR\x04chat\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\a \x01(\tR\tmessageId\x12\x18\n" +
-	"\alabeled\x18\b \x01(\bR\alabeled\"\x15\n" +
-	"\x13LabelActionResponse\"-\n" +
+	"\alabeled\x18\b \x01(\bR\alabeled\x12\x17\n" +
+	"\afrom_me\x18\t \x01(\bR\x06fromMe\x12\x16\n" +
+	"\x06sender\x18\n" +
+	" \x01(\tR\x06sender\")\n" +
+	"\x13LabelActionResponse\x12\x12\n" +
+	"\x04chat\x18\x01 \x01(\tR\x04chat\"-\n" +
 	"\x19GetBusinessProfileRequest\x12\x10\n" +
 	"\x03jid\x18\x01 \x01(\tR\x03jid\"_\n" +
 	"\rBusinessHours\x12\x10\n" +

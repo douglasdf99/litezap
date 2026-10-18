@@ -81,7 +81,7 @@ export function statusPanel(ctx) {
   text,
   h('div', { class: 'row' }, send),
   privacy,
-  h('p', { class: 'small muted' }, 'O status passa pela fila de envio (ritmo e janela de horário) e tem limite de 30 por dia por instância.'));
+  h('p', { class: 'small muted' }, 'O status passa pela fila de envio (ritmo e janela de horário) e tem limite de 10 por dia por instância.'));
 
   const card = (m) => {
     const media = m.media && m.media.id ? button('Ver mídia', async () => {
