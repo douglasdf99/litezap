@@ -297,3 +297,32 @@ func TestNoOperatorRoutesWithoutTokens(t *testing.T) {
 		t.Fatalf("role = %v", body)
 	}
 }
+
+type fakeUsage struct{ from, to, id string }
+
+func (f *fakeUsage) Usage(_ context.Context, from, to, id string) ([]store.Usage, error) {
+	f.from, f.to, f.id = from, to, id
+	return []store.Usage{{InstanceID: "i1", Day: from, MessagesSent: 3}}, nil
+}
+
+func TestUsageEndpoint(t *testing.T) {
+	fu := &fakeUsage{}
+	e := newEnvWith(t, func(o *Options) {
+		o.Operator = OperatorOptions{Tokens: []string{operator}, Usage: fu}
+	})
+	if code, _ := e.do("GET", "/v1/usage", admin, ""); code != 403 {
+		t.Fatalf("admin usage = %d", code)
+	}
+	code, out := e.do("GET", "/v1/usage?from=2026-10-01&to=2026-10-31&instance_id=i1", operator, "")
+	if code != 200 || fu.from != "2026-10-01" || fu.to != "2026-10-31" || fu.id != "i1" || len(out["usage"].([]any)) != 1 {
+		t.Fatalf("usage = %d %v %+v", code, out, fu)
+	}
+	for _, q := range []string{"?from=x", "?from=2026-10-31&to=2026-10-01", "?from=2024-01-01&to=2026-01-01"} {
+		if code, _ := e.do("GET", "/v1/usage"+q, operator, ""); code != 400 {
+			t.Errorf("usage%s = %d", q, code)
+		}
+	}
+	if code, out := e.do("GET", "/v1/usage", operator, ""); code != 200 || out["from"] == nil {
+		t.Fatalf("default range = %d %v", code, out)
+	}
+}

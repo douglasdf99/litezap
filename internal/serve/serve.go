@@ -87,27 +87,41 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	}
 	defer st.Close()
 
-	spawner.CleanupOrphans(cfg.DataDir, log)
 	cl := newCloud(cfg, st, log)
+	if err := cl.listenOps(); err != nil {
+		return err
+	}
+
+	spawner.CleanupOrphans(cfg.DataDir, log)
 	sp := &spawner.Process{DataDir: cfg.DataDir, MemoryLimitMB: cfg.WorkerMemoryMB, Log: log,
 		Env: workerEnv(st, cfg)}
-	mgr := manager.New(st, sp, manager.DefaultOptions(), log)
+	// shutdown_timeout shrinks every shutdown phase proportionally (E12).
+	scale := shutdownScale(cfg.ShutdownTimeout)
+	mopt := manager.DefaultOptions()
+	mopt.StopTimeout = scaled(mopt.StopTimeout, scale)
+	mgr := manager.New(st, sp, mopt, log)
 	resolver := &lookup.Resolver{Store: st, Workers: mgr}
 	// Events: webhooks are the bus's persistent sink; SSE streams subscribe per request.
 	day := 24 * time.Hour
 	hooks := webhook.New(st, webhook.Options{AllowPrivate: cfg.WebhookAllowPrivateURLs, Log: log,
 		Retention:       time.Duration(cfg.WebhookRetentionDays) * day,
 		FailedRetention: time.Duration(cfg.WebhookFailedRetentionDays) * day})
-	bus := events.NewBus(nil, hooks)
+	bus := events.NewBus(nil, hooks, cl.usage)
 	bus.SetLogger(log)
+	cl.attach(bus)
 	history := events.NewHistoryTracker(bus, nil, 15*time.Second)
 	q := queue.New(st, mgr, queue.Options{Defaults: cfg.InstanceDefaults, Log: log, Resolver: resolver,
 		ConnectGrace: 15 * time.Second, Events: bus, Hold: cl.sending.Held})
 	cl.sending.Wake = q.Wake
 	mgr.SetObserver(manager.Observers{
-		&ingest.Ingestor{Store: st, Log: log, Events: bus, History: history}, q, events.Observer{Bus: bus},
+		&ingest.Ingestor{Store: st, Log: log, Events: bus, History: history}, q, events.Observer{Bus: bus}, cl.proxy,
 	})
-	stopAll := func() { shutdownAll(q, mgr, history, hooks) }
+	stopAll := func() {
+		shutdownAll(q, mgr, history, hooks, scale)
+		cctx, cancel := context.WithTimeout(context.Background(), scaled(5*time.Second, scale))
+		cl.close(cctx)
+		cancel()
+	}
 	// Before any worker starts: sends interrupted by the last shutdown go back to the queue.
 	if n, err := q.Recover(ctx); err != nil {
 		stopAll()
@@ -156,10 +170,11 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 			PublicHost: publicHost(cfg.PublicURL)}),
 		AdminToken: cfg.AdminToken,
 		ProtectOps: !loopback,
-		Ready:      st.Ping,
+		Ready:      cl.health.Ready, // fails once draining (E12)
 		Webhooks:   &service.Webhooks{Store: st, Dispatcher: hooks},
 		Events:     bus,
 		Operator:   cl.operatorOptions(),
+		Metrics:    cl.metrics(),
 	}, log)
 	var codes *dashboard.LaunchCodes
 	if loopback {
@@ -185,6 +200,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		}
 		errc <- srv.Serve(ln)
 	}()
+	cl.serveOps()
 	if opt.OnListening != nil {
 		opt.OnListening(Info{URL: dashboardURL(ln.Addr().String()), DataDir: cfg.DataDir,
 			AdminToken: cfg.AdminToken, Dashboard: !cfg.DisableDashboard,
@@ -199,7 +215,8 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 			serveErr = err
 		}
 	}
-	hctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	cl.drain() // /readyz answers 503 from now on
+	hctx, cancel := context.WithTimeout(context.Background(), scaled(5*time.Second, scale))
 	if err := srv.Shutdown(hctx); err != nil {
 		// Requests still running after the grace period are cut, so none outlives the
 		// queues, workers and store stopped below.
@@ -215,15 +232,16 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 // writes before the deferred st.Close runs. Events produced until then still reach the
 // webhook outbox: the history tracker flushes, then the webhook dispatcher writes its
 // buffer and gives deliveries in flight up to 5s (cut ones are resent after the restart).
-func shutdownAll(q *queue.Queues, mgr *manager.Manager, history *events.HistoryTracker, hooks *webhook.Dispatcher) {
-	qctx, qcancel := context.WithTimeout(context.Background(), 10*time.Second)
+// scale (<= 1) shrinks every phase to fit shutdown_timeout.
+func shutdownAll(q *queue.Queues, mgr *manager.Manager, history *events.HistoryTracker, hooks *webhook.Dispatcher, scale float64) {
+	qctx, qcancel := context.WithTimeout(context.Background(), scaled(10*time.Second, scale))
 	q.Shutdown(qctx)
 	qcancel()
-	ctx, cancel := context.WithTimeout(context.Background(), manager.DefaultOptions().StopTimeout+5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scaled(manager.DefaultOptions().StopTimeout+5*time.Second, scale))
 	mgr.Shutdown(ctx)
 	cancel()
 	history.Close()
-	hctx, hcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	hctx, hcancel := context.WithTimeout(context.Background(), scaled(5*time.Second, scale))
 	defer hcancel()
 	hooks.Close(hctx)
 }

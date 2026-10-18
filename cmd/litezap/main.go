@@ -39,6 +39,7 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		mcp.Version = version
+		serve.Version = version
 		fs := flag.NewFlagSet("serve", flag.ExitOnError)
 		cfg := fs.String("config", "litezap.yaml", "config file (optional)")
 		fs.Parse(os.Args[2:])
