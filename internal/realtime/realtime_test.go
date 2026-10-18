@@ -71,7 +71,7 @@ func TestUnknownCallEnds(t *testing.T) {
 	if len(r.evs) != 1 {
 		t.Fatalf("events = %+v", r.evs)
 	}
-	if e := r.evs[0].data.(events.Call); e.Reason != "rejected_by_device" || e.Missed || e.Caller == "" {
+	if e := r.evs[0].data.(events.Call); e.Reason != "rejected_by_peer" || e.Missed || e.Caller == "" {
 		t.Fatalf("ended = %+v", e)
 	}
 }
@@ -138,5 +138,87 @@ func TestCallMemoryEvictsOldest(t *testing.T) {
 	}
 	if _, ok := h.calls[fmt.Sprint("i1|C", maxCalls+4)]; !ok {
 		t.Fatal("newest call evicted")
+	}
+}
+
+func selfReject(id string) *workerv1.Event {
+	return &workerv1.Event{Kind: &workerv1.Event_Call{Call: &workerv1.Call{CallId: id, Kind: "reject",
+		Caller: "5511@s.whatsapp.net", FromSelf: true}}}
+}
+
+func terminate(id, reason string) *workerv1.Event {
+	return &workerv1.Event{Kind: &workerv1.Event_Call{Call: &workerv1.Call{CallId: id, Kind: "terminate",
+		Caller: "5511@s.whatsapp.net", Reason: reason}}}
+}
+
+func (r *rec) types() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for _, e := range r.evs {
+		out = append(out, e.typ)
+	}
+	return out
+}
+
+func (r *rec) last() events.Call {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.evs[len(r.evs)-1].data.(events.Call)
+}
+
+// The sequence seen on a real phone: offer, then right away a reject from one of the
+// account's own devices, then (seconds later) the real end of the call.
+func TestRejectFromOwnDeviceDoesNotEndCall(t *testing.T) {
+	h, r := newHandler(settings.Defaults(), nil)
+	defer h.Close()
+	// Caller hung up before anyone answered: missed.
+	h.WorkerEvent("i1", call("offer", "P1"))
+	h.WorkerEvent("i1", selfReject("P1"))
+	if got := r.types(); len(got) != 1 || got[0] != events.TypeCallReceived {
+		t.Fatalf("own-device reject ended the call: %v", got)
+	}
+	h.WorkerEvent("i1", terminate("P1", ""))
+	if e := r.last(); len(r.types()) != 2 || !e.Missed || e.Reason != "" {
+		t.Fatalf("hung up = %v %+v", r.types(), e)
+	}
+	// Answered on the phone: the terminate says accepted_elsewhere, not missed.
+	h.WorkerEvent("i1", call("offer", "P2"))
+	h.WorkerEvent("i1", selfReject("P2"))
+	h.WorkerEvent("i1", terminate("P2", "accepted_elsewhere"))
+	if e := r.last(); e.CallID != "P2" || e.Missed || e.Reason != "accepted_elsewhere" {
+		t.Fatalf("answered elsewhere = %+v", e)
+	}
+	// Answered with an accept from our own phone, then terminated.
+	h.WorkerEvent("i1", call("offer", "P3"))
+	h.WorkerEvent("i1", selfReject("P3"))
+	h.WorkerEvent("i1", &workerv1.Event{Kind: &workerv1.Event_Call{Call: &workerv1.Call{CallId: "P3", Kind: "accept", FromSelf: true}}})
+	h.WorkerEvent("i1", terminate("P3", ""))
+	if e := r.last(); e.CallID != "P3" || e.Missed {
+		t.Fatalf("accepted = %+v", e)
+	}
+}
+
+// Without a terminate the call ends after CallTimeout (reason timeout).
+func TestCallTimeoutEndsCall(t *testing.T) {
+	h, r := newHandler(settings.Defaults(), nil)
+	h.CallTimeout = 50 * time.Millisecond
+	defer h.Close()
+	h.WorkerEvent("i1", call("offer", "T1"))
+	h.WorkerEvent("i1", selfReject("T1"))
+	deadline := time.Now().Add(2 * time.Second)
+	for len(r.types()) < 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("call never timed out")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if e := r.last(); e.Reason != "timeout" || !e.Missed || e.CallID != "T1" {
+		t.Fatalf("timeout = %+v", e)
+	}
+	h.WorkerEvent("i1", terminate("T1", "")) // late terminate: no second call.ended
+	time.Sleep(80 * time.Millisecond)
+	if n := len(r.types()); n != 2 {
+		t.Fatalf("events = %v", r.types())
 	}
 }

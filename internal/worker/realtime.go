@@ -3,11 +3,13 @@ package worker
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"go.mau.fi/whatsmeow"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/grpc/codes"
@@ -140,28 +142,64 @@ func callMedia(e *events.CallOffer) string {
 	return "audio"
 }
 
+// ownUser reports whether jid is the account itself (phone-number JID or LID, any device).
+func (w *Whatsmeow) ownUser(jid types.JID) bool {
+	if jid.IsEmpty() || w.cli.Store == nil {
+		return false
+	}
+	if own := w.cli.Store.GetJID(); !own.IsEmpty() && own.User == jid.User && own.Server == jid.Server {
+		return true
+	}
+	lid := w.cli.Store.GetLID()
+	return !lid.IsEmpty() && lid.User == jid.User && lid.Server == jid.Server
+}
+
+// callData summarizes a call stanza's child for the debug log without any JID: its tag,
+// its children's tags and its attribute names.
+func callData(n *waBinary.Node) (tag string, children, attrs []string) {
+	if n == nil {
+		return "", nil, nil
+	}
+	for _, c := range n.GetChildren() {
+		children = append(children, c.Tag)
+	}
+	for k := range n.Attrs {
+		attrs = append(attrs, k)
+	}
+	slices.Sort(attrs)
+	return n.Tag, children, attrs
+}
+
 // toCall normalizes the call events we report; nil for the others (relay latency,
 // transport, pre-accept: internal signalling).
 func (w *Whatsmeow) toCall(evt any) (*workerv1.Call, types.BasicCallMeta, bool) {
 	var c workerv1.Call
 	var meta types.BasicCallMeta
+	var data *waBinary.Node
 	switch e := evt.(type) {
 	case *events.CallOffer:
-		c.Kind, c.Media, meta = "offer", callMedia(e), e.BasicCallMeta
+		c.Kind, c.Media, meta, data = "offer", callMedia(e), e.BasicCallMeta, e.Data
 	case *events.CallOfferNotice:
-		c.Kind, c.Media, meta = "offer_notice", e.Media, e.BasicCallMeta
+		c.Kind, c.Media, meta, data = "offer_notice", e.Media, e.BasicCallMeta, e.Data
 	case *events.CallAccept:
-		c.Kind, meta = "accept", e.BasicCallMeta
+		c.Kind, meta, data = "accept", e.BasicCallMeta, e.Data
 	case *events.CallTerminate:
-		c.Kind, c.Reason, meta = "terminate", e.Reason, e.BasicCallMeta
+		c.Kind, c.Reason, meta, data = "terminate", e.Reason, e.BasicCallMeta, e.Data
 	case *events.CallReject:
-		c.Kind, meta = "reject", e.BasicCallMeta
+		c.Kind, meta, data = "reject", e.BasicCallMeta, e.Data
 	default:
 		return nil, meta, false
 	}
 	if meta.CallID == "" {
 		return nil, meta, false
 	}
+	c.FromSelf = w.ownUser(meta.From)
+	// Trace of call signalling on real devices (a few lines per call, at Info so the default
+	// log shows it); users are never logged, only servers and device numbers.
+	tag, children, attrs := callData(data)
+	w.log.Info("call signal", "kind", c.Kind, "from_self", c.FromSelf, "from_server", meta.From.Server,
+		"from_device", meta.From.Device, "creator_self", w.ownUser(meta.CallCreator), "reason", c.Reason,
+		"data_tag", tag, "data_children", children, "data_attrs", attrs)
 	creator := meta.CallCreator
 	if creator.IsEmpty() {
 		creator = meta.From
@@ -223,8 +261,12 @@ func (w *Whatsmeow) onRealtime(evt any) bool {
 			creator = meta.From
 		}
 		w.calls.add(c.CallId, creator, time.Now())
-	case "terminate", "reject":
+	case "terminate":
 		w.calls.remove(c.CallId)
+	case "reject":
+		if !c.FromSelf { // our own devices' rejects do not end the call (see realtime package)
+			w.calls.remove(c.CallId)
+		}
 	}
 	w.sink.Data(&workerv1.Event{Kind: &workerv1.Event_Call{Call: c}})
 	return true

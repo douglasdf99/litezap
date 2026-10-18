@@ -1513,7 +1513,7 @@ components:
         is_group: { type: boolean }
         media: { type: string, enum: [audio, video] }
         rejected: { type: boolean, description: "call.received: rejeitada por `calls.auto_reject`." }
-        reason: { type: string, description: "call.ended: motivo do WhatsApp, `rejected` ou `rejected_by_device`." }
+        reason: { type: string, description: "call.ended: motivo do WhatsApp (ex.: `accepted_elsewhere`), `rejected` (por esta instância), `rejected_by_peer` ou `timeout` (sem sinal de fim em 2 min)." }
         missed: { type: boolean, description: "call.ended: tocou sem ninguém atender." }
         timestamp: { type: string, format: date-time }
     SettingsPatch:
@@ -2181,8 +2181,10 @@ webhooks:
       x-zapi: Webhook de chamadas
       description: |
         A chamada terminou; sai uma vez por chamada. `missed: true` quando tocou sem ninguém atender e
-        não foi rejeitada. `reason` traz o motivo do WhatsApp, `rejected` (rejeitada por esta instância)
-        ou `rejected_by_device` (rejeitada num aparelho da conta).
+        não foi rejeitada. `reason` traz o motivo do WhatsApp (ex.: `accepted_elsewhere`), `rejected`
+        (rejeitada por esta instância), `rejected_by_peer` ou `timeout` (nenhum sinal de fim em 2
+        minutos). O celular manda aos aparelhos vinculados um "reject" logo depois da oferta, atendendo
+        ou não; esse sinal dos nossos próprios aparelhos não encerra a chamada.
       x-related: [call.received, call.accepted]
       x-fields:
         - [call_id, string, "Id da chamada."]

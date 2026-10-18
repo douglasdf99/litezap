@@ -41,3 +41,13 @@ Data: 2026-10-18 · Branch: `feat/m7-events` (a partir de `main`) · Spec: `2026
 - Mensagem de rejeição enfileirada em segundo plano (o loop de eventos da instância só espera a rejeição); `Handler.Close` no shutdown.
 - `SubscribePresence` passa pela suspensão de envio do operador; cota diária de 200.
 - `message.status` não carrega `from_me` (o filtro `from_me:false` não esconde status); chats de filtro só aceitam `s.whatsapp.net`, `g.us` e `lid`; memória de chamadas descarta a mais antiga.
+
+## Teste com celular real: "reject" do próprio aparelho
+
+Duas ligações reais (contato desligou antes; atendida no celular) deram `call.received` seguido, no mesmo segundo, de um `events.CallReject` e nenhum `CallAccept`, com `auto_reject` desligado.
+
+- whatsmeow (`call.go`, `handleCallEvent`): todo `<call>` com um filho `<reject>` vira `events.CallReject`; `From` é o atributo `from` do stanza, `CallCreator`/`CallID` vêm do filho. Não há campo de motivo nem distinção de origem: o próprio whatsmeow não sabe se o reject é do outro lado ou de um aparelho nosso. Também não há nada que mande `accept`/`terminate` aos companheiros: o que chega depende do servidor do WhatsApp.
+- Hipótese (a confirmar com o log `call signal`): o celular (ou o servidor em nome dele) avisa os aparelhos vinculados que não atendem chamadas, como um companheiro "Chrome (Linux)", com um `reject` vindo do próprio usuário. Por isso chega no mesmo segundo da oferta, atendendo ou não.
+- Correção: o worker marca `from_self` quando o `From` é o próprio usuário (JID de telefone ou LID, qualquer aparelho). O supervisor ignora esse `reject` (log "call reject from own device ignored") e espera o `terminate`. Todo sinal reinicia um prazo de 2 min; sem fim nesse prazo sai `call.ended` com `reason: timeout` (e `missed` se ninguém atendeu). Um `reject` do outro lado encerra com `reason: rejected_by_peer`. `terminate` com `accepted_elsewhere` conta como atendida.
+- Não confirmado no código: se um companheiro recebe `CallAccept` quando o celular atende. Pelo teste real, não recebe; se nem o `terminate` chegar, a chamada atendida acaba como `timeout` com `missed: true` (limitação documentada).
+- Log `call signal` no worker (Info): tipo, `from_self`, servidor e número do aparelho de origem, se o criador é a própria conta, motivo, tag do filho, tags dos netos e nomes dos atributos. Nenhum usuário/telefone.

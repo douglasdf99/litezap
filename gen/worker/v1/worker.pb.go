@@ -609,14 +609,18 @@ func (x *Presence) GetLastSeenMs() int64 {
 // accept (answered on one of the account's devices) | terminate (ended) | reject
 // (rejected by a device of the account or by the other side).
 type Call struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CallId        string                 `protobuf:"bytes,1,opt,name=call_id,json=callId,proto3" json:"call_id,omitempty"`
-	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	Caller        string                 `protobuf:"bytes,3,opt,name=caller,proto3" json:"caller,omitempty"` // call creator, phone-number JID when known
-	Group         string                 `protobuf:"bytes,4,opt,name=group,proto3" json:"group,omitempty"`   // group JID for group calls
-	Media         string                 `protobuf:"bytes,5,opt,name=media,proto3" json:"media,omitempty"`   // audio | video ("" when unknown)
-	TimestampMs   int64                  `protobuf:"varint,6,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
-	Reason        string                 `protobuf:"bytes,7,opt,name=reason,proto3" json:"reason,omitempty"` // terminate reason as sent by WhatsApp
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	CallId      string                 `protobuf:"bytes,1,opt,name=call_id,json=callId,proto3" json:"call_id,omitempty"`
+	Kind        string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	Caller      string                 `protobuf:"bytes,3,opt,name=caller,proto3" json:"caller,omitempty"` // call creator, phone-number JID when known
+	Group       string                 `protobuf:"bytes,4,opt,name=group,proto3" json:"group,omitempty"`   // group JID for group calls
+	Media       string                 `protobuf:"bytes,5,opt,name=media,proto3" json:"media,omitempty"`   // audio | video ("" when unknown)
+	TimestampMs int64                  `protobuf:"varint,6,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
+	Reason      string                 `protobuf:"bytes,7,opt,name=reason,proto3" json:"reason,omitempty"` // terminate reason as sent by WhatsApp
+	// The signal came from one of the account's own devices (its phone or another
+	// companion), not from the other party: e.g. the phone telling companions it handles
+	// the call. Such a reject does not end the call.
+	FromSelf      bool `protobuf:"varint,8,opt,name=from_self,json=fromSelf,proto3" json:"from_self,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -698,6 +702,13 @@ func (x *Call) GetReason() string {
 		return x.Reason
 	}
 	return ""
+}
+
+func (x *Call) GetFromSelf() bool {
+	if x != nil {
+		return x.FromSelf
+	}
+	return false
 }
 
 // ConnState.state uses the instance.State strings:
@@ -2917,7 +2928,7 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x03jid\x18\x01 \x01(\tR\x03jid\x12\x16\n" +
 	"\x06online\x18\x02 \x01(\bR\x06online\x12 \n" +
 	"\flast_seen_ms\x18\x03 \x01(\x03R\n" +
-	"lastSeenMs\"\xb2\x01\n" +
+	"lastSeenMs\"\xcf\x01\n" +
 	"\x04Call\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x16\n" +
@@ -2925,7 +2936,8 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x05group\x18\x04 \x01(\tR\x05group\x12\x14\n" +
 	"\x05media\x18\x05 \x01(\tR\x05media\x12!\n" +
 	"\ftimestamp_ms\x18\x06 \x01(\x03R\vtimestampMs\x12\x16\n" +
-	"\x06reason\x18\a \x01(\tR\x06reason\"K\n" +
+	"\x06reason\x18\a \x01(\tR\x06reason\x12\x1b\n" +
+	"\tfrom_self\x18\b \x01(\bR\bfromSelf\"K\n" +
 	"\tConnState\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x10\n" +
