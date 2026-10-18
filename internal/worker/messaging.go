@@ -136,11 +136,15 @@ func (w *Whatsmeow) Send(ctx context.Context, req *workerv1.SendRequest) (*worke
 	if err != nil || to.User == "" {
 		return nil, grpcErr(codes.InvalidArgument, "invalid_number", "invalid recipient JID")
 	}
-	msg, err := w.build(ctx, to, req)
+	// Status posts and channel posts are built apart (social.go).
+	msg, handle, special, err := w.buildSpecial(ctx, to, req)
+	if !special && err == nil {
+		msg, err = w.build(ctx, to, req)
+	}
 	if err != nil {
 		return nil, err
 	}
-	resp, err := w.cli.SendMessage(ctx, to, msg, whatsmeow.SendRequestExtra{ID: types.MessageID(req.MessageId)})
+	resp, err := w.cli.SendMessage(ctx, to, msg, whatsmeow.SendRequestExtra{ID: types.MessageID(req.MessageId), MediaHandle: handle})
 	if err != nil {
 		return nil, sendErr(err)
 	}

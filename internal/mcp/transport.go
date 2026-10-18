@@ -23,6 +23,7 @@ type HTTPDeps struct {
 	Events    *events.Bus
 	Groups    GroupService     // marco 8; nil: the group tools answer not_implemented
 	Account   AccountService   // marco 9 tools
+	Social    SocialService    // marco 10 tools
 	Attendant AttendantService // built-in attendant read tools (spec 4.7)
 	Version   string
 	Logger    *slog.Logger
@@ -53,7 +54,7 @@ func NewHTTPHandler(d HTTPDeps) http.Handler {
 			return s.(*sdk.Server)
 		}
 		b := &Local{Instances: d.Instances, Messaging: d.Messaging, Events: d.Events, Groups: d.Groups, Caller: sc, Account: d.Account,
-			Attendant: d.Attendant}
+			Social: d.Social, Attendant: d.Attendant}
 		s, _ := servers.LoadOrStore(sc, NewServer(b, Options{Version: d.Version, Logger: d.Logger, SchemaCache: cache}))
 		return s.(*sdk.Server)
 	}, &sdk.StreamableHTTPOptions{Stateless: true, Logger: d.Logger, DisableLocalhostProtection: d.PublicHost != ""})

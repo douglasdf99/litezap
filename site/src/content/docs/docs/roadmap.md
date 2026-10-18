@@ -21,7 +21,7 @@ prometidas; a ordem é.
 | M7 | Eventos completos e chamadas | <span class="lz-badge lz-badge--soon">Planejado</span> |
 | M8 | Grupos e comunidades | <span class="lz-badge lz-badge--soon">Planejado</span> |
 | M9 | Chats, contatos, perfil, privacidade e conta | <span class="lz-badge lz-badge--soon">Planejado</span> |
-| M10 | Status, canais e Business | <span class="lz-badge lz-badge--soon">Planejado</span> |
+| M10 | Status, canais e Business | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | M11 | Plataforma e parceiros | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | App local v2 | Instaladores, assinatura de código, atualização automática, iniciar com o sistema, túnel opcional | <span class="lz-badge lz-badge--soon">Planejado</span> |
 | Nuvem | Projeto pré-instalado por cliente, IPs gerenciados, backups e upgrades | <span class="lz-badge lz-badge--soon">Planejado</span> |
@@ -57,7 +57,9 @@ contatos; nome, recado e foto do perfil; privacidade; leitura automática; passk
 
 ### M10: status, canais e Business
 
-Publicar e receber status; criar, seguir, silenciar e publicar em canais; etiquetas e perfil comercial (leitura).
+Publicar e receber status (`status.received`, opt-in), responder e apagar; criar, seguir, silenciar, ler, reagir e
+publicar em canais; etiquetas (`label.updated`) e perfil comercial (leitura). Adiados: leitura automática de status,
+eventos de agenda, produto/catálogo e download da mídia de canais.
 
 ### M11: plataforma e parceiros
 

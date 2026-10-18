@@ -102,6 +102,7 @@ func Run(ctx context.Context, opt Options, log *slog.Logger) error {
 	g := grpc.NewServer(wire.ServerOptions()...)
 	workerv1.RegisterWorkerServer(g, srv)
 	workerv1.RegisterGroupsServer(g, NewGroupsServer(srv))
+	workerv1.RegisterSocialServer(g, NewSocialServer(srv))
 
 	stopped := make(chan struct{})
 	// Runs before db.Close: cancel so the shutdown goroutine always finishes, then wait for it.

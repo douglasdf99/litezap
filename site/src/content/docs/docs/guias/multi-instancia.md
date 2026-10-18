@@ -85,7 +85,7 @@ curl -X POST https://zap.seu-dominio.com/v1/instances/inst_7f3a9c2e5b1d4086/api-
 
 | Escopo | Pode | Não pode |
 |---|---|---|
-| `read` | `GET` da instância, mensagens, fila, chats, contatos, mídia, grupos, perfil, privacidade, eventos (SSE), uso | QR, configurações, hook de agente, convites de grupo, qualquer escrita |
+| `read` | `GET` da instância, mensagens, fila, chats, contatos, mídia, grupos, perfil, privacidade, eventos (SSE), uso, status, canais, etiquetas, perfil comercial | QR, configurações, hook de agente, convites de grupo, qualquer escrita |
 | `send` | `POST /messages` e `GET /messages/{msg_id}` | todo o resto |
 
 Chaves nunca acessam `/mcp`, webhooks, ciclo de vida (start/stop/logout) nem a gestão de chaves. Uma chave também respeita a `ip_allowlist` da instância; no stream SSE ela nunca recebe `instance.qr` nem `instance.pair_code`, e um stream aberto é encerrado em até um heartbeat (15s) quando a chave é revogada, expira ou sai da allowlist. Rotacionar o token da instância revoga as chaves criadas com ele (as criadas pelo admin continuam).

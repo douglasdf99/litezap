@@ -87,7 +87,45 @@ message Event {
     Call call = 8;
     GroupUpdate group = 20; // marco 8 (groups.proto)
     ChatUpdate chat_update = 21; // marco 9
+    // Marco 10: a contact's status (story) post, a channel post and a label change.
+    Message status = 30; // chat "status@broadcast", sender: the author
+    ChannelPost channel_post = 31;
+    LabelUpdate label = 32;
   }
+}
+
+// ChannelPost is a message published in a channel (newsletter) the account follows.
+message ChannelPost {
+  string channel = 1; // "<id>@newsletter"
+  int64 server_id = 2; // the channel's message number (reactions use it)
+  Message message = 3; // id, type, text, media metadata (media.ref is empty)
+  int64 views = 4;
+  map<string, int64> reactions = 5; // emoji -> count
+}
+
+// LabelUpdate is a WhatsApp Business label change from the app state (any device,
+// including the echo of this worker's own LabelAction). kind: edit | chat | message.
+message LabelUpdate {
+  string kind = 1;
+  string label_id = 2;
+  // edit
+  string name = 3;
+  int32 color = 4;
+  bool deleted = 5;
+  int32 predefined_id = 6;
+  // chat | message: the chat (phone-number JID when known), the message and the new state
+  string chat = 7;
+  string message_id = 8;
+  bool labeled = 9;
+  int64 timestamp_ms = 10;
+  bool full_sync = 11;
+}
+
+// StatusStyle is the look of a text status (sent to status@broadcast).
+message StatusStyle {
+  uint32 background_argb = 1; // 0: WhatsApp's default
+  uint32 text_argb = 2;
+  int32 font = 3; // ExtendedTextMessage.FontType (0 system ... 5)
 }
 
 // ChatPresence is a typing notification (only received while the account is available).
@@ -202,6 +240,8 @@ message Quote {
   bool from_me = 2;
   string sender = 3;     // author JID (received messages)
   string text = 4;       // shown in the quote preview
+  // remote_jid: the quoted message is in another chat (a status: "status@broadcast")
+  string remote_jid = 5;
 }
 
 message LinkPreview {
@@ -271,6 +311,7 @@ message SendRequest {
   string forward_kind = 25;
   bytes forward_ref = 26;
   bool forwarded = 27;
+  StatusStyle status_style = 28; // text to status@broadcast
 }
 message SendResponse {
   string message_id = 1;

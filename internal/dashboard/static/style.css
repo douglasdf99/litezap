@@ -275,6 +275,12 @@ textarea { resize: vertical; width: 100%; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: .75rem; }
 ul.plain { list-style: none; padding: 0; margin: 0 0 .75rem; }
 ul.plain li { padding: .25rem 0; }
+/* marco 10: status, channels, labels */
+.stack { display: flex; flex-direction: column; gap: .75rem; }
+.status-list { display: flex; flex-direction: column; gap: .5rem; }
+.status-item p { margin: .4rem 0; }
+.label-swatch { display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; vertical-align: middle; }
+.btn.tiny { padding: 0 .3rem; font-size: .7rem; margin-left: .2rem; }
 
 /* marco 11 */
 .pair-wrap > .card { margin-bottom: 1rem; }

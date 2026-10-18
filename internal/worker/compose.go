@@ -363,6 +363,14 @@ func (w *Whatsmeow) contextInfo(ctx context.Context, to types.JID, req *workerv1
 		ci.QuotedMessage = &waE2E.Message{Conversation: proto.String(q.Text)}
 		var author types.JID
 		switch {
+		case q.RemoteJid != "":
+			// A message of another chat (a contact's status): its author must be given.
+			a, err := parseOptJID(q.Sender)
+			if err != nil || a.IsEmpty() {
+				return nil, nil, invalid("the author of the quoted message is required")
+			}
+			ci.RemoteJID = proto.String(q.RemoteJid)
+			author = a
 		case q.FromMe:
 			pn, lid := w.ownJIDs()
 			author = pn

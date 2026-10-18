@@ -11,7 +11,5 @@ catálogo, com payload e exemplos, quando o marco for entregue. Os nomes são a 
 | Tipo | Quando será emitido | Marco |
 |---|---|---|
 | `chat.updated` | Chat arquivado, fixado ou silenciado (inclusive pelo celular) | M9 |
-| `status.received` | Status publicado por um contato (desligado por padrão) | M10 |
-| `label.updated` | Etiqueta criada, alterada ou atribuída (Business) | M10 |
 
 Quedas de proxy têm evento próprio desde o M11: [`instance.proxy_failed`](/docs/eventos/instance-proxy-failed/).

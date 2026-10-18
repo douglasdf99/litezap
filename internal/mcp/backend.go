@@ -66,6 +66,7 @@ type Local struct {
 	Groups    GroupService // nil: the group tools answer not_implemented (marco 8)
 	Caller    service.Scope
 	Account   AccountService   // marco 9 tools (nil: they answer not_implemented)
+	Social    SocialService    // marco 10 tools (nil: they answer not_implemented)
 	Attendant AttendantService // built-in attendant read tools (nil: not_implemented)
 }
 

@@ -158,6 +158,7 @@ func (p *Process) Start(ctx context.Context, id string) (WorkerHandle, error) {
 	}
 	h.client = workerv1.NewWorkerClient(conn)
 	h.groups = workerv1.NewGroupsClient(conn)
+	h.social = workerv1.NewSocialClient(conn)
 	// The socket file exists from bind(), slightly before listen(); wait until the worker answers.
 	pctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -202,6 +203,7 @@ type procHandle struct {
 	pidFile string
 	client  workerv1.WorkerClient
 	groups  workerv1.GroupsClient
+	social  workerv1.SocialClient
 	stdin   io.Closer
 
 	mu     sync.Mutex
@@ -214,6 +216,9 @@ func (h *procHandle) Done() <-chan struct{}         { return h.done }
 
 // Groups is the Groups service of the worker (marco 8), on the same connection.
 func (h *procHandle) Groups() workerv1.GroupsClient { return h.groups }
+
+// Social is the Social service of the worker (marco 10), on the same connection.
+func (h *procHandle) Social() workerv1.SocialClient { return h.social }
 
 func (h *procHandle) closeConn() {
 	h.mu.Lock()

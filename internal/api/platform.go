@@ -78,11 +78,14 @@ func (s *server) keyStillValid(r *http.Request) bool {
 }
 
 // Routes an API key may call, by scope. Anything else is refused (fail closed): no
-// lifecycle, settings, QR, webhooks, agent hook, group invites, MCP or admin routes.
+// lifecycle, settings, QR, webhooks, agent hook, group invites, MCP or admin routes; no
+// status, channel or label writes (marco 10).
 var (
 	keyReadRe = regexp.MustCompile(`^/v1/(me|instances/[^/]+/?|instances/[^/]+/(messages/[^/]+|queue|chats|chats/[^/]+|chats/[^/]+/messages|` +
 		`contacts|contacts/[^/]+|contacts/[^/]+/(picture|profile)|media/[^/]+|groups|groups/[^/]+|communities|communities/[^/]+|` +
-		`communities/[^/]+/groups|blocklist|profile|profile/picture|privacy|events|usage))$`)
+		`communities/[^/]+/groups|blocklist|profile|profile/picture|privacy|events|usage|` +
+		// marco 10 reads (no secrets): statuses, channels, labels, business profile
+		`status|status/privacy|channels|channels/[^/]+|channels/[^/]+/messages|labels|business/profile))$`)
 	keySendPostRe = regexp.MustCompile(`^/v1/instances/[^/]+/messages$`)
 	keySendGetRe  = regexp.MustCompile(`^/v1/(me|instances/[^/]+/messages/[^/]+)$`)
 )
