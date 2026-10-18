@@ -2,6 +2,8 @@
 
 Data: 2026-10-18 · Branch: `feat/cloud-c1-engine` (a partir de `integration/preview`) · Spec: `docs/superpowers/specs/2026-10-18-litezap-cloud-design.md` (branch `docs/cloud-spec`), seção 9 e roteiro C1 (seção 10), decisões D5 e D13 aprovadas.
 
+Hospedagem: o spec original assumia Fly.io; o usuário trocou para AWS `sa-east-1` (uma EC2 por projeto, segredos no SSM Parameter Store, Caddy + Let's Encrypt em hostnames `sslip.io`). Nada no motor depende de provedor: a configuração é 100% por ambiente (arquivo de ambiente do systemd/Docker gerado a partir do SSM), o `ops_listen_addr` fica no IP privado para health check e Prometheus, e `shutdown_timeout` fica abaixo do `TimeoutStopSec`/`docker stop -t`. Exemplo completo no README ("Hospedagem gerenciada").
+
 Regra geral: **sem a configuração nova o motor se comporta exatamente como hoje** (self-host e app local). Tudo é opt-in por `litezap.yaml` ou `LITEZAP_*`. Para reduzir conflitos com o marco 6 (`feat/m6-messages`), o código novo fica em arquivos/pacotes novos e as edições em arquivos compartilhados são pontuais.
 
 ## Escopo do C1 no motor (spec: "Motor: E1–E9, E11–E13, E15, E17")
@@ -18,7 +20,7 @@ Regra geral: **sem a configuração nova o motor se comporta exatamente como hoj
 | E8 exportação | `POST /v1/export` (admin/operador): `tar.gz` com `litezap.db` (backup online `VACUUM INTO`, sem webhooks do operador), mídia e `manifest.json`; `upload_url` (PUT numa URL pré-assinada HTTPS) só para o operador. Importação fica para o C2 | `internal/export` |
 | E9 logs JSON | `LITEZAP_LOG_FORMAT=json` (supervisor e workers) | `cmd/litezap` |
 | E11 uso persistido | tabela `usage_daily` (instância × dia UTC: enviadas pela API, recebidas, bytes de mídia, segundos conectada, entregas de webhook) gravada a cada 30 s e no shutdown; `GET /v1/usage?from=&to=` (operador) | `internal/usage`, `store` |
-| E12 upgrade gracioso | `/readyz` responde 503 assim que o sinal chega; `shutdown_timeout` limita o encerramento inteiro (para caber no `kill_timeout` do Fly) | `serve` |
+| E12 upgrade gracioso | `/readyz` responde 503 assim que o sinal chega; `shutdown_timeout` limita o encerramento inteiro (para caber no prazo entre SIGTERM e SIGKILL da plataforma: `TimeoutStopSec` do systemd, `docker stop -t`) | `serve` |
 | E13 watchdog de conexão zumbi | `zombie_timeout` (padrão 0 = desligado, para não mudar o self-host; nuvem usa 5m): worker que reportou `connected` mas está sem socket, ou preso em `keepalive_timeout` com socket "aberto", por mais que o limite → reconexão forçada (`reason: zombie_watchdog`) | `internal/worker/watchdog.go` |
 | E15 limpeza | `media_retention_days` (apaga cópias locais vencidas; baixa de novo sob demanda) e `message_retention_days` (apaga log, mídia e itens finalizados da fila mais velhos); ambos 0 = desligado (hoje) | `internal/retention` |
 | E17 envio suspenso | operador suspende o envio global ou por instância (`PUT /v1/operator/sending`, `PUT /v1/operator/instances/{id}/sending`): novos envios → `403 sending_suspended` (API e MCP), itens já na fila ficam retidos até liberar | `service`, `queue` (gancho mínimo) |

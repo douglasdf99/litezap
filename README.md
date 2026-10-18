@@ -38,7 +38,7 @@ Configuração (`litezap.yaml`; variáveis `LITEZAP_*` têm precedência):
 | `message_retention_days` | `LITEZAP_MESSAGE_RETENTION_DAYS` | `0` (guarda o log para sempre) |
 | `media_retention_days` | `LITEZAP_MEDIA_RETENTION_DAYS` | `0` (cópias locais de mídia nunca são apagadas) |
 | `zombie_timeout` | `LITEZAP_ZOMBIE_TIMEOUT` | `0` (watchdog de conexão desligado; ex.: `5m`) |
-| `shutdown_timeout` | `LITEZAP_SHUTDOWN_TIMEOUT` | `0` (fases padrão, até ~40s; ex.: `25s` para caber num `kill_timeout` de 30s) |
+| `shutdown_timeout` | `LITEZAP_SHUTDOWN_TIMEOUT` | `0` (fases padrão, até ~40s; ex.: `25s` para caber num prazo de parada de 30s, ex.: `TimeoutStopSec=30` do systemd ou `docker stop -t 30`) |
 | `ops_listen_addr` | `LITEZAP_OPS_LISTEN_ADDR` | vazio (veja [Hospedagem gerenciada](#hospedagem-gerenciada-operador)) |
 | `operator_token`, `locked_settings`, `max_instances`, `require_proxy` | `LITEZAP_OPERATOR_TOKEN`, `LITEZAP_LOCKED_SETTINGS`, `LITEZAP_MAX_INSTANCES`, `LITEZAP_REQUIRE_PROXY` | desligados (veja [Hospedagem gerenciada](#hospedagem-gerenciada-operador)) |
 
@@ -518,7 +518,32 @@ Opções para rodar o LiteZap como serviço para terceiros (a nuvem gerenciada u
 
 Métricas em `/metrics`: `litezap_instances{state}`, `litezap_queue_messages{status}`, `litezap_webhook_deliveries{status}`, `litezap_messages_sent_total`, `litezap_messages_received_total`, `litezap_media_bytes_total`, `litezap_instance_state_changes_total{state}`, `litezap_proxy_failures_total`, `litezap_proxy_unreachable_instances`, `litezap_sending_suspended`, `litezap_sending_suspended_instances`, `litezap_ready`, `litezap_draining`, `litezap_build_info{version}` e métricas básicas do runtime Go do supervisor.
 
-Exemplo (Fly.io, só por segredos): `LITEZAP_LISTEN_ADDR=0.0.0.0:8080`, `LITEZAP_OPS_LISTEN_ADDR=[::]:9090`, `LITEZAP_PUBLIC_URL`, `LITEZAP_ADMIN_TOKEN`, `LITEZAP_OPERATOR_TOKEN`, `LITEZAP_LOCKED_SETTINGS=proxy_url,unsafe_pacing`, `LITEZAP_REQUIRE_PROXY=true`, `LITEZAP_MAX_INSTANCES`, `LITEZAP_ZOMBIE_TIMEOUT=5m`, `LITEZAP_SHUTDOWN_TIMEOUT=25s`, `LITEZAP_MEDIA_RETENTION_DAYS=7`, `LITEZAP_MESSAGE_RETENTION_DAYS=90`, `LITEZAP_LOG_FORMAT=json`.
+Toda a configuração cabe em variáveis de ambiente, então serve para qualquer provedor (VM, container, systemd). Regras gerais: segredos (`LITEZAP_ADMIN_TOKEN`, `LITEZAP_OPERATOR_TOKEN`) vêm do cofre do provedor, nunca de arquivo no volume de dados; o `ops_listen_addr` fica numa interface privada (health check e Prometheus); `shutdown_timeout` fica alguns segundos abaixo do prazo que a plataforma dá entre SIGTERM e SIGKILL.
+
+Exemplo (AWS: uma EC2 por projeto em `sa-east-1`, segredos no SSM Parameter Store, Caddy com Let's Encrypt na frente). Um script de boot (ou `ExecStartPre`) gera o arquivo de ambiente a partir do SSM, com permissão `0600`:
+
+```bash
+# /usr/local/bin/litezap-env: monta /etc/litezap/env a partir de /litezap/<ref>/* no SSM
+install -m 600 /dev/null /etc/litezap/env
+aws ssm get-parameters-by-path --region sa-east-1 --path "/litezap/$REF/" --with-decryption \
+  --query 'Parameters[].[Name,Value]' --output text |
+  while read -r name value; do echo "${name##*/}=$value"; done >> /etc/litezap/env
+```
+
+Parâmetros (`SecureString` para os tokens): `LITEZAP_ADMIN_TOKEN`, `LITEZAP_OPERATOR_TOKEN`, `LITEZAP_PUBLIC_URL=https://<ref>.<ip>.sslip.io`, `LITEZAP_LISTEN_ADDR=127.0.0.1:8787` (só o Caddy fala com o motor), `LITEZAP_OPS_LISTEN_ADDR=<ip privado>:9090` (security group liberando só a rede de monitoramento), `LITEZAP_DATA_DIR=/var/lib/litezap`, `LITEZAP_LOCKED_SETTINGS=proxy_url,unsafe_pacing`, `LITEZAP_REQUIRE_PROXY=true`, `LITEZAP_MAX_INSTANCES`, `LITEZAP_ZOMBIE_TIMEOUT=5m`, `LITEZAP_SHUTDOWN_TIMEOUT=25s`, `LITEZAP_MEDIA_RETENTION_DAYS=7`, `LITEZAP_MESSAGE_RETENTION_DAYS=90`, `LITEZAP_LOG_FORMAT=json`.
+
+```ini
+# /etc/systemd/system/litezap.service
+[Service]
+ExecStartPre=/usr/local/bin/litezap-env
+EnvironmentFile=/etc/litezap/env
+ExecStart=/usr/local/bin/litezap serve -config ""
+Restart=always
+KillSignal=SIGTERM
+TimeoutStopSec=30
+```
+
+Com Docker, o mesmo arquivo vai em `docker run --env-file /etc/litezap/env --stop-timeout 30 -v /var/lib/litezap:/var/lib/litezap ...`. O Caddy faz `reverse_proxy 127.0.0.1:8787` no hostname do `public_url` (sem buffer de resposta, por causa do SSE: `flush_interval -1`). O health check e o Prometheus usam `http://<ip privado>:9090/readyz` e `/metrics`. Com o motor em loopback, `/healthz` e `/readyz` também respondem sem token pelo Caddy (só dizem "ok"/"ready"); `/metrics` na porta pública sempre exige o token admin.
 
 ## Limitações conhecidas
 

@@ -24,7 +24,7 @@ disable_dashboard: false
 message_retention_days: 0
 media_retention_days: 0
 # Watchdog de conexão zumbi (0 = desligado; ex.: 5m) e prazo total do encerramento
-# (0 = fases padrão, até ~40s; ex.: 25s para caber num kill_timeout de 30s).
+# (0 = fases padrão, até ~40s; ex.: 25s para caber num prazo de parada de 30s, como TimeoutStopSec=30).
 zombie_timeout: 0s
 shutdown_timeout: 0s
 
