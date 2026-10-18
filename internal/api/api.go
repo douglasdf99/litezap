@@ -67,6 +67,9 @@ type Options struct {
 	// many events a stream may lag behind before it is disconnected (default 256).
 	SSEHeartbeat time.Duration
 	SSEBuffer    int
+	// MCP, when set, serves the MCP streamable HTTP endpoint at /mcp behind the same
+	// Bearer authentication; the caller's service.Scope is in the request context.
+	MCP http.Handler
 }
 
 type server struct {
@@ -106,8 +109,13 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 	// Signed media URLs work without a token (spec 4.5); the signature is the credential.
 	r.Get("/media/{id}/{media_id}", s.signedMedia)
 
+	if opt.MCP != nil {
+		r.With(s.authenticate).Handle("/mcp", opt.MCP)
+	}
+
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(s.authenticate)
+		r.Get("/me", s.me)
 		r.With(s.requireAdmin).Post("/instances", s.createInstance)
 		r.With(s.requireAdmin).Get("/instances", s.listInstances)
 		if opt.Webhooks != nil {
@@ -165,7 +173,9 @@ func (s *server) authenticate(next http.Handler) http.Handler {
 			}
 			p.instanceID = id
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
+		ctx := context.WithValue(r.Context(), ctxKey{}, p)
+		ctx = service.WithScope(ctx, service.Scope{Admin: p.admin, InstanceID: p.instanceID})
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -239,6 +249,16 @@ func decodeMax(w http.ResponseWriter, r *http.Request, v any, limit int64) error
 		return apierr.Validation("invalid JSON body")
 	}
 	return nil
+}
+
+// me tells the caller who its token is (used by `litezap mcp` to learn its scope).
+func (s *server) me(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	out := map[string]any{"admin": p.admin}
+	if p.instanceID != "" {
+		out["instance_id"] = p.instanceID
+	}
+	writeJSON(w, 200, out)
 }
 
 func (s *server) readyz(w http.ResponseWriter, r *http.Request) {
