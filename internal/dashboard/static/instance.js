@@ -5,6 +5,7 @@ import { h, mount, clear, toast, errMsg, stateBadge, field, fmtTime, phoneOf, co
 import { webhooksPanel } from './webhooks.js';
 import { agentPanel } from './agent.js';
 import { groupsPanel } from './groups.js';
+import { statusPanel, channelsPanel, labelsPanel } from './social.js';
 import { profilePanel } from './profile.js';
 import { chatActions, chatMarks } from './chatactions.js';
 
@@ -26,7 +27,8 @@ export function availableActions(state) {
 }
 
 const TABS = [
-  ['chats', 'Conversas'], ['groups', 'Grupos'], ['pair', 'Parear'], ['settings', 'Configurações'],
+  ['chats', 'Conversas'], ['groups', 'Grupos'], ['status', 'Status'], ['channels', 'Canais'], ['labels', 'Etiquetas'],
+  ['pair', 'Parear'], ['settings', 'Configurações'],
   ['agent', 'Atendente IA'], ['profile', 'Perfil'], ['webhooks', 'Webhooks'], ['events', 'Eventos ao vivo'],
 ];
 
@@ -79,7 +81,7 @@ export function instanceView(id, { root, shell, setLive }) {
   };
 
   // chat.presence is opt-in (not part of "*"): ask for it so the live feed shows typing.
-  const stop = api.subscribe(`${base}/events?types=*,chat.presence`, (type, ev) => {
+  const stop = api.subscribe(`${base}/events?types=*,chat.presence,status.received`, (type, ev) => {
     ctx.events.unshift(ev);
     if (ctx.events.length > 300) ctx.events.length = 300;
     if (type === 'instance.status') {
@@ -99,7 +101,8 @@ export function instanceView(id, { root, shell, setLive }) {
       mount(tabs, TABS.map(([t, label]) => h('a', { href: ctx.href(t), class: t === tab ? 'active' : '' }, label)));
       if (current && current.name === tab && current.update) { current.update(rest); return; }
       if (current && current.cleanup) current.cleanup();
-      const make = { chats: chatsTab, pair: pairTab, settings: settingsTab, webhooks: webhooksTab, events: eventsTab, agent: agentPanel, groups: groupsPanel, profile: profilePanel }[tab];
+      const make = { chats: chatsTab, pair: pairTab, settings: settingsTab, webhooks: webhooksTab, events: eventsTab, agent: agentPanel, groups: groupsPanel, profile: profilePanel,
+        status: statusPanel, channels: channelsPanel, labels: labelsPanel }[tab];
       current = { name: tab, ...make(ctx, rest) };
       mount(body, current.el);
     },

@@ -39,6 +39,7 @@ type env struct {
 	srv  *httptest.Server
 	grp  *service.Groups
 	acct *service.Account
+	soc  *service.Social
 }
 
 func newEnv(t *testing.T, tweak func(*settings.Settings)) *env {
@@ -77,11 +78,12 @@ func newEnv(t *testing.T, tweak func(*settings.Settings)) *env {
 		DataDir: dir, Defaults: defaults, Resolver: resolver, SignedURLs: true}
 	grp := &service.Groups{Store: st, Workers: mgr, Resolver: resolver, Defaults: defaults}
 	acct := &service.Account{Messaging: msg, Events: bus}
-	h := api.New(svc, msg, api.Options{AdminToken: admin, Events: bus, Groups: grp, Account: acct,
-		MCP: NewHTTPHandler(HTTPDeps{Instances: svc, Messaging: msg, Events: bus, Groups: grp, Logger: log, Account: acct})}, log)
+	soc := &service.Social{Store: st, Workers: mgr, Messaging: msg, Events: bus}
+	h := api.New(svc, msg, api.Options{AdminToken: admin, Events: bus, Groups: grp, Account: acct, Social: soc,
+		MCP: NewHTTPHandler(HTTPDeps{Instances: svc, Messaging: msg, Events: bus, Groups: grp, Logger: log, Account: acct, Social: soc})}, log)
 	srv := httptest.NewServer(h)
 	t.Cleanup(func() { bus.CloseSubscribers(); srv.Close() })
-	return &env{t: t, sp: sp, svc: svc, msg: msg, bus: bus, srv: srv, grp: grp, acct: acct}
+	return &env{t: t, sp: sp, svc: svc, msg: msg, bus: bus, srv: srv, grp: grp, acct: acct, soc: soc}
 }
 
 func (e *env) create(name string) (id, token string) {
@@ -169,7 +171,7 @@ func (e *env) client(m mode, token string) *sdk.ClientSession {
 				}
 				sc.InstanceID = id
 			}
-			b = &Local{Instances: e.svc, Messaging: e.msg, Events: e.bus, Groups: e.grp, Caller: sc, Account: e.acct}
+			b = &Local{Instances: e.svc, Messaging: e.msg, Events: e.bus, Groups: e.grp, Caller: sc, Account: e.acct, Social: e.soc}
 		}
 		st, ct := sdk.NewInMemoryTransports()
 		ss, err := NewServer(b, Options{}).Connect(ctx, st, nil)
