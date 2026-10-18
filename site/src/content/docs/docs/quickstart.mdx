@@ -1,0 +1,129 @@
+---
+title: Quickstart
+description: Compile o LiteZap, conecte um número e envie a primeira mensagem.
+---
+
+import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Neste guia você sobe o servidor na sua máquina, conecta um número de teste e envia uma mensagem para um segundo
+número. Leva uns 5 minutos.
+
+**Você precisa de:** Go (a versão do `go.mod`), `git`, `curl`, `jq`, um celular com o número de teste no WhatsApp
+e um segundo número (o contato) para conversar.
+
+<Aside type="tip">
+	Use um número de teste, não o seu número principal. Números novos conectados a automações estão mais expostos a
+	restrições.
+</Aside>
+
+<Steps>
+
+1. **Compile e suba o servidor**
+
+   ```bash
+   git clone https://github.com/douglasdf99/litezap.git && cd litezap
+   go build -o litezap ./cmd/litezap
+   ./litezap serve
+   ```
+
+   O servidor escuta em `127.0.0.1:8787` e cria a pasta `data/`. Na primeira execução ele gera o token admin em
+   `data/admin_token`.
+
+2. **Crie uma instância**
+
+   Em outro terminal, use o token admin para criar a instância. Guarde o `ID` e o `TOK`: o token da instância só
+   aparece nesta resposta.
+
+   ```bash
+   ADMIN=$(cat data/admin_token)
+   RESP=$(curl -s -X POST localhost:8787/v1/instances \
+     -H "Authorization: Bearer $ADMIN" -d '{"name":"teste"}')
+   ID=$(echo "$RESP" | jq -r .instance.id)
+   TOK=$(echo "$RESP" | jq -r .token)
+   ```
+
+3. **Conecte o número**
+
+   <Tabs>
+   <TabItem label="QR code">
+
+   ```bash
+   curl -s "localhost:8787/v1/instances/$ID/qr?format=png" \
+     -H "Authorization: Bearer $TOK" -o qr.png && open qr.png   # Linux: xdg-open
+   ```
+
+   No celular: WhatsApp > Aparelhos conectados > Conectar um aparelho, e escaneie. O QR muda a cada poucos
+   segundos; se expirar, rode o comando de novo.
+
+   </TabItem>
+   <TabItem label="Código no telefone">
+
+   ```bash
+   curl -s -X POST localhost:8787/v1/instances/$ID/pair-phone \
+     -H "Authorization: Bearer $TOK" -d '{"phone":"5511999999999"}'
+   ```
+
+   No celular: Aparelhos conectados > Conectar um aparelho > Conectar com número de telefone, e digite o `code`.
+
+   </TabItem>
+   </Tabs>
+
+4. **Confira o estado**
+
+   ```bash
+   curl -s localhost:8787/v1/instances/$ID -H "Authorization: Bearer $TOK"
+   ```
+
+   Repita até ver `"state":"connected"` e o campo `phone`. Os estados mudam de forma assíncrona.
+
+5. **Libere a janela de envio (só para o teste)**
+
+   A primeira mensagem para um contato que não falou com você nas últimas 24h só sai dentro da janela de envio
+   (padrão 08:00–20:00 no fuso da instância). Para testar a qualquer hora, desligue a janela:
+
+   ```bash
+   curl -s -X PUT localhost:8787/v1/instances/$ID/settings \
+     -H "Authorization: Bearer $TOK" -d '{"send_window":{"start":"","end":""}}'
+   ```
+
+   Em produção, prefira manter a janela. Veja [janela de envio](/docs/conceitos/janela-de-envio/).
+
+6. **Envie a primeira mensagem**
+
+   ```bash
+   curl -s -X POST "localhost:8787/v1/instances/$ID/messages?wait=true&timeout=90s" \
+     -H "Authorization: Bearer $TOK" \
+     -d '{"to":"5511988887777","type":"text","text":"Olá do LiteZap!"}'
+   ```
+
+   Logo depois de conectar, a fila espera uma **carência de 15 a 30 segundos** antes do primeiro envio, e antes de
+   falar com um número novo o LiteZap confere se ele tem WhatsApp. Por isso o `timeout=90s`. A resposta `200` traz
+   `"status":"sent"` e o `wa_message_id`. Se vier `202` com `"status":"queued"`, a mensagem continua na fila:
+   consulte `GET /v1/instances/$ID/messages/<id>`.
+
+7. **Leia a resposta do contato**
+
+   Responda pelo celular do contato e liste os chats:
+
+   ```bash
+   curl -s localhost:8787/v1/instances/$ID/chats -H "Authorization: Bearer $TOK" | jq
+   curl -s "localhost:8787/v1/instances/$ID/chats/<jid>/messages" -H "Authorization: Bearer $TOK" | jq
+   ```
+
+   Use o `jid` que aparece em `GET /chats`, não o número que você digitou: no Brasil, o WhatsApp pode guardar o
+   número com ou sem o 9º dígito.
+
+</Steps>
+
+## Teste a resiliência
+
+- **Crash do worker:** `kill -9 $(cat data/run/$ID.pid)`. Em poucos segundos o worker volta a `connected`, sem novo QR.
+- **Restart do servidor:** pare o `serve` (Ctrl+C) e suba de novo. A instância reconecta e mensagens que estavam
+  na fila são enviadas.
+- **Logout:** `POST /v1/instances/$ID/logout` leva o estado a `logged_out` e o aparelho some da lista no celular.
+
+## E agora?
+
+- Entenda a [fila e o ritmo](/docs/conceitos/fila-e-ritmo/) antes de enviar em volume.
+- Veja todas as rotas na [referência da API](/docs/api/).
+- Vai rodar num servidor? Siga o guia [self-hosted](/docs/self-hosted/).

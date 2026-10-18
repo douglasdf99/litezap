@@ -1,0 +1,585 @@
+---
+import Logo from '../components/Logo.astro';
+import Architecture from '../components/Architecture.astro';
+
+const GITHUB = 'https://github.com/douglasdf99/litezap';
+
+const features = [
+	{
+		title: 'Várias instâncias',
+		text: 'Um número de WhatsApp por instância, cada uma com token próprio. Crie, pare, reinicie e apague pela API.',
+	},
+	{
+		title: 'QR ou código por telefone',
+		text: 'Pareie escaneando o QR (JSON ou PNG) ou digitando no celular um código gerado pela API.',
+	},
+	{
+		title: 'Supervisor com auto-restart',
+		text: 'Cada número roda num processo isolado. Heartbeat a cada 10s, restart com backoff e circuit breaker. Crash de um worker não derruba os outros.',
+	},
+	{
+		title: 'Envio e recebimento',
+		text: 'Fila persistente por instância, modo síncrono com ?wait=true, idempotência por client_message_id, chats, histórico e confirmações de leitura.',
+	},
+	{
+		title: 'Mídia',
+		text: 'Imagem, vídeo, áudio (inclusive mensagem de voz), documento e reações. Mídia recebida sob demanda, com URLs assinadas temporárias.',
+	},
+	{
+		title: 'Anti-ban por padrão',
+		text: 'Ritmo com variação aleatória, rampa para números novos, janela de envio para contatos frios e verificação do número antes do primeiro envio.',
+	},
+	{
+		title: 'Proxy por instância',
+		text: 'HTTP, HTTPS ou SOCKS5 por número, fixo durante a sessão. Se o proxy cai, a instância espera: nunca vaza pela conexão direta.',
+	},
+	{
+		title: 'Webhooks e SSE',
+		text: 'Eventos assinados com HMAC, retry e dead-letter, além de stream SSE por instância.',
+		soon: true,
+	},
+	{
+		title: 'MCP e atendente IA',
+		text: 'Servidor MCP para Claude e outros clientes, e um hook de agente para respostas automáticas com pausa quando um humano assume.',
+		soon: true,
+	},
+];
+
+const sendExample = `curl -X POST "localhost:8787/v1/instances/$ID/messages?wait=true" \\
+  -H "Authorization: Bearer $TOK" \\
+  -d '{"to":"5511999999999","type":"text",
+       "text":"Seu pedido saiu para entrega!",
+       "client_message_id":"pedido-123"}'`;
+
+const sendResponse = `{
+  "id": "msg_a41c9e07d2b35f68",
+  "wa_message_id": "3EB0A1B2C3D4E5F6A7B8C9",
+  "chat": "5511999999999@s.whatsapp.net",
+  "status": "sent"
+}`;
+---
+
+<!doctype html>
+<html lang="pt-BR">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>LiteZap: API de WhatsApp open source, local ou na nuvem</title>
+		<meta
+			name="description"
+			content="LiteZap é uma API de WhatsApp não oficial e open source (Apache-2.0). O mesmo binário roda no seu PC, no seu servidor ou na nuvem gerenciada."
+		/>
+		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+		<script is:inline>
+			try {
+				const t = localStorage.getItem('starlight-theme');
+				if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+			} catch {}
+		</script>
+	</head>
+	<body>
+		<header class="nav">
+			<div class="wrap nav-inner">
+				<a href="/" class="brand"><Logo size={28} /> LiteZap</a>
+				<nav>
+					<a href="/docs/">Docs</a>
+					<a href="/docs/api/">API</a>
+					<a href="/docs/self-hosted/">Self-hosted</a>
+					<a href="/docs/roadmap/">Roadmap</a>
+					<a class="btn btn-ghost btn-sm" href={GITHUB}>GitHub</a>
+				</nav>
+			</div>
+		</header>
+
+		<main>
+			<section class="hero wrap">
+				<div class="hero-copy">
+					<p class="eyebrow">Open source · Apache-2.0 · feito em Go</p>
+					<h1>A API de WhatsApp que roda <span class="zap">onde você quiser</span>.</h1>
+					<p class="lead">
+						O mesmo binário no seu computador, no seu servidor ou na nuvem gerenciada. Um processo por número,
+						supervisionado, com uma fila que respeita o ritmo de um humano.
+					</p>
+					<div class="ctas">
+						<a class="btn btn-primary" href="/docs/quickstart/">Primeira mensagem em 5 minutos</a>
+						<a class="btn btn-ghost" href={GITHUB}>Ver código no GitHub</a>
+					</div>
+					<p class="fine">Não oficial. Sem afiliação com o WhatsApp ou a Meta.</p>
+				</div>
+				<div class="terminal" aria-label="Exemplo de envio">
+					<div class="terminal-bar"><span></span><span></span><span></span></div>
+					<pre><code>{sendExample}</code></pre>
+					<div class="terminal-sep">200 OK</div>
+					<pre><code>{sendResponse}</code></pre>
+				</div>
+			</section>
+
+			<section class="wrap modes">
+				<a class="mode" href="/docs/app-local/">
+					<h3>No seu PC</h3>
+					<p>Rode o binário na sua máquina, com o seu IP residencial. API só em localhost por padrão.</p>
+					<span class="tag">disponível · app desktop em breve</span>
+				</a>
+				<a class="mode" href="/docs/self-hosted/">
+					<h3>No seu servidor</h3>
+					<p>VPS ou servidor próprio com Docker ou systemd, atrás de um proxy reverso com TLS.</p>
+					<span class="tag">disponível</span>
+				</a>
+				<a class="mode" href="#nuvem">
+					<h3>Na nuvem LiteZap</h3>
+					<p>Um projeto pré-instalado só seu, com upgrades, backups, monitoramento e IPs gerenciados.</p>
+					<span class="tag soon">em breve</span>
+				</a>
+			</section>
+
+			<section class="wrap section">
+				<h2>Tudo o que uma integração séria precisa</h2>
+				<p class="section-lead">Recursos no estilo das APIs de WhatsApp comerciais, num motor que você pode ler, rodar e auditar.</p>
+				<div class="grid">
+					{
+						features.map((f) => (
+							<article class="card">
+								<h3>
+									{f.title} {f.soon && <span class="tag soon">em breve</span>}
+								</h3>
+								<p>{f.text}</p>
+							</article>
+						))
+					}
+				</div>
+			</section>
+
+			<section class="wrap section arch">
+				<div>
+					<h2>Um supervisor, um worker por número</h2>
+					<p>
+						<code>litezap serve</code> expõe a API REST, guarda tudo num SQLite local e cuida da fila de envio.
+						Cada número conectado ganha seu próprio processo <code>litezap worker</code>, falando com o supervisor
+						por gRPC num socket local.
+					</p>
+					<ul class="checks">
+						<li>Se um worker trava ou morre, só aquele número reconecta, sem novo QR.</li>
+						<li>Se o supervisor morre, os workers encerram sozinhos: nada de processo órfão.</li>
+						<li>Mensagens na fila sobrevivem a restarts e são enviadas quando o número volta.</li>
+					</ul>
+					<a href="/docs/conceitos/instancias/">Como funcionam as instâncias →</a>
+				</div>
+				<Architecture />
+			</section>
+
+			<section class="wrap section pricing" id="nuvem">
+				<h2>Preços</h2>
+				<div class="plans">
+					<div class="plan">
+						<h3>Self-hosted</h3>
+						<p class="price">Grátis</p>
+						<p>Para sempre, Apache-2.0. Rode quantas instâncias o seu hardware aguentar.</p>
+						<a class="btn btn-ghost" href="/docs/self-hosted/">Instalar</a>
+					</div>
+					<div class="plan plan-featured">
+						<h3>Nuvem LiteZap</h3>
+						<p class="price">Em breve</p>
+						<p>
+							Projeto pré-instalado por cliente, cobrança mensal por instância, IP de saída isolado, backups e
+							upgrades gerenciados.
+						</p>
+						<a class="btn btn-primary" href="/docs/roadmap/">Ver roadmap</a>
+					</div>
+				</div>
+			</section>
+
+			<section class="wrap final">
+				<h2>Comece agora</h2>
+				<p>Compile, suba o servidor e conecte o primeiro número em poucos minutos.</p>
+				<div class="ctas center">
+					<a class="btn btn-primary" href="/docs/quickstart/">Ler o quickstart</a>
+					<a class="btn btn-ghost" href="/docs/api/">Referência da API</a>
+				</div>
+			</section>
+		</main>
+
+		<footer class="footer">
+			<div class="wrap footer-inner">
+				<span class="brand"><Logo size={20} /> LiteZap</span>
+				<span>Apache-2.0 · Projeto independente, não afiliado ao WhatsApp ou à Meta.</span>
+				<span><a href="/docs/">Docs</a> · <a href={GITHUB}>GitHub</a></span>
+			</div>
+		</footer>
+	</body>
+</html>
+
+<style is:global>
+	:root {
+		--bg: #0f0d18;
+		--bg-2: #17142a;
+		--card: #1b1830;
+		--line: #2e2a49;
+		--text: #eceaf5;
+		--muted: #a7a2c3;
+		--accent: #7b61ff;
+		--accent-2: #4b2fd6;
+		--zap: #ffc53d;
+		--ok: #3ccf91;
+		color-scheme: dark;
+	}
+	@media (prefers-color-scheme: light) {
+		:root:not([data-theme='dark']) {
+			--bg: #ffffff;
+			--bg-2: #f6f5fb;
+			--card: #ffffff;
+			--line: #e3e0f0;
+			--text: #15131f;
+			--muted: #5f5a7a;
+			--accent: #5a3fe0;
+			--zap: #c98a00;
+			--ok: #1f9d6b;
+			color-scheme: light;
+		}
+	}
+	:root[data-theme='light'] {
+		--bg: #ffffff;
+		--bg-2: #f6f5fb;
+		--card: #ffffff;
+		--line: #e3e0f0;
+		--text: #15131f;
+		--muted: #5f5a7a;
+		--accent: #5a3fe0;
+		--zap: #c98a00;
+		--ok: #1f9d6b;
+		color-scheme: light;
+	}
+	* {
+		box-sizing: border-box;
+	}
+	body {
+		margin: 0;
+		background: var(--bg);
+		color: var(--text);
+		font-family:
+			ui-sans-serif,
+			system-ui,
+			-apple-system,
+			'Segoe UI',
+			Roboto,
+			sans-serif;
+		line-height: 1.6;
+		-webkit-font-smoothing: antialiased;
+	}
+	a {
+		color: var(--accent);
+	}
+	code,
+	pre {
+		font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+	}
+	.wrap {
+		max-width: 1120px;
+		margin: 0 auto;
+		padding: 0 16px;
+	}
+	.nav {
+		position: sticky;
+		top: 0;
+		z-index: 10;
+		background: color-mix(in srgb, var(--bg) 85%, transparent);
+		backdrop-filter: blur(8px);
+		border-bottom: 1px solid var(--line);
+	}
+	.nav-inner {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		height: 60px;
+		gap: 1rem;
+	}
+	.nav nav {
+		display: flex;
+		align-items: center;
+		gap: 1.25rem;
+		font-size: 0.95rem;
+	}
+	.nav nav a:not(.btn) {
+		color: var(--muted);
+		text-decoration: none;
+	}
+	.nav nav a:not(.btn):hover {
+		color: var(--text);
+	}
+	.brand {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-weight: 700;
+		color: var(--text);
+		text-decoration: none;
+		letter-spacing: -0.01em;
+	}
+	.btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.7rem 1.15rem;
+		border-radius: 0.6rem;
+		font-weight: 600;
+		text-decoration: none;
+		border: 1px solid transparent;
+		transition: transform 0.1s ease;
+	}
+	.btn:hover {
+		transform: translateY(-1px);
+	}
+	.btn-sm {
+		padding: 0.4rem 0.8rem;
+		font-size: 0.9rem;
+	}
+	.btn-primary {
+		background: linear-gradient(135deg, var(--accent), var(--accent-2));
+		color: #fff;
+	}
+	.btn-ghost {
+		border-color: var(--line);
+		color: var(--text);
+		background: var(--card);
+	}
+	.hero {
+		display: grid;
+		grid-template-columns: 1.05fr 1fr;
+		gap: 3rem;
+		align-items: center;
+		padding-top: 5rem;
+		padding-bottom: 4rem;
+	}
+	.eyebrow {
+		color: var(--muted);
+		font-size: 0.9rem;
+		margin: 0 0 1rem;
+	}
+	h1 {
+		font-size: clamp(2.2rem, 5vw, 3.4rem);
+		line-height: 1.1;
+		letter-spacing: -0.03em;
+		margin: 0 0 1.25rem;
+	}
+	.zap {
+		background: linear-gradient(90deg, var(--accent), var(--zap));
+		-webkit-background-clip: text;
+		background-clip: text;
+		color: transparent;
+	}
+	.lead {
+		font-size: 1.15rem;
+		color: var(--muted);
+		margin: 0 0 2rem;
+		max-width: 34rem;
+	}
+	.ctas {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+	}
+	.ctas.center {
+		justify-content: center;
+	}
+	.fine {
+		margin-top: 1.25rem;
+		font-size: 0.8rem;
+		color: var(--muted);
+	}
+	.terminal {
+		background: #12101f;
+		border: 1px solid #2e2a49;
+		border-radius: 0.9rem;
+		overflow: hidden;
+		box-shadow: 0 30px 80px -30px rgba(91, 63, 224, 0.45);
+		min-width: 0;
+	}
+	.terminal-bar {
+		display: flex;
+		gap: 6px;
+		padding: 0.75rem 1rem;
+		border-bottom: 1px solid #2e2a49;
+	}
+	.terminal-bar span {
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		background: #3e3a57;
+	}
+	.terminal pre {
+		margin: 0;
+		padding: 1rem 1.25rem;
+		color: #d9d5ee;
+		font-size: 0.82rem;
+		overflow-x: auto;
+	}
+	.terminal-sep {
+		padding: 0.35rem 1.25rem;
+		font-family: ui-monospace, Menlo, monospace;
+		font-size: 0.75rem;
+		color: #3ccf91;
+		border-top: 1px dashed #2e2a49;
+	}
+	.modes {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 1rem;
+	}
+	.mode,
+	.card,
+	.plan {
+		background: var(--card);
+		border: 1px solid var(--line);
+		border-radius: 0.9rem;
+		padding: 1.4rem;
+	}
+	.mode {
+		color: var(--text);
+		text-decoration: none;
+		transition: border-color 0.15s ease;
+	}
+	.mode:hover {
+		border-color: var(--accent);
+	}
+	.mode h3,
+	.card h3,
+	.plan h3 {
+		margin: 0 0 0.5rem;
+		font-size: 1.05rem;
+	}
+	.mode p,
+	.card p,
+	.plan p {
+		margin: 0 0 0.75rem;
+		color: var(--muted);
+		font-size: 0.95rem;
+	}
+	.tag {
+		display: inline-block;
+		font-size: 0.72rem;
+		font-weight: 600;
+		padding: 0.15rem 0.55rem;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--ok) 15%, transparent);
+		color: var(--ok);
+		vertical-align: middle;
+	}
+	.tag.soon {
+		background: color-mix(in srgb, var(--zap) 18%, transparent);
+		color: var(--zap);
+	}
+	.section {
+		padding-top: 5.5rem;
+	}
+	.section h2,
+	.final h2 {
+		font-size: clamp(1.6rem, 3vw, 2.2rem);
+		letter-spacing: -0.02em;
+		margin: 0 0 0.5rem;
+	}
+	.section-lead {
+		color: var(--muted);
+		margin: 0 0 2rem;
+	}
+	.grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 1rem;
+	}
+	.arch {
+		display: grid;
+		grid-template-columns: 1fr 1.1fr;
+		gap: 3rem;
+		align-items: center;
+	}
+	.arch p {
+		color: var(--muted);
+	}
+	.arch code {
+		color: var(--text);
+		background: var(--bg-2);
+		padding: 0.1rem 0.35rem;
+		border-radius: 0.3rem;
+		font-size: 0.9em;
+	}
+	.checks {
+		padding: 0;
+		list-style: none;
+		margin: 1.25rem 0;
+	}
+	.checks li {
+		padding-left: 1.6rem;
+		position: relative;
+		margin-bottom: 0.6rem;
+	}
+	.checks li::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		top: 0.45rem;
+		width: 0.7rem;
+		height: 0.7rem;
+		border-radius: 50%;
+		background: var(--accent);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+	}
+	.plans {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 360px));
+		gap: 1rem;
+		margin-top: 1.5rem;
+	}
+	.plan-featured {
+		border-color: var(--accent);
+	}
+	.price {
+		font-size: 1.8rem;
+		font-weight: 700;
+		color: var(--text) !important;
+		margin: 0.25rem 0 0.75rem !important;
+	}
+	.final {
+		text-align: center;
+		padding-top: 6rem;
+		padding-bottom: 6rem;
+	}
+	.final p {
+		color: var(--muted);
+		margin: 0 0 1.5rem;
+	}
+	.footer {
+		border-top: 1px solid var(--line);
+		padding: 2rem 0;
+		font-size: 0.85rem;
+		color: var(--muted);
+	}
+	.footer-inner {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1rem;
+		justify-content: space-between;
+		align-items: center;
+	}
+	@media (max-width: 900px) {
+		.hero,
+		.arch {
+			grid-template-columns: 1fr;
+		}
+		.hero {
+			padding-top: 3rem;
+		}
+		.grid,
+		.modes {
+			grid-template-columns: 1fr 1fr;
+		}
+	}
+	@media (max-width: 640px) {
+		.grid,
+		.modes,
+		.plans {
+			grid-template-columns: 1fr;
+		}
+		.nav nav a:not(.btn):not([href='/docs/']) {
+			display: none;
+		}
+	}
+</style>

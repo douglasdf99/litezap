@@ -1,0 +1,1148 @@
+openapi: 3.1.0
+info:
+  title: LiteZap API
+  version: "0.2.0"
+  summary: API de WhatsApp não oficial, open source, que roda local, no seu servidor ou na nuvem.
+  description: |
+    Referência da API REST do motor LiteZap (marco 2: instâncias, pareamento, envio com fila
+    persistente, recebimento, chats, contatos, verificação de números, mídia e proxy por instância).
+
+    Autenticação: `Authorization: Bearer <token>`. O token admin acessa tudo; o token de instância
+    (prefixo `lzi_`) só acessa as rotas da própria instância.
+
+    Erros seguem sempre o envelope `{"error":{"code","message","retryable"}}`.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: http://127.0.0.1:8787
+    description: Padrão local (listen_addr)
+  - url: https://api.seu-dominio.com
+    description: Self-hosted atrás de proxy reverso com TLS
+security:
+  - bearer: []
+tags:
+  - name: Instâncias
+    description: Criar, listar, controlar e apagar instâncias (um número de WhatsApp cada).
+    x-slug: instancias
+  - name: Pareamento
+    description: Conectar o número por QR code ou código de pareamento por telefone.
+    x-slug: pareamento
+  - name: Configurações
+    description: Ritmo, rampa, janela de envio, fuso e proxy de cada instância.
+    x-slug: configuracoes
+  - name: Mensagens
+    description: Envio pela fila persistente e consulta de status.
+    x-slug: mensagens
+  - name: Chats
+    description: Chats e histórico do log de mensagens, marcar como lido.
+    x-slug: chats
+  - name: Contatos
+    description: Contatos conhecidos pela sessão do WhatsApp.
+    x-slug: contatos
+  - name: Números
+    description: Verificar se números têm WhatsApp.
+    x-slug: numeros
+  - name: Mídia
+    description: Baixar mídia recebida e gerar URLs assinadas temporárias.
+    x-slug: midia
+  - name: Operação
+    description: Saúde do processo e prontidão.
+    x-slug: operacao
+
+paths:
+  /v1/instances:
+    post:
+      tags: [Instâncias]
+      operationId: createInstance
+      summary: Criar instância
+      x-litezap-scope: admin
+      description: |
+        Cria a instância e já sobe o worker dela (o estado passa de `created` a `starting` e depois
+        `qr_pending`). O token da instância aparece **uma única vez** nesta resposta; o servidor guarda
+        só o hash. A resposta leva `Cache-Control: no-store`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, description: Nome livre para identificar a instância. }
+            example: { name: "atendimento" }
+      responses:
+        "201":
+          description: Instância criada.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InstanceCreated" }
+              example:
+                instance:
+                  id: inst_7f3a9c2e5b1d4086
+                  name: atendimento
+                  state: starting
+                  created_at: "2026-10-17T13:45:00Z"
+                  updated_at: "2026-10-17T13:45:00Z"
+                token: lzi_Q2hhdmUtZGUtZXhlbXBsby1uYW8tdXNl
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      tags: [Instâncias]
+      operationId: listInstances
+      summary: Listar instâncias
+      x-litezap-scope: admin
+      responses:
+        "200":
+          description: Todas as instâncias.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instances:
+                    type: array
+                    items: { $ref: "#/components/schemas/Instance" }
+              example:
+                instances:
+                  - id: inst_7f3a9c2e5b1d4086
+                    name: atendimento
+                    state: connected
+                    phone: "5511999999999"
+                    created_at: "2026-10-17T13:45:00Z"
+                    updated_at: "2026-10-17T13:47:12Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/instances/{id}:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+    get:
+      tags: [Instâncias]
+      operationId: getInstance
+      summary: Consultar instância
+      x-litezap-scope: instancia
+      description: Estado atual e número conectado. Os estados mudam de forma assíncrona; use esta rota para acompanhar (polling) até haver eventos (marco 3).
+      responses:
+        "200":
+          description: A instância.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Instance" }
+              example:
+                id: inst_7f3a9c2e5b1d4086
+                name: atendimento
+                state: connected
+                phone: "5511999999999"
+                created_at: "2026-10-17T13:45:00Z"
+                updated_at: "2026-10-17T13:47:12Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+    delete:
+      tags: [Instâncias]
+      operationId: deleteInstance
+      summary: Apagar instância
+      x-litezap-scope: admin
+      description: |
+        Faz logout (melhor esforço, até 15s, libera o aparelho no celular), para o worker e apaga a sessão,
+        a mídia e a fila da instância. É a única saída para uma instância `banned`. Pode levar ~20s.
+      responses:
+        "204": { description: Apagada. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /v1/instances/{id}/start:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Instâncias]
+      operationId: startInstance
+      summary: Iniciar worker
+      x-litezap-scope: instancia
+      description: Sobe o worker de uma instância `stopped`, `failed` ou `logged_out` (nesse caso volta a `qr_pending`). Responde assim que o worker é disparado; a instância devolvida pode ainda mostrar o estado anterior.
+      responses:
+        "200": { $ref: "#/components/responses/InstanceOK" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "503": { $ref: "#/components/responses/ShuttingDown" }
+  /v1/instances/{id}/stop:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Instâncias]
+      operationId: stopInstance
+      summary: Parar worker
+      x-litezap-scope: instancia
+      description: Para o worker e leva a instância a `stopped` (a sessão fica salva; `start` reconecta sem QR). Uma instância parada não sobe sozinha no próximo boot.
+      responses:
+        "200": { $ref: "#/components/responses/InstanceOK" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+  /v1/instances/{id}/restart:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Instâncias]
+      operationId: restartInstance
+      summary: Reiniciar worker
+      x-litezap-scope: instancia
+      description: Para e sobe o worker de novo. Responde assim que o novo worker é disparado.
+      responses:
+        "200": { $ref: "#/components/responses/InstanceOK" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "503": { $ref: "#/components/responses/ShuttingDown" }
+  /v1/instances/{id}/logout:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Instâncias]
+      operationId: logoutInstance
+      summary: Desconectar número
+      x-litezap-scope: instancia
+      description: Desloga a sessão do WhatsApp (o aparelho some da lista no celular) e leva a instância a `logged_out`. Para usar de novo, `start` e parear outra vez.
+      responses:
+        "200": { $ref: "#/components/responses/InstanceOK" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+  /v1/instances/{id}/token/rotate:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Instâncias]
+      operationId: rotateToken
+      summary: Rotacionar token da instância
+      x-litezap-scope: admin
+      description: Gera um novo token de instância; o anterior deixa de valer na hora. O novo token aparece só nesta resposta.
+      responses:
+        "200":
+          description: Novo token.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+              example: { token: lzi_Tm92by10b2tlbi1kZS1leGVtcGxv }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /v1/instances/{id}/qr:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Pareamento]
+      operationId: getQR
+      summary: Obter QR code
+      x-litezap-scope: instancia
+      description: |
+        QR atual para escanear em WhatsApp > Aparelhos conectados. O código muda a cada poucos segundos:
+        busque de novo se expirar. Só responde enquanto a instância está `qr_pending`.
+      parameters:
+        - name: format
+          in: query
+          required: false
+          description: "`png` devolve a imagem (320×320); omitido devolve o texto do QR em JSON."
+          schema: { type: string, enum: [png] }
+      responses:
+        "200":
+          description: Código do QR (JSON) ou imagem PNG.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+              example: { code: "2@kQ3x...,Zm9v...,YmFy...,MQ==" }
+            image/png:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/NotPairing" }
+  /v1/instances/{id}/pair-phone:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Pareamento]
+      operationId: pairPhone
+      summary: Parear por código
+      x-litezap-scope: instancia
+      description: |
+        Alternativa ao QR: gera um código para digitar no celular (Aparelhos conectados > Conectar com
+        número de telefone). Só vale enquanto a instância está `qr_pending`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone]
+              properties:
+                phone: { type: string, description: "Número do aparelho com DDI e DDD (10 a 15 dígitos)." }
+            example: { phone: "5511999999999" }
+      responses:
+        "200":
+          description: Código de pareamento.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+              example: { code: "ABCD-EFGH" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/NotPairing" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+
+  /v1/instances/{id}/settings:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Configurações]
+      operationId: getSettings
+      summary: Ler configurações
+      x-litezap-scope: instancia
+      description: Configurações efetivas (padrões da config + overrides da instância). A senha do `proxy_url` vem mascarada.
+      responses:
+        "200":
+          description: Configurações efetivas.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+              example:
+                min_interval_ms: 3000
+                jitter_ms: 2000
+                max_per_minute: 20
+                typing_simulation: true
+                ramp: { enabled: true, start_per_day: 50, end_per_day: 150, days: 14 }
+                send_window: { start: "08:00", end: "20:00" }
+                timezone: ""
+                unsafe_pacing: false
+                proxy_url: ""
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+    put:
+      tags: [Configurações]
+      operationId: updateSettings
+      summary: Alterar configurações
+      x-litezap-scope: instancia
+      description: |
+        Atualização parcial: campos ausentes mantêm o valor atual. `proxy_url` e `unsafe_pacing` exigem o
+        token admin (`403 forbidden` com token de instância). Pisos: `min_interval_ms` ≥ 1000 e
+        `max_per_minute` ≤ 60, salvo `unsafe_pacing`. `send_window` com `start` e `end` vazios libera
+        qualquer horário. `"proxy_url": ""` volta ao `default_proxy_url`. Trocar o proxy reinicia o worker.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SettingsPatch" }
+            example:
+              min_interval_ms: 5000
+              ramp: { enabled: true }
+              send_window: { start: "09:00", end: "18:00" }
+              timezone: America/Sao_Paulo
+      responses:
+        "200":
+          description: Configurações efetivas depois da alteração.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /v1/instances/{id}/messages:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Mensagens]
+      operationId: sendMessage
+      summary: Enviar mensagem
+      x-litezap-scope: instancia
+      description: |
+        Valida e grava a mensagem na fila persistente da instância. Sem `wait`, responde `202` com
+        `status: queued`. Com `?wait=true`, espera o resultado por até `timeout` (padrão `30s`, no máximo
+        `2m`): `200` quando enviada, erro quando falhou, ou `202` com o status atual (`queued`/`in_flight`)
+        se o tempo acabar; a mensagem continua na fila.
+
+        Tipos: `text`, `image`, `video`, `audio` (`media.ptt: true` = mensagem de voz), `document`,
+        `reaction`. `to` aceita número com DDI (10 a 15 dígitos) ou JID (`@s.whatsapp.net`, `@g.us`,
+        `@lid`). Mídia por `media.url` (o servidor baixa, IPs privados bloqueados) ou `media.base64`.
+        Limites: imagem 16MB, vídeo/áudio 64MB, documento 100MB, corpo 140MB, texto 64KB.
+
+        Idempotência: `client_message_id` (até 128 caracteres) repetido devolve a mesma mensagem;
+        repetido com outro conteúdo responde `409 conflict`.
+      parameters:
+        - name: wait
+          in: query
+          description: "`true` espera o envio terminar (modo síncrono)."
+          schema: { type: string, enum: ["true"] }
+        - name: timeout
+          in: query
+          description: "Duração Go (`30s`, `90s`, `2m`). Padrão `30s`, teto efetivo `2m`. Só com `wait=true`."
+          schema: { type: string, example: 30s }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendMessage" }
+            examples:
+              texto:
+                summary: Texto com idempotência
+                value: { to: "5511999999999", type: text, text: "Olá! Seu pedido saiu para entrega.", client_message_id: "pedido-123" }
+              imagem:
+                summary: Imagem por URL
+                value: { to: "5511999999999", type: image, caption: "Comprovante", media: { url: "https://exemplo.com/comprovante.jpg" } }
+              voz:
+                summary: Áudio como mensagem de voz (base64)
+                value: { to: "5511999999999", type: audio, media: { base64: "T2dnUwACAAAAAAAA...", mime: "audio/ogg; codecs=opus", ptt: true } }
+              documento:
+                summary: Documento
+                value: { to: "5511999999999", type: document, caption: "Segue o boleto", media: { url: "https://exemplo.com/boleto.pdf", file_name: "boleto.pdf" } }
+              reacao:
+                summary: Reação
+                value: { to: "5511999999999", type: reaction, reaction: { message_id: "msg_a41c9e07d2b35f68", emoji: "👍" } }
+      responses:
+        "200":
+          description: Enviada (com `?wait=true`). Traz `wa_message_id`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+              example:
+                id: msg_a41c9e07d2b35f68
+                client_message_id: pedido-123
+                wa_message_id: 3EB0A1B2C3D4E5F6A7B8C9
+                chat: 5511999999999@s.whatsapp.net
+                from_me: true
+                source: api
+                type: text
+                text: "Olá! Seu pedido saiu para entrega."
+                status: sent
+                timestamp: "2026-10-17T13:50:03Z"
+        "202":
+          description: Na fila (`queued`) ou em envio (`in_flight`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+              example:
+                id: msg_a41c9e07d2b35f68
+                client_message_id: pedido-123
+                chat: 5511999999999@s.whatsapp.net
+                from_me: true
+                source: api
+                type: text
+                text: "Olá! Seu pedido saiu para entrega."
+                status: queued
+                timestamp: "2026-10-17T13:50:00Z"
+        "400": { $ref: "#/components/responses/SendBadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/SendConflict" }
+        "410": { $ref: "#/components/responses/MessageExpired" }
+        "413": { $ref: "#/components/responses/MediaTooLarge" }
+        "422": { $ref: "#/components/responses/MediaFetchFailed" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "503": { $ref: "#/components/responses/BusyOrShuttingDown" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+
+  /v1/instances/{id}/messages/{msg_id}:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - name: msg_id
+        in: path
+        required: true
+        description: "`id` devolvido no envio (`msg_...`) ou id de uma mensagem do log."
+        schema: { type: string }
+    get:
+      tags: [Mensagens]
+      operationId: getMessage
+      summary: Consultar mensagem
+      x-litezap-scope: instancia
+      description: |
+        Status de um envio: `queued`, `in_flight`, `sent`, `delivered`, `read` ou `failed` (com `error`
+        no formato `codigo: detalhe` e `attempts`). Também aceita o id de uma mensagem recebida do log.
+      responses:
+        "200":
+          description: A mensagem.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+              examples:
+                entregue:
+                  value:
+                    id: msg_a41c9e07d2b35f68
+                    wa_message_id: 3EB0A1B2C3D4E5F6A7B8C9
+                    chat: 5511999999999@s.whatsapp.net
+                    from_me: true
+                    source: api
+                    type: text
+                    text: "Olá!"
+                    status: delivered
+                    timestamp: "2026-10-17T13:50:03Z"
+                falhou:
+                  value:
+                    id: msg_0c5e8b2f9a7d4613
+                    chat: 5511888888888@s.whatsapp.net
+                    from_me: true
+                    source: api
+                    type: text
+                    text: "Olá!"
+                    status: failed
+                    attempts: 0
+                    error: "invalid_number: number is not on WhatsApp"
+                    timestamp: "2026-10-17T13:51:00Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/instances/{id}/chats:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Chats]
+      operationId: listChats
+      summary: Listar chats
+      x-litezap-scope: instancia
+      description: Chats do log de mensagens, do mais recente para o mais antigo. Paginação por cursor.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Uma página de chats.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatPage" }
+              example:
+                chats:
+                  - jid: 5511999999999@s.whatsapp.net
+                    name: Maria
+                    is_group: false
+                    last_message_at: "2026-10-17T13:52:10Z"
+                    unread_count: 2
+                  - jid: 120363025246125888@g.us
+                    name: Equipe
+                    is_group: true
+                    last_message_at: "2026-10-17T12:00:00Z"
+                    unread_count: 0
+                next_cursor: eyJ0IjoiMjAyNi0xMC0xN1QxMjowMDowMFoifQ
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /v1/instances/{id}/chats/{jid}/messages:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - $ref: "#/components/parameters/ChatJID"
+    get:
+      tags: [Chats]
+      operationId: chatMessages
+      summary: Histórico do chat
+      x-litezap-scope: instancia
+      description: |
+        Mensagens do chat, da mais recente para a mais antiga. `status` é `received` para recebidas e
+        `pending` → `sent` → `delivered` → `read` para enviadas (`pending` = em envio, sem confirmação
+        do WhatsApp). Mídia recebida traz `media.url` para download.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Uma página de mensagens.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessagePage" }
+              example:
+                messages:
+                  - id: msg_e29d4b8a0f6c1357
+                    wa_message_id: 3A9F2C7D1E0B4A5C6D7E
+                    chat: 5511999999999@s.whatsapp.net
+                    sender: 5511999999999@s.whatsapp.net
+                    from_me: false
+                    source: contact
+                    type: image
+                    text: "Foto do produto"
+                    media:
+                      id: med_5b8e1f3c9d2a7046
+                      kind: image
+                      mime: image/jpeg
+                      size: 182345
+                      url: /v1/instances/inst_7f3a9c2e5b1d4086/media/med_5b8e1f3c9d2a7046
+                    status: received
+                    timestamp: "2026-10-17T13:52:10Z"
+                next_cursor: eyJzIjoxMjM0fQ
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /v1/instances/{id}/chats/{jid}/read:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - $ref: "#/components/parameters/ChatJID"
+    post:
+      tags: [Chats]
+      operationId: markRead
+      summary: Marcar chat como lido
+      x-litezap-scope: instancia
+      description: Envia confirmação de leitura das últimas mensagens recebidas (até 100) e zera `unread_count`.
+      responses:
+        "204": { description: Marcado como lido. }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+
+  /v1/instances/{id}/contacts:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Contatos]
+      operationId: listContacts
+      summary: Listar contatos
+      x-litezap-scope: instancia
+      description: Contatos da sessão do WhatsApp (consulta o worker; a instância precisa estar rodando).
+      responses:
+        "200":
+          description: Contatos ordenados por JID.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contacts:
+                    type: array
+                    items: { $ref: "#/components/schemas/Contact" }
+              example:
+                contacts:
+                  - jid: 5511999999999@s.whatsapp.net
+                    name: Maria Souza
+                    push_name: Maria
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+  /v1/instances/{id}/contacts/{jid}:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - $ref: "#/components/parameters/ChatJID"
+    get:
+      tags: [Contatos]
+      operationId: getContact
+      summary: Consultar contato
+      x-litezap-scope: instancia
+      responses:
+        "200":
+          description: O contato.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Contact" }
+              example:
+                jid: 5511999999999@s.whatsapp.net
+                name: Maria Souza
+                push_name: Maria
+                business_name: Loja da Maria
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+
+  /v1/instances/{id}/check-numbers:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Números]
+      operationId: checkNumbers
+      summary: Verificar números
+      x-litezap-scope: instancia
+      description: |
+        Diz quais números têm WhatsApp e devolve o `jid` que o WhatsApp usa (no Brasil, com ou sem o 9º
+        dígito). De 1 a 10 números por chamada (10 a 15 dígitos com DDI). Resultados ficam em cache
+        (30 dias para quem tem, 24h para quem não tem). Consultas não cacheadas: até 10 por minuto e
+        200 por dia (UTC) por instância; acima disso `429 rate_limited`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phones]
+              properties:
+                phones:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  items: { type: string }
+            example: { phones: ["5511999999999", "5511888888888"] }
+      responses:
+        "200":
+          description: Resultado por número.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: "#/components/schemas/NumberResult" }
+              example:
+                results:
+                  - { phone: "5511999999999", exists: true, jid: "5511999999999@s.whatsapp.net" }
+                  - { phone: "5511888888888", exists: false }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+
+  /v1/instances/{id}/media/{media_id}:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - $ref: "#/components/parameters/MediaID"
+    get:
+      tags: [Mídia]
+      operationId: getMedia
+      summary: Baixar mídia recebida
+      x-litezap-scope: instancia
+      description: |
+        Baixa a mídia de uma mensagem recebida (`media.id` no log). Na primeira vez o worker baixa do
+        WhatsApp e o arquivo fica em `data/media/`. Com `?signed=1` devolve uma URL assinada que vale 1h
+        sem token, para repassar a terceiros. Fora de loopback, `?signed=1` exige `public_url`
+        (`409 conflict`). A resposta leva `X-Content-Type-Options: nosniff`, CSP `sandbox` e
+        `Content-Disposition` (`inline` só para JPEG/PNG/WebP/GIF, áudio e vídeo).
+      parameters:
+        - name: signed
+          in: query
+          description: "`1` devolve `{url, expires_at}` em vez do arquivo."
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200":
+          description: O arquivo, ou a URL assinada com `?signed=1`.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+            application/json:
+              schema: { $ref: "#/components/schemas/SignedURL" }
+              example:
+                url: "https://api.seu-dominio.com/media/inst_7f3a9c2e5b1d4086/med_5b8e1f3c9d2a7046?exp=1792252800&sig=9f86d081884c7d65"
+                expires_at: "2026-10-17T14:52:10Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/SignedDisabled" }
+        "410": { $ref: "#/components/responses/MediaUnavailable" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+
+  /media/{id}/{media_id}:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - $ref: "#/components/parameters/MediaID"
+    get:
+      tags: [Mídia]
+      operationId: getSignedMedia
+      summary: Mídia por URL assinada
+      x-litezap-scope: assinatura
+      security: []
+      description: Rota fora de `/v1`, sem token. A assinatura HMAC-SHA256 (segredo em `data/media_key`) é a credencial. Apagar `data/media_key` invalida todas as URLs já emitidas.
+      parameters:
+        - { name: exp, in: query, required: true, description: Expiração (unix)., schema: { type: string } }
+        - { name: sig, in: query, required: true, description: Assinatura., schema: { type: string } }
+      responses:
+        "200":
+          description: O arquivo.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "403":
+          description: "`forbidden`: URL inválida ou expirada."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: forbidden, message: "invalid or expired media URL", retryable: false } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410": { $ref: "#/components/responses/MediaUnavailable" }
+
+  /healthz:
+    get:
+      tags: [Operação]
+      operationId: healthz
+      summary: Processo vivo
+      x-litezap-scope: operacao
+      security: []
+      description: Público quando o `listen_addr` é loopback; caso contrário exige o token admin.
+      responses:
+        "200":
+          description: Vivo.
+          content:
+            application/json:
+              example: { status: ok }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /readyz:
+    get:
+      tags: [Operação]
+      operationId: readyz
+      summary: Pronto para atender
+      x-litezap-scope: operacao
+      security: []
+      description: Confere o banco (SQLite). Público quando o `listen_addr` é loopback; caso contrário exige o token admin.
+      responses:
+        "200":
+          description: Pronto.
+          content:
+            application/json:
+              example: { status: ready }
+        "503":
+          description: Indisponível.
+          content:
+            application/json:
+              example: { status: unavailable }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: "Token admin (`lza_...`, de `data/admin_token` ou `LITEZAP_ADMIN_TOKEN`) ou token de instância (`lzi_...`)."
+  parameters:
+    InstanceID:
+      name: id
+      in: path
+      required: true
+      description: "Id da instância (`inst_...`)."
+      schema: { type: string }
+    ChatJID:
+      name: jid
+      in: path
+      required: true
+      description: "JID do chat (`...@s.whatsapp.net`, `...@g.us`, `...@lid`) ou número com DDI. Prefira o `jid` devolvido por `GET /chats` ou `check-numbers`."
+      schema: { type: string }
+    MediaID:
+      name: media_id
+      in: path
+      required: true
+      description: "Id da mídia (`med_...`), de `media.id` no log."
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      description: Itens por página. Padrão 50, máximo 200.
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      description: "`next_cursor` da página anterior (opaco)."
+      schema: { type: string }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, retryable]
+          properties:
+            code: { type: string, description: Código estável (veja a tabela de erros). }
+            message: { type: string, description: Texto para humanos; nunca traz telefone nem token. }
+            retryable: { type: boolean, description: Se o cliente pode tentar de novo. }
+    InstanceState:
+      type: string
+      enum: [created, starting, qr_pending, connecting, connected, reconnecting, logged_out, banned, failed, stopped]
+    Instance:
+      type: object
+      required: [id, name, state, created_at, updated_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        state: { $ref: "#/components/schemas/InstanceState" }
+        state_reason: { type: string, description: "Ex.: `proxy_unreachable`, `temp_banned:<duração>`." }
+        phone: { type: string, description: Número conectado (depois do pareamento). }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    InstanceCreated:
+      type: object
+      properties:
+        instance: { $ref: "#/components/schemas/Instance" }
+        token: { type: string, description: "Token da instância (`lzi_...`). Mostrado só uma vez." }
+    Ramp:
+      type: object
+      properties:
+        enabled: { type: boolean, default: true }
+        start_per_day: { type: integer, default: 50 }
+        end_per_day: { type: integer, default: 150 }
+        days: { type: integer, default: 14, minimum: 1, maximum: 365 }
+    SendWindow:
+      type: object
+      properties:
+        start: { type: string, description: "HH:MM; vazio com end vazio = sem janela.", example: "08:00" }
+        end: { type: string, example: "20:00" }
+    Settings:
+      type: object
+      properties:
+        min_interval_ms: { type: integer, default: 3000, description: "Intervalo mínimo entre envios. Mínimo 1000 sem unsafe_pacing." }
+        jitter_ms: { type: integer, default: 2000, description: Variação aleatória somada ao intervalo. }
+        max_per_minute: { type: integer, default: 20, description: "Teto por minuto. Máximo 60 sem unsafe_pacing." }
+        typing_simulation: { type: boolean, default: true, description: "Mostra \"digitando\" antes de enviar (~50ms por caractere, até 5s)." }
+        ramp: { $ref: "#/components/schemas/Ramp" }
+        send_window: { $ref: "#/components/schemas/SendWindow" }
+        timezone: { type: string, description: "Fuso IANA (ex.: America/Sao_Paulo); vazio = fuso do servidor." }
+        unsafe_pacing: { type: boolean, default: false, description: Remove os pisos de ritmo. Só admin. }
+        proxy_url: { type: string, description: "http://, https:// ou socks5://; senha mascarada na leitura." }
+    SettingsPatch:
+      type: object
+      description: Todos os campos são opcionais; ausentes mantêm o valor atual.
+      properties:
+        min_interval_ms: { type: integer }
+        jitter_ms: { type: integer }
+        max_per_minute: { type: integer }
+        typing_simulation: { type: boolean }
+        ramp:
+          type: object
+          properties:
+            enabled: { type: boolean }
+            start_per_day: { type: integer }
+            end_per_day: { type: integer }
+            days: { type: integer }
+        send_window: { $ref: "#/components/schemas/SendWindow" }
+        timezone: { type: string }
+        unsafe_pacing: { type: boolean, description: Só admin. }
+        proxy_url: { type: string, description: "Só admin. Vazio volta ao default_proxy_url." }
+    MediaInput:
+      type: object
+      description: Informe `url` ou `base64`.
+      properties:
+        url: { type: string, description: "http(s) público; o servidor baixa (timeout 30s, sem IPs privados)." }
+        base64: { type: string }
+        mime: { type: string }
+        file_name: { type: string, description: Até 255 bytes. }
+        ptt: { type: boolean, description: "Áudio como mensagem de voz." }
+    SendMessage:
+      type: object
+      required: [to, type]
+      properties:
+        to: { type: string, description: "Número com DDI (10 a 15 dígitos) ou JID." }
+        type: { type: string, enum: [text, image, video, audio, document, reaction] }
+        text: { type: string, description: "Obrigatório em `text` (até 64KB)." }
+        caption: { type: string, description: "Legenda de image, video e document." }
+        media: { $ref: "#/components/schemas/MediaInput" }
+        reaction:
+          type: object
+          properties:
+            message_id: { type: string, description: "Id LiteZap ou wa_message_id de uma mensagem do chat." }
+            emoji: { type: string, description: "Vazio remove a reação." }
+        client_message_id: { type: string, maxLength: 128, description: Chave de idempotência. }
+        expires_after: { type: string, description: "Duração entre 1m e 168h (padrão 24h). Não enviada até lá: message_expired.", example: 24h }
+    MediaInfo:
+      type: object
+      properties:
+        id: { type: string, description: Id da mídia recebida. }
+        kind: { type: string }
+        mime: { type: string }
+        size: { type: integer }
+        file_name: { type: string }
+        seconds: { type: integer }
+        ptt: { type: boolean }
+        url: { type: string, description: Caminho da API para baixar (mídia recebida). }
+    Message:
+      type: object
+      required: [id, chat, from_me, type, status, timestamp]
+      properties:
+        id: { type: string }
+        client_message_id: { type: string }
+        wa_message_id: { type: string }
+        chat: { type: string }
+        sender: { type: string }
+        from_me: { type: boolean }
+        source: { type: string, enum: [contact, api, device, history] }
+        type: { type: string }
+        text: { type: string }
+        media: { $ref: "#/components/schemas/MediaInfo" }
+        reaction_to: { type: string }
+        status:
+          type: string
+          enum: [queued, in_flight, sent, delivered, read, failed, received, pending]
+        attempts: { type: integer }
+        error: { type: string, description: "Último erro (`codigo: detalhe`) de item não enviado." }
+        timestamp: { type: string, format: date-time }
+    Chat:
+      type: object
+      properties:
+        jid: { type: string }
+        name: { type: string }
+        is_group: { type: boolean }
+        last_message_at: { type: string, format: date-time }
+        unread_count: { type: integer }
+    ChatPage:
+      type: object
+      properties:
+        chats: { type: array, items: { $ref: "#/components/schemas/Chat" } }
+        next_cursor: { type: string, description: Ausente na última página. }
+    MessagePage:
+      type: object
+      properties:
+        messages: { type: array, items: { $ref: "#/components/schemas/Message" } }
+        next_cursor: { type: string, description: Ausente na última página. }
+    Contact:
+      type: object
+      properties:
+        jid: { type: string }
+        name: { type: string }
+        push_name: { type: string }
+        business_name: { type: string }
+    NumberResult:
+      type: object
+      properties:
+        phone: { type: string }
+        exists: { type: boolean }
+        jid: { type: string }
+    SignedURL:
+      type: object
+      properties:
+        url: { type: string }
+        expires_at: { type: string, format: date-time }
+
+  responses:
+    InstanceOK:
+      description: A instância logo após a ação (o estado pode ainda ser o anterior).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Instance" }
+    ValidationFailed:
+      description: "`validation_failed`: corpo ou campo inválido."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: validation_failed, message: "phone must have 10 to 15 digits including country code", retryable: false } }
+    SendBadRequest:
+      description: "`validation_failed` ou `invalid_number` (o número não tem WhatsApp)."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: invalid_number, message: "number is not on WhatsApp", retryable: false } }
+    Unauthorized:
+      description: "`unauthorized`: token ausente ou inválido."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: unauthorized, message: "missing or invalid token", retryable: false } }
+    Forbidden:
+      description: "`forbidden`: token sem acesso ao recurso."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: forbidden, message: "token not allowed for this resource", retryable: false } }
+    InstanceNotFound:
+      description: "`instance_not_found`."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: instance_not_found, message: "instance not found", retryable: false } }
+    NotFound:
+      description: "`not_found` (mensagem, chat, contato ou mídia) ou `instance_not_found`."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: not_found, message: "message not found", retryable: false } }
+    InstanceConflict:
+      description: "`instance_not_connected` (worker parado ou número deslogado) ou `instance_banned`."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: instance_not_connected, message: "instance worker is not running", retryable: true } }
+    NotPairing:
+      description: "`instance_not_pairing`: a instância não está aguardando pareamento."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: instance_not_pairing, message: "instance is not waiting for a QR scan (state: connected)", retryable: false } }
+    SendConflict:
+      description: "`conflict` (client_message_id reusado com outro conteúdo), `instance_not_connected` (deslogada) ou `instance_banned`."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: conflict, message: "client_message_id was already used for a different message", retryable: false } }
+    SignedDisabled:
+      description: "`conflict`: URLs assinadas desativadas (fora de loopback sem public_url)."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: conflict, message: "signed URLs need public_url when the API is not bound to loopback", retryable: false } }
+    MessageExpired:
+      description: "`message_expired`: não enviada antes de expires_after (com ?wait=true)."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: message_expired, message: "message not sent before expires_after", retryable: false } }
+    MediaUnavailable:
+      description: "`media_unavailable`: a mídia expirou no WhatsApp."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: media_unavailable, message: "media is no longer available on WhatsApp", retryable: false } }
+    MediaTooLarge:
+      description: "`media_too_large`: acima do limite do tipo ou corpo acima de 140MB."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: media_too_large, message: "image exceeds the size limit", retryable: false } }
+    MediaFetchFailed:
+      description: "`media_fetch_failed`: media.url não pôde ser baixada."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: media_fetch_failed, message: "media.url could not be downloaded", retryable: true } }
+    RateLimited:
+      description: "`rate_limited`: cota de consultas de check-numbers esgotada (10/min, 200/dia)."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: rate_limited, message: "too many number lookups; try again in a minute", retryable: true } }
+    BusyOrShuttingDown:
+      description: "`rate_limited` (muitos envios grandes simultâneos e o cliente desistiu de esperar vaga) ou `shutting_down`."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: rate_limited, message: "too many large sends in progress", retryable: true } }
+    ShuttingDown:
+      description: "`shutting_down`: servidor encerrando."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: shutting_down, message: "server is shutting down", retryable: true } }
+    WorkerError:
+      description: "`worker_error`: o worker recusou ou falhou a operação."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: worker_error, message: "worker request failed", retryable: true } }
+    WorkerTimeout:
+      description: "`worker_timeout`: o worker não respondeu a tempo."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: worker_timeout, message: "instance worker did not answer in time", retryable: true } }

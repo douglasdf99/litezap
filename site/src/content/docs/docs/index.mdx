@@ -1,0 +1,63 @@
+---
+title: Introdução
+description: O que é o LiteZap, como ele está organizado e por onde começar.
+---
+
+import { Card, CardGrid, LinkCard, Aside } from '@astrojs/starlight/components';
+import Architecture from '../../../components/Architecture.astro';
+
+O LiteZap é uma **API de WhatsApp não oficial e open source** (Apache-2.0), escrita em Go sobre a biblioteca
+[whatsmeow](https://github.com/tulir/whatsmeow). Você conecta um número escaneando um QR code e passa a enviar e
+receber mensagens por uma API REST simples.
+
+O mesmo binário roda de três formas:
+
+- **No seu PC**: o servidor escuta só em `127.0.0.1` e usa a conexão (e o IP) da sua máquina.
+- **No seu servidor**: VPS ou máquina própria, com Docker ou systemd, atrás de um proxy reverso com TLS.
+- **Na nuvem LiteZap** (em breve): um projeto pré-instalado só seu, com upgrades, backups e IPs gerenciados.
+
+<Aside type="caution" title="Uso não oficial">
+	O LiteZap não é afiliado ao WhatsApp nem à Meta. Números usados por automação podem ser restringidos ou banidos. O
+	motor vem com proteções anti-ban ligadas por padrão, mas nenhuma ferramenta elimina o risco. Leia as
+	[boas práticas](/docs/boas-praticas/).
+</Aside>
+
+## Como funciona
+
+<Architecture />
+
+- `litezap serve` é o **supervisor**: expõe a API, guarda tudo em SQLite (`data/litezap.db`), mantém a fila de envio
+  e controla o ciclo de vida das instâncias.
+- Cada número conectado é uma **instância** com seu próprio processo `litezap worker`. O supervisor faz heartbeat a
+  cada 10 segundos, reinicia o worker com backoff se ele cair e abre um circuit breaker se ele cair demais.
+- Os workers encerram sozinhos se o supervisor morrer, mesmo à força. No próximo `serve`, as instâncias voltam sem
+  novo QR e a fila continua de onde parou.
+
+## O que já funciona (marco 2)
+
+<CardGrid>
+	<Card title="Instâncias e pareamento" icon="phone">
+		Criar, listar, parar, reiniciar, desconectar e apagar. Pareamento por QR (JSON ou PNG) ou por código no telefone.
+	</Card>
+	<Card title="Envio com fila persistente" icon="rocket">
+		Texto, imagem, vídeo, áudio e voz, documento e reação. Idempotência, modo síncrono e até 5 tentativas.
+	</Card>
+	<Card title="Recebimento e histórico" icon="document">
+		Chats e mensagens recebidas ficam num log local, com paginação por cursor e mídia baixada sob demanda.
+	</Card>
+	<Card title="Anti-ban e proxy" icon="warning">
+		Ritmo, rampa, janela de envio, verificação de número e proxy HTTP/SOCKS5 por instância.
+	</Card>
+</CardGrid>
+
+Ainda **não** existem eventos em tempo real: webhooks e SSE chegam no marco 3. Até lá, acompanhe por polling em
+`GET /chats` e `GET /messages/{id}`. Veja o [roadmap](/docs/roadmap/).
+
+## Próximos passos
+
+<CardGrid>
+	<LinkCard title="Quickstart" description="Do zero à primeira mensagem." href="/docs/quickstart/" />
+	<LinkCard title="Conceitos" description="Instâncias, tokens, fila, rampa e janela." href="/docs/conceitos/instancias/" />
+	<LinkCard title="Self-hosted" description="Docker, systemd, TLS e segurança." href="/docs/self-hosted/" />
+	<LinkCard title="Referência da API" description="Todas as rotas, com exemplos." href="/docs/api/" />
+</CardGrid>

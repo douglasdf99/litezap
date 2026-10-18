@@ -1,0 +1,135 @@
+---
+// Diagrama: supervisor + um worker por número. Cores vêm das variáveis da página
+// (landing) ou do Starlight (docs).
+---
+
+<figure class="lz-arch">
+	<svg viewBox="0 0 560 450" role="img" aria-labelledby="lz-arch-title">
+		<title id="lz-arch-title">
+			Seu sistema chama a API REST do litezap serve, que gerencia fila, banco SQLite e um processo worker por
+			número; cada worker conecta ao WhatsApp, opcionalmente por um proxy.
+		</title>
+		<defs>
+			<marker id="lz-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+				<path d="M0 0 10 5 0 10z" class="a-fill"></path>
+			</marker>
+		</defs>
+
+		<rect x="170" y="8" width="220" height="50" rx="10" class="box"></rect>
+		<text x="280" y="30" class="t-strong">Seu sistema</text>
+		<text x="280" y="47" class="t-muted">backend · automações · CRM</text>
+
+		<line x1="280" y1="60" x2="280" y2="100" class="edge" marker-end="url(#lz-arrow)"></line>
+		<text x="292" y="85" class="t-label t-start">REST /v1 · Bearer token</text>
+
+		<rect x="20" y="104" width="520" height="150" rx="14" class="box box-accent"></rect>
+		<text x="40" y="130" class="t-strong t-start">litezap serve</text>
+		<text x="152" y="130" class="t-muted t-start">supervisor</text>
+
+		<rect x="40" y="146" width="150" height="40" rx="8" class="chip"></rect>
+		<text x="115" y="171" class="t-chip">API REST</text>
+		<rect x="205" y="146" width="150" height="40" rx="8" class="chip"></rect>
+		<text x="280" y="171" class="t-chip">Fila + ritmo</text>
+		<rect x="370" y="146" width="150" height="40" rx="8" class="chip"></rect>
+		<text x="445" y="171" class="t-chip">Manager</text>
+		<rect x="40" y="196" width="232" height="40" rx="8" class="chip"></rect>
+		<text x="156" y="221" class="t-chip">SQLite · data/litezap.db</text>
+		<rect x="288" y="196" width="232" height="40" rx="8" class="chip"></rect>
+		<text x="404" y="221" class="t-chip">Mídia · URLs assinadas</text>
+
+		<line x1="110" y1="256" x2="110" y2="296" class="edge" marker-end="url(#lz-arrow)"></line>
+		<line x1="280" y1="256" x2="280" y2="296" class="edge" marker-end="url(#lz-arrow)"></line>
+		<line x1="450" y1="256" x2="450" y2="296" class="edge" marker-end="url(#lz-arrow)"></line>
+		<text x="292" y="281" class="t-label t-start">gRPC · socket local</text>
+
+		<rect x="35" y="300" width="150" height="52" rx="10" class="box box-worker"></rect>
+		<text x="110" y="322" class="t-strong">worker</text>
+		<text x="110" y="340" class="t-muted">número A</text>
+		<rect x="205" y="300" width="150" height="52" rx="10" class="box box-worker"></rect>
+		<text x="280" y="322" class="t-strong">worker</text>
+		<text x="280" y="340" class="t-muted">número B</text>
+		<rect x="375" y="300" width="150" height="52" rx="10" class="box box-worker"></rect>
+		<text x="450" y="322" class="t-strong">worker</text>
+		<text x="450" y="340" class="t-muted">número C</text>
+
+		<line x1="110" y1="354" x2="110" y2="394" class="edge" marker-end="url(#lz-arrow)"></line>
+		<line x1="280" y1="354" x2="280" y2="394" class="edge" marker-end="url(#lz-arrow)"></line>
+		<line x1="450" y1="354" x2="450" y2="394" class="edge edge-dash" marker-end="url(#lz-arrow)"></line>
+		<text x="460" y="379" class="t-label t-start">proxy</text>
+
+		<rect x="20" y="398" width="520" height="40" rx="10" class="box box-wa"></rect>
+		<text x="280" y="423" class="t-strong">WhatsApp</text>
+	</svg>
+	<figcaption>Um processo por número: um crash afeta só aquele número, que volta sozinho sem novo QR.</figcaption>
+</figure>
+
+<style>
+	.lz-arch {
+		margin: 0;
+	}
+	svg {
+		width: 100%;
+		height: auto;
+		display: block;
+		font-family: inherit;
+	}
+	.box {
+		fill: var(--card, var(--sl-color-black));
+		stroke: var(--line, var(--sl-color-gray-5));
+		stroke-width: 1.2;
+	}
+	.box-accent {
+		stroke: var(--accent, var(--sl-color-accent));
+		stroke-width: 1.6;
+		fill: var(--bg-2, var(--sl-color-gray-6));
+	}
+	.box-worker {
+		stroke: var(--accent, var(--sl-color-accent));
+	}
+	.box-wa {
+		stroke-dasharray: 4 4;
+	}
+	.chip {
+		fill: var(--card, var(--sl-color-black));
+		stroke: var(--line, var(--sl-color-gray-5));
+	}
+	.edge {
+		stroke: var(--muted, var(--sl-color-gray-3));
+		stroke-width: 1.4;
+	}
+	.edge-dash {
+		stroke-dasharray: 4 3;
+	}
+	.a-fill {
+		fill: var(--muted, var(--sl-color-gray-3));
+	}
+	text {
+		text-anchor: middle;
+	}
+	.t-start {
+		text-anchor: start;
+	}
+	.t-strong {
+		fill: var(--text, var(--sl-color-white));
+		font-size: 14px;
+		font-weight: 650;
+	}
+	.t-muted {
+		fill: var(--muted, var(--sl-color-gray-3));
+		font-size: 12px;
+	}
+	.t-chip {
+		fill: var(--text, var(--sl-color-white));
+		font-size: 13px;
+	}
+	.t-label {
+		fill: var(--muted, var(--sl-color-gray-3));
+		font-size: 11.5px;
+	}
+	figcaption {
+		margin-top: 0.75rem;
+		font-size: 0.85rem;
+		color: var(--muted, var(--sl-color-gray-3));
+		text-align: center;
+	}
+</style>
