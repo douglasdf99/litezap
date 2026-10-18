@@ -100,7 +100,7 @@ curl -s -X POST localhost:8787/v1/instances/$ID/messages -H "Authorization: Bear
 curl -s -X POST localhost:8787/v1/instances/$ID/messages -H "Authorization: Bearer $TOK" \
   -d '{"to":"1203630000@g.us","type":"poll","poll":{"name":"Almoço?","options":["12h","13h"],"max_selections":1}}'
 
-# editar (até 20 min), apagar para todos (até 48h), fixar e encaminhar
+# editar (até 15 min), apagar para todos (até 48h), fixar e encaminhar
 curl -s -X POST localhost:8787/v1/instances/$ID/messages -H "Authorization: Bearer $TOK" \
   -d '{"type":"edit","message_id":"msg_...","text":"texto corrigido"}'
 curl -s -X POST localhost:8787/v1/instances/$ID/messages -H "Authorization: Bearer $TOK" \
@@ -117,10 +117,10 @@ Campos que valem para mensagens novas (não para `reaction`, `edit`, `revoke`, `
 
 - `reply_to`: id do LiteZap ou `wa_message_id` de uma mensagem do chat; fora do log responde `validation_failed`.
 - `mentions`: números ou JIDs (escreva `@<número>` no texto onde a menção aparece); em grupo, `["all"]` menciona todos (grupos de até 256 participantes).
-- `link_preview` (só `text`): `"off"` (padrão), `"auto"` (lê o primeiro link do texto: título, descrição e miniatura de `og:*`) ou um objeto `{"url","title","description","image_url"}` com o cartão pronto. A página é buscada no enfileiramento com o mesmo filtro de endereço da mídia (IPs privados e locais recusados, sem proxy do ambiente), só `text/html`, até 512KB, e todo o trabalho tem limite de 5s: se falhar ou demorar, a mensagem sai sem prévia.
+- `link_preview` (só `text`): `"off"` (padrão), `"auto"` (lê o primeiro link do texto: título, descrição e miniatura de `og:*`) ou um objeto `{"url","title","description","image_url"}` com o cartão pronto. A página é buscada no enfileiramento com o mesmo filtro de endereço da mídia (IPs privados e locais sempre recusados, mesmo com `media_allow_private_urls`, e sem proxy do ambiente), só `text/html`, até 512KB, e todo o trabalho tem limite de 5s: se falhar ou demorar, a mensagem sai sem prévia. No objeto, `url` precisa aparecer no texto.
 - `delay_ms` e `typing_ms` (0 a 15000): espera extra antes do envio e "digitando..." por esse tempo (mesmo com `typing_simulation` desligado). Só somam tempo depois da verificação de ritmo: `min_interval_ms`, `max_per_minute`, rampa e janela continuam valendo.
 
-`edit`, `revoke` e `pin` usam `message_id` (id do LiteZap ou `wa_message_id`); com id do LiteZap, `to` é opcional. Editar: só textos enviados por este número, até 20 minutos depois (`409 edit_window_expired`). Apagar para todos: as próprias mensagens até 48h (`409 revoke_window_expired`); de outra pessoa, só em grupo onde o número é admin (o worker confere; senão `403 forbidden`). Fixar: `pin.duration` `24h`, `7d` (padrão) ou `30d`; `pin.unpin: true` desafixa. As janelas são conferidas no envio e de novo quando o item sai da fila. Editar e apagar atualizam o log (`edited_at`, `revoked_at` e texto) e emitem `message.edited`/`message.revoked`; esses itens passam pela fila como qualquer envio, mas não viram mensagem no log. Encaminhar (`forward.message_id`, ou `wa_message_id` com `forward.chat`): textos, localizações, contatos e mídia **recebida** (reenviada a partir dos servidores do WhatsApp, sem novo upload); mídia enviada pela API não pode ser encaminhada porque o LiteZap não guarda o arquivo.
+`edit`, `revoke` e `pin` usam `message_id` (id do LiteZap ou `wa_message_id`); com id do LiteZap, `to` é opcional. Editar: só textos enviados por este número, até 15 minutos depois (`409 edit_window_expired`). Apagar para todos: as próprias mensagens até 48h (`409 revoke_window_expired`); de outra pessoa, só em grupo onde o número é admin (o worker confere; senão `403 forbidden`). Fixar: `pin.duration` `24h`, `7d` (padrão) ou `30d`; `pin.unpin: true` desafixa. As janelas são conferidas no envio e de novo quando o item sai da fila. Editar e apagar atualizam o log (`edited_at`, `revoked_at` e texto) e emitem `message.edited`/`message.revoked`; esses itens passam pela fila como qualquer envio, mas não viram mensagem no log. Encaminhar (`forward.message_id`, ou `wa_message_id` com `forward.chat`): textos, localizações, contatos e mídia **recebida** (reenviada a partir dos servidores do WhatsApp, sem novo upload); mídia enviada pela API não pode ser encaminhada porque o LiteZap não guarda o arquivo, e mídia de visualização única nunca é encaminhada. Em grupos que endereçam membros por LID, o `@<número>` de uma menção é trocado no texto pelo `@<lid>` que o WhatsApp espera.
 
 `to` aceita número com DDI ou JID (`...@s.whatsapp.net`, `...@g.us`, `...@lid`). `?wait=true` espera o resultado por `timeout` (padrão `30s`, no máximo 2 minutos); se o tempo acabar a resposta é `202` com o status atual (`queued`/`in_flight`) e o envio continua na fila. Limites: imagem 16MB, vídeo/áudio 64MB, documento 100MB. `expires_after` (padrão `24h`, máximo `168h`): não enviada até lá, a mensagem falha com `message_expired`.
 
@@ -154,7 +154,7 @@ Erros: `{"error":{"code","message","retryable"}}`. Códigos:
 | `media_unavailable` | 410 | mídia recebida expirou no WhatsApp |
 | `message_expired` | 410 | mensagem não enviada antes de `expires_after` |
 | `message_canceled` | 409 | mensagem removida da fila antes do envio (`?wait=true` ou reenvio com o mesmo `client_message_id`) |
-| `edit_window_expired` · `revoke_window_expired` | 409 | edição depois de 20 minutos · apagar para todos depois de 48h |
+| `edit_window_expired` · `revoke_window_expired` | 409 | edição depois de 15 minutos · apagar para todos depois de 48h |
 | `media_too_large` | 413 | mídia acima do limite do tipo, ou corpo do envio acima de 140MB |
 | `media_fetch_failed` | 422 | `media.url` não pôde ser baixada (`retryable`) |
 | `rate_limited` | 429 | muitas consultas de números por minuto em `check-numbers` (cota própria, separada da fila) (`retryable`) |
@@ -202,8 +202,8 @@ Adicionar campos em `data` não muda a versão; remover ou mudar o sentido de um
 | `message.sent` | envio pela API concluído (`source: "api"`) ou mensagem enviada pelo celular (`source: "device"`) | mensagem |
 | `message.status` | `sent`, `delivered`, `read` ou `failed` de uma mensagem nossa | `{id, wa_message_id?, chat, status, error?}` |
 | `message.reaction` | reação recebida | mensagem com `type: "reaction"`, `text` = emoji (vazio = reação removida), `reaction_to` |
-| `message.edited` | mensagem editada (pela API, pelo celular ou pelo contato) | `{id?, wa_message_id, chat, sender?, from_me, source, text, timestamp}` (`text` = texto novo; `id` vazio se a mensagem não está no log) |
-| `message.revoked` | mensagem apagada para todos | `{id?, wa_message_id, chat, sender?, from_me, source, timestamp}` |
+| `message.edited` | mensagem editada (pela API, pelo celular ou pelo contato; edições recebidas só valem do próprio autor, as demais são ignoradas) | `{id?, wa_message_id, chat, sender?, from_me, source, text, timestamp}` (`text` = texto novo; `id` vazio se a mensagem não está no log) |
+| `message.revoked` | mensagem apagada para todos (pelo autor, ou por admin do grupo) | `{id?, wa_message_id, chat, sender?, from_me, source, timestamp}` |
 | `message.poll_vote` | voto em enquete (o voto atual da pessoa; lista vazia = voto retirado) | `{poll_id?, poll_wa_message_id, chat, voter, push_name?, from_me, selected_options, unknown_options?, timestamp}` |
 | `history.synced` | fim da ingestão de um history sync (um evento por sync, 15s depois do último bloco) | `{chats, messages, new_messages}` |
 
@@ -317,7 +317,7 @@ O LiteZap expõe as mesmas operações como ferramentas do [Model Context Protoc
 | `send_media` | envia imagem, vídeo, áudio (ou nota de voz), documento, sticker, gif ou vídeo redondo a partir de uma URL pública |
 | `send_reaction` | reage com um emoji a uma mensagem (vazio remove) |
 | `send_location` · `send_contact` | localização; 1 a 10 cartões de contato (nome + telefone) |
-| `edit_message` · `delete_message` | edita um texto enviado (até 20 min) · apaga para todos (até 48h; marcadas como destrutivas, com aviso para só agir a pedido do usuário) |
+| `edit_message` · `delete_message` | edita um texto enviado (até 15 min) · apaga para todos (até 48h; marcadas como destrutivas, com aviso para só agir a pedido do usuário) |
 | `get_message_status` | `queued`, `in_flight`, `sent`, `delivered`, `read` ou `failed` |
 | `list_chats` | chats do log, mais recentes primeiro, com não lidas (paginado) |
 | `get_messages` | mensagens de um chat, mais novas primeiro (paginado por `cursor`) |

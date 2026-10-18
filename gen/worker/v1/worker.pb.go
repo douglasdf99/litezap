@@ -554,18 +554,20 @@ type Message struct {
 	// text | image | video | gif | ptv | audio | document | sticker | location | contact |
 	// poll | reaction | unknown, and the updates edit | revoke | poll_vote (not new messages:
 	// target_id names the message they change).
-	Type          string         `protobuf:"bytes,8,opt,name=type,proto3" json:"type,omitempty"`
-	Text          string         `protobuf:"bytes,9,opt,name=text,proto3" json:"text,omitempty"`                                // body, caption, reaction emoji, poll name, new text of an edit
-	Media         *Media         `protobuf:"bytes,10,opt,name=media,proto3" json:"media,omitempty"`                             // set for image | video | gif | ptv | audio | document | sticker
-	ReactionTo    string         `protobuf:"bytes,11,opt,name=reaction_to,json=reactionTo,proto3" json:"reaction_to,omitempty"` // WhatsApp id of the message a reaction refers to
-	QuotedId      string         `protobuf:"bytes,12,opt,name=quoted_id,json=quotedId,proto3" json:"quoted_id,omitempty"`       // WhatsApp id of the message this one replies to
-	Mentions      []string       `protobuf:"bytes,13,rep,name=mentions,proto3" json:"mentions,omitempty"`                       // mentioned JIDs
-	Location      *Location      `protobuf:"bytes,14,opt,name=location,proto3" json:"location,omitempty"`
-	Contacts      []*ContactCard `protobuf:"bytes,15,rep,name=contacts,proto3" json:"contacts,omitempty"`
-	Poll          *Poll          `protobuf:"bytes,16,opt,name=poll,proto3" json:"poll,omitempty"`
-	TargetId      string         `protobuf:"bytes,17,opt,name=target_id,json=targetId,proto3" json:"target_id,omitempty"`       // edit | revoke | poll_vote: WhatsApp id of the changed message
-	PollHashes    [][]byte       `protobuf:"bytes,18,rep,name=poll_hashes,json=pollHashes,proto3" json:"poll_hashes,omitempty"` // poll_vote: SHA-256 of each selected option name
-	Forwarded     bool           `protobuf:"varint,19,opt,name=forwarded,proto3" json:"forwarded,omitempty"`
+	Type       string         `protobuf:"bytes,8,opt,name=type,proto3" json:"type,omitempty"`
+	Text       string         `protobuf:"bytes,9,opt,name=text,proto3" json:"text,omitempty"`                                // body, caption, reaction emoji, poll name, new text of an edit
+	Media      *Media         `protobuf:"bytes,10,opt,name=media,proto3" json:"media,omitempty"`                             // set for image | video | gif | ptv | audio | document | sticker
+	ReactionTo string         `protobuf:"bytes,11,opt,name=reaction_to,json=reactionTo,proto3" json:"reaction_to,omitempty"` // WhatsApp id of the message a reaction refers to
+	QuotedId   string         `protobuf:"bytes,12,opt,name=quoted_id,json=quotedId,proto3" json:"quoted_id,omitempty"`       // WhatsApp id of the message this one replies to
+	Mentions   []string       `protobuf:"bytes,13,rep,name=mentions,proto3" json:"mentions,omitempty"`                       // mentioned JIDs
+	Location   *Location      `protobuf:"bytes,14,opt,name=location,proto3" json:"location,omitempty"`
+	Contacts   []*ContactCard `protobuf:"bytes,15,rep,name=contacts,proto3" json:"contacts,omitempty"`
+	Poll       *Poll          `protobuf:"bytes,16,opt,name=poll,proto3" json:"poll,omitempty"`
+	TargetId   string         `protobuf:"bytes,17,opt,name=target_id,json=targetId,proto3" json:"target_id,omitempty"`       // edit | revoke | poll_vote: WhatsApp id of the changed message
+	PollHashes [][]byte       `protobuf:"bytes,18,rep,name=poll_hashes,json=pollHashes,proto3" json:"poll_hashes,omitempty"` // poll_vote: SHA-256 of each selected option name
+	Forwarded  bool           `protobuf:"varint,19,opt,name=forwarded,proto3" json:"forwarded,omitempty"`
+	// revoke: WhatsApp marked it as an admin deleting another member's message (groups)
+	AdminRevoke   bool `protobuf:"varint,20,opt,name=admin_revoke,json=adminRevoke,proto3" json:"admin_revoke,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -729,6 +731,13 @@ func (x *Message) GetPollHashes() [][]byte {
 func (x *Message) GetForwarded() bool {
 	if x != nil {
 		return x.Forwarded
+	}
+	return false
+}
+
+func (x *Message) GetAdminRevoke() bool {
+	if x != nil {
+		return x.AdminRevoke
 	}
 	return false
 }
@@ -1066,6 +1075,7 @@ type Media struct {
 	Seconds       uint32                 `protobuf:"varint,5,opt,name=seconds,proto3" json:"seconds,omitempty"`
 	Ptt           bool                   `protobuf:"varint,6,opt,name=ptt,proto3" json:"ptt,omitempty"`
 	Ref           []byte                 `protobuf:"bytes,7,opt,name=ref,proto3" json:"ref,omitempty"` // opaque: pass back to DownloadMedia
+	ViewOnce      bool                   `protobuf:"varint,8,opt,name=view_once,json=viewOnce,proto3" json:"view_once,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1147,6 +1157,13 @@ func (x *Media) GetRef() []byte {
 		return x.Ref
 	}
 	return nil
+}
+
+func (x *Media) GetViewOnce() bool {
+	if x != nil {
+		return x.ViewOnce
+	}
+	return false
 }
 
 type Receipt struct {
@@ -2305,7 +2322,7 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x02QR\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x1d\n" +
 	"\n" +
-	"timeout_ms\x18\x02 \x01(\x03R\ttimeoutMs\"\xc9\x04\n" +
+	"timeout_ms\x18\x02 \x01(\x03R\ttimeoutMs\"\xec\x04\n" +
 	"\aMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04chat\x18\x02 \x01(\tR\x04chat\x12\x16\n" +
@@ -2328,7 +2345,8 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\ttarget_id\x18\x11 \x01(\tR\btargetId\x12\x1f\n" +
 	"\vpoll_hashes\x18\x12 \x03(\fR\n" +
 	"pollHashes\x12\x1c\n" +
-	"\tforwarded\x18\x13 \x01(\bR\tforwarded\"\x84\x01\n" +
+	"\tforwarded\x18\x13 \x01(\bR\tforwarded\x12!\n" +
+	"\fadmin_revoke\x18\x14 \x01(\bR\vadminRevoke\"\x84\x01\n" +
 	"\bLocation\x12\x1a\n" +
 	"\blatitude\x18\x01 \x01(\x01R\blatitude\x12\x1c\n" +
 	"\tlongitude\x18\x02 \x01(\x01R\tlongitude\x12\x12\n" +
@@ -2354,7 +2372,7 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x1c\n" +
-	"\tthumbnail\x18\x04 \x01(\fR\tthumbnail\"\x9e\x01\n" +
+	"\tthumbnail\x18\x04 \x01(\fR\tthumbnail\"\xbb\x01\n" +
 	"\x05Media\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
 	"\x04mime\x18\x02 \x01(\tR\x04mime\x12\x12\n" +
@@ -2362,7 +2380,8 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\tfile_name\x18\x04 \x01(\tR\bfileName\x12\x18\n" +
 	"\aseconds\x18\x05 \x01(\rR\aseconds\x12\x10\n" +
 	"\x03ptt\x18\x06 \x01(\bR\x03ptt\x12\x10\n" +
-	"\x03ref\x18\a \x01(\fR\x03ref\"u\n" +
+	"\x03ref\x18\a \x01(\fR\x03ref\x12\x1b\n" +
+	"\tview_once\x18\b \x01(\bR\bviewOnce\"u\n" +
 	"\aReceipt\x12\x1f\n" +
 	"\vmessage_ids\x18\x01 \x03(\tR\n" +
 	"messageIds\x12\x12\n" +

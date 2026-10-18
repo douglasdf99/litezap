@@ -83,11 +83,11 @@ type Target struct {
 	SentAt      time.Time `json:"sent_at"`
 }
 
-// Edit and revoke windows (whatsmeow.EditWindow is 20 minutes; WhatsApp lets senders
-// delete for everyone for about two days). Checked again when the item is dispatched: a
-// queued edit may have waited too long.
+// Edit and revoke windows: WhatsApp documents 15 minutes for edits (whatsmeow.EditWindow
+// says 20; later edits may be ignored by recipients) and about two days to delete for
+// everyone. Checked again when the item is dispatched: a queued edit may have waited too long.
 const (
-	EditWindow   = 20 * time.Minute
+	EditWindow   = 15 * time.Minute
 	RevokeWindow = 48 * time.Hour
 )
 
@@ -103,7 +103,7 @@ func windowError(p Payload, now time.Time) string {
 	age := now.Sub(p.Target.SentAt)
 	switch {
 	case p.Type == "edit" && age > EditWindow:
-		return "edit_window_expired: messages can only be edited for 20 minutes"
+		return "edit_window_expired: messages can only be edited for 15 minutes"
 	case p.Type == "revoke" && age > RevokeWindow:
 		return "revoke_window_expired: messages can only be deleted for everyone for 48 hours"
 	}

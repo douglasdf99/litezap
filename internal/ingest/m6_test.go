@@ -73,3 +73,36 @@ func TestStructuredMessagesAndUpdates(t *testing.T) {
 		t.Fatalf("vote on unknown poll = %+v", v)
 	}
 }
+
+// Only the author edits a message; only the author or a group admin deletes it.
+func TestForgedUpdatesAreIgnored(t *testing.T) {
+	in, st := setup(t)
+	pub := &recPub{}
+	in.Events = pub
+	ctx := context.Background()
+	group := "120363@g.us"
+	ana, bia := "5511911111111@s.whatsapp.net", "5511922222222@s.whatsapp.net"
+	in.WorkerEvent("i1", msgEv(&workerv1.Message{Id: "G1", Chat: group, Sender: ana, IsGroup: true, TimestampMs: ts, Type: "text", Text: "da Ana"}))
+	in.WorkerEvent("i1", msgEv(&workerv1.Message{Id: "MINE", Chat: group, Sender: ana, FromMe: true, IsGroup: true, TimestampMs: ts, Type: "text", Text: "meu"}))
+	forged := []*workerv1.Message{
+		{Id: "F1", Chat: group, Sender: bia, IsGroup: true, TimestampMs: ts, Type: "edit", Text: "falso", TargetId: "G1"},
+		{Id: "F2", Chat: group, Sender: bia, IsGroup: true, TimestampMs: ts, Type: "revoke", TargetId: "G1"},
+		{Id: "F3", Chat: group, Sender: bia, IsGroup: true, TimestampMs: ts, Type: "revoke", TargetId: "MINE"},
+	}
+	for _, m := range forged {
+		in.WorkerEvent("i1", msgEv(m))
+	}
+	g1, _ := st.MessageByWAID(ctx, "i1", group, "G1")
+	mine, _ := st.MessageByWAID(ctx, "i1", group, "MINE")
+	if g1.Text != "da Ana" || !g1.RevokedAt.IsZero() || !mine.RevokedAt.IsZero() {
+		t.Fatalf("forged updates applied: %+v %+v", g1, mine)
+	}
+	if n := len(pub.snapshot()); n != 2 { // the two messages only
+		t.Fatalf("events = %d", n)
+	}
+	// An admin may delete Ana's message.
+	in.WorkerEvent("i1", msgEv(&workerv1.Message{Id: "A1", Chat: group, Sender: bia, IsGroup: true, TimestampMs: ts, Type: "revoke", TargetId: "G1", AdminRevoke: true}))
+	if g1, _ := st.MessageByWAID(ctx, "i1", group, "G1"); g1.RevokedAt.IsZero() {
+		t.Fatal("admin revoke not applied")
+	}
+}

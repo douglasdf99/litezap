@@ -376,4 +376,5 @@ type MediaInfo struct {
 	FileName string `json:"file_name,omitempty"`
 	Seconds  int    `json:"seconds,omitempty"`
 	PTT      bool   `json:"ptt,omitempty"`
+	ViewOnce bool   `json:"view_once,omitempty"` // received as view-once (never forwarded)
 }

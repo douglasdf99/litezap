@@ -71,7 +71,7 @@ func record(m *workerv1.Message, source string) store.Message {
 	rec.MetaJSON = meta(m).JSON()
 	if md := m.Media; md != nil {
 		info := store.MediaInfo{ID: secure.NewID("med_"), Kind: md.Kind, Mime: md.Mime, Size: int64(md.Size),
-			FileName: md.FileName, Seconds: int(md.Seconds), PTT: md.Ptt}
+			FileName: md.FileName, Seconds: int(md.Seconds), PTT: md.Ptt, ViewOnce: md.ViewOnce}
 		b, _ := json.Marshal(info)
 		rec.MediaJSON = string(b)
 		rec.Media = &store.Media{ID: info.ID, Kind: md.Kind, Mime: md.Mime, Size: info.Size, FileName: md.FileName, Ref: md.Ref}
@@ -174,12 +174,23 @@ func (in *Ingestor) update(ctx context.Context, instanceID string, m *workerv1.M
 		return err
 	}
 	at := time.UnixMilli(m.TimestampMs).UTC()
-	var rec store.Message
 	typ := events.TypeMessageEdited
-	if m.Type == "edit" {
-		rec, err = in.Store.EditMessage(ctx, instanceID, m.Chat, m.TargetId, m.Text, at)
-	} else {
+	if m.Type == "revoke" {
 		typ = events.TypeMessageRevoked
+	}
+	// Anyone who knows a message id can send an edit or revoke of it: only its author may
+	// edit it, and only its author or a group admin may delete it (as WhatsApp clients do).
+	rec, err := in.Store.MessageByWAID(ctx, instanceID, m.Chat, m.TargetId)
+	switch {
+	case errors.Is(err, store.ErrNotFound): // not in the log: the event still goes out
+	case err != nil:
+		return err
+	case !mayChange(m, rec):
+		in.Log.Warn("ignored "+m.Type+" of a message by someone else", "instance_id", instanceID, "chat", m.Chat, "target", m.TargetId)
+		return nil
+	case m.Type == "edit":
+		rec, err = in.Store.EditMessage(ctx, instanceID, m.Chat, m.TargetId, m.Text, at)
+	default:
 		rec, err = in.Store.RevokeMessage(ctx, instanceID, m.Chat, m.TargetId, at)
 	}
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -194,6 +205,12 @@ func (in *Ingestor) update(ctx context.Context, instanceID string, m *workerv1.M
 		in.Events.Publish(instanceID, typ, u)
 	}
 	return nil
+}
+
+// mayChange reports whether the update m may change the logged message target.
+func mayChange(m *workerv1.Message, target store.Message) bool {
+	sameAuthor := target.FromMe == m.FromMe && (m.FromMe || target.SenderJID == m.Sender)
+	return sameAuthor || (m.Type == "revoke" && m.IsGroup && m.AdminRevoke)
 }
 
 // pollVote publishes message.poll_vote with the options matched by their SHA-256 against

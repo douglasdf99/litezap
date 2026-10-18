@@ -96,6 +96,8 @@ message Message {
   string target_id = 17; // edit | revoke | poll_vote: WhatsApp id of the changed message
   repeated bytes poll_hashes = 18; // poll_vote: SHA-256 of each selected option name
   bool forwarded = 19;
+  // revoke: WhatsApp marked it as an admin deleting another member's message (groups)
+  bool admin_revoke = 20;
 }
 
 message Location {
@@ -139,6 +141,7 @@ message Media {
   uint32 seconds = 5;
   bool ptt = 6;
   bytes ref = 7; // opaque: pass back to DownloadMedia
+  bool view_once = 8;
 }
 
 message Receipt {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"image"
+	"image/color"
 	_ "image/gif" // decoders for preview thumbnails
 	"image/jpeg"
 	_ "image/png"
@@ -16,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/douglasdf99/litezap/internal/apierr"
+	"github.com/douglasdf99/litezap/internal/media"
 	"github.com/douglasdf99/litezap/internal/queue"
 	"github.com/douglasdf99/litezap/internal/store"
 	"golang.org/x/net/html"
@@ -28,7 +30,7 @@ var previewBudget = 5 * time.Second
 const (
 	maxPreviewHTML   = 512 << 10
 	maxPreviewImage  = 2 << 20
-	maxPreviewPixels = 4096 * 4096
+	maxPreviewPixels = 2048 * 2048
 	thumbSide        = 300
 	maxPreviewTitle  = 300
 	maxPreviewDesc   = 1000
@@ -178,6 +180,10 @@ func thumbnail(data []byte) []byte {
 	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width*cfg.Height > maxPreviewPixels {
 		return nil
 	}
+	switch cfg.ColorModel {
+	case color.RGBA64Model, color.NRGBA64Model, color.Gray16Model:
+		return nil // 16-bit images take twice the memory to decode
+	}
 	src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil
@@ -211,6 +217,18 @@ func validPreviewURL(raw string) bool {
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && len(raw) <= 2048
 }
 
+// previewFetcher is the fetcher for link previews. Unlike media.url, preview URLs come from
+// message texts (possibly copied from inbound messages), so private addresses are always
+// refused, whatever media_allow_private_urls says.
+func (s *Messaging) previewFetcher() *media.Fetcher {
+	s.previewOnce.Do(func() {
+		if s.PreviewFetcher == nil {
+			s.PreviewFetcher = &media.Fetcher{}
+		}
+	})
+	return s.PreviewFetcher
+}
+
 // linkPreview builds the preview card of a text. Validation errors are returned; network
 // failures are not (the message simply goes without a preview, or with the custom
 // fields only). nil: no preview.
@@ -221,6 +239,8 @@ func (s *Messaging) linkPreview(ctx context.Context, in *LinkPreviewInput, text 
 	target := in.URL
 	if target == "" {
 		target = firstURL(text)
+	} else if !strings.Contains(text, target) {
+		return nil, nil, apierr.Validation("link_preview.url must appear in the text")
 	}
 	if target == "" {
 		if in.Mode == "auto" {
@@ -241,8 +261,9 @@ func (s *Messaging) linkPreview(ctx context.Context, in *LinkPreviewInput, text 
 	defer cancel()
 	lp := &queue.LinkPreview{URL: target, Title: in.Title, Description: in.Description}
 	image := in.ImageURL
+	fetcher := s.previewFetcher()
 	if in.Mode == "auto" {
-		doc, final, err := s.Fetcher.FetchPage(ctx, target, maxPreviewHTML)
+		doc, final, err := fetcher.FetchPage(ctx, target, maxPreviewHTML)
 		if err != nil {
 			return nil, nil, nil // private address, timeout, not HTML...: no preview
 		}
@@ -258,8 +279,12 @@ func (s *Messaging) linkPreview(ctx context.Context, in *LinkPreviewInput, text 
 		}
 	}
 	if image != "" {
-		if data, _, err := s.Fetcher.Fetch(ctx, image, maxPreviewImage); err == nil {
-			lp.Thumbnail = thumbnail(data)
+		// A thumbnail is decoded in memory: it takes one of the media slots.
+		if release, err := s.acquireMedia(ctx); err == nil {
+			if data, _, err := fetcher.Fetch(ctx, image, maxPreviewImage); err == nil {
+				lp.Thumbnail = thumbnail(data)
+			}
+			release()
 		}
 	}
 	if lp.Title == "" && lp.Description == "" && lp.Thumbnail == nil {

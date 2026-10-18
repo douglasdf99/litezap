@@ -51,7 +51,7 @@ func TestDelayAndTypingOverride(t *testing.T) {
 
 func TestEditWindowCheckedAtDispatch(t *testing.T) {
 	e := newEnvAt(t, t0, fastSettings(), instance.Connected, noLookup)
-	old := e.enqueue(chatA, Payload{Type: "edit", Text: "x", Target: &Target{WAMessageID: "W1", FromMe: true, SentAt: t0.Add(-21 * time.Minute)}})
+	old := e.enqueue(chatA, Payload{Type: "edit", Text: "x", Target: &Target{WAMessageID: "W1", FromMe: true, SentAt: t0.Add(-16 * time.Minute)}})
 	revoke := e.enqueue(chatB, Payload{Type: "revoke", Target: &Target{WAMessageID: "W2", FromMe: true, SentAt: t0.Add(-49 * time.Hour)}})
 	e.eventually("failed", func() bool {
 		return e.status(old).Status == store.OutFailed && e.status(revoke).Status == store.OutFailed

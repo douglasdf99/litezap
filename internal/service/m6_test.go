@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -218,6 +219,11 @@ func TestForward(t *testing.T) {
 		t.Fatalf("text forward = %+v", r)
 	}
 	_ = txt
+	once := e.received(&workerv1.Message{Id: "VO1", Type: "image",
+		Media: &workerv1.Media{Kind: "image", Mime: "image/jpeg", Size: 10, Ref: []byte("r"), ViewOnce: true}})
+	if _, err := e.svc.Send(ctx, "i1", SendInput{To: other, Type: "forward", Forward: &ForwardInput{MessageID: once.ID}}, 0); apiCode(err) != "validation_failed" {
+		t.Fatalf("view-once forward = %v", err)
+	}
 	png := []byte("\x89PNG\r\n\x1a\nimage")
 	mine, err := e.svc.Send(ctx, "i1", SendInput{To: peer, Type: "image", Media: &MediaInput{Base64: base64.StdEncoding.EncodeToString(png)}}, 2*time.Second)
 	if err != nil {
@@ -276,6 +282,7 @@ func pngImage(t *testing.T, w, h int) []byte {
 func TestLinkPreview(t *testing.T) {
 	e := newMsgEnv(t)
 	ctx := context.Background()
+	e.svc.PreviewFetcher = &media.Fetcher{AllowPrivate: true}
 	big := pngImage(t, 800, 400)
 	slow := make(chan struct{})
 	t.Cleanup(func() { close(slow) })
@@ -313,7 +320,7 @@ func TestLinkPreview(t *testing.T) {
 		t.Fatalf("thumbnail = %+v, %v", thumb, err)
 	}
 	// Custom card, no page fetch.
-	if _, err := e.svc.Send(ctx, "i1", SendInput{To: peer, Type: "text", Text: "promo", LinkPreview: &LinkPreviewInput{Mode: "custom",
+	if _, err := e.svc.Send(ctx, "i1", SendInput{To: peer, Type: "text", Text: "promo https://example.com/p", LinkPreview: &LinkPreviewInput{Mode: "custom",
 		URL: "https://example.com/p", Title: "Promo"}}, 2*time.Second); err != nil {
 		t.Fatal(err)
 	}
@@ -330,14 +337,19 @@ func TestLinkPreview(t *testing.T) {
 			t.Fatalf("%s = %+v, %v", path, v, err)
 		}
 	}
-	// Private addresses are refused by the same filter as media.
-	e.svc.Fetcher = &media.Fetcher{}
+	// Private addresses are refused by the same filter as media (and by default, whatever
+	// media_allow_private_urls says: the env's media fetcher allows them).
+	e.svc.PreviewFetcher = nil
+	e.svc.previewOnce = sync.Once{}
 	v, err = e.svc.Send(ctx, "i1", SendInput{To: peer, Type: "text", Text: srv.URL + "/page", LinkPreview: &LinkPreviewInput{Mode: "auto"}}, 2*time.Second)
 	if err != nil || v.LinkPreview != nil || e.lastSent().LinkPreview != nil {
 		t.Fatalf("private = %+v, %v", v, err)
 	}
 	if _, err := e.svc.Send(ctx, "i1", SendInput{To: peer, Type: "text", Text: "x", LinkPreview: &LinkPreviewInput{Mode: "custom", Title: "t"}}, 0); apiCode(err) != "validation_failed" {
 		t.Fatalf("custom without url = %v", err)
+	}
+	if _, err := e.svc.Send(ctx, "i1", SendInput{To: peer, Type: "text", Text: "x", LinkPreview: &LinkPreviewInput{Mode: "custom", Title: "t", URL: "https://elsewhere.com"}}, 0); apiCode(err) != "validation_failed" {
+		t.Fatalf("custom url not in the text = %v", err)
 	}
 }
 

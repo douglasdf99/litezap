@@ -398,7 +398,7 @@ func content(m *waE2E.Message) (typ, text string, media *workerv1.Media, reactio
 		return "text", m.GetExtendedTextMessage().GetText(), nil, "", true
 	case m.GetImageMessage() != nil:
 		x := m.GetImageMessage()
-		return "image", x.GetCaption(), &workerv1.Media{Kind: "image", Mime: x.GetMimetype(), Size: x.GetFileLength(), Ref: mediaRef(x)}, "", true
+		return "image", x.GetCaption(), &workerv1.Media{Kind: "image", Mime: x.GetMimetype(), Size: x.GetFileLength(), Ref: mediaRef(x), ViewOnce: x.GetViewOnce()}, "", true
 	case m.GetPtvMessage() != nil:
 		x := m.GetPtvMessage()
 		return "ptv", "", &workerv1.Media{Kind: "video", Mime: x.GetMimetype(), Size: x.GetFileLength(), Seconds: x.GetSeconds(), Ref: mediaRef(x)}, "", true
@@ -408,10 +408,10 @@ func content(m *waE2E.Message) (typ, text string, media *workerv1.Media, reactio
 		if x.GetGifPlayback() {
 			typ = "gif"
 		}
-		return typ, x.GetCaption(), &workerv1.Media{Kind: "video", Mime: x.GetMimetype(), Size: x.GetFileLength(), Seconds: x.GetSeconds(), Ref: mediaRef(x)}, "", true
+		return typ, x.GetCaption(), &workerv1.Media{Kind: "video", Mime: x.GetMimetype(), Size: x.GetFileLength(), Seconds: x.GetSeconds(), Ref: mediaRef(x), ViewOnce: x.GetViewOnce()}, "", true
 	case m.GetAudioMessage() != nil:
 		x := m.GetAudioMessage()
-		return "audio", "", &workerv1.Media{Kind: "audio", Mime: x.GetMimetype(), Size: x.GetFileLength(), Seconds: x.GetSeconds(), Ptt: x.GetPTT(), Ref: mediaRef(x)}, "", true
+		return "audio", "", &workerv1.Media{Kind: "audio", Mime: x.GetMimetype(), Size: x.GetFileLength(), Seconds: x.GetSeconds(), Ptt: x.GetPTT(), Ref: mediaRef(x), ViewOnce: x.GetViewOnce()}, "", true
 	case m.GetDocumentMessage() != nil:
 		x := m.GetDocumentMessage()
 		return "document", x.GetCaption(), &workerv1.Media{Kind: "document", Mime: x.GetMimetype(), Size: x.GetFileLength(), FileName: x.GetFileName(), Ref: mediaRef(x)}, "", true
@@ -582,13 +582,13 @@ func (w *Whatsmeow) toMessage(info types.MessageInfo, m *waE2E.Message, known li
 	return out
 }
 
-// editText is the new text carried by an edit (nil content: not an edit we can show).
+// editText is the new text carried by an edit (false: not an edit we can show).
 func editText(m *waE2E.Message) (string, bool) {
 	if pm := m.GetProtocolMessage(); pm != nil && pm.GetEditedMessage() != nil {
 		m = pm.GetEditedMessage()
 	}
-	_, t, _, _, ok := content(m)
-	return t, ok
+	typ, t, _, _, ok := content(m)
+	return t, ok && typ != "unknown"
 }
 
 // toUpdate reports an edit, revoke or poll vote of the message target (nil: not one).
@@ -606,6 +606,7 @@ func (w *Whatsmeow) toUpdate(e *events.Message) *workerv1.Message {
 		switch pm.GetType() {
 		case waE2E.ProtocolMessage_REVOKE:
 			u.Type, u.TargetId = "revoke", pm.GetKey().GetID()
+			u.AdminRevoke = e.Info.Edit == types.EditAttributeAdminRevoke
 		case waE2E.ProtocolMessage_MESSAGE_EDIT:
 			t, ok := editText(pm.GetEditedMessage())
 			if !ok {

@@ -47,6 +47,11 @@ type Messaging struct {
 	// (the URLs would point at an address third parties cannot use).
 	SignedURLs bool
 
+	// PreviewFetcher fetches link previews (default: a fetcher that never reaches private
+	// addresses). Tests replace it.
+	PreviewFetcher *media.Fetcher
+	previewOnce    sync.Once
+
 	mediaOnce  sync.Once
 	mediaSlots chan struct{}
 

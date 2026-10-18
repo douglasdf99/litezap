@@ -267,7 +267,7 @@ type sendContactInput struct {
 
 type editMessageInput struct {
 	InstanceID      string `json:"instance_id,omitempty" jsonschema:"Instance of the message"`
-	MessageID       string `json:"message_id" jsonschema:"The message to edit: the id returned when it was sent (msg_…). Only your own text messages, within 20 minutes of sending."`
+	MessageID       string `json:"message_id" jsonschema:"The message to edit: the id returned when it was sent (msg_…). Only your own text messages, within 15 minutes of sending."`
 	Text            string `json:"text" jsonschema:"The new text (replaces the old one; the recipient sees it marked as edited)."`
 	To              string `json:"to,omitempty" jsonschema:"Chat of the message; only needed with a wa_message_id."`
 	ClientMessageID string `json:"client_message_id,omitempty" jsonschema:"Your idempotency key (up to 128 chars)."`
@@ -448,7 +448,7 @@ func (t *tools) register(s *sdk.Server) {
 	add(t, s, &sdk.Tool{
 		Name:  "edit_message",
 		Title: "Edit a sent WhatsApp message",
-		Description: "Replaces the text of a text message this number sent, within 20 minutes of sending; the recipient sees it marked as edited and may already have read the old text. " +
+		Description: "Replaces the text of a text message this number sent, within 15 minutes of sending; the recipient sees it marked as edited and may already have read the old text. " +
 			"Only edit when the user asks. Fails with edit_window_expired after the window. Goes through the anti-ban queue.",
 		InputSchema: schema[editMessageInput](map[string]func(*jsonschema.Schema){
 			"instance_id": instID, "wait": boolDefault(true), "timeout_seconds": intRange(30, 1, maxWaitSeconds),

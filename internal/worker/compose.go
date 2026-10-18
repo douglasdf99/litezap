@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
@@ -55,6 +56,22 @@ func invalid(msg string) error { return grpcErr(codes.InvalidArgument, "validati
 
 // build turns a SendRequest into the WhatsApp message to send (uploading media when needed).
 func (w *Whatsmeow) build(ctx context.Context, to types.JID, req *workerv1.SendRequest) (*waE2E.Message, error) {
+	var ci *waE2E.ContextInfo
+	if req.Type != "edit" && req.Type != "revoke" && req.Type != "pin" {
+		var renames map[string]string
+		var err error
+		if ci, renames, err = w.contextInfo(ctx, to, req); err != nil {
+			return nil, err
+		}
+		if len(renames) > 0 {
+			// A mention mapped to a LID must appear in the text as "@<lid user>": clients
+			// highlight a mention by matching the @token with the JID.
+			req = proto.Clone(req).(*workerv1.SendRequest)
+			for pn, lid := range renames {
+				req.Text = strings.ReplaceAll(req.Text, "@"+pn, "@"+lid)
+			}
+		}
+	}
 	var msg *waE2E.Message
 	var err error
 	switch req.Type {
@@ -102,10 +119,6 @@ func (w *Whatsmeow) build(ctx context.Context, to types.JID, req *workerv1.SendR
 	default:
 		msg, err = w.buildUpload(ctx, req)
 	}
-	if err != nil {
-		return nil, err
-	}
-	ci, err := w.contextInfo(ctx, to, req)
 	if err != nil {
 		return nil, err
 	}
@@ -270,6 +283,9 @@ func buildForward(kind string, ref []byte) (*waE2E.Message, error) {
 	if err != nil {
 		return nil, invalid("unreadable media reference")
 	}
+	if v, ok := m.(interface{ GetViewOnce() bool }); ok && v.GetViewOnce() {
+		return nil, invalid("view-once media cannot be forwarded")
+	}
 	switch x := m.(type) {
 	case *waE2E.ImageMessage:
 		x.ContextInfo = nil
@@ -335,11 +351,13 @@ func (w *Whatsmeow) buildUpload(ctx context.Context, req *workerv1.SendRequest) 
 }
 
 // contextInfo builds the reply, mention and forwarding context of a message (nil: none).
-func (w *Whatsmeow) contextInfo(ctx context.Context, to types.JID, req *workerv1.SendRequest) (*waE2E.ContextInfo, error) {
+// renames maps the phone users of mentions that the group addresses by LID to their LID
+// users, so the text can be fixed to match.
+func (w *Whatsmeow) contextInfo(ctx context.Context, to types.JID, req *workerv1.SendRequest) (ci *waE2E.ContextInfo, renames map[string]string, err error) {
 	if req.Quote == nil && len(req.Mentions) == 0 && !req.MentionAll && !req.Forwarded {
-		return nil, nil
+		return nil, nil, nil
 	}
-	ci := &waE2E.ContextInfo{}
+	ci = &waE2E.ContextInfo{}
 	if q := req.Quote; q != nil && q.MessageId != "" {
 		ci.StanzaID = proto.String(q.MessageId)
 		ci.QuotedMessage = &waE2E.Message{Conversation: proto.String(q.Text)}
@@ -356,7 +374,7 @@ func (w *Whatsmeow) contextInfo(ctx context.Context, to types.JID, req *workerv1
 		default:
 			a, err := parseOptJID(q.Sender)
 			if err != nil || a.IsEmpty() {
-				return nil, invalid("the author of the quoted message is required in groups")
+				return nil, nil, invalid("the author of the quoted message is required in groups")
 			}
 			author = w.groupParticipant(ctx, to, a)
 		}
@@ -375,20 +393,27 @@ func (w *Whatsmeow) contextInfo(ctx context.Context, to types.JID, req *workerv1
 	for _, m := range req.Mentions {
 		j, err := types.ParseJID(m)
 		if err != nil || j.User == "" {
-			return nil, invalid("invalid mention " + m)
+			return nil, nil, invalid("invalid mention " + m)
 		}
-		addMention(w.groupParticipant(ctx, to, j))
+		mapped := w.groupParticipant(ctx, to, j)
+		if mapped.User != j.User {
+			if renames == nil {
+				renames = map[string]string{}
+			}
+			renames[j.User] = mapped.User
+		}
+		addMention(mapped)
 	}
 	if req.MentionAll {
 		if to.Server != types.GroupServer {
-			return nil, invalid("mentions \"all\" only works in groups")
+			return nil, nil, invalid("mentions \"all\" only works in groups")
 		}
 		gi, err := w.groupInfoOf(ctx, to)
 		if err != nil {
-			return nil, sendErr(err)
+			return nil, nil, sendErr(err)
 		}
 		if len(gi.Participants) > maxMentionAll {
-			return nil, invalid("mentions \"all\" is limited to groups of up to 256 participants")
+			return nil, nil, invalid("mentions \"all\" is limited to groups of up to 256 participants")
 		}
 		pn, lid := w.ownJIDs()
 		for _, p := range gi.Participants {
@@ -402,7 +427,7 @@ func (w *Whatsmeow) contextInfo(ctx context.Context, to types.JID, req *workerv1
 		ci.IsForwarded = proto.Bool(true)
 		ci.ForwardingScore = proto.Uint32(1)
 	}
-	return ci, nil
+	return ci, renames, nil
 }
 
 // setContextInfo attaches ci to the content of msg; false when the type has no context.

@@ -290,7 +290,7 @@ func (s *Messaging) composeTarget(ctx context.Context, instanceID, chat string, 
 			return apierr.Validation("text (the new text) is required (up to 64KB)")
 		}
 		if now.Sub(t.Timestamp) > queue.EditWindow {
-			return apierr.New(http.StatusConflict, "edit_window_expired", "messages can only be edited for 20 minutes", false)
+			return apierr.New(http.StatusConflict, "edit_window_expired", "messages can only be edited for 15 minutes", false)
 		}
 		p.Text = in.Text
 	case "revoke":
@@ -370,6 +370,9 @@ func (s *Messaging) composeForward(ctx context.Context, instanceID string, in Se
 		var info store.MediaInfo
 		if src.MediaJSON == "" || json.Unmarshal([]byte(src.MediaJSON), &info) != nil || info.ID == "" {
 			return apierr.Validation("only received attachments can be forwarded: LiteZap does not keep the files it sends")
+		}
+		if info.ViewOnce {
+			return apierr.Validation("view-once media cannot be forwarded")
 		}
 		md, err := s.Store.GetMedia(ctx, instanceID, info.ID)
 		if err != nil {
