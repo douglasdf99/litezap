@@ -66,8 +66,12 @@ func TestClientIP(t *testing.T) {
 		{"10.0.0.2:5000", "198.51.100.4, 10.0.0.3", trusted, "198.51.100.4"},
 		// Several headers are one list, in order.
 		{"10.0.0.2:5000", "198.51.100.4|10.0.0.9", trusted, "198.51.100.4"},
-		// Garbage in the chain: stop and use the last good hop (the proxy itself).
-		{"10.0.0.2:5000", "198.51.100.4, nonsense", trusted, "10.0.0.2"},
+		// Garbage in the chain: the client is unknown (invalid, matched by no list).
+		{"10.0.0.2:5000", "198.51.100.4, nonsense", trusted, "invalid IP"},
+		{"10.0.0.2:5000", "198.51.100.4, ", trusted, "invalid IP"},
+		// Proxies that append a port, or brackets for IPv6.
+		{"10.0.0.2:5000", "198.51.100.4:4711", trusted, "198.51.100.4"},
+		{"10.0.0.2:5000", "[2001:db8::7]:4711", trusted, "2001:db8::7"},
 		// Everything trusted: the leftmost entry.
 		{"10.0.0.2:5000", "10.0.0.5", trusted, "10.0.0.5"},
 		{"[2001:db8::1]:443", "", nil, "2001:db8::1"},

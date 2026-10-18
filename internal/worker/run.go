@@ -87,6 +87,7 @@ func Run(ctx context.Context, opt Options, log *slog.Logger) error {
 	cli.EmitAppStateEventsOnFullSync = true
 	wa := NewWhatsmeow(cli, log)
 	wa.proxied = opt.ProxyURL != ""
+	wa.proxySecrets = ProxySecrets(opt.ProxyURL)
 	wa.acct.proxyURL = opt.ProxyURL
 	wa.dataDir, wa.instanceID = opt.DataDir, opt.InstanceID
 	wa.zombieTimeout = opt.ZombieTimeout

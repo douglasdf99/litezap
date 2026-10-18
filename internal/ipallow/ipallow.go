@@ -78,7 +78,9 @@ func (l List) Contains(a netip.Addr) bool {
 // the connection comes from a trusted proxy: the header is walked from the right (the
 // entry appended by the nearest proxy) past every trusted hop, and the first untrusted
 // address is the client. A client cannot spoof its address by sending the header itself,
-// because entries left of the first untrusted hop are never read.
+// because entries left of the first untrusted hop are never read. A hop that is not an
+// address (with or without a port) makes the result invalid, which no allowlist contains
+// (fail closed).
 func ClientIP(r *http.Request, trusted List) netip.Addr {
 	remote := parseHostPort(r.RemoteAddr)
 	if len(trusted) == 0 || !trusted.Contains(remote) {
@@ -92,11 +94,11 @@ func ClientIP(r *http.Request, trusted List) netip.Addr {
 	}
 	client := remote
 	for i := len(hops) - 1; i >= 0; i-- {
-		a, err := netip.ParseAddr(hops[i])
-		if err != nil {
-			return client // malformed chain: trust nothing further left
+		a := parseHostPort(hops[i])
+		if !a.IsValid() {
+			return netip.Addr{} // malformed chain: unknown client
 		}
-		client = a.Unmap()
+		client = a
 		if !trusted.Contains(client) {
 			return client
 		}

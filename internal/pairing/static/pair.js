@@ -98,7 +98,12 @@
       return;
     }
     $('show-phone').addEventListener('click', function () { mode = 'phone'; show('qr-box', false); show('phone-box', true); });
-    $('show-qr').addEventListener('click', function () { mode = 'qr'; show('phone-box', false); poll(); });
+    $('show-qr').addEventListener('click', function () {
+      mode = 'qr';
+      show('phone-box', false);
+      if (timer) clearTimeout(timer);
+      poll();
+    });
     $('phone-go').addEventListener('click', function () {
       var btn = $('phone-go');
       btn.disabled = true;

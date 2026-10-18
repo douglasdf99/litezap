@@ -126,14 +126,16 @@ type APIKey struct {
 	CreatedAt   time.Time
 	ExpiresAt   time.Time // zero: never
 	LastUsedAt  time.Time
+	// CreatedBy is "admin" or "instance" (keys minted with the instance token die with it).
+	CreatedBy string
 }
 
-const apiKeyCols = `id, instance_id, name, key_hash, scopes, ip_allowlist_json, created_at, expires_at, last_used_at`
+const apiKeyCols = `id, instance_id, name, key_hash, scopes, ip_allowlist_json, created_at, expires_at, last_used_at, created_by`
 
 func scanAPIKey(row scanner) (APIKey, error) {
 	var k APIKey
 	var scopes, allow, created, expires, used string
-	err := row.Scan(&k.ID, &k.InstanceID, &k.Name, &k.KeyHash, &scopes, &allow, &created, &expires, &used)
+	err := row.Scan(&k.ID, &k.InstanceID, &k.Name, &k.KeyHash, &scopes, &allow, &created, &expires, &used, &k.CreatedBy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return k, ErrNotFound
 	}
@@ -149,10 +151,17 @@ func scanAPIKey(row scanner) (APIKey, error) {
 }
 
 func (s *Store) CreateAPIKey(ctx context.Context, k APIKey) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO api_keys (`+apiKeyCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')`,
+	if k.CreatedBy == "" {
+		k.CreatedBy = "admin"
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO api_keys (`+apiKeyCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?)`,
 		k.ID, k.InstanceID, k.Name, k.KeyHash, strings.Join(k.Scopes, ","), toJSONStrings(k.IPAllowlist),
-		now(), fmtTS(k.ExpiresAt))
+		now(), fmtTS(k.ExpiresAt), k.CreatedBy)
 	return err
+}
+
+func (s *Store) GetAPIKey(ctx context.Context, id string) (APIKey, error) {
+	return scanAPIKey(s.db.QueryRowContext(ctx, `SELECT `+apiKeyCols+` FROM api_keys WHERE id = ?`, id))
 }
 
 func (s *Store) APIKeyByHash(ctx context.Context, hash string) (APIKey, error) {
@@ -176,10 +185,26 @@ func (s *Store) ListAPIKeys(ctx context.Context, instanceID string) ([]APIKey, e
 	return out, rows.Err()
 }
 
-func (s *Store) CountAPIKeys(ctx context.Context, instanceID string) (int, error) {
+// CountAPIKeys counts the instance's keys, after removing its expired ones.
+func (s *Store) CountAPIKeys(ctx context.Context, instanceID string, at time.Time) (int, error) {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM api_keys WHERE instance_id = ? AND expires_at != '' AND expires_at <= ?`,
+		instanceID, fmtTS(at)); err != nil {
+		return 0, err
+	}
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys WHERE instance_id = ?`, instanceID).Scan(&n)
 	return n, err
+}
+
+// DeleteInstanceCreatedAPIKeys removes the keys minted with the instance token (called
+// when that token is rotated) and returns how many.
+func (s *Store) DeleteInstanceCreatedAPIKeys(ctx context.Context, instanceID string) (int, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM api_keys WHERE instance_id = ? AND created_by = 'instance'`, instanceID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 func (s *Store) DeleteAPIKey(ctx context.Context, instanceID, id string) error {

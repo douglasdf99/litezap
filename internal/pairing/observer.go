@@ -48,6 +48,10 @@ func (o *Observer) StateChanged(id string, st instance.State, _ string) {
 			go o.paired(id)
 		}
 		return
+	case instance.Starting, instance.Connecting, instance.Reconnecting:
+		// part of a pairing in progress (or unrelated): keep what we know
+	default: // stopped, logged out, failed, banned: the pairing did not complete
+		delete(o.pairing, id)
 	}
 	o.mu.Unlock()
 }

@@ -21,6 +21,11 @@ func TestWorkerMemoryFromProc(t *testing.T) {
 	write(filepath.Join(data, "run", "inst_b.pid"), "102")
 	write(filepath.Join(data, "run", "inst_c.pid"), "garbage")
 	write(filepath.Join(proc, "101", "status"), "Name:\tlitezap\nVmPeak:\t 9999 kB\nVmRSS:\t   2048 kB\n")
+	write(filepath.Join(proc, "101", "cmdline"), "/usr/bin/litezap\x00worker\x00--instance\x00inst_a\x00--socket\x00/x.sock\x00")
+	// 103 is a reused PID: another process.
+	write(filepath.Join(data, "run", "inst_d.pid"), "103")
+	write(filepath.Join(proc, "103", "status"), "VmRSS:\t 1 kB\n")
+	write(filepath.Join(proc, "103", "cmdline"), "/usr/bin/postgres\x00")
 	// 102 has exited: no /proc entry.
 	got := workerMemory(data, proc)
 	if len(got) != 1 || got["inst_a"] != 2048*1024 {

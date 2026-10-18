@@ -19,6 +19,8 @@ import (
 // PlatformService is the marco 11 service (service.Platform).
 type PlatformService interface {
 	Authenticate(ctx context.Context, token string) (service.Auth, error)
+	KeyAuth(ctx context.Context, keyID string) (service.Auth, error)
+	Touch(ctx context.Context, keyID string)
 	Update(ctx context.Context, id string, patch service.InstancePatch) (service.InstanceView, error)
 	Search(ctx context.Context, q service.InstanceQuery) (service.InstancePage, error)
 	Bulk(ctx context.Context, req service.BulkRequest) ([]service.BulkResult, error)
@@ -43,21 +45,36 @@ type AccessOptions struct {
 
 var errIPNotAllowed = apierr.New(http.StatusForbidden, "forbidden", "this token is not allowed from your IP address", false)
 
-// checkIP enforces the allowlist of the authenticated principal.
-func (s *server) checkIP(r *http.Request, p principal, own ipallow.List) error {
-	var list ipallow.List
+// checkIP enforces the allowlists of the authenticated principal: the operator or admin
+// list, or the credential's own list plus, for an API key, the instance's list.
+func (s *server) checkIP(r *http.Request, p principal, a service.Auth) error {
+	var lists []ipallow.List
 	switch {
 	case p.operator:
-		list = s.opt.Access.OperatorAllow
+		lists = []ipallow.List{s.opt.Access.OperatorAllow}
 	case p.admin:
-		list = s.opt.Access.AdminAllow
+		lists = []ipallow.List{s.opt.Access.AdminAllow}
 	default:
-		list = own
+		lists = []ipallow.List{a.IPAllowlist, a.InstanceAllowlist}
 	}
-	if len(list) == 0 || list.Contains(ipallow.ClientIP(r, s.opt.Access.TrustedProxies)) {
-		return nil
+	ip := ipallow.ClientIP(r, s.opt.Access.TrustedProxies)
+	for _, l := range lists {
+		if len(l) > 0 && !l.Contains(ip) {
+			return errIPNotAllowed
+		}
 	}
-	return errIPNotAllowed
+	return nil
+}
+
+// keyStillValid re-checks an API key during a long request (SSE): revoked, expired or
+// now outside an allowlist ends the stream. Other principals always pass.
+func (s *server) keyStillValid(r *http.Request) bool {
+	p := principalFrom(r)
+	if p.keyID == "" || s.opt.Platform == nil {
+		return true
+	}
+	a, err := s.opt.Platform.KeyAuth(r.Context(), p.keyID)
+	return err == nil && s.checkIP(r, p, a) == nil
 }
 
 // Routes an API key may call, by scope. Anything else is refused (fail closed): no
@@ -221,6 +238,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
+	in.CreatedByAdmin = principalFrom(r).admin
 	k, secret, err := s.opt.Platform.CreateKey(r.Context(), chi.URLParam(r, "id"), in)
 	if err != nil {
 		s.writeErr(w, err)

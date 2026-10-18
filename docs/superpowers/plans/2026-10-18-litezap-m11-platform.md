@@ -24,6 +24,13 @@ Marco 10 corre em paralelo a partir de `main`: este marco mexe o mínimo em arqu
 - API: allowlist por instância/admin/chave (+ `trusted_proxies`), PATCH (permissões), filtros/paginação, bulk (permissão, confirm, tag), chaves (escopos, revogação, expiração, `/mcp` negado, sem escalada), links (mint, página, expiração, revogação, uso único após pareamento, nada de token da instância, headers CSP/frame-ancestors).
 - Observer de pareamento e `ProxyWatch` com detalhe; histograma.
 
+## Revisão (code-reviewer) e correções
+
+- Crítico: chave `read` recebia `instance.qr`/`instance.pair_code` pelo SSE — agora excluídos para chaves (`events.Filter.Exclude`).
+- Importantes: chave também respeita a allowlist da instância; rotacionar o token revoga as chaves criadas com ele (`created_by`); `X-Forwarded-For` malformado falha fechado (aceita `ip:porta`); SSE de chave reavaliado a cada heartbeat; o detalhe de erro do proxy remove as credenciais configuradas literalmente (além das regex); o painel envia só os campos alterados.
+- Menores corrigidos: limite do lote antes de deduplicar, `last_used_at` só depois da checagem de IP, chaves expiradas não contam no limite, observer esquece pareamentos abandonados, poll duplicado na página, PID reutilizado na memória por worker.
+- Menores aceitos: 401×403 revela validade do token vindo de IP proibido (tokens de 256 bits); chave `read` vê `ip_allowlist` da instância; o resgate de código do painel não aplica `admin_allowed_ips` (o token não funciona de fora da lista); `postMessage` da página usa `*` sem dados sensíveis.
+
 ## Fora / adiado
 
 - Metadados livres (chave/valor) além de `tags`.

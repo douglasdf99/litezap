@@ -6,6 +6,7 @@ package events
 import (
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -122,10 +123,16 @@ type Sink interface {
 type Filter struct {
 	InstanceID string
 	Types      []string
+	// Exclude drops these exact types whatever Types says (scoped API keys never see
+	// pairing secrets).
+	Exclude []string
 }
 
 func (f Filter) match(e Envelope) bool {
 	if f.InstanceID != "" && f.InstanceID != e.InstanceID {
+		return false
+	}
+	if slices.Contains(f.Exclude, e.Type) {
 		return false
 	}
 	if len(f.Types) == 0 {

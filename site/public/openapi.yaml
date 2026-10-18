@@ -2549,8 +2549,10 @@ paths:
 
         Qualquer outra rota responde `403 forbidden`, inclusive `/mcp`, webhooks, ações de ciclo de vida e
         a gestão de chaves. A chave aparece **uma única vez** nesta resposta (só o hash fica guardado).
-        Opcionais: `ip_allowlist` (IPs/CIDRs) e `expires_in_seconds`. Até 50 chaves por instância. Apagar a
-        instância apaga as chaves.
+        Opcionais: `ip_allowlist` (IPs/CIDRs) e `expires_in_seconds`. Até 50 chaves por instância (as expiradas
+        são descartadas). Apagar a instância apaga as chaves.
+
+        Uma chave também respeita a `ip_allowlist` da instância; no stream SSE ela nunca recebe `instance.qr` nem `instance.pair_code`, e um stream aberto é encerrado em até um heartbeat (15s) quando a chave é revogada, expira ou sai da allowlist. Rotacionar o token da instância revoga as chaves criadas com ele (as criadas pelo admin continuam).
       requestBody:
         required: true
         content:

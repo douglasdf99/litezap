@@ -13,7 +13,8 @@ CREATE TABLE api_keys (
   ip_allowlist_json TEXT NOT NULL DEFAULT '[]',
   created_at        TEXT NOT NULL,
   expires_at        TEXT NOT NULL DEFAULT '',   -- '' never
-  last_used_at      TEXT NOT NULL DEFAULT ''
+  last_used_at      TEXT NOT NULL DEFAULT '',
+  created_by        TEXT NOT NULL DEFAULT 'admin'  -- admin | instance (rotating the instance token revokes these)
 );
 CREATE INDEX api_keys_instance ON api_keys(instance_id);
 

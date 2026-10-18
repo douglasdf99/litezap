@@ -30,8 +30,15 @@ func workerMemory(dataDir, proc string) map[string]int64 {
 		if err != nil || pid <= 0 {
 			continue
 		}
-		if rss, ok := vmRSS(filepath.Join(proc, strconv.Itoa(pid), "status")); ok {
-			out[strings.TrimSuffix(filepath.Base(f), ".pid")] = rss
+		id := strings.TrimSuffix(filepath.Base(f), ".pid")
+		dir := filepath.Join(proc, strconv.Itoa(pid))
+		// A stale pid file may name a reused PID: only count our worker of this instance.
+		if cmd, err := os.ReadFile(filepath.Join(dir, "cmdline")); err != nil ||
+			!strings.Contains(string(cmd), "\x00worker\x00") || !strings.Contains(string(cmd), "\x00--instance\x00"+id+"\x00") {
+			continue
+		}
+		if rss, ok := vmRSS(filepath.Join(dir, "status")); ok {
+			out[id] = rss
 		}
 	}
 	return out

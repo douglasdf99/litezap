@@ -25,9 +25,14 @@ export function editInstance(inst, onSaved) {
       label: 'Salvar', primary: true,
       onclick: async () => {
         try {
-          const v = await api.patch(`/v1/instances/${encodeURIComponent(inst.id)}`, {
-            name: name.value.trim(), tags: splitList(tags.value), ip_allowlist: splitList(allow.value),
-          });
+          // Only the fields that changed (tags and ip_allowlist need the admin token).
+          const body = {};
+          const same = (a, b) => a.join(',') === (b || []).join(',');
+          if (name.value.trim() !== inst.name) body.name = name.value.trim();
+          if (!same(splitList(tags.value).map((t) => t.toLowerCase()), inst.tags)) body.tags = splitList(tags.value);
+          if (!same(splitList(allow.value), inst.ip_allowlist)) body.ip_allowlist = splitList(allow.value);
+          if (!Object.keys(body).length) return true;
+          const v = await api.patch(`/v1/instances/${encodeURIComponent(inst.id)}`, body);
           toast('Instância atualizada');
           onSaved(v);
         } catch (e) { toast(errMsg(e), 'error'); return false; }

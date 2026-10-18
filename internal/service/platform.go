@@ -47,10 +47,14 @@ const (
 // Auth is an authenticated instance credential: an instance token (Scopes nil: full
 // access to the instance) or a scoped API key.
 type Auth struct {
-	InstanceID  string
-	IPAllowlist ipallow.List // empty: any address
-	KeyID       string
-	Scopes      []string
+	InstanceID string
+	// IPAllowlist is the credential's own list (the instance's for an instance token, the
+	// key's for a key); InstanceAllowlist is the instance's list, which a key must also
+	// satisfy. Empty lists allow any address.
+	IPAllowlist       ipallow.List
+	InstanceAllowlist ipallow.List
+	KeyID             string
+	Scopes            []string
 }
 
 // Authenticate resolves an instance token (lzi_) or an API key (lzk_).
@@ -77,19 +81,49 @@ func (p *Platform) Authenticate(ctx context.Context, token string) (Auth, error)
 		if err != nil {
 			return Auth{}, err
 		}
-		now := p.now()
-		if !k.ExpiresAt.IsZero() && !now.Before(k.ExpiresAt) {
-			return Auth{}, apierr.Unauthorized()
-		}
-		allow, err := storedList(k.IPAllowlist)
-		if err != nil {
-			return Auth{}, err
-		}
-		p.touch(ctx, k.ID, now)
-		return Auth{InstanceID: k.InstanceID, IPAllowlist: allow, KeyID: k.ID, Scopes: k.Scopes}, nil
+		return p.keyAuth(ctx, k)
 	}
 	return Auth{}, apierr.Unauthorized()
 }
+
+// KeyAuth re-reads a key (open SSE streams re-check it: a revoked or expired key, or
+// one whose allowlist changed, is cut off).
+func (p *Platform) KeyAuth(ctx context.Context, keyID string) (Auth, error) {
+	k, err := p.Store.GetAPIKey(ctx, keyID)
+	if errors.Is(err, store.ErrNotFound) {
+		return Auth{}, apierr.Unauthorized()
+	}
+	if err != nil {
+		return Auth{}, err
+	}
+	return p.keyAuth(ctx, k)
+}
+
+func (p *Platform) keyAuth(ctx context.Context, k store.APIKey) (Auth, error) {
+	if !k.ExpiresAt.IsZero() && !p.now().Before(k.ExpiresAt) {
+		return Auth{}, apierr.Unauthorized()
+	}
+	allow, err := storedList(k.IPAllowlist)
+	if err != nil {
+		return Auth{}, err
+	}
+	in, err := p.Store.GetInstance(ctx, k.InstanceID)
+	if errors.Is(err, store.ErrNotFound) {
+		return Auth{}, apierr.Unauthorized()
+	}
+	if err != nil {
+		return Auth{}, err
+	}
+	instAllow, err := storedList(in.IPAllowlist)
+	if err != nil {
+		return Auth{}, err
+	}
+	return Auth{InstanceID: k.InstanceID, IPAllowlist: allow, InstanceAllowlist: instAllow, KeyID: k.ID, Scopes: k.Scopes}, nil
+}
+
+// Touch records that a key was used (at most once a minute per key); call it once the
+// request passed every check.
+func (p *Platform) Touch(ctx context.Context, keyID string) { p.touch(ctx, keyID, p.now()) }
 
 // storedList parses a list saved by this package; a corrupt one fails closed.
 func storedList(v []string) (ipallow.List, error) {
@@ -282,6 +316,9 @@ func (p *Platform) Bulk(ctx context.Context, req BulkRequest) ([]BulkResult, err
 	if (len(req.IDs) == 0) == (req.Tag == "") {
 		return nil, apierr.Validation("give either ids or tag")
 	}
+	if len(req.IDs) > MaxBulk {
+		return nil, apierr.Validation(fmt.Sprintf("at most %d instances per request", MaxBulk))
+	}
 	if req.Action == "delete" && !req.Confirm {
 		return nil, apierr.Validation(`delete needs "confirm": true (it removes the instances and their data)`)
 	}
@@ -339,6 +376,9 @@ type KeyInput struct {
 	IPAllowlist []string `json:"ip_allowlist"`
 	// ExpiresInSeconds, when > 0, makes the key stop working after that long.
 	ExpiresInSeconds int64 `json:"expires_in_seconds"`
+	// CreatedByAdmin is set by the caller (not the JSON body): keys minted with the
+	// instance token are revoked when that token is rotated.
+	CreatedByAdmin bool `json:"-"`
 }
 
 // KeyView is an API key without its secret.
@@ -402,7 +442,7 @@ func (p *Platform) CreateKey(ctx context.Context, instanceID string, in KeyInput
 	if _, err := p.Store.GetInstance(ctx, instanceID); err != nil {
 		return KeyView{}, "", mapErr(err)
 	}
-	if n, err := p.Store.CountAPIKeys(ctx, instanceID); err != nil {
+	if n, err := p.Store.CountAPIKeys(ctx, instanceID, p.now()); err != nil {
 		return KeyView{}, "", err
 	} else if n >= MaxKeysPerInstance {
 		return KeyView{}, "", apierr.New(http.StatusConflict, "limit_reached", fmt.Sprintf("an instance has at most %d API keys", MaxKeysPerInstance), false)
@@ -411,7 +451,10 @@ func (p *Platform) CreateKey(ctx context.Context, instanceID string, in KeyInput
 	rand.Read(b)
 	secret := "lzk_" + base64.RawURLEncoding.EncodeToString(b)
 	k := store.APIKey{ID: secure.NewID("key_"), InstanceID: instanceID, Name: name, KeyHash: secure.HashToken(secret),
-		Scopes: scopes, IPAllowlist: allow}
+		Scopes: scopes, IPAllowlist: allow, CreatedBy: "instance"}
+	if in.CreatedByAdmin {
+		k.CreatedBy = "admin"
+	}
 	if in.ExpiresInSeconds > 0 {
 		k.ExpiresAt = p.now().Add(time.Duration(in.ExpiresInSeconds) * time.Second)
 	}

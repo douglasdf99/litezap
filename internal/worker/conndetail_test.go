@@ -18,6 +18,10 @@ func TestSanitizeDetail(t *testing.T) {
 		"auth failed for alice:hunter2@10.0.0.1:3128":                                                   "auth failed for [redacted]@10.0.0.1:3128",
 		"jid 5511999990000 token lzi_abcDEF123 rejected":                                                "jid [redacted] token [redacted] rejected",
 		"http://user:@host:8080 refused":                                                                "http://[redacted]@host:8080 refused",
+		"socks5://:s3cret@host:1080 refused":                                                            "socks5://[redacted]@host:1080 refused",
+		"socks5://user:p@ss@host:1080 refused":                                                          "socks5://[redacted]@host:1080 refused",
+		"auth user:p@ss@10.0.0.1:3128 refused":                                                          "auth [redacted]@10.0.0.1:3128 refused",
+		"lookup web.whatsapp.com: no such host":                                                         "lookup web.whatsapp.com: no such host",
 	}
 	for in, want := range cases {
 		if got := SanitizeDetail(in); got != want {
@@ -68,9 +72,20 @@ func TestProxyFailureCarriesDetail(t *testing.T) {
 	}
 }
 
+func TestSanitizeDetailRemovesConfiguredSecrets(t *testing.T) {
+	secrets := ProxySecrets("socks5://bob:pa%2Fss%40word@proxy.example:1080")
+	got := SanitizeDetail("proxy said: bad password pa/ss@word for bob (pa%2Fss%40word)", secrets...)
+	if strings.Contains(got, "pa/ss") || strings.Contains(got, "bob") || strings.Contains(got, "%2Fss") {
+		t.Fatalf("secret leaked: %q", got)
+	}
+	if ProxySecrets("socks5://proxy.example:1080") != nil || ProxySecrets("::bad") != nil {
+		t.Fatal("secrets without userinfo")
+	}
+}
+
 func TestReportConnDetailFallsBackToPlainState(t *testing.T) {
-	r := &stateRec{}
-	reportConnDetail(r, "reconnecting", "proxy_unreachable", "", errors.New("boom"))
+	w, r := newTestAdapter(t, true, func(context.Context) error { return nil })
+	w.reportConnDetail("reconnecting", "proxy_unreachable", "", errors.New("boom"))
 	if states, _ := r.snapshot(); len(states) != 1 || states[0].reason != "proxy_unreachable" {
 		t.Fatalf("states = %v", states)
 	}

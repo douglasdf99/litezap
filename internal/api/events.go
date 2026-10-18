@@ -137,7 +137,12 @@ func (s *server) instanceEvents(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	s.stream(w, r, events.Filter{InstanceID: id, Types: types})
+	f := events.Filter{InstanceID: id, Types: types}
+	if principalFrom(r).keyID != "" {
+		// A QR or pairing code lets whoever holds it link their own phone: never for API keys.
+		f.Exclude = []string{events.TypeInstanceQR, events.TypeInstancePairCode}
+	}
+	s.stream(w, r, f)
 }
 
 const sseWriteTimeout = 10 * time.Second
@@ -185,6 +190,10 @@ func (s *server) stream(w http.ResponseWriter, r *http.Request, f events.Filter)
 				return
 			}
 		case <-hb.C:
+			if !s.keyStillValid(r) {
+				write("event: error\ndata: {\"code\":\"unauthorized\",\"message\":\"credential revoked, expired or not allowed\"}\n\n")
+				return
+			}
 			if !write(": ping\n\n") {
 				return
 			}

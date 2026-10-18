@@ -170,6 +170,19 @@ func TestObserverPublishesPairedOncePerPairing(t *testing.T) {
 	}
 }
 
+func TestObserverForgetsAbandonedPairing(t *testing.T) {
+	_, st, c := newLinks(t)
+	pub := &recPub{}
+	o := &Observer{Store: st, Events: pub, Now: c.now}
+	o.StateChanged("inst_1", instance.QRPending, "")
+	o.StateChanged("inst_1", instance.Stopped, "")
+	o.StateChanged("inst_1", instance.Connected, "") // e.g. a restored session: not a pairing
+	o.Close()
+	if len(pub.evs) != 0 {
+		t.Fatalf("events = %+v", pub.evs)
+	}
+}
+
 type fakeInstances struct {
 	mu      sync.Mutex
 	state   instance.State

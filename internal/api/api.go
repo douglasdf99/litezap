@@ -13,7 +13,6 @@ import (
 
 	"github.com/douglasdf99/litezap/internal/apierr"
 	"github.com/douglasdf99/litezap/internal/events"
-	"github.com/douglasdf99/litezap/internal/ipallow"
 	"github.com/douglasdf99/litezap/internal/secure"
 	"github.com/douglasdf99/litezap/internal/service"
 	"github.com/douglasdf99/litezap/internal/settings"
@@ -210,7 +209,7 @@ func (s *server) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		var p principal
-		var own ipallow.List
+		var auth service.Auth
 		if s.isOperator(tok) {
 			p.admin, p.operator = true, true
 		} else if secure.Equal(tok, s.opt.AdminToken) {
@@ -221,7 +220,7 @@ func (s *server) authenticate(next http.Handler) http.Handler {
 				s.writeErr(w, err)
 				return
 			}
-			p.instanceID, p.keyID, p.scopes, own = a.InstanceID, a.KeyID, a.Scopes, a.IPAllowlist
+			p.instanceID, p.keyID, p.scopes, auth = a.InstanceID, a.KeyID, a.Scopes, a
 		} else {
 			id, err := s.svc.Authenticate(r.Context(), tok)
 			if err != nil {
@@ -230,9 +229,12 @@ func (s *server) authenticate(next http.Handler) http.Handler {
 			}
 			p.instanceID = id
 		}
-		if err := s.checkIP(r, p, own); err != nil {
+		if err := s.checkIP(r, p, auth); err != nil {
 			s.writeErr(w, err)
 			return
+		}
+		if p.keyID != "" {
+			s.opt.Platform.Touch(r.Context(), p.keyID)
 		}
 		ctx := context.WithValue(r.Context(), ctxKey{}, p)
 		ctx = service.WithScope(ctx, p.scope())

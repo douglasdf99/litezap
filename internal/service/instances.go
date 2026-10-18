@@ -231,6 +231,10 @@ func (s *Instances) RotateToken(ctx context.Context, id string) (string, error) 
 	if err := s.Store.SetInstanceTokenHash(ctx, id, secure.HashToken(tok)); err != nil {
 		return "", mapErr(err)
 	}
+	// API keys minted with the old token go with it (a leaked token must not leave keys behind).
+	if _, err := s.Store.DeleteInstanceCreatedAPIKeys(ctx, id); err != nil {
+		return "", err
+	}
 	return tok, nil
 }
 
