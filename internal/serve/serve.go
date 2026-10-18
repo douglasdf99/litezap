@@ -127,8 +127,11 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 			}
 			return settings.Effective(cfg.InstanceDefaults, cfg.DefaultProxyURL, in.SettingsJSON)
 		}}
+	// Groups (marco 8): group.updated and group chat names.
+	groupEvents := &service.GroupEvents{Store: st, Workers: mgr, Events: bus, Log: log}
 	mgr.SetObserver(manager.Observers{
 		&ingest.Ingestor{Store: st, Log: log, Events: bus, History: history}, q, events.Observer{Bus: bus}, cl.proxy, rt,
+		groupEvents,
 	})
 	stopAll := func() {
 		actx, acancel := context.WithTimeout(context.Background(), scaled(5*time.Second, scale))
@@ -136,6 +139,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		acancel()
 		shutdownAll(q, mgr, history, hooks, scale)
 		rt.Close() // reject messages being queued, presence retries
+		groupEvents.Close()
 		cctx, cancel := context.WithTimeout(context.Background(), scaled(5*time.Second, scale))
 		cl.close(cctx)
 		cancel()
@@ -189,9 +193,11 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	agent.Start()
 	rt.SetSender(guarded)
 	msg.OnSettingsChanged = rt.SettingsChanged
+	groups := &service.Groups{Store: st, Workers: mgr, Resolver: resolver, Sending: cl.sending,
+		Fetcher: msg.Fetcher, Defaults: cfg.InstanceDefaults, DefaultProxy: cfg.DefaultProxyURL}
 	handler := api.New(svc, guarded, api.Options{
 		// MCP streamable HTTP at /mcp, behind the same tokens (spec 3.1, 6.1).
-		MCP: mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Logger: log,
+		MCP: mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Groups: groups, Logger: log,
 			PublicHost: publicHost(cfg.PublicURL)}),
 		AdminToken: cfg.AdminToken,
 		ProtectOps: !loopback,
@@ -201,6 +207,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		Operator:   cl.operatorOptions(),
 		Metrics:    cl.metrics(),
 		AgentHook:  &agenthook.Admin{Store: st},
+		Groups:     groups,
 	}, log)
 	var codes *dashboard.LaunchCodes
 	if loopback {

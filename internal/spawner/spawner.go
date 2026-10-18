@@ -18,6 +18,12 @@ type WorkerHandle interface {
 	Close(ctx context.Context) error
 }
 
+// GroupsHandle is implemented by handles whose worker also serves the Groups service
+// (marco 8), on the same connection.
+type GroupsHandle interface {
+	Groups() workerv1.GroupsClient
+}
+
 // Spawner starts workers. ProcessSpawner runs local processes; a container
 // implementation arrives with the cloud piece.
 type Spawner interface {

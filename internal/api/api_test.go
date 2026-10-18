@@ -74,7 +74,9 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 		Settings: func(ctx context.Context, id string) (settings.Settings, error) { return msg.Settings(ctx, id) }}
 	rt.SetSender(msg)
 	msg.OnSettingsChanged = rt.SettingsChanged
-	mgr.SetObserver(manager.Observers{&ingest.Ingestor{Store: st, Log: log, Events: bus}, q, events.Observer{Bus: bus}, rt})
+	groups := &service.Groups{Store: st, Workers: mgr, Resolver: resolver, Defaults: defaults} // marco 8
+	mgr.SetObserver(manager.Observers{&ingest.Ingestor{Store: st, Log: log, Events: bus}, q, events.Observer{Bus: bus}, rt,
+		&service.GroupEvents{Store: st, Workers: mgr, Events: bus}})
 	if err := disp.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +90,7 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 	})
 	svc := &service.Instances{Store: st, Manager: mgr, DataDir: dir, Queues: q, Events: bus}
 	opt := Options{AdminToken: admin, Ready: st.Ping, Events: bus,
-		Webhooks: &service.Webhooks{Store: st, Dispatcher: disp}, AgentHook: &agenthook.Admin{Store: st}}
+		Webhooks: &service.Webhooks{Store: st, Dispatcher: disp}, AgentHook: &agenthook.Admin{Store: st}, Groups: groups}
 	if tweak != nil {
 		tweak(&opt)
 	}

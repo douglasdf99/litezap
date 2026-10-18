@@ -36,9 +36,10 @@ func TestToolList(t *testing.T) {
 			t.Errorf("%s lacks a description or annotations", tl.Name)
 		}
 	}
-	want := []string{"check_numbers", "delete_message", "edit_message", "get_contact", "get_instance_status", "get_message_status", "get_messages",
-		"get_qr", "list_chats", "list_contacts", "list_instances", "mark_read", "send_contact", "send_location", "send_media",
-		"send_message", "send_reaction", "wait_for_events"}
+	want := []string{"check_numbers", "create_group", "delete_message", "edit_message", "get_contact", "get_group", "get_group_invite_link",
+		"get_instance_status", "get_message_status", "get_messages", "get_qr", "list_chats", "list_contacts", "list_groups", "list_instances",
+		"manage_group_participants", "mark_read", "send_contact", "send_location", "send_media", "send_message", "send_reaction",
+		"update_group", "wait_for_events"}
 	slices.Sort(names)
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v", names)

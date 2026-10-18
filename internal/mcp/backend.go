@@ -62,7 +62,8 @@ type MessagingService interface {
 type Local struct {
 	Instances InstanceService
 	Messaging MessagingService
-	Events    *events.Bus // nil: wait_for_events is unavailable
+	Events    *events.Bus  // nil: wait_for_events is unavailable
+	Groups    GroupService // nil: the group tools answer not_implemented (marco 8)
 	Caller    service.Scope
 }
 

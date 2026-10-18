@@ -4,6 +4,7 @@ import * as api from './api.js';
 import { h, mount, clear, toast, errMsg, stateBadge, field, fmtTime, phoneOf, confirmDanger } from './ui.js';
 import { webhooksPanel } from './webhooks.js';
 import { agentPanel } from './agent.js';
+import { groupsPanel } from './groups.js';
 
 const ACTIONS = { start: 'Iniciar', stop: 'Parar', restart: 'Reiniciar', logout: 'Deslogar' };
 
@@ -23,7 +24,7 @@ export function availableActions(state) {
 }
 
 const TABS = [
-  ['chats', 'Conversas'], ['pair', 'Parear'], ['settings', 'Configurações'],
+  ['chats', 'Conversas'], ['groups', 'Grupos'], ['pair', 'Parear'], ['settings', 'Configurações'],
   ['agent', 'Atendente IA'], ['webhooks', 'Webhooks'], ['events', 'Eventos ao vivo'],
 ];
 
@@ -96,7 +97,7 @@ export function instanceView(id, { root, shell, setLive }) {
       mount(tabs, TABS.map(([t, label]) => h('a', { href: ctx.href(t), class: t === tab ? 'active' : '' }, label)));
       if (current && current.name === tab && current.update) { current.update(rest); return; }
       if (current && current.cleanup) current.cleanup();
-      const make = { chats: chatsTab, pair: pairTab, settings: settingsTab, webhooks: webhooksTab, events: eventsTab, agent: agentPanel }[tab];
+      const make = { chats: chatsTab, pair: pairTab, settings: settingsTab, webhooks: webhooksTab, events: eventsTab, agent: agentPanel, groups: groupsPanel }[tab];
       current = { name: tab, ...make(ctx, rest) };
       mount(body, current.el);
     },
@@ -588,6 +589,7 @@ function summary(ev) {
     case 'chat.presence': return `${phoneOf(d.sender || d.chat)}: ${PRESENCE_LABEL[d.state] || d.state}`;
     case 'call.received': return `${d.is_group ? 'chamada em grupo' : 'chamada'} de ${phoneOf(d.caller)}${d.media === 'video' ? ' (vídeo)' : ''}${d.rejected ? ' — rejeitada' : ''}`;
     case 'call.accepted': return `chamada de ${phoneOf(d.caller)} atendida`;
+    case 'group.updated': return `grupo ${d.name || d.chat}: ${d.kind}${d.participants ? ' ' + d.participants.map(phoneOf).join(', ') : ''}`;
     case 'call.ended': return `chamada de ${phoneOf(d.caller)} encerrada${d.missed ? ' (perdida)' : d.reason ? ` (${d.reason})` : ''}`;
     case 'history.synced': return `${d.messages} mensagens em ${d.chats} blocos (${d.new_messages} novas)`;
     default: return '';

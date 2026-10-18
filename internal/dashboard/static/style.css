@@ -262,3 +262,8 @@ textarea { resize: vertical; width: 100%; }
   .table-card .table .actions { justify-content: flex-start; min-width: 0; }
 }
 .agent > .card { margin-bottom: 1rem; }
+
+/* groups (marco 8) */
+.group-detail { overflow-y: auto; }
+.prewrap { white-space: pre-wrap; }
+.group-add { margin-top: .75rem; }

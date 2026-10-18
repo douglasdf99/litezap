@@ -80,6 +80,8 @@ type Options struct {
 	Operator OperatorOptions
 	// AgentHook, when set, serves the agent hook routes (spec 4.3).
 	AgentHook AgentHookService
+	// Groups, when set, serves the group and community routes (marco 8).
+	Groups GroupService
 }
 
 type server struct {
@@ -168,6 +170,7 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 			r.Post("/check-numbers", s.checkNumbers)
 			r.Get("/media/{media_id}", s.getMedia)
 			s.agentRoutes(r)
+			s.groupRoutes(r)
 			r.Post("/presence/subscribe", s.subscribePresence)
 			if opt.Events != nil {
 				r.Get("/events", s.instanceEvents)

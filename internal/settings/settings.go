@@ -64,6 +64,7 @@ type Settings struct {
 	ProxyURL string   `json:"proxy_url" yaml:"-"`
 	Calls    Calls    `json:"calls" yaml:"calls"`
 	Presence Presence `json:"presence" yaml:"presence"`
+	Groups   Groups   `json:"groups" yaml:"groups"` // marco 8 (groups.go)
 }
 
 // Defaults follows spec 4.1: 3s + 0-2s jitter, 20/min, typing on, ramp 50 -> 150 over 14
@@ -104,6 +105,9 @@ func (s Settings) Validate() error {
 		}
 	}
 	if err := s.SendWindow.validate(); err != nil {
+		return err
+	}
+	if err := s.Groups.validate(s.UnsafePacing); err != nil {
 		return err
 	}
 	if len(s.Calls.RejectMessage) > MaxRejectMessage {
@@ -245,6 +249,7 @@ type Patch struct {
 	ProxyURL *string        `json:"proxy_url,omitempty"`
 	Calls    *CallsPatch    `json:"calls,omitempty"`
 	Presence *PresencePatch `json:"presence,omitempty"`
+	Groups   *GroupsPatch   `json:"groups,omitempty"`
 }
 
 // Merge returns p with every field set in q overriding it.
@@ -303,6 +308,7 @@ func (p Patch) Merge(q Patch) Patch {
 		}
 		out.Presence = &PresencePatch{Online: pickB(a.Online, b.Online)}
 	}
+	out.Groups = mergeGroups(p.Groups, q.Groups)
 	if p.Ramp != nil || q.Ramp != nil {
 		var a, b RampPatch
 		if p.Ramp != nil {
@@ -365,6 +371,7 @@ func (s Settings) Apply(p Patch) Settings {
 	if p.Presence != nil && p.Presence.Online != nil {
 		s.Presence.Online = *p.Presence.Online
 	}
+	s.Groups = s.Groups.apply(p.Groups)
 	return s
 }
 
@@ -389,7 +396,9 @@ func Effective(defaults Settings, defaultProxy, overrides string) (Settings, err
 	}
 	base := defaults
 	base.ProxyURL = defaultProxy
-	return base.Apply(p), nil
+	out := base.Apply(p)
+	out.Groups = out.Groups.Limits() // unset limits show their defaults
+	return out, nil
 }
 
 // DailyCap is the ramp limit of new recipients for the day containing now, or -1 when
