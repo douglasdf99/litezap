@@ -50,7 +50,7 @@ Legenda:
 | INS-10 | Dados da instância (me) | Dados da instância | N/A | Pronto — `GET /instances/{id}` + `GET /profile` (M9) | S | Juntar com INS-8 | M9 |
 | INS-11 | Token de extensão (conector no navegador) | Gerar token de extensão | Não (produto próprio da Z-API) | Fora | — | O equivalente LiteZap é o app local (peça #2) | — |
 | INS-12 | Leitura automática de mensagens | Ler mensagens automaticamente | Sim — `MarkRead` (receipt.go) | Pronto — setting `auto_read {enabled, groups}`: lote por chat, 2–5s, 1 recibo/s; `read-self` com confirmação de leitura desligada (M9) | S | Setting por instância; respeitar privacidade de confirmação de leitura | M9 |
-| INS-13 | Leitura automática de status | Ler status automaticamente | Sim — `MarkRead` com chat `types.StatusBroadcastJID` | Falta | S | Depende de receber status (STA-5) | M10 |
+| INS-13 | Leitura automática de status | Ler status automaticamente | Sim — `MarkRead` com chat `types.StatusBroadcastJID` | Falta (adiado no M10: os status já chegam no log; marcar como visto fica para depois) | S | Depende de receber status (STA-5) | M10 |
 | INS-14 | Rejeitar chamadas automaticamente | Rejeitar chamadas | Sim — `RejectCall` (call.go) + evento `CallOffer` (types/events/call.go) | Pronto — setting `calls.auto_reject`; rejeição de chamadas individuais ao vivo pelo worker (só as que ele viu, pelo `CallCreator`) em < 3s, evento `call.received` com `rejected`; grupo só informado | S | | M7 |
 | INS-15 | Mensagem automática ao rejeitar chamada | Mensagem de rejeição | Sim — `SendMessage` | Pronto — `calls.reject_message` pela fila (ritmo/janela/rampa), 1 por contato a cada 10 min, expira em 1h; só chamadas 1:1 | S | Passa pela fila (ritmo/janela) | M7 |
 
@@ -92,13 +92,13 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 | MSG-21 | Fixar / desafixar mensagem | Fixar mensagens | Manual — `PinInChatMessage` via `SendMessage` | Falta | S | Duração e regras de grupo (incerto) | M6 |
 | MSG-22 | Enquete | Enviar enquete | Sim — `BuildPollCreation` (msgsecret.go) | Falta | S | | M6 |
 | MSG-23 | Votar em enquete e receber votos | Enviar voto | Sim — `BuildPollVote`, `DecryptPollVote` (msgsecret.go) | Falta | M | Votos chegam cifrados; precisa do segredo da enquete (o whatsmeow guarda no store) e de evento `message.poll_vote` | M6 |
-| MSG-24 | Eventos (criar, editar, responder) | Enviar / editar / responder evento | Manual — `EventMessage`, `EncEventResponseMessage` (waE2E) | Falta | M | Recurso recente (incerto em contas comuns) | M10 |
+| MSG-24 | Eventos (criar, editar, responder) | Enviar / editar / responder evento | Manual — `EventMessage`, `EncEventResponseMessage` (waE2E) | Falta (adiado no M10) | M | Recurso recente (incerto em contas comuns) | M10 |
 | MSG-25 | Botões de ação, lista de botões, com imagem, com vídeo | 4 páginas | Manual — `ButtonsMessage`/`TemplateMessage`; o whatsmeow já anexa o nó `biz` (send.go, `getButtonTypeFromMessage`) | Falta | M | **Instável**: a própria Z-API mantém uma página sobre a instabilidade, exige aceite de termos e, na versão de 27/08/2024, o resumo diz que só lista de opções em chat individual é confiável (a tabela da mesma página diz que tudo funciona — contraditório). Pode quebrar a cada versão do WhatsApp | Exp |
 | MSG-26 | Lista de opções | Enviar lista de opções | Manual — `ListMessage` (nó `biz` com `v=2` e tipo, send.go `getButtonAttributes`) | Falta | M | Mesma instabilidade; é o tipo interativo menos instável | Exp |
 | MSG-27 | Botão OTP (copiar código) e botão PIX | 2 páginas | Manual — `InteractiveMessage` com native flow (incerto) | Falta | M | Instável; PIX é específico do Brasil | Exp |
 | MSG-28 | Carrossel | Enviar carrossel | Manual — `InteractiveMessage` carrossel (incerto) | Falta | L | Instável | Exp |
 | MSG-29 | Receber respostas de botões/listas | Responder botão / ação / lista | Sim — chegam em `events.Message` (`ButtonsResponseMessage`, `ListResponseMessage`, `InteractiveResponseMessage`) | Pronto — tipo `button_reply` no log e evento `message.button_reply` (botão, lista, template, interativa) | S | Útil mesmo sem enviar botões (clientes de outras ferramentas respondem) | M7 |
-| MSG-30 | Produto e catálogo como mensagem | Enviar produto / catálogo | Manual — `ProductMessage` (exige catálogo existente na conta business) | Falta | M | Sem API de catálogo no whatsmeow (BUS-1); só reencaminhar produto existente (incerto) | M10 |
+| MSG-30 | Produto e catálogo como mensagem | Enviar produto / catálogo | Manual — `ProductMessage` (exige catálogo existente na conta business) | Falta (adiado no M10; depende de catálogo) | M | Sem API de catálogo no whatsmeow (BUS-1); só reencaminhar produto existente (incerto) | M10 |
 | MSG-31 | Pedido + atualizar status/pagamento do pedido | 3 páginas | Parcial — `OrderMessage` (proto) e `GetOrderDetails` (business.go) só leitura | Falta | L | Fluxo de pagamentos do WhatsApp Business no Brasil; incerto | Avaliar |
 | MSG-32 | Convite de admin de canal | Enviar convite de admin de canal | Manual — `NewsletterAdminInviteMessage` (waE2E) | Falta | M | Aceitar/revogar não têm função (CHN-11) | Avaliar |
 | MSG-33 | Conversar com a Meta AI | Meta AI | Parcial — `types.MetaAIJID`, `GetBotListV2` (user.go); envio comum ao JID do bot (incerto) | Falta | M | Valor baixo para atendimento | Avaliar |
@@ -183,19 +183,19 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 
 | ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
 |---|---|---|---|---|---|---|---|
-| CHN-1 | Criar canal | Criar canal | Sim — `CreateNewsletter` (newsletter.go) | Falta | S | | M10 |
+| CHN-1 | Criar canal | Criar canal | Sim — `CreateNewsletter` (newsletter.go) | Pronto — `POST /channels` (com foto), 2/dia (M10) | S | | M10 |
 | CHN-2 | Atualizar nome, descrição, foto | 3 páginas | Não — sem função; exigiria query MEX via `DangerousInternals` (frágil) | Falta | L | | Avaliar |
-| CHN-3 | Seguir / deixar de seguir | 2 páginas | Sim — `FollowNewsletter`, `UnfollowNewsletter` | Falta | S | | M10 |
-| CHN-4 | Silenciar / reativar | 2 páginas | Sim — `NewsletterToggleMute` | Falta | S | | M10 |
+| CHN-3 | Seguir / deixar de seguir | 2 páginas | Sim — `FollowNewsletter`, `UnfollowNewsletter` | Pronto — `POST /channels/{jid}/follow` e `/unfollow`, 3/min e 30/dia (M10) | S | | M10 |
+| CHN-4 | Silenciar / reativar | 2 páginas | Sim — `NewsletterToggleMute` | Pronto — `POST /channels/{jid}/mute` e `/unmute` (M10) | S | | M10 |
 | CHN-5 | Apagar canal | Deletar canal | Não | Falta | — | | Avaliar |
-| CHN-6 | Metadados (por JID ou convite) | Metadata do canal | Sim — `GetNewsletterInfo`, `GetNewsletterInfoWithInvite` | Falta | S | | M10 |
+| CHN-6 | Metadados (por JID ou convite) | Metadata do canal | Sim — `GetNewsletterInfo`, `GetNewsletterInfoWithInvite` | Pronto — `GET /channels/{jid}` e `POST /channels/preview {"invite"}` (M10) | S | | M10 |
 | CHN-7 | Listar assinantes | Listar inscritos | Não | Falta | — | | Avaliar |
-| CHN-8 | Listar canais seguidos | Listar canais | Sim — `GetSubscribedNewsletters` | Falta | S | | M10 |
+| CHN-8 | Listar canais seguidos | Listar canais | Sim — `GetSubscribedNewsletters` | Pronto — `GET /channels` (M10) | S | | M10 |
 | CHN-9 | Buscar canais (diretório) | Buscar canais | Não | Falta | — | | Avaliar |
 | CHN-10 | Configurações do canal (reações) | Configurações | Não | Falta | — | | Avaliar |
 | CHN-11 | Admins: aceitar convite, remover, revogar convite, transferir posse | 4 páginas | Não | Falta | — | | Avaliar |
-| CHN-12 | Publicar no canal (texto e mídia) | (via endpoints de mensagem) | Sim — `SendMessage` para JID `@newsletter` + `UploadNewsletter` (upload.go) | Falta — worker ignora JIDs de canal | M | Mídia de canal não é cifrada (upload próprio) | M10 |
-| CHN-13 | Reagir, marcar visto, ler mensagens do canal | (não há) | Sim — `NewsletterSendReaction`, `NewsletterMarkViewed`, `GetNewsletterMessages` | Falta | S | | M10 |
+| CHN-12 | Publicar no canal (texto e mídia) | (via endpoints de mensagem) | Sim — `SendMessage` para JID `@newsletter` + `UploadNewsletter` (upload.go) | Pronto — `POST /channels/{jid}/messages` (texto, imagem, vídeo, áudio, documento) pela fila, só dono/admin (M10) | M | Mídia de canal não é cifrada (upload próprio) | M10 |
+| CHN-13 | Reagir, marcar visto, ler mensagens do canal | (não há) | Sim — `NewsletterSendReaction`, `NewsletterMarkViewed`, `GetNewsletterMessages` | Parcial — `POST /channels/{jid}/reactions`, `GET /channels/{jid}/messages`, evento opt-in `channel.message`; marcar visto e mídia recebida não (M10) | S | | M10 |
 
 ### 2.12 Listas de transmissão (Z-API: Transmission List)
 
@@ -207,12 +207,12 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 
 | ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
 |---|---|---|---|---|---|---|---|
-| STA-1 | Status de texto | Enviar status de texto | Manual — `ExtendedTextMessage` (cor de fundo, fonte) para `types.StatusBroadcastJID`; destinatários resolvidos por `getStatusBroadcastRecipients` (broadcast.go) | Falta | S | Envio cifrado para todos os contatos: lento com agendas grandes | M10 |
-| STA-2 | Status de imagem | Enviar status de imagem | Manual — idem com `ImageMessage` | Falta | S | | M10 |
-| STA-3 | Status de vídeo | Enviar status de vídeo | Manual — idem com `VideoMessage` | Falta | S | | M10 |
-| STA-4 | Responder status (texto, GIF, figurinha) | 3 páginas | Manual — mensagem ao autor com `ContextInfo` citando o status (`RemoteJID` `status@broadcast`) | Falta | S | Depende de MSG-15 | M10 |
-| STA-5 | Receber status dos contatos | (webhook) | Sim — `events.Message` com chat `status@broadcast` | Falta — worker descarta (messaging.go, filtro de `BroadcastServer`) | S | Evento `status.received`; desligado por padrão (volume) | M10 |
-| STA-6 | Privacidade do status | (não há) | Sim — `GetStatusPrivacy` (broadcast.go) | Falta | S | | M10 |
+| STA-1 | Status de texto | Enviar status de texto | Manual — `ExtendedTextMessage` (cor de fundo, fonte) para `types.StatusBroadcastJID`; destinatários resolvidos por `getStatusBroadcastRecipients` (broadcast.go) | Pronto — `POST /status {"type":"text"}` (fundo, cor do texto, fonte) pela fila, 30/dia (M10) | S | Envio cifrado para todos os contatos: lento com agendas grandes | M10 |
+| STA-2 | Status de imagem | Enviar status de imagem | Manual — idem com `ImageMessage` | Pronto — `POST /status {"type":"image"}` (M10) | S | | M10 |
+| STA-3 | Status de vídeo | Enviar status de vídeo | Manual — idem com `VideoMessage` | Pronto — `POST /status {"type":"video"}` (M10) | S | | M10 |
+| STA-4 | Responder status (texto, GIF, figurinha) | 3 páginas | Manual — mensagem ao autor com `ContextInfo` citando o status (`RemoteJID` `status@broadcast`) | Parcial — `POST /status/{msg_id}/reply` só texto (GIF/figurinha não) (M10) | S | Depende de MSG-15 | M10 |
+| STA-5 | Receber status dos contatos | (webhook) | Sim — `events.Message` com chat `status@broadcast` | Pronto — status no log (`GET /status`, mídia baixável) e evento opt-in `status.received` (M10) | S | Evento `status.received`; desligado por padrão (volume) | M10 |
+| STA-6 | Privacidade do status | (não há) | Sim — `GetStatusPrivacy` (broadcast.go) | Pronto — `GET /status/privacy` (M10) | S | | M10 |
 
 ### 2.14 Fila de mensagens (Z-API: Message Queue)
 
@@ -231,11 +231,11 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 | BUS-1 | Produtos: criar/editar, listar (várias versões), obter, apagar | 7 páginas | Não — não há API de catálogo (só `GetOrderDetails`, business.go) | Fora (por ora) | L | Exigiria engenharia reversa do protocolo de catálogo | Avaliar |
 | BUS-2 | Coleções: criar, listar, editar, apagar, produtos da coleção | 7 páginas | Não | Fora (por ora) | L | | Avaliar |
 | BUS-3 | Configuração do catálogo | Config do catálogo | Não | Fora (por ora) | — | | Avaliar |
-| BUS-4 | Etiquetas: listar, cores, criar, editar, apagar | 5 páginas | Parcial — `appstate.BuildLabelEdit` (criar/editar/apagar); lista vem dos eventos `LabelEdit` do app state; cores são índices fixos | Falta | M | Só contas Business; guardar etiquetas no store a partir do sync | M10 |
-| BUS-5 | Atribuir / remover etiqueta de chat | 2 páginas | Sim — `appstate.BuildLabelChat` (+ `BuildLabelMessage`) | Falta | S | Evento `label.updated` | M10 |
+| BUS-4 | Etiquetas: listar, cores, criar, editar, apagar | 5 páginas | Parcial — `appstate.BuildLabelEdit` (criar/editar/apagar); lista vem dos eventos `LabelEdit` do app state; cores são índices fixos | Pronto — `GET`/`POST /labels`, `PATCH`/`DELETE /labels/{id}` (só Business: `409 business_account_required`) (M10) | M | Só contas Business; guardar etiquetas no store a partir do sync | M10 |
+| BUS-5 | Atribuir / remover etiqueta de chat | 2 páginas | Sim — `appstate.BuildLabelChat` (+ `BuildLabelMessage`) | Pronto — `PUT`/`DELETE /labels/{id}/chats/{jid}` e `/messages/{msg_id}`, evento `label.updated` (M10) | S | Evento `label.updated` | M10 |
 | BUS-6 | Notas no chat | Notas | Não (incerto) | Fora | — | | — |
 | BUS-7 | Perfil comercial: descrição, e-mail, endereço, sites, horário, categorias (editar) | 7 páginas | Não — só leitura | Fora (por ora) | L | | Avaliar |
-| BUS-8 | Ler perfil comercial | Dados da conta business | Sim — `GetBusinessProfile` (user.go) | Falta | S | | M10 |
+| BUS-8 | Ler perfil comercial | Dados da conta business | Sim — `GetBusinessProfile` (user.go) | Pronto — `GET /business/profile` (própria conta); de contatos em `GET /contacts/{jid}/profile` (M9/M10) | S | | M10 |
 
 ### 2.16 Perfil da conta (Z-API: dentro de Instance)
 
@@ -292,9 +292,9 @@ Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-AP
 | — whatsmeow `Parcial` | 10 |
 | — whatsmeow `Não` | 21 |
 | Recursos só da camada LiteZap (`N/A`) | 27 |
-| **LiteZap `Pronto`** | **76** |
-| LiteZap `Parcial` | 2 |
-| LiteZap `Falta` | 63 |
+| **LiteZap `Pronto`** | **90** |
+| LiteZap `Parcial` | 4 |
+| LiteZap `Falta` | 47 |
 | LiteZap `Fora` | 18 |
 
 Viáveis com whatsmeow (`Sim` + `Manual` + `Parcial`): **111 de 132** recursos de protocolo. Os 21 inviáveis hoje: INS-11 (extensão, produto próprio da Z-API), MOB-1…4 (registro como aparelho principal), CON-8 (denúncia), CAL-1/2 (chamadas de voz e SIP), COM-8 (desativar comunidade), CHN-2/5/7/9/10/11 (administração avançada de canais), BRD-1 (listas de transmissão), BUS-1/2/3/6/7 (catálogo, coleções, notas, perfil comercial editável).
@@ -390,6 +390,8 @@ Escopo: STA-1…6, INS-13, CHN-1, 3, 4, 6, 8, 12, 13, BUS-4, 5, 8, MSG-24, MSG-3
 - Status: publicar texto/imagem/vídeo, responder, receber (`status.received`, desligado por padrão).
 - Canais: criar, seguir, silenciar, metadados, publicar, reagir.
 - Business: etiquetas (CRUD + atribuição + evento `label.updated`), ler perfil comercial.
+
+Entregue em 2026-10-18 (plano `docs/superpowers/plans/2026-10-18-litezap-m10-status-channels.md`): serviço gRPC `Social` no worker, status e posts de canal pela fila de envio (30 status/dia), status recebidos no log (`status@broadcast`, fora de `GET /chats`), eventos `status.received` e `channel.message` (opt-in) e `label.updated`, etiquetas em tabelas próprias, cotas de canal (seguir 3/min e 30/dia, criar 2/dia, reagir 30/min), MCP (leitura + `follow_channel`, `label_chat`) e abas Status, Canais e Etiquetas no painel. Adiados: INS-13, MSG-24, MSG-30, mídia de canais recebida, marcar visto em canal.
 
 Aceite:
 

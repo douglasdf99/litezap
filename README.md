@@ -86,6 +86,9 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `POST /v1/instances/{id}/contacts/{jid}/block\|unblock` · `GET /v1/instances/{id}/blocklist` | instância ou admin |
 | `GET\|PATCH /v1/instances/{id}/profile` · `GET\|PUT\|DELETE /v1/instances/{id}/profile/picture` | instância ou admin |
 | `GET\|PATCH /v1/instances/{id}/privacy` | instância ou admin |
+| `POST /v1/instances/{id}/status[?wait=true]` · `GET /status` · `GET /status/privacy` · `DELETE /status/{msg_id}` · `POST /status/{msg_id}/reply` (seção "Status, canais e etiquetas") | instância ou admin |
+| `GET\|POST /v1/instances/{id}/channels` · `POST /channels/preview` `{"invite"}` · `GET /channels/{jid}` · `POST /channels/{jid}/follow\|unfollow\|mute\|unmute` · `GET\|POST /channels/{jid}/messages` · `POST /channels/{jid}/reactions` | instância ou admin |
+| `GET\|POST /v1/instances/{id}/labels` · `PATCH\|DELETE /labels/{label_id}` · `PUT\|DELETE /labels/{label_id}/chats/{jid}` · `PUT\|DELETE /labels/{label_id}/messages/{msg_id}` · `GET /business/profile` | instância ou admin (conta Business) |
 | `GET /v1/instances/{id}/events[?types=]` (SSE) | instância ou admin |
 | `GET /v1/events[?types=]` (SSE, todas as instâncias) | admin |
 | `POST /v1/webhooks` · `GET /v1/webhooks[?instance_id=]` | admin (global ou de uma instância) ou instância (só a própria) |
@@ -277,6 +280,39 @@ curl -s -X POST $G/join -H "Authorization: Bearer $TOK" -d '{"code":"https://cha
 - **Comunidades**: `POST /communities {"name", "description"?}` cria, sem participantes (o WhatsApp cria o grupo de avisos sozinho), com o formato de criação de comunidade do app (descrição obrigatória para o WhatsApp: sem `description` vai o nome); se o WhatsApp recusar (algumas contas não podem criar comunidades), responde `409 community_not_allowed`: tente criar uma pelo app com o mesmo número; `GET /communities/{jid}` traz a comunidade e seus grupos (`announcement_group: true` no de avisos); `POST /communities/{jid}/groups {"group"}` vincula um grupo existente, `DELETE …/groups/{group}` desvincula; para criar um grupo já dentro da comunidade use `POST /groups` com `"parent"`. Configurações, descrição, link e participantes de uma comunidade usam as rotas de `/groups/{jid}` (semântica do WhatsApp nesses casos não verificada em aparelho real). Desativar comunidade não existe no whatsmeow.
 - O nome dos chats de grupo no log é preenchido ao chegar a primeira mensagem (o LiteZap consulta o grupo em segundo plano) e acompanha as mudanças de nome.
 
+### Status, canais e etiquetas (Business)
+
+```bash
+S=localhost:8787/v1/instances/$ID
+# status (story) de texto, imagem ou vídeo: vai para quem a privacidade do status do celular permite
+curl -X POST "$S/status?wait=true" -H "Authorization: Bearer $TOK" -d '{"type":"text","text":"Bom dia!","background_color":"#1E6E4F","font":1}'
+curl -X POST "$S/status" -H "Authorization: Bearer $TOK" -d '{"type":"image","caption":"Novidade","media":{"url":"https://exemplo.com/foto.jpg"}}'
+curl "$S/status" -H "Authorization: Bearer $TOK"            # status recebidos dos contatos e os nossos (log)
+curl "$S/status/privacy" -H "Authorization: Bearer $TOK"    # {type: contacts|blacklist|whitelist, list}
+curl -X DELETE "$S/status/$MSG_ID" -H "Authorization: Bearer $TOK"   # apaga um status nosso para todos
+curl -X POST "$S/status/$MSG_ID/reply" -H "Authorization: Bearer $TOK" -d '{"text":"Que lindo!"}'  # responde ao autor citando o status
+
+# canais (newsletters)
+curl "$S/channels" -H "Authorization: Bearer $TOK"                                   # seguidos e administrados
+curl -X POST "$S/channels/preview" -H "Authorization: Bearer $TOK" -d '{"invite":"https://whatsapp.com/channel/0029Va..."}'
+curl -X POST "$S/channels/120363...@newsletter/follow" -H "Authorization: Bearer $TOK"  # unfollow, mute, unmute
+curl "$S/channels/120363...@newsletter/messages?count=20" -H "Authorization: Bearer $TOK"
+curl -X POST "$S/channels/120363...@newsletter/reactions" -H "Authorization: Bearer $TOK" -d '{"server_id":123,"emoji":"👍"}'
+curl -X POST "$S/channels" -H "Authorization: Bearer $TOK" -d '{"name":"Minha loja","description":"Ofertas"}'
+curl -X POST "$S/channels/120363...@newsletter/messages?wait=true" -H "Authorization: Bearer $TOK" -d '{"type":"text","text":"Promoção!"}'
+
+# etiquetas do WhatsApp Business (cor = índice 0-19 da paleta do WhatsApp) e perfil comercial
+curl "$S/labels" -H "Authorization: Bearer $TOK"
+curl -X POST "$S/labels" -H "Authorization: Bearer $TOK" -d '{"name":"Novo cliente","color":1}'
+curl -X PUT "$S/labels/5/chats/5511988887777" -H "Authorization: Bearer $TOK"   # DELETE remove
+curl "$S/business/profile" -H "Authorization: Bearer $TOK"
+```
+
+- **Status**: tipos `text` (até 700 caracteres, `background_color`/`text_color` `#RRGGBB`, `font` 0–9), `image` e `video` (`caption`, mídia por `url` ou `base64`). Os destinatários são os da privacidade do status configurada no celular (todos os contatos, todos menos alguns, ou só alguns); o WhatsApp não permite escolher por envio. Publicar passa pela fila de envio (ritmo, janela de horário, rampa — conta como um destinatário novo por dia —, suspensão do operador; resposta igual à de `POST /messages`) e tem teto de **30 status por dia** por instância (`429 rate_limited`). Os status dos contatos que chegam com a instância conectada ficam no log, no chat `status@broadcast` (fora de `GET /chats`; a mídia baixa pela rota `/media` de sempre), e saem no evento `status.received`.
+- **Canais**: `GET /channels/{jid}` e a prévia por convite trazem nome, descrição, seguidores, link e o papel do número (`owner`, `admin`, `subscriber`). Seguir/deixar de seguir tem limite de 3 por minuto e 30 por dia; criar canal, 2 por dia; reagir, 30 por minuto (por instância, em memória). Publicar (`text`, `image`, `video`, `audio`, `document`) só como dono/admin, pela fila de envio. Posts novos dos canais seguidos saem em `channel.message` (sem download da mídia).
+- **Etiquetas**: só em conta WhatsApp Business (em conta pessoal, `409 business_account_required`). A lista vem do celular pelo app state (inclusive as que já existiam ao parear) e cada mudança, pela API ou no celular, sai em `label.updated`. Logo após parear pode responder `409 app_state_not_synced` até o celular compartilhar as chaves.
+- **Perfil comercial**: `GET /business/profile` lê endereço, e-mail, categorias, horário e opções (site) da própria conta Business. Editar perfil e catálogo de produtos não existem no whatsmeow.
+
 ### Verificar números
 
 `POST /check-numbers` aceita de 1 a 10 números por chamada (DDI + DDD + número, 10–15 dígitos) e devolve `exists` e o `jid` que o WhatsApp usa. Resultados ficam em cache (30 dias para quem tem WhatsApp, 24h para quem não tem). Consultas novas têm cota de 10 por minuto por instância, separada da cota de 30 por minuto da fila de envio; acima disso, `429 rate_limited`.
@@ -321,6 +357,9 @@ Adicionar campos em `data` não muda a versão; remover ou mudar o sentido de um
 | `call.ended` | chamada encerrada (uma vez por chamada) | mesmos campos + `reason` e `missed`. `reason`: `caller_hangup` (tocou sem atender até quem ligou desistir; `missed: true`), `accepted_elsewhere` (atendida no celular ou outro aparelho da conta; vem logo depois de `call.accepted`, no momento do atendimento, porque o aparelho vinculado não é avisado do fim da conversa), `ended` (encerrada depois de atendida), `rejected` (por `calls.auto_reject`), `rejected_by_peer` (o outro lado rejeitou e nenhum fim chegou em 5s), `timeout` (nenhum sinal em 2 min; `missed` se ninguém atendeu) ou outro motivo enviado pelo WhatsApp. O "reject" que um aparelho hospedado do WhatsApp (`hosted.lid`) manda logo após toda oferta é ignorado |
 | `group.updated` | mudança num grupo em que o número está (feita no celular, por outro membro ou pela API); um evento por tipo de mudança | `{chat, kind, actor?, participants?, reason?, name?, description?, removed?, settings?, group?, timestamp}`. `kind`: `participants_added` (`reason: "invite"` = entrou por link), `participants_removed`, `participants_promoted`, `participants_demoted`, `join_request` (pedido de entrada com aprovação), `join_request_revoked` (pedido cancelado ou recusado), `subject` (`name`), `description` (`""` = removida), `photo` (`removed`), `settings` (`settings {announce?, locked?, approval_required?, ephemeral_seconds?}`; uma mudança na aprovação de entrada sai depois, com o valor lido do grupo, ou `approval_mode_changed: true` se a leitura falhar), `invite_link_reset`, `joined` (o número foi adicionado ou criou o grupo; `name`), `deleted`, `suspended`/`unsuspended`, `community_linked`/`community_unlinked` (`group`). `filters.chat: "group"` casa com ele |
 | `chat.updated` | chat arquivado/desarquivado, fixado, silenciado, marcado como (não) lido, apagado ou limpo, ou mensagem favoritada, pela API (`source: "api"`) ou em qualquer aparelho da conta (`source: "device"`); uma vez por mudança (o eco do WhatsApp para ações da API não duplica) | `{chat, is_group?, changed: [archived\|pinned\|muted\|unread\|deleted\|cleared\|starred], archived, pinned, muted, muted_until?, unread, deleted?, cleared?, message_id?, wa_message_id?, starred?, source, timestamp}` (`muted` sem `muted_until` = até reativar) |
+| `status.received` | status (story) novo de um contato. **Opt-in**: só para quem pede o tipo explicitamente (`status.received` ou `status.*`; `*` não inclui) | mensagem com `chat: "status@broadcast"`, `sender` = autor, `media.url` para baixar |
+| `channel.message` | post novo num canal seguido. **Opt-in** como `status.received` | `{channel, server_id, wa_message_id, type, text?, media?, views?, reactions?, timestamp}` (`media` só com metadados) |
+| `label.updated` | etiqueta do WhatsApp Business criada, renomeada, recolorida ou apagada, ou aplicada/removida de um chat ou mensagem, pela API (`source: "api"`) ou no celular (`source: "device"`); o sync completo do pareamento não gera eventos | `{kind: edit\|chat\|message, label_id, name?, color?, deleted?, chat?, wa_message_id?, labeled?, source, timestamp}` |
 | `history.synced` | fim da ingestão de um history sync (um evento por sync, 15s depois do último bloco) | `{chats, messages, new_messages}` |
 | `agent.failed` | uma chamada do hook de agente falhou (nada foi enviado) ou o limite de respostas pausou o chat | `{chat, message_id, wa_message_id, reason, error?, http_status?}`; `reason`: `timeout`, `http_error`, `network_error`, `invalid_response`, `send_failed`, `loop_guard`, `internal` |
 | `agent.handoff` | o agente passou o chat para um humano (ação `handoff`) | `{chat, message_id, wa_message_id, note?}` |
@@ -337,7 +376,7 @@ curl -N "localhost:8787/v1/instances/$ID/events?types=message.*,instance.status"
 curl -N "localhost:8787/v1/events" -H "Authorization: Bearer $ADMIN"   # todas as instâncias
 ```
 
-Cada evento sai como `id: <evt>`, `event: <type>` e `data: <envelope>`; a cada 15s vai um comentário `: ping` para manter a conexão. `types` aceita tipos exatos, famílias (`message.*`) e `*` (que não inclui `chat.presence`; sem `types` também não: use `types=*,chat.presence`). Não há replay: eventos de quando o cliente estava desconectado não são reenviados (use webhooks para isso). Um cliente que fica mais de 256 eventos atrasado recebe `event: error` (`slow_consumer`) e é desconectado; reconecte.
+Cada evento sai como `id: <evt>`, `event: <type>` e `data: <envelope>`; a cada 15s vai um comentário `: ping` para manter a conexão. `types` aceita tipos exatos, famílias (`message.*`) e `*` (que não inclui `chat.presence`, `status.received` nem `channel.message`; sem `types` também não: use `types=*,chat.presence,status.received`). Não há replay: eventos de quando o cliente estava desconectado não são reenviados (use webhooks para isso). Um cliente que fica mais de 256 eventos atrasado recebe `event: error` (`slow_consumer`) e é desconectado; reconecte.
 
 ### Webhooks
 
@@ -503,6 +542,10 @@ O LiteZap expõe as mesmas operações como ferramentas do [Model Context Protoc
 | `get_profile_picture` · `get_contact_about` | foto (URL) e recado/empresa de um contato; gastam a cota de consultas (30/min) |
 | `list_blocked` · `block_contact` · `unblock_contact` | bloqueados; bloquear (marcada como destrutiva, só a pedido do usuário) e desbloquear |
 | `update_chat` | arquivar, fixar ou silenciar (`mute_hours`) um chat; nada é enviado ao contato |
+| `list_status_updates` | status recebidos dos contatos e os nossos, do log (publicar status não é ferramenta: vai para todos os contatos) |
+| `list_channels` · `get_channel` · `get_channel_messages` | canais seguidos; um canal por JID ou link de convite; posts recentes |
+| `follow_channel` | segue ou deixa de seguir um canal (3/min, 30/dia) |
+| `list_labels` · `label_chat` · `get_business_profile` | etiquetas do WhatsApp Business e suas conversas; etiquetar/desetiquetar um chat; perfil comercial (conta Business) |
 
 `instance_id` é opcional com token de instância (é sempre a dela) e com token admin quando só existe uma instância. A busca de mensagens fica para o marco 2b.
 
@@ -629,6 +672,16 @@ Com a instância conectada e o contato de teste já tendo conversado com o núme
 6. Comunidade (opcional): `POST /communities {"name":"Teste"}`, `POST /communities/<cjid>/groups {"group":"<jid>"}` e `GET /communities/<cjid>`.
 7. Por último, `POST /groups/<jid>/leave`.
 
+### Testar status, canais e etiquetas (marco 10)
+
+Com o SSE aberto em `?types=status.received,channel.message,label.updated` e o celular de um contato de teste (que tenha o número salvo e esteja na privacidade do status):
+
+1. `POST /status?wait=true {"type":"text","text":"Teste LiteZap","background_color":"#204060"}`: o contato vê o status (fundo azul) em até 1 min; o número também mostra o status no próprio celular. Repita com `{"type":"image","media":{"url":"..."}}` e apague um com `DELETE /status/<id>`.
+2. O contato posta um status: chega `status.received` (com `media.url` para imagem/vídeo) e ele aparece em `GET /status`; responda com `POST /status/<id>/reply {"text":"..."}`: o contato recebe a resposta citando o status.
+3. `GET /status/privacy` bate com Configurações → Privacidade → Status no celular.
+4. Canais: abra um canal público por link (`POST /channels/preview`), siga (`/follow`), confira no celular, leia `GET /channels/<jid>/messages` e reaja a um post (`/reactions`). Crie um canal (`POST /channels`) e publique texto e imagem (`POST /channels/<jid>/messages`): os posts aparecem no canal no celular. Com o canal seguido, um post novo gera `channel.message`.
+5. Etiquetas (conta Business): `GET /labels` lista as etiquetas do celular; `POST /labels {"name":"Teste","color":3}` aparece no celular; `PUT /labels/<id>/chats/<número>` etiqueta a conversa no celular; mude uma etiqueta no celular: `label.updated` com `source: "device"`. Em conta pessoal, `/labels` responde `409 business_account_required`.
+
 ### Testar chats, contatos, perfil e privacidade (marco 9)
 
 Com o SSE aberto em `?types=chat.updated` e o celular à mão (`JID` = um chat de `GET /chats`):
@@ -673,6 +726,9 @@ Com o SSE aberto em `?types=chat.updated` e o celular à mão (`JID` = um chat d
 - **Configurações**: ritmo, rampa, janela, fuso, proxy e ritmo inseguro (só são enviados os campos alterados; a senha mascarada do proxy nunca é reenviada).
 - **Atendente IA**: configurar o hook de agente (URL, segredo, timeout, contexto, pausa por humano, limite de respostas, ignorados), ligar/desligar por conversa, reativar chats pausados e ver as chamadas recentes com motivo das falhas.
 - **Grupos**: grupos do número, metadados e configurações, participantes (promover, rebaixar, remover, adicionar com os limites anti-ban), link de convite (mostrar, copiar, redefinir), criar grupo e sair.
+- **Status** (marco 10): publicar status de texto (com cor de fundo), imagem ou vídeo, ver quem recebe (privacidade do status), status recebidos dos contatos com mídia, responder e apagar os nossos.
+- **Canais**: canais seguidos, abrir por link de convite, criar, seguir/deixar de seguir, silenciar, ver publicações, reagir e publicar (como dono/admin).
+- **Etiquetas** (conta Business): perfil comercial, criar, renomear, apagar e aplicar etiquetas a conversas; atualiza com `label.updated`.
 - **Webhooks**: criar (o segredo aparece uma vez), ligar/desligar, excluir, ver entregas por status e reenviar as da dead-letter. Há também a página de webhooks globais.
 - **Eventos ao vivo**: os mesmos eventos dos webhooks, com o JSON de cada um.
 
@@ -754,6 +810,7 @@ Com Docker, o mesmo arquivo vai em `docker run --env-file /etc/litezap/env --sto
 - Se um recibo chegar antes da confirmação do envio, sai `message.status: delivered` (ou `read`) antes de `message.sent`, e o `message.status: sent` é omitido.
 - Sem busca full-text (marco 2b).
 - Marco 9: "limpar conversa" e mensagens temporárias por chat não existem; pareamento por passkey não é suportado (o WhatsApp exige uma asserção WebAuthn do site dele; use QR ou código); as listas de exceção da privacidade só no celular; o JID usado nas ações de chat em conversas diretas (LID quando a conta já migrou) ainda precisa de validação com celular real.
+- Marco 10: os destinatários de um status são sempre os da privacidade do status do celular (não dá para escolher por envio) e, com agenda grande, publicar demora (cada contato recebe uma cópia cifrada); a lista de contatos usada vem da agenda sincronizada do celular. Status dos contatos só chegam com a instância conectada (não há histórico). Mídia de publicações de canais recebidas não é baixada; marcar publicações de canal como vistas, leitura automática de status, eventos de agenda e produtos/catálogo não existem. As cotas de canais (seguir, criar, reagir) ficam em memória (reiniciar zera; o teto diário de status é persistente). A detecção de conta Business usa o nome comercial gravado no pareamento.
 - Botões, listas e carrossel não são enviados (instáveis no WhatsApp); respostas a eles chegam como `unknown`.
 - Votos em enquetes criadas antes do pareamento não são decifrados (a sessão não tem o segredo). Votos não ficam no log, só no evento `message.poll_vote`.
 - Fixar mensagem não emite evento, e fixações feitas pelo celular não são registradas.

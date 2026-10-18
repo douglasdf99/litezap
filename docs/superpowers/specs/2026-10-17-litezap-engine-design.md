@@ -221,6 +221,9 @@ Regra de versionamento: adicionar campos em `data` não muda a versão; remover 
 | `chat.presence` | digitando/gravando/parou, online/offline de contato assinado — marco 7; opt-in: exige `presence.online` e não entra em `*` |
 | `call.received` · `call.accepted` · `call.ended` | chamada tocando (com `rejected` se `calls.auto_reject`), atendida num aparelho da conta, encerrada (`reason`, `missed`) — marco 7 |
 | `group.updated` | mudança num grupo, um evento por `kind` (participantes adicionados/removidos/promovidos/rebaixados, pedido de entrada, nome, descrição, foto, configurações, link redefinido, `joined`, `deleted`, vínculo de comunidade) — marco 8 |
+| `status.received` | status (story) de um contato, gravado no log em `status@broadcast` — marco 10; opt-in: não entra em `*` |
+| `channel.message` | publicação num canal seguido (não gravada) — marco 10; opt-in |
+| `label.updated` | etiqueta do WhatsApp Business editada ou aplicada a chat/mensagem, pela API ou no celular (sync completo sem evento) — marco 10 |
 | `history.synced` | ingestão de history sync concluída |
 | `agent.failed` | falha no hook de agente |
 | `agent.handoff` | ação `handoff` do agente |
@@ -262,6 +265,9 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 | `GET/PUT/DELETE /instances/{id}/agent-hook` · `PUT .../chats/{jid}/agent` · `GET .../agent-hook/chats` · `GET .../agent-hook/calls` | inst | hook de agente (4.3) |
 | `GET/POST /instances/{id}/groups` · `GET/PATCH .../groups/{jid}` · `PUT/DELETE .../photo` · `POST .../participants` · `GET/POST .../requests` · `GET .../invite` · `POST .../invite/reset` · `POST .../leave` · `POST .../groups/preview` · `POST .../groups/join` | inst | grupos (marco 8): síncrono, resultado por participante; criar/adicionar/entrar passam por cotas `settings.groups` (tetos só com `unsafe_pacing`), adições só de contatos conhecidos, bloqueados por suspensão de envio |
 | `GET/POST /instances/{id}/communities` · `GET .../communities/{jid}` · `GET/POST .../communities/{jid}/groups` · `DELETE .../groups/{group}` | inst | comunidades (marco 8) |
+| `POST/GET /instances/{id}/status` · `GET .../status/privacy` · `DELETE .../status/{msg_id}` · `POST .../status/{msg_id}/reply` | inst | status (marco 10): publicar pela fila (destino `status@broadcast`), 30/dia; listar do log; responder citando |
+| `GET/POST /instances/{id}/channels` · `POST .../channels/preview` · `GET .../channels/{jid}` · `POST .../{jid}/follow\|unfollow\|mute\|unmute` · `GET/POST .../{jid}/messages` · `POST .../{jid}/reactions` | inst | canais (marco 10): publicar pela fila só como dono/admin; seguir 3/min e 30/dia, criar 2/dia, reagir 30/min |
+| `GET/POST /instances/{id}/labels` · `PATCH/DELETE .../labels/{label_id}` · `PUT/DELETE .../{label_id}/chats/{jid}` · `PUT/DELETE .../{label_id}/messages/{msg_id}` · `GET .../business/profile` | inst | etiquetas e perfil comercial (marco 10): só conta Business (`409 business_account_required`) |
 | `GET /instances/{id}/events` · `GET /events` | inst · admin | SSE |
 | `/webhooks...` | admin ou inst (só os da própria instância) | 5.3 |
 | `GET /me` | qualquer | quem é o token (`{admin, instance_id}`), usado por `litezap mcp` |
@@ -287,6 +293,8 @@ Implementado no marco 4 (além das acima, exceto `search_messages`, que depende 
 
 Marco 8: `list_groups`, `get_group` (leitura), `create_group`, `update_group`, `manage_group_participants` (destrutiva) e `get_group_invite_link` (nunca redefine), com aviso de risco de banimento nas escritas; as cotas e a checagem de participantes valem como na REST.
 
+Marco 10: `list_status_updates`, `list_channels`, `get_channel`, `get_channel_messages`, `list_labels`, `get_business_profile` (leitura), `follow_channel` e `label_chat` (escritas seguras, com as cotas da REST). Publicar status não é ferramenta (vai para todos os contatos).
+
 ## 8. Store (SQLite)
 
 Arquivo `data/litezap.db`, modo WAL, migrações versionadas embutidas no binário. Entidades:
@@ -302,6 +310,8 @@ Arquivo `data/litezap.db`, modo WAL, migrações versionadas embutidas no binár
 - `media` (id, instance_id, message_id, kind, mime, size, file_name, ref, path, expires_at, created_at) — `ref` é a referência opaca de download vinda do worker
 
 Marco 8: as cotas de grupos (adições, criações, entradas por link) ficam em `engine_kv` (`groups.quota:<instância>`, timestamps das últimas 24h), sem migração nova.
+
+Marco 10 (migração `0010_m10_social.sql`): `labels` (instance_id, label_id, name, color, predefined_id, deleted, updated_at), `label_chats` (instance_id, label_id, chat_jid) e `label_messages` (instance_id, label_id, chat_jid, wa_message_id), alimentadas pelo app state; status recebidos ficam em `messages` no chat `status@broadcast` (fora de `GET /chats`) e o teto diário de status conta `outbound_queue`.
 
 Retenção do log de mensagens: ilimitada por padrão, com `message_retention_days` configurável. A interface `Store` expõe operações por agregado (Instances, Chats, Messages, Queue, Webhooks, Media) para permitir implementação Postgres na peça #3.
 

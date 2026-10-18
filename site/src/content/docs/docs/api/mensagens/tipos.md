@@ -80,7 +80,7 @@ Figurinhas, localização e contatos **recebidos** já são registrados no log e
 | `edit`, `revoke`, `pin`, `forward` | Editar, apagar para todos, fixar e encaminhar | <span class="lz-badge lz-badge--soon">M6</span> |
 | `reply_to`, `mentions`, `link_preview` | Responder citando, mencionar (inclusive todos), prévia de link | <span class="lz-badge lz-badge--soon">M6</span> |
 | `delay_ms`, `typing_ms` | Atraso e "digitando" por mensagem (sem furar os pisos de ritmo) | <span class="lz-badge lz-badge--soon">M6</span> |
-| Evento de agenda | Criar, editar e responder eventos | <span class="lz-badge lz-badge--soon">M10</span> |
+| Evento de agenda | Criar, editar e responder eventos | <span class="lz-badge lz-badge--no">Avaliar</span> |
 | Botões, listas, OTP/PIX, carrossel | Mensagens interativas | <span class="lz-badge lz-badge--exp">Exp</span> |
 
 Os campos e nomes acima são a proposta atual e podem mudar até o marco ser entregue. Um `type` desconhecido hoje

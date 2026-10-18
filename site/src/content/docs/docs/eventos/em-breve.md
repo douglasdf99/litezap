@@ -11,8 +11,6 @@ catálogo, com payload e exemplos, quando o marco for entregue. Os nomes são a 
 | Tipo | Quando será emitido | Marco |
 |---|---|---|
 | `chat.updated` | Chat arquivado, fixado ou silenciado (inclusive pelo celular) | M9 |
-| `status.received` | Status publicado por um contato (desligado por padrão) | M10 |
-| `label.updated` | Etiqueta criada, alterada ou atribuída (Business) | M10 |
 | `instance.proxy_failed` | Proxy da instância deixou de responder | M11 |
 | `agent.failed`, `agent.handoff` | Falha do hook de agente; agente transferiu para humano | M5 |
 

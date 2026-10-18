@@ -59,7 +59,7 @@ Legenda: <span class="lz-badge lz-badge--ok">Disponível</span> já funciona;
 | Editar, apagar, fixar, encaminhar | — | <span class="lz-badge lz-badge--soon">M6</span> |
 | Link com prévia | — | <span class="lz-badge lz-badge--soon">M6</span> |
 | Enquete e votos | — | <span class="lz-badge lz-badge--soon">M6</span> |
-| Eventos (agenda) | — | <span class="lz-badge lz-badge--soon">M10</span> |
+| Eventos (agenda) | — | <span class="lz-badge lz-badge--no">Avaliar</span> |
 | Botões, listas, OTP/PIX, carrossel | — | <span class="lz-badge lz-badge--exp">Exp</span> |
 
 ### Fila
@@ -94,9 +94,9 @@ Legenda: <span class="lz-badge lz-badge--ok">Disponível</span> já funciona;
 
 | Z-API | LiteZap | |
 |---|---|---|
-| Status (texto, imagem, vídeo, responder) | — | <span class="lz-badge lz-badge--soon">M10</span> |
-| Canais (criar, seguir, silenciar, publicar) | — | <span class="lz-badge lz-badge--soon">M10</span> |
-| Etiquetas e perfil comercial (leitura) | — | <span class="lz-badge lz-badge--soon">M10</span> |
+| Status (texto, imagem, vídeo, responder) | [Status](/docs/api/status/) (`POST /status`, `POST /status/{msg_id}/reply`) e [`status.received`](/docs/eventos/status-received/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
+| Canais (criar, seguir, silenciar, metadados, publicar, reagir) | [Canais](/docs/api/canais/) e [`channel.message`](/docs/eventos/channel-message/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
+| Etiquetas e perfil comercial (leitura) | [Etiquetas e Business](/docs/api/business/) e [`label.updated`](/docs/eventos/label-updated/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Catálogo, coleções, pedidos | — | <span class="lz-badge lz-badge--no">Avaliar</span> |
 | Listas de transmissão | — (envio em massa é gatilho de banimento) | <span class="lz-badge lz-badge--no">Fora</span> |
 | Chamadas de voz / SIP | — (não suportado pela biblioteca de protocolo) | <span class="lz-badge lz-badge--no">Fora</span> |

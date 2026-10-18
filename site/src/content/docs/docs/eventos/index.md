@@ -55,6 +55,9 @@ Cada entrega é um `POST` com o envelope como corpo (`Content-Type: application/
 | [`call.accepted`](/docs/eventos/call-accepted/) | Chamada atendida num aparelho da conta | M7 |
 | [`call.ended`](/docs/eventos/call-ended/) | Chamada encerrada (`missed` quando perdida) | M7 |
 | [`group.updated`](/docs/eventos/group-updated/) | Mudança num grupo (participantes, nome, descrição, foto, configurações, convite), um evento por `kind` | M8 |
+| [`status.received`](/docs/eventos/status-received/) | Status (story) de um contato (opt-in) | M10 |
+| [`channel.message`](/docs/eventos/channel-message/) | Publicação num canal seguido (opt-in) | M10 |
+| [`label.updated`](/docs/eventos/label-updated/) | Etiqueta do WhatsApp Business criada, alterada ou aplicada, pela API ou no celular | M10 |
 | [`history.synced`](/docs/eventos/history-synced/) | Fim da sincronização de histórico | M3 |
 
 Tipos planejados (`chat.updated`...) estão em

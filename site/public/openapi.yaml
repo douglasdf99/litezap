@@ -150,6 +150,32 @@ tags:
       seguem os limites do WhatsApp (25 e 139 caracteres); a foto é recortada no centro e reduzida a
       640x640 (JPEG). Bloquear um contato vale também no celular.
     x-concept: /docs/conceitos/instancias/
+  - name: Status
+    description: Publicar status (stories), ver os dos contatos e responder.
+    x-slug: status
+    x-intro: |
+      Status de texto, imagem ou vídeo (marco 10). Os destinatários são os da privacidade do status do
+      celular: o WhatsApp não permite escolher por envio. Publicar passa pela fila de envio (ritmo,
+      janela, rampa) e tem teto de 30 por dia por instância. Os status dos contatos ficam no log e saem
+      no evento opt-in `status.received`.
+    x-concept: /docs/conceitos/limites/
+  - name: Canais
+    description: Seguir, ler, reagir, criar e publicar em canais (newsletters).
+    x-slug: canais
+    x-intro: |
+      Canais são listas públicas de mão única (marco 10). Seguir e deixar de seguir têm limite de 3 por
+      minuto e 30 por dia; criar, 2 por dia; reagir, 30 por minuto. Publicar só como dono ou admin, pela
+      fila de envio. Editar o canal, apagar, listar inscritos e buscar no diretório não existem no
+      whatsmeow.
+    x-concept: /docs/conceitos/limites/
+  - name: Etiquetas e Business
+    description: Etiquetas e perfil comercial de contas WhatsApp Business.
+    x-slug: business
+    x-intro: |
+      Só contas WhatsApp Business (em conta pessoal, `409 business_account_required`). As etiquetas vêm do
+      celular pelo app state e cada mudança sai em `label.updated`. O perfil comercial é só leitura;
+      catálogo, coleções e pedidos não existem no whatsmeow.
+    x-concept: /docs/conceitos/instancias/
   - name: Operação
     description: Saúde do processo, prontidão e identidade do token.
     x-slug: operacao
@@ -2387,6 +2413,497 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /v1/instances/{id}/status:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Status]
+      operationId: postStatus
+      x-litezap-milestone: M10
+      x-zapi: "Enviar status de texto / imagem / vídeo"
+      x-litezap-events: [message.sent, message.status]
+      x-litezap-notes: "Vai para todos os contatos permitidos pela privacidade do status: fila de envio e no máximo 30 por dia."
+      summary: Publicar status
+      x-litezap-scope: instancia
+      description: |
+        Publica um status (story) de texto, imagem ou vídeo. Os destinatários são os da privacidade do
+        status configurada no celular (veja `GET /status/privacy`); o WhatsApp não permite escolher por
+        envio. Passa pela fila de envio como `POST /messages` (ritmo, janela de horário, rampa,
+        suspensão do operador, `client_message_id`, `?wait=true`) e tem teto de 30 status por dia por
+        instância (`429 rate_limited`). Texto: até 700 caracteres, `background_color`/`text_color`
+        `#RRGGBB` e `font` 0–9.
+      parameters:
+        - { name: wait, in: query, schema: { type: boolean }, description: "Espera o envio (até `timeout`, padrão 30s)." }
+        - { name: timeout, in: query, schema: { type: string, example: 30s } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StatusInput" }
+            examples:
+              texto: { summary: Texto, value: { type: text, text: "Bom dia! Abrimos às 9h.", background_color: "#1E6E4F", font: 1 } }
+              imagem: { summary: Imagem, value: { type: image, caption: "Novidade da semana", media: { url: "https://exemplo.com/foto.jpg" } } }
+      responses:
+        "200":
+          description: Publicado (com `?wait=true`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+              example: { id: msg_5c1e9a7d3b2f4068, wa_message_id: 3EB0C4D5E6F7A8B9C0D1E2, chat: status@broadcast, from_me: true, source: api, type: text, text: "Bom dia! Abrimos às 9h.", status: sent, timestamp: "2026-10-18T12:00:03Z" }
+        "202":
+          description: Na fila.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/SendConflict" }
+        "413": { $ref: "#/components/responses/MediaTooLarge" }
+        "422": { $ref: "#/components/responses/MediaFetchFailed" }
+        "429": { $ref: "#/components/responses/SocialRateLimited" }
+    get:
+      tags: [Status]
+      operationId: listStatus
+      x-litezap-milestone: M10
+      x-zapi: "(sem equivalente)"
+      x-litezap-events: [status.received]
+      summary: Status recentes
+      x-litezap-scope: instancia
+      description: |
+        Status no log, do mais recente para o mais antigo: os dos contatos recebidos com a instância
+        conectada (`sender` = autor; mídia baixável por `media.url`) e os nossos. Ficam no chat
+        `status@broadcast`, que não aparece em `GET /chats`.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Uma página de status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessagePage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /v1/instances/{id}/status/privacy:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Status]
+      operationId: statusPrivacy
+      x-litezap-milestone: M10
+      x-zapi: "(sem equivalente)"
+      summary: Privacidade do status
+      x-litezap-scope: instancia
+      description: Quem recebe os status do número, como configurado no celular (Configurações → Privacidade → Status).
+      responses:
+        "200":
+          description: Privacidade do status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusPrivacy" }
+              example: { type: blacklist, list: ["5511988887777@s.whatsapp.net"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
+  /v1/instances/{id}/status/{msg_id}:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - { name: msg_id, in: path, required: true, schema: { type: string }, description: "Id do LiteZap (ou wa_message_id) do status." }
+    delete:
+      tags: [Status]
+      operationId: deleteStatus
+      x-litezap-milestone: M10
+      x-zapi: "(sem equivalente)"
+      summary: Apagar status
+      x-litezap-scope: instancia
+      description: Apaga para todos um status nosso (pela fila, como um `revoke`). Aceita `?wait=true`.
+      responses:
+        "200": { description: Apagado., content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } } }
+        "202": { description: Na fila., content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/instances/{id}/status/{msg_id}/reply:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - { name: msg_id, in: path, required: true, schema: { type: string }, description: "Id do LiteZap (ou wa_message_id) do status do contato." }
+    post:
+      tags: [Status]
+      operationId: replyStatus
+      x-litezap-milestone: M10
+      x-zapi: "Responder status com texto"
+      x-litezap-events: [message.sent]
+      summary: Responder status
+      x-litezap-scope: instancia
+      description: Manda um texto ao autor de um status recebido, citando o status (como responder pelo app). Vai pela fila; aceita `?wait=true`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+                client_message_id: { type: string }
+            example: { text: "Que lindo!" }
+      responses:
+        "200": { description: Enviada., content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } } }
+        "202": { description: Na fila., content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/instances/{id}/channels:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Canais]
+      operationId: listChannels
+      x-litezap-milestone: M10
+      x-zapi: "Listar canais"
+      summary: Listar canais seguidos
+      x-litezap-scope: instancia
+      description: Canais que o número segue ou administra, com o papel (`owner`, `admin`, `subscriber`).
+      responses:
+        "200":
+          description: Canais.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  channels: { type: array, items: { $ref: "#/components/schemas/Channel" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+    post:
+      tags: [Canais]
+      operationId: createChannel
+      x-litezap-milestone: M10
+      x-zapi: "Criar canal"
+      summary: Criar canal
+      x-litezap-scope: instancia
+      description: Cria um canal do número (dono). Foto opcional (JPEG, PNG ou GIF por URL ou base64, recortada em 640x640). No máximo 2 por dia por instância.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateChannel" }
+            example: { name: "Minha loja", description: "Ofertas da semana" }
+      responses:
+        "201": { description: Canal criado., content: { application/json: { schema: { $ref: "#/components/schemas/Channel" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "429": { $ref: "#/components/responses/SocialRateLimited" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+
+  /v1/instances/{id}/channels/preview:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Canais]
+      operationId: previewChannel
+      x-litezap-milestone: M10
+      x-zapi: "Metadata do canal (por convite)"
+      summary: Canal por link de convite
+      x-litezap-scope: instancia
+      description: Lê um canal pelo link (`https://whatsapp.com/channel/...`) ou código de convite, sem segui-lo (`role` vem vazio).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [invite], properties: { invite: { type: string } } }
+            example: { invite: "https://whatsapp.com/channel/0029VaExemplo" }
+      responses:
+        "200": { description: Canal., content: { application/json: { schema: { $ref: "#/components/schemas/Channel" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/instances/{id}/channels/{jid}:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }, { $ref: "#/components/parameters/ChannelJID" }]
+    get:
+      tags: [Canais]
+      operationId: getChannel
+      x-litezap-milestone: M10
+      x-zapi: "Metadata do canal"
+      summary: Metadados do canal
+      x-litezap-scope: instancia
+      description: Nome, descrição, seguidores, link de convite, verificação e o papel do número no canal.
+      responses:
+        "200": { description: Canal., content: { application/json: { schema: { $ref: "#/components/schemas/Channel" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/instances/{id}/channels/{jid}/{action}:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - $ref: "#/components/parameters/ChannelJID"
+      - { name: action, in: path, required: true, schema: { type: string, enum: [follow, unfollow, mute, unmute] } }
+    post:
+      tags: [Canais]
+      operationId: channelAction
+      x-litezap-milestone: M10
+      x-zapi: "Seguir / deixar de seguir / silenciar / reativar canal"
+      summary: Seguir, deixar de seguir, silenciar
+      x-litezap-scope: instancia
+      description: |
+        `follow`, `unfollow`, `mute` ou `unmute` (o celular acompanha). Seguir e deixar de seguir têm
+        limite de 3 por minuto e 30 por dia por instância e são recusados com envios suspensos pelo
+        operador.
+      responses:
+        "204": { description: Feito. }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/SocialRateLimited" }
+
+  /v1/instances/{id}/channels/{jid}/messages:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }, { $ref: "#/components/parameters/ChannelJID" }]
+    get:
+      tags: [Canais]
+      operationId: channelMessages
+      x-litezap-milestone: M10
+      x-zapi: "(sem equivalente)"
+      summary: Publicações do canal
+      x-litezap-scope: instancia
+      description: Últimas publicações (texto, tipo de mídia, visualizações, reações). `before` = `server_id` para paginar para trás.
+      parameters:
+        - { name: count, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: before, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: Publicações.
+          content:
+            application/json:
+              schema: { type: object, properties: { messages: { type: array, items: { $ref: "#/components/schemas/ChannelPost" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Canais]
+      operationId: publishChannel
+      x-litezap-milestone: M10
+      x-zapi: "(via enviar mensagem para o canal)"
+      x-litezap-events: [message.sent]
+      summary: Publicar no canal
+      x-litezap-scope: instancia
+      description: |
+        Publica texto, imagem, vídeo, áudio ou documento num canal de que o número é dono ou admin
+        (`403 forbidden` caso contrário). Vai pela fila de envio; aceita `?wait=true` e `client_message_id`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChannelPostInput" }
+            example: { type: text, text: "Promoção relâmpago até 18h!" }
+      responses:
+        "200": { description: Publicado., content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } } }
+        "202": { description: Na fila., content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/instances/{id}/channels/{jid}/reactions:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }, { $ref: "#/components/parameters/ChannelJID" }]
+    post:
+      tags: [Canais]
+      operationId: channelReact
+      x-litezap-milestone: M10
+      x-zapi: "(sem equivalente)"
+      summary: Reagir a publicação
+      x-litezap-scope: instancia
+      description: Reage a uma publicação pelo `server_id` (`emoji` vazio remove). Limite de 30 por minuto por instância.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [server_id], properties: { server_id: { type: integer }, emoji: { type: string } } }
+            example: { server_id: 123, emoji: "👍" }
+      responses:
+        "204": { description: Feito. }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/SocialRateLimited" }
+
+  /v1/instances/{id}/labels:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Etiquetas e Business]
+      operationId: listLabels
+      x-litezap-milestone: M10
+      x-zapi: "Listar etiquetas"
+      x-litezap-events: [label.updated]
+      summary: Listar etiquetas
+      x-litezap-scope: instancia
+      description: Etiquetas do WhatsApp Business sincronizadas do celular (inclusive as que existiam ao parear), com as conversas de cada uma.
+      responses:
+        "200":
+          description: Etiquetas.
+          content:
+            application/json:
+              schema: { type: object, properties: { labels: { type: array, items: { $ref: "#/components/schemas/Label" } } } }
+              example: { labels: [{ id: "1", name: "Novo cliente", color: 1, chats: ["5511988887777@s.whatsapp.net"] }] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/BusinessRequired" }
+    post:
+      tags: [Etiquetas e Business]
+      operationId: createLabel
+      x-litezap-milestone: M10
+      x-zapi: "Criar etiqueta"
+      x-litezap-events: [label.updated]
+      summary: Criar etiqueta
+      x-litezap-scope: instancia
+      description: Cria uma etiqueta (o celular recebe pelo app state). `color` é o índice 0–19 da paleta do WhatsApp.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LabelInput" }
+            example: { name: "Pagamento pendente", color: 3 }
+      responses:
+        "201": { description: Criada., content: { application/json: { schema: { $ref: "#/components/schemas/Label" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/BusinessRequired" }
+
+  /v1/instances/{id}/labels/{label_id}:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - { name: label_id, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [Etiquetas e Business]
+      operationId: updateLabel
+      x-litezap-milestone: M10
+      x-zapi: "Editar etiqueta"
+      x-litezap-events: [label.updated]
+      summary: Renomear ou mudar a cor
+      x-litezap-scope: instancia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LabelInput" }
+      responses:
+        "200": { description: Etiqueta., content: { application/json: { schema: { $ref: "#/components/schemas/Label" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/BusinessRequired" }
+    delete:
+      tags: [Etiquetas e Business]
+      operationId: deleteLabel
+      x-litezap-milestone: M10
+      x-zapi: "Apagar etiqueta"
+      x-litezap-events: [label.updated]
+      summary: Apagar etiqueta
+      x-litezap-scope: instancia
+      description: Apaga a etiqueta (sai de todas as conversas, também no celular).
+      responses:
+        "204": { description: Apagada. }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/BusinessRequired" }
+
+  /v1/instances/{id}/labels/{label_id}/chats/{jid}:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - { name: label_id, in: path, required: true, schema: { type: string } }
+      - $ref: "#/components/parameters/ChatJID"
+    put:
+      tags: [Etiquetas e Business]
+      operationId: labelChat
+      x-litezap-milestone: M10
+      x-zapi: "Atribuir etiqueta a um chat"
+      x-litezap-events: [label.updated]
+      summary: Etiquetar conversa
+      x-litezap-scope: instancia
+      responses:
+        "200": { description: A etiqueta com suas conversas., content: { application/json: { schema: { $ref: "#/components/schemas/Label" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/BusinessRequired" }
+    delete:
+      tags: [Etiquetas e Business]
+      operationId: unlabelChat
+      x-litezap-milestone: M10
+      x-zapi: "Remover etiqueta de um chat"
+      x-litezap-events: [label.updated]
+      summary: Remover etiqueta da conversa
+      x-litezap-scope: instancia
+      responses:
+        "200": { description: A etiqueta com suas conversas., content: { application/json: { schema: { $ref: "#/components/schemas/Label" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/BusinessRequired" }
+
+  /v1/instances/{id}/labels/{label_id}/messages/{msg_id}:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - { name: label_id, in: path, required: true, schema: { type: string } }
+      - { name: msg_id, in: path, required: true, schema: { type: string }, description: Id do LiteZap da mensagem. }
+    put:
+      tags: [Etiquetas e Business]
+      operationId: labelMessage
+      x-litezap-milestone: M10
+      x-zapi: "(sem equivalente)"
+      x-litezap-events: [label.updated]
+      summary: Etiquetar mensagem
+      x-litezap-scope: instancia
+      responses:
+        "204": { description: Feito. }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/BusinessRequired" }
+    delete:
+      tags: [Etiquetas e Business]
+      operationId: unlabelMessage
+      x-litezap-milestone: M10
+      x-zapi: "(sem equivalente)"
+      x-litezap-events: [label.updated]
+      summary: Remover etiqueta da mensagem
+      x-litezap-scope: instancia
+      responses:
+        "204": { description: Feito. }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/BusinessRequired" }
+
+  /v1/instances/{id}/business/profile:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Etiquetas e Business]
+      operationId: businessProfile
+      x-litezap-milestone: M10
+      x-zapi: "Dados da conta business"
+      summary: Perfil comercial
+      x-litezap-scope: instancia
+      description: Endereço, e-mail, categorias, horário de funcionamento e opções (site, descrição) da própria conta Business (somente leitura).
+      responses:
+        "200":
+          description: Perfil comercial.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessProfile" }
+              example: { jid: 5511999999999@s.whatsapp.net, business_name: "Loja Exemplo", address: "Rua A, 10", email: "oi@loja.exemplo", categories: [Varejo], timezone: America/Sao_Paulo, hours: [{ day: mon, mode: open_24h }] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/BusinessRequired" }
+
 components:
   securitySchemes:
     bearer:
@@ -2437,8 +2954,15 @@ components:
     EventTypes:
       name: types
       in: query
-      description: "Filtro separado por vírgulas: tipos exatos (`instance.status`), famílias (`message.*`) ou `*`. Omitido: todos. `chat.presence` é opt-in: nem `*` nem a omissão o incluem (use `*,chat.presence`)."
+      description: "Filtro separado por vírgulas: tipos exatos (`instance.status`), famílias (`message.*`) ou `*`. Omitido: todos. `chat.presence`, `status.received` e `channel.message` são opt-in: nem `*` nem a omissão os incluem (use `*,chat.presence,status.received`)."
       schema: { type: string, example: "message.*,instance.status" }
+
+    ChannelJID:
+      name: jid
+      in: path
+      required: true
+      description: "JID do canal (`<id>@newsletter`) ou só o id numérico."
+      schema: { type: string, example: 120363000000000001@newsletter }
 
   schemas:
     Error:
@@ -2980,6 +3504,125 @@ components:
             description: { type: string }
         timestamp: { type: string, format: date-time }
 
+    StatusInput:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum: [text, image, video] }
+        text: { type: string, maxLength: 700, description: "text: o texto do status." }
+        caption: { type: string, description: "image/video: legenda." }
+        media: { $ref: "#/components/schemas/MediaInput" }
+        background_color: { type: string, example: "#1E6E4F", description: "text: cor de fundo #RRGGBB." }
+        text_color: { type: string, example: "#FFFFFF" }
+        font: { type: integer, minimum: 0, maximum: 9 }
+        client_message_id: { type: string }
+        expires_after: { type: string, example: 2h }
+    StatusPrivacy:
+      type: object
+      properties:
+        type: { type: string, enum: [contacts, blacklist, whitelist], description: "contacts: todos; blacklist: todos menos `list`; whitelist: só `list`." }
+        list: { type: array, items: { type: string } }
+    Channel:
+      type: object
+      properties:
+        jid: { type: string, example: 120363000000000001@newsletter }
+        name: { type: string }
+        description: { type: string }
+        invite_code: { type: string }
+        invite_link: { type: string }
+        subscribers: { type: integer }
+        verified: { type: boolean }
+        state: { type: string, enum: [active, suspended, geosuspended] }
+        created_at: { type: string, format: date-time }
+        role: { type: string, enum: [owner, admin, subscriber, guest], description: "Papel do número (vazio quando lido por convite)." }
+        muted: { type: boolean }
+        picture_url: { type: string }
+    CreateChannel:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 100 }
+        description: { type: string, maxLength: 2048 }
+        picture: { $ref: "#/components/schemas/PictureInput" }
+    ChannelPost:
+      type: object
+      properties:
+        server_id: { type: integer, description: "Número da publicação no canal (reações usam)." }
+        wa_message_id: { type: string }
+        type: { type: string }
+        text: { type: string }
+        media: { $ref: "#/components/schemas/MediaInfo" }
+        views: { type: integer }
+        reactions: { type: object, additionalProperties: { type: integer } }
+        timestamp: { type: string, format: date-time }
+    ChannelPostInput:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum: [text, image, video, audio, document] }
+        text: { type: string }
+        caption: { type: string }
+        media: { $ref: "#/components/schemas/MediaInput" }
+        client_message_id: { type: string }
+        expires_after: { type: string }
+    Label:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        color: { type: integer, minimum: 0, maximum: 19, description: "Índice na paleta do WhatsApp." }
+        chats: { type: array, items: { type: string } }
+    LabelInput:
+      type: object
+      properties:
+        name: { type: string, maxLength: 100 }
+        color: { type: integer, minimum: 0, maximum: 19 }
+    BusinessProfile:
+      type: object
+      properties:
+        jid: { type: string }
+        business_name: { type: string }
+        address: { type: string }
+        email: { type: string }
+        categories: { type: array, items: { type: string } }
+        timezone: { type: string }
+        hours:
+          type: array
+          items:
+            type: object
+            properties:
+              day: { type: string }
+              mode: { type: string }
+              open: { type: string }
+              close: { type: string }
+        options: { type: object, additionalProperties: { type: string } }
+    ChannelMessageEvent:
+      type: object
+      description: Dados de `channel.message`.
+      properties:
+        channel: { type: string }
+        server_id: { type: integer }
+        wa_message_id: { type: string }
+        type: { type: string }
+        text: { type: string }
+        media: { $ref: "#/components/schemas/MediaInfo" }
+        views: { type: integer }
+        reactions: { type: object, additionalProperties: { type: integer } }
+        timestamp: { type: string, format: date-time }
+    LabelUpdatedEvent:
+      type: object
+      description: Dados de `label.updated`.
+      properties:
+        kind: { type: string, enum: [edit, chat, message] }
+        label_id: { type: string }
+        name: { type: string }
+        color: { type: integer }
+        deleted: { type: boolean }
+        chat: { type: string }
+        wa_message_id: { type: string }
+        labeled: { type: boolean }
+        source: { type: string, enum: [api, device] }
+        timestamp: { type: string, format: date-time }
   responses:
     InstanceOK:
       description: A instância logo após a ação (o estado pode ainda ser o anterior).
@@ -3150,6 +3793,18 @@ components:
           example: { error: { code: worker_timeout, message: "instance worker did not answer in time", retryable: true } }
 
 # Eventos entregues por webhook e SSE (catálogo v1). Fonte no motor: internal/events.
+    SocialRateLimited:
+      description: "`rate_limited`: limite da instância (30 status/dia; seguir canais 3/min e 30/dia; criar canal 2/dia; reagir 30/min)."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: rate_limited, message: "daily status (30 per day) limit reached for this instance; try again later", retryable: true } }
+    BusinessRequired:
+      description: "`business_account_required`: só contas WhatsApp Business; ou `app_state_not_synced` logo após parear."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: business_account_required, message: "this needs a WhatsApp Business account", retryable: false } }
 webhooks:
   instance.status:
     post:
@@ -3564,5 +4219,77 @@ webhooks:
           application/json:
             schema: { $ref: "#/components/schemas/Envelope" }
             example: { id: evt_1b7e5c3a9d2f4086, type: chat.updated, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T10:10:00.000Z", data: { chat: 5511999999999@s.whatsapp.net, changed: [archived], archived: true, pinned: false, muted: false, unread: false, source: device, timestamp: "2026-10-18T10:10:00Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  status.received:
+    post:
+      summary: Status de um contato
+      x-slug: status-received
+      x-litezap-milestone: M10
+      x-zapi: Webhook de status
+      description: |
+        Um contato publicou um status (story), recebido com a instância conectada. **Opt-in**: só sai
+        para quem pede o tipo explicitamente (`status.received` ou `status.*`); `*` não inclui. O status
+        fica no log (`GET /status`) e a mídia baixa por `media.url`.
+      x-related: [message.received]
+      x-fields:
+        - [id, string, "Id do LiteZap (use em /status/{msg_id}/reply)."]
+        - [chat, string, "Sempre status@broadcast."]
+        - [sender, string, "Autor do status."]
+        - [type, string, "text, image, video..."]
+        - [text, string, "Texto ou legenda (opcional)."]
+        - [media, object, "Mídia com url de download (opcional)."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_4d2a8c6e0b1f3957, type: status.received, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T12:30:00.000Z", data: { id: msg_7a3c1e9d5b2f4086, wa_message_id: 3A1B2C3D4E5F6A7B8C9D, chat: status@broadcast, sender: 5511988887777@s.whatsapp.net, from_me: false, push_name: Ana, source: contact, type: image, text: "Praia hoje", media: { id: med_2c8e4a6f0b1d3957, kind: image, mime: image/jpeg, url: /v1/instances/inst_7f3a9c2e5b1d4086/media/med_2c8e4a6f0b1d3957 }, timestamp: "2026-10-18T12:30:00Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  channel.message:
+    post:
+      summary: Publicação em canal seguido
+      x-slug: channel-message
+      x-litezap-milestone: M10
+      x-zapi: (sem equivalente)
+      description: |
+        Publicação nova num canal que o número segue. **Opt-in** como `status.received`. Não fica no log e a
+        mídia vem só com metadados.
+      x-fields:
+        - [channel, string, "JID do canal."]
+        - [server_id, integer, "Número da publicação (use para reagir)."]
+        - [type, string, "Tipo."]
+        - [text, string, "Texto ou legenda (opcional)."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_9b1d3f5a7c2e4068, type: channel.message, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T12:31:00.000Z", data: { channel: 120363000000000002@newsletter, server_id: 812, wa_message_id: "3EB0123456789ABCDEF0", type: text, text: "Manchete do dia", timestamp: "2026-10-18T12:31:00Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  label.updated:
+    post:
+      summary: Etiqueta alterada
+      x-slug: label-updated
+      x-litezap-milestone: M10
+      x-zapi: (sem equivalente)
+      description: |
+        Etiqueta do WhatsApp Business criada, renomeada, recolorida ou apagada (`kind: edit`), ou aplicada/
+        removida de uma conversa (`chat`) ou mensagem (`message`), pela API (`source: api`) ou no celular
+        (`source: device`). O sync completo logo após parear grava as etiquetas sem gerar eventos.
+      x-fields:
+        - [kind, string, "edit, chat ou message."]
+        - [label_id, string, "Id da etiqueta."]
+        - [name, string, "edit: nome (opcional)."]
+        - [color, integer, "edit: índice da cor (opcional)."]
+        - [deleted, boolean, "edit: apagada (opcional)."]
+        - [chat, string, "chat/message: a conversa (opcional)."]
+        - [labeled, boolean, "chat/message: estado novo (opcional)."]
+        - [source, string, "api ou device."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_3e7a1c9d5b2f8046, type: label.updated, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T12:32:00.000Z", data: { kind: chat, label_id: "5", chat: 5511988887777@s.whatsapp.net, labeled: true, source: device, timestamp: "2026-10-18T12:32:00Z" } }
       responses:
         "2XX": { description: Qualquer 2xx confirma a entrega. }
