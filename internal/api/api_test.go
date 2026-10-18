@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/douglasdf99/litezap/internal/agenthook"
+	"github.com/douglasdf99/litezap/internal/attendant"
 	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/ingest"
 	"github.com/douglasdf99/litezap/internal/lookup"
@@ -100,6 +101,8 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 	opt.Pairing = links
 	opt.PairingPage = pairing.Handler(pairing.PageOptions{Links: links, Instances: svc})
 	opt.Operator.Usage = &usage.Recorder{Store: st}
+	vault, _ := attendant.NewVault([]byte("attendant-key-0123456789abcdef01"))
+	opt.Attendant = &attendant.Admin{A: &attendant.Attendant{Store: st, Vault: vault}} // spec 4.7
 	if tweak != nil {
 		tweak(&opt)
 	}

@@ -92,6 +92,10 @@ type Handler struct {
 	// CallTimeout and RejectGrace override defaultCallTimeout and defaultRejectGrace (tests).
 	CallTimeout time.Duration
 	RejectGrace time.Duration
+	// FollowUp, when set, is offered each automatic rejection that passed the per-caller
+	// cooldown: true means the built-in attendant writes to the caller itself (and sends
+	// fallback, the reject message, if it fails); false keeps the static reject message.
+	FollowUp func(instanceID, caller, callID, fallback string) bool
 
 	mu       sync.Mutex
 	sender   Sender
@@ -519,7 +523,7 @@ func (h *Handler) offer(id, key string, c *workerv1.Call, at time.Time, live boo
 	}
 	// WhatsApp may or may not echo a terminate for a call we rejected: end it here, once.
 	h.end(id, key, c, at, "rejected")
-	if msg := set.Calls.RejectMessage; msg != "" && c.Caller != "" {
+	if msg := set.Calls.RejectMessage; (msg != "" || h.FollowUp != nil) && c.Caller != "" {
 		h.goBackground(func() { h.reply(id, c, msg) })
 	}
 }
@@ -570,6 +574,12 @@ func (h *Handler) reply(id string, c *workerv1.Call, msg string) {
 	}
 	h.replied[key] = now
 	h.mu.Unlock()
+	if h.FollowUp != nil && h.FollowUp(id, c.Caller, c.CallId, msg) {
+		return
+	}
+	if msg == "" {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 	// The client id makes a replayed offer (worker reconnect) queue nothing new.

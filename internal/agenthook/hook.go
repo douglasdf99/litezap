@@ -50,7 +50,37 @@ type Options struct {
 	// BufferSize is how many events may wait for the router (default 1000).
 	BufferSize int
 	Log        *slog.Logger
+	// Builtin answers for hooks with target "builtin" (the built-in attendant, spec 4.7);
+	// nil: such hooks fail with reason not_configured.
+	Builtin BuiltinAgent
 }
+
+// BuiltinAgent is the built-in attendant: it answers a request like an external hook
+// would, without the HTTP round trip. Its errors are failures (fail-closed); a *CallError
+// carries the agent.failed reason.
+type BuiltinAgent interface {
+	Answer(ctx context.Context, req Request) (Response, error)
+}
+
+// CallError is a built-in agent failure with a stable agent.failed reason
+// (not_configured, daily_cap, llm_error, invalid_response...).
+type CallError struct {
+	Reason string
+	Detail string
+}
+
+func (e *CallError) Error() string { return e.Reason + ": " + e.Detail }
+
+// AgentEvent is an event the built-in attendant asks to publish once its answer is acted
+// on (agent.lead, agent.appointment_requested, agent.order_draft).
+type AgentEvent struct {
+	Type string
+	Data map[string]any
+}
+
+// builtinEventTypes are the only event types an AgentEvent may have.
+var builtinEventTypes = map[string]bool{events.TypeAgentLead: true, events.TypeAgentAppointment: true,
+	events.TypeAgentOrderDraft: true}
 
 // Header names of a hook request (the signature is the webhook one, spec 5.3).
 const (
@@ -105,6 +135,14 @@ type job struct {
 	eventID string
 	msg     events.Message
 	raw     json.RawMessage // the message.received data, forwarded as is
+	call    *callJob        // a call follow-up instead of a message (built-in attendant only)
+}
+
+// callJob is a rejected call the built-in attendant follows up on; fallback (the static
+// calls.reject_message) is sent instead when the attendant fails.
+type callJob struct {
+	callID   string
+	fallback string
 }
 
 // New returns a hook; set the messenger and publisher, then Start it.
@@ -329,7 +367,10 @@ func (h *Hook) dispatch(instanceID string, j job) {
 	k := chatKey{instanceID, j.msg.Chat}
 	h.mu.Lock()
 	if cs, ok := h.chats[k]; ok {
-		cs.pending = &j
+		// A call follow-up never displaces a message waiting for its turn.
+		if j.call == nil || cs.pending == nil || cs.pending.call != nil {
+			cs.pending = &j
+		}
 		h.mu.Unlock()
 		return
 	}
@@ -370,7 +411,7 @@ func (h *Hook) config(ctx context.Context, instanceID string) (Config, bool) {
 		h.log.Error("agent hook: bad stored config", "instance_id", instanceID, "err", err)
 		return Config{}, false
 	}
-	return cfg, cfg.URL != ""
+	return cfg, cfg.URL != "" || cfg.Builtin()
 }
 
 // chatAgent loads the chat's override and pause (zero state for an unknown chat).
@@ -450,6 +491,9 @@ func (h *Hook) handle(instanceID string, j job) {
 	base.HTTPStatus, base.DurationMS = res.status, res.duration.Milliseconds()
 	if res.reason != "" {
 		h.fail(base, j, res.reason, res.err, res.status)
+		if j.call != nil {
+			h.callFallback(instanceID, j)
+		}
 		return
 	}
 	h.act(ctx, cfg, base, j, res.resp)
@@ -524,6 +568,9 @@ type Request struct {
 	Chat       ChatInfo         `json:"chat"`
 	Message    json.RawMessage  `json:"message"` // the data of message.received
 	Context    []ContextMessage `json:"context"` // last N messages, oldest first (ends with this one)
+	// Trigger is "call" for a call follow-up (built-in attendant only; Message then
+	// describes the call); empty for a received message.
+	Trigger string `json:"trigger,omitempty"`
 }
 
 type ChatInfo struct {
@@ -534,22 +581,30 @@ type ChatInfo struct {
 
 // ContextMessage is a logged message as the hook sees it.
 type ContextMessage struct {
-	ID          string        `json:"id"`
-	WAMessageID string        `json:"wa_message_id,omitempty"`
-	Sender      string        `json:"sender,omitempty"`
-	FromMe      bool          `json:"from_me"`
-	Source      string        `json:"source"` // contact | api | device | history
-	Type        string        `json:"type"`
-	Text        string        `json:"text,omitempty"`
-	Media       *events.Media `json:"media,omitempty"`
-	Timestamp   time.Time     `json:"timestamp"`
-	Revoked     bool          `json:"revoked,omitempty"`
+	ID          string `json:"id"`
+	WAMessageID string `json:"wa_message_id,omitempty"`
+	Sender      string `json:"sender,omitempty"`
+	FromMe      bool   `json:"from_me"`
+	Source      string `json:"source"` // contact | api | device | history
+	// Origin says who wrote it: contact (the customer or a group participant), agent (the
+	// agent's own replies), human (someone answering from the phone), automatic (automatic
+	// messages such as the call reject message), api (other API sends: CRM, inbox,
+	// scripts) or history (synced from the phone; author unknown).
+	Origin    string        `json:"origin"`
+	Type      string        `json:"type"`
+	Text      string        `json:"text,omitempty"`
+	Media     *events.Media `json:"media,omitempty"`
+	Timestamp time.Time     `json:"timestamp"`
+	Revoked   bool          `json:"revoked,omitempty"`
 }
 
 // Response is the hook's answer.
 type Response struct {
 	Reply   json.RawMessage   `json:"reply"`
 	Actions []json.RawMessage `json:"actions"`
+	// Events are published after the answer is acted on (built-in attendant only; never
+	// read from an external hook's JSON).
+	Events []AgentEvent `json:"-"`
 }
 
 type callResult struct {
@@ -569,10 +624,21 @@ func (h *Hook) context(ctx context.Context, instanceID, chat string, n int) ([]C
 	if err != nil {
 		return nil, err
 	}
+	var apiIDs []string
+	for _, m := range msgs {
+		if m.FromMe && m.Source == "api" {
+			apiIDs = append(apiIDs, m.ID)
+		}
+	}
+	clientIDs, err := h.st.ClientIDsForMessages(ctx, instanceID, apiIDs)
+	if err != nil {
+		return nil, err
+	}
 	for i := len(msgs) - 1; i >= 0; i-- {
 		m := msgs[i]
 		cm := ContextMessage{ID: m.ID, WAMessageID: m.WAMessageID, Sender: m.SenderJID, FromMe: m.FromMe,
-			Source: m.Source, Type: m.Type, Text: m.Text, Timestamp: m.Timestamp, Revoked: !m.RevokedAt.IsZero()}
+			Source: m.Source, Origin: Origin(m.FromMe, m.Source, clientIDs[m.ID]), Type: m.Type, Text: m.Text,
+			Timestamp: m.Timestamp, Revoked: !m.RevokedAt.IsZero()}
 		if m.MediaJSON != "" {
 			var mi store.MediaInfo
 			if json.Unmarshal([]byte(m.MediaJSON), &mi) == nil {
@@ -588,15 +654,39 @@ func (h *Hook) context(ctx context.Context, instanceID, chat string, n int) ([]C
 	return out, nil
 }
 
-// call POSTs the signed request and reads the response; it never retries.
+// Origin classifies a logged message for the agent's context (ContextMessage.Origin);
+// clientID is the client_message_id of an API send ("" when unknown).
+func Origin(fromMe bool, source, clientID string) string {
+	switch {
+	case !fromMe:
+		return "contact"
+	case source == "device":
+		return "human"
+	case source == "history":
+		return "history"
+	case strings.HasPrefix(clientID, "agent:") || strings.HasPrefix(clientID, "agent-react:"):
+		return "agent"
+	case strings.HasPrefix(clientID, "call-reject-"):
+		return "automatic"
+	default:
+		return "api"
+	}
+}
+
+// call POSTs the signed request (or asks the built-in attendant) and reads the response;
+// it never retries.
 func (h *Hook) call(ctx context.Context, cfg Config, instanceID string, ca store.ChatAgent, j job) callResult {
 	cms, err := h.context(ctx, instanceID, j.msg.Chat, cfg.ContextMessages)
 	if err != nil {
 		return callResult{reason: "internal", err: "load context: " + err.Error()}
 	}
-	body, err := json.Marshal(Request{InstanceID: instanceID,
+	hreq := Request{InstanceID: instanceID,
 		Chat:    ChatInfo{JID: j.msg.Chat, Name: ca.Name, IsGroup: j.msg.IsGroup || ca.IsGroup},
-		Message: j.raw, Context: cms})
+		Message: j.raw, Context: cms}
+	if cfg.Builtin() {
+		return h.callBuiltin(ctx, cfg, hreq, j)
+	}
+	body, err := json.Marshal(hreq)
 	if err != nil {
 		return callResult{reason: "internal", err: err.Error()}
 	}
@@ -756,6 +846,7 @@ func (h *Hook) act(ctx context.Context, cfg Config, c store.AgentCall, j job, re
 	if reply == nil && len(acts) == 0 {
 		c.Status = "ok"
 		h.record(c)
+		h.publishEvents(c.InstanceID, m, resp.Events)
 		return
 	}
 	ca, err := h.chatAgent(ctx, c.InstanceID, m.Chat)
@@ -836,4 +927,29 @@ func (h *Hook) act(ctx context.Context, cfg Config, c store.AgentCall, j job, re
 	}
 	c.Status, c.Detail = "ok", strings.Join(notes, "; ")
 	h.record(c)
+	h.publishEvents(c.InstanceID, m, resp.Events)
+}
+
+// publishEvents publishes the built-in attendant's events (known types only), with the
+// chat and the triggering message filled in by the engine.
+func (h *Hook) publishEvents(instanceID string, m events.Message, evs []AgentEvent) {
+	for _, e := range evs {
+		if !builtinEventTypes[e.Type] {
+			continue
+		}
+		data := map[string]any{}
+		for k, v := range e.Data {
+			data[k] = v
+		}
+		data["chat"] = m.Chat
+		delete(data, "message_id")
+		delete(data, "wa_message_id")
+		if !strings.HasPrefix(m.ID, "call:") {
+			data["message_id"] = m.ID
+			if m.WAMessageID != "" {
+				data["wa_message_id"] = m.WAMessageID
+			}
+		}
+		h.publish(instanceID, e.Type, data)
+	}
 }

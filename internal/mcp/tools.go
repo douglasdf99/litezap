@@ -547,8 +547,9 @@ func (t *tools) register(s *sdk.Server) {
 		Annotations: readOnly,
 	}, t.waitForEvents)
 
-	t.registerGroups(s)  // marco 8 (groups.go)
-	t.registerAccount(s) // marco 9 (account.go)
+	t.registerGroups(s)    // marco 8 (groups.go)
+	t.registerAccount(s)   // marco 9 (account.go)
+	t.registerAttendant(s) // built-in attendant, read-only (attendant.go)
 }
 
 // ---- handlers ----

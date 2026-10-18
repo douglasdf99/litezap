@@ -18,6 +18,7 @@ import (
 // after it was generated (Secret then holds it, once).
 type View struct {
 	Configured          bool     `json:"configured"`
+	Target              string   `json:"target"` // url | builtin
 	URL                 string   `json:"url"`
 	Enabled             bool     `json:"enabled"`
 	Timeout             Duration `json:"timeout"`
@@ -33,7 +34,11 @@ type View struct {
 }
 
 func view(c Config, configured bool) View {
-	return View{Configured: configured, URL: c.URL, Enabled: c.Enabled, Timeout: c.Timeout,
+	target := c.Target
+	if target == "" {
+		target = TargetURL
+	}
+	return View{Configured: configured, Target: target, URL: c.URL, Enabled: c.Enabled, Timeout: c.Timeout,
 		ContextMessages: c.ContextMessages, GroupsEnabled: c.GroupsEnabled, HumanPause: c.HumanPause,
 		PauseOnAPISend: c.PauseOnAPISend, Ignore: c.Ignore, MaxRepliesPerWindow: c.MaxRepliesPerWindow, ReplyWindow: c.ReplyWindow,
 		SecretSet: c.Secret != ""}

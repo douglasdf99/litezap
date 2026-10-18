@@ -44,6 +44,9 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 
 // Config is an instance's agent hook configuration (stored as JSON, secret included).
 type Config struct {
+	// Target is where messages go: "url" (default; the signed POST to URL) or "builtin"
+	// (the built-in attendant running inside the engine, spec 4.7).
+	Target  string `json:"target,omitempty"`
 	URL     string `json:"url"`
 	Secret  string `json:"secret"`
 	Enabled bool   `json:"enabled"` // default for chats without an override
@@ -67,6 +70,15 @@ type Config struct {
 	ReplyWindow         Duration `json:"reply_window"`
 }
 
+// Targets of the hook.
+const (
+	TargetURL     = "url"
+	TargetBuiltin = "builtin"
+)
+
+// Builtin reports whether the hook uses the built-in attendant.
+func (c Config) Builtin() bool { return c.Target == TargetBuiltin }
+
 // Defaults (spec 4.3, plus the loop guard).
 const (
 	DefaultTimeout         = 30 * time.Second
@@ -85,6 +97,7 @@ func DefaultConfig() Config {
 
 // Patch changes some fields of a Config (nil = keep).
 type Patch struct {
+	Target              *string   `json:"target"`
 	URL                 *string   `json:"url"`
 	Secret              *string   `json:"secret"`
 	Enabled             *bool     `json:"enabled"`
@@ -106,6 +119,10 @@ func (p Patch) Apply(c Config) Config {
 		}
 	}
 	set(&c.URL, p.URL)
+	set(&c.Target, p.Target)
+	if c.Target == TargetURL {
+		c.Target = "" // the default is stored as ""
+	}
 	set(&c.Secret, p.Secret)
 	if p.Enabled != nil {
 		c.Enabled = *p.Enabled
@@ -153,7 +170,9 @@ func (c *Config) Validate(norm func(string) (string, error)) error {
 		}
 	}
 	switch {
-	case c.Enabled && c.URL == "":
+	case c.Target != "" && c.Target != TargetURL && c.Target != TargetBuiltin:
+		return errors.New(`target must be "url" or "builtin"`)
+	case c.Enabled && c.URL == "" && c.Target != TargetBuiltin:
 		return errors.New("url is required to enable the hook")
 	case len(c.Secret) < minSecretLen || len(c.Secret) > maxSecretLen:
 		return fmt.Errorf("secret must have %d to %d characters", minSecretLen, maxSecretLen)

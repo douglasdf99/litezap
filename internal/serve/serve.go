@@ -15,6 +15,7 @@ import (
 
 	"github.com/douglasdf99/litezap/internal/agenthook"
 	"github.com/douglasdf99/litezap/internal/api"
+	"github.com/douglasdf99/litezap/internal/attendant"
 	"github.com/douglasdf99/litezap/internal/autoread"
 	"github.com/douglasdf99/litezap/internal/config"
 	"github.com/douglasdf99/litezap/internal/dashboard"
@@ -110,9 +111,27 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	hooks := webhook.New(st, webhook.Options{AllowPrivate: cfg.WebhookAllowPrivateURLs, Log: log,
 		Retention:       time.Duration(cfg.WebhookRetentionDays) * day,
 		FailedRetention: time.Duration(cfg.WebhookFailedRetentionDays) * day})
+	// Built-in attendant (spec 4.7): the agent hook's "builtin" target. Provider keys are
+	// encrypted with data/attendant_key.
+	vault, err := attendant.LoadVault(filepath.Join(cfg.DataDir, "attendant_key"))
+	if err != nil {
+		return fmt.Errorf("attendant key: %w", err)
+	}
+	att := &attendant.Attendant{Store: st, Vault: vault, Log: log,
+		Location: func(ctx context.Context, id string) *time.Location {
+			in, err := st.GetInstance(ctx, id)
+			if err != nil {
+				return nil
+			}
+			set, err := settings.Effective(cfg.InstanceDefaults, cfg.DefaultProxyURL, in.SettingsJSON)
+			if err != nil {
+				return nil
+			}
+			return set.Location()
+		}}
 	// Agent hook (spec 4.3): another bus sink; its send path is set once Messaging exists.
 	agent := agenthook.New(st, agenthook.Options{AllowPrivate: cfg.WebhookAllowPrivateURLs, Log: log,
-		Held: cl.sending.Held})
+		Held: cl.sending.Held, Builtin: att})
 	bus := events.NewBus(nil, hooks, cl.usage, agent)
 	bus.SetLogger(log)
 	cl.attach(bus)
@@ -121,7 +140,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		ConnectGrace: 15 * time.Second, Events: bus, Hold: cl.sending.Held, SendLatency: cl.latency})
 	cl.sending.Wake = q.Wake
 	// Calls and presence (marco 7); its sender is set below, once messaging exists.
-	rt := &realtime.Handler{Workers: mgr, Events: bus, Log: log,
+	rt := &realtime.Handler{Workers: mgr, Events: bus, Log: log, FollowUp: agent.CallFollowUp,
 		Settings: func(ctx context.Context, id string) (settings.Settings, error) {
 			in, err := st.GetInstance(ctx, id)
 			if err != nil {
@@ -206,15 +225,17 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	guarded := service.GuardedMessaging{Messaging: msg, Sending: cl.sending}
 	// Agent replies take the same guarded path as REST sends (queue, pacing, suspension).
 	agent.SetMessenger(guarded)
+	att.Media = msg // attachments: transcription and vision
 	agent.SetPublisher(bus)
 	agent.Start()
 	rt.SetSender(guarded)
 	msg.OnSettingsChanged = rt.SettingsChanged
 	groups := &service.Groups{Store: st, Workers: mgr, Resolver: resolver, Sending: cl.sending,
 		Fetcher: msg.Fetcher, Defaults: cfg.InstanceDefaults, DefaultProxy: cfg.DefaultProxyURL}
+	attAdmin := &attendant.Admin{A: att}
 	handler := api.New(svc, guarded, api.Options{
 		// MCP streamable HTTP at /mcp, behind the same tokens (spec 3.1, 6.1).
-		MCP: mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Groups: groups, Logger: log, Account: acct,
+		MCP: mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Groups: groups, Logger: log, Account: acct, Attendant: attAdmin,
 			PublicHost: publicHost(cfg.PublicURL)}),
 		AdminToken: cfg.AdminToken,
 		ProtectOps: !loopback,
@@ -224,6 +245,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		Operator:   cl.operatorOptions(),
 		Metrics:    cl.metrics(),
 		AgentHook:  &agenthook.Admin{Store: st},
+		Attendant:  attAdmin,
 		Groups:     groups,
 		Account:    acct,
 		// Marco 11: IP allowlists, scoped API keys, metadata, bulk, hosted pairing.

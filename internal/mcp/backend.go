@@ -65,7 +65,8 @@ type Local struct {
 	Events    *events.Bus  // nil: wait_for_events is unavailable
 	Groups    GroupService // nil: the group tools answer not_implemented (marco 8)
 	Caller    service.Scope
-	Account   AccountService // marco 9 tools (nil: they answer not_implemented)
+	Account   AccountService   // marco 9 tools (nil: they answer not_implemented)
+	Attendant AttendantService // built-in attendant read tools (nil: not_implemented)
 }
 
 var _ Backend = (*Local)(nil)

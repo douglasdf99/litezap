@@ -80,6 +80,8 @@ type Options struct {
 	Operator OperatorOptions
 	// AgentHook, when set, serves the agent hook routes (spec 4.3).
 	AgentHook AgentHookService
+	// Attendant, when set, serves the built-in attendant routes (spec 4.7).
+	Attendant AttendantService
 	// Account, when set, serves chats, contacts, profile and privacy routes (marco 9).
 	Account AccountService
 	// Groups, when set, serves the group and community routes (marco 8).
@@ -190,6 +192,7 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 			r.Post("/check-numbers", s.checkNumbers)
 			r.Get("/media/{media_id}", s.getMedia)
 			s.agentRoutes(r)
+			s.attendantRoutes(r)
 			s.groupRoutes(r)
 			r.Post("/presence/subscribe", s.subscribePresence)
 			s.accountRoutes(r)
