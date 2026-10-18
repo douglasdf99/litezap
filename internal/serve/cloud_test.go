@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -43,6 +44,40 @@ func TestShutdownScale(t *testing.T) {
 		if got := shutdownScale(in); got != want {
 			t.Errorf("shutdownScale(%v) = %v, want %v", in, got, want)
 		}
+	}
+}
+
+// The operator mints a one-click login; the dashboard exchanges it for the admin token
+// (never the operator token).
+func TestOperatorDashboardLogin(t *testing.T) {
+	const op = "lzo_serve_test_operator_token"
+	t.Setenv("LITEZAP_OPERATOR_TOKEN", op)
+	info := startServe(t, Options{})
+	req, _ := http.NewRequest("POST", info.URL+"/v1/operator/dashboard-login", nil)
+	req.Header.Set("Authorization", "Bearer "+op)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Code string `json:"code"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if resp.StatusCode != 201 || out.Code == "" {
+		t.Fatalf("mint = %d %+v", resp.StatusCode, out)
+	}
+	req, _ = http.NewRequest("POST", info.URL+"/app/api/session", strings.NewReader(`{"code":"`+out.Code+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", info.URL)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(b), info.AdminToken) || strings.Contains(string(b), op) {
+		t.Fatalf("exchange = %d %s", resp.StatusCode, b)
 	}
 }
 

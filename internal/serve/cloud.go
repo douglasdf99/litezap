@@ -11,7 +11,9 @@ import (
 
 	"github.com/douglasdf99/litezap/internal/api"
 	"github.com/douglasdf99/litezap/internal/config"
+	"github.com/douglasdf99/litezap/internal/dashboard"
 	"github.com/douglasdf99/litezap/internal/events"
+	"github.com/douglasdf99/litezap/internal/export"
 	"github.com/douglasdf99/litezap/internal/ops"
 	"github.com/douglasdf99/litezap/internal/service"
 	"github.com/douglasdf99/litezap/internal/store"
@@ -35,18 +37,26 @@ type cloud struct {
 	proxy   *usage.ProxyWatch
 	health  *ops.Health
 
+	// remoteCodes are the one-click dashboard logins minted by the operator (E7); nil
+	// without an operator token or with the dashboard disabled.
+	remoteCodes *dashboard.LaunchCodes
+
 	opsLn  net.Listener
 	opsSrv *http.Server
 }
 
 func newCloud(cfg config.Config, st *store.Store, log *slog.Logger) *cloud {
-	return &cloud{cfg: cfg, log: log, st: st,
+	c := &cloud{cfg: cfg, log: log, st: st,
 		policy:  &service.Policy{Store: st, MaxInstances: cfg.MaxInstances, RequireProxy: cfg.RequireProxy, DefaultProxy: cfg.DefaultProxyURL},
 		sending: &service.Sending{Store: st},
 		usage:   &usage.Recorder{Store: st, Log: log},
 		proxy:   &usage.ProxyWatch{},
 		health:  &ops.Health{Ping: st.Ping},
 	}
+	if !cfg.DisableDashboard && len(cfg.OperatorTokens()) > 0 {
+		c.remoteCodes = dashboard.NewRemoteLaunchCodes()
+	}
+	return c
 }
 
 // listenOps binds ops_listen_addr (if set) before any worker is touched, like the API.
@@ -104,10 +114,15 @@ func (c *cloud) serveOps() {
 
 // operatorOptions configures the API's operator role.
 func (c *cloud) operatorOptions() api.OperatorOptions {
-	return api.OperatorOptions{
+	o := api.OperatorOptions{
 		Tokens: c.cfg.OperatorTokens(), Locked: c.cfg.LockedSettings,
 		Policy: c.policy, Sending: c.sending, Usage: c.usage, PublicURL: c.cfg.PublicURL,
+		Export: &export.Exporter{Store: c.st, DataDir: c.cfg.DataDir, Version: Version, Log: c.log},
 	}
+	if c.remoteCodes != nil {
+		o.MintLogin = c.remoteCodes.MintWithExpiry
+	}
+	return o
 }
 
 // drain makes /readyz fail as soon as the shutdown starts (E12).

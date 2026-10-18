@@ -29,6 +29,10 @@ type Options struct {
 	// LaunchCodes enables one-click login (POST /app/api/session). Set it only when the
 	// server listens on loopback; nil disables the endpoint.
 	LaunchCodes *LaunchCodes
+	// RemoteCodes enables one-click login with codes minted through the operator API
+	// (managed hosting, cloud E7): redeemable from any client address, same-origin JSON
+	// only. nil disables them.
+	RemoteCodes *LaunchCodes
 }
 
 // Fixed MIME types for the assets: on Windows mime.TypeByExtension reads the registry,
@@ -54,7 +58,7 @@ func Handler(opt Options) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+Prefix+"api/info", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusOK, map[string]bool{"one_click_login": opt.LaunchCodes != nil})
+		writeJSON(w, http.StatusOK, map[string]bool{"one_click_login": opt.LaunchCodes != nil || opt.RemoteCodes != nil})
 	})
 	mux.HandleFunc("POST "+Prefix+"api/session", func(w http.ResponseWriter, r *http.Request) {
 		redeem(w, r, opt)
@@ -89,11 +93,12 @@ func securityHeaders(next http.Handler) http.Handler {
 // same 403 so a probe learns nothing about which one tripped.
 func redeem(w http.ResponseWriter, r *http.Request, opt Options) {
 	w.Header().Set("Cache-Control", "no-store")
-	if opt.LaunchCodes == nil {
+	if opt.LaunchCodes == nil && opt.RemoteCodes == nil {
 		apierr.Write(w, apierr.New(http.StatusNotFound, "not_found", "one-click login is not enabled", false))
 		return
 	}
-	if !loopbackRemote(r.RemoteAddr) || !loopbackHost(r.Host) || !sameOrigin(r) || !jsonBody(r) {
+	local := loopbackRemote(r.RemoteAddr) && loopbackHost(r.Host)
+	if (!local && opt.RemoteCodes == nil) || !sameOrigin(r) || !jsonBody(r) {
 		apierr.Write(w, apierr.Forbidden())
 		return
 	}
@@ -104,8 +109,13 @@ func redeem(w http.ResponseWriter, r *http.Request, opt Options) {
 		apierr.Write(w, apierr.Validation("invalid JSON body"))
 		return
 	}
-	if !opt.LaunchCodes.Redeem(req.Code) {
-		apierr.Write(w, apierr.New(http.StatusForbidden, "forbidden", "login code invalid, used or expired; open the dashboard again from the tray", false))
+	// A tray code is only ever redeemed from loopback; remote codes from anywhere.
+	ok := local && opt.LaunchCodes != nil && opt.LaunchCodes.Redeem(req.Code)
+	if !ok && opt.RemoteCodes != nil {
+		ok = opt.RemoteCodes.Redeem(req.Code)
+	}
+	if !ok {
+		apierr.Write(w, apierr.New(http.StatusForbidden, "forbidden", "login code invalid, used or expired; open the dashboard again from where you came", false))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"token": opt.AdminToken})

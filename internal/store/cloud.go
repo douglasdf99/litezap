@@ -287,6 +287,24 @@ func (s *Store) PruneMessages(ctx context.Context, before time.Time) (int64, err
 	return n, nil
 }
 
+// ScrubForExport removes the operator's data from a backup copy (its webhooks with their
+// secrets, runtime settings and per-instance flags) and rewrites the file so the deleted
+// rows do not linger in free pages. Run it on the copy, never on the live database.
+func (s *Store) ScrubForExport(ctx context.Context) error {
+	for _, q := range []string{
+		`DELETE FROM webhooks WHERE owner = 'operator'`,
+		`DELETE FROM engine_kv`,
+		`DELETE FROM instance_flags`,
+		`VACUUM`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := s.db.ExecContext(ctx, q); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // BackupTo writes a consistent copy of the database to path (which must not exist),
 // without stopping writers (VACUUM INTO).
 func (s *Store) BackupTo(ctx context.Context, path string) error {

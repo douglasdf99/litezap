@@ -181,7 +181,8 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		codes = opt.LaunchCodes
 	}
 	srv := &http.Server{
-		Handler:           withDashboard(handler, !cfg.DisableDashboard, cfg.AdminToken, codes),
+		Handler: withDashboard(handler, !cfg.DisableDashboard,
+			dashboard.Options{AdminToken: cfg.AdminToken, LaunchCodes: codes, RemoteCodes: cl.remoteCodes}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -276,12 +277,12 @@ func publicHost(publicURL string) string {
 
 // withDashboard mounts the embedded dashboard at /app/ (and redirects / there) in front
 // of the API router.
-func withDashboard(apiHandler http.Handler, enabled bool, adminToken string, codes *dashboard.LaunchCodes) http.Handler {
+func withDashboard(apiHandler http.Handler, enabled bool, opt dashboard.Options) http.Handler {
 	if !enabled {
 		return apiHandler
 	}
 	mux := http.NewServeMux()
-	mux.Handle(dashboard.Prefix, dashboard.Handler(dashboard.Options{AdminToken: adminToken, LaunchCodes: codes}))
+	mux.Handle(dashboard.Prefix, dashboard.Handler(opt))
 	mux.Handle("GET /{$}", http.RedirectHandler(dashboard.Prefix, http.StatusFound))
 	mux.Handle("/", apiHandler)
 	return mux
