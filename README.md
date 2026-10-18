@@ -5,7 +5,7 @@ Cada número roda em um processo worker isolado, supervisionado com heartbeat, r
 
 Licença: Apache-2.0. Roda no seu PC, no seu servidor ou na nuvem gerenciada do LiteZap.
 
-> Status: marco 3 (envio com fila persistente, recebimento, chats, histórico, mídia, proxy por instância, eventos com webhooks assinados e SSE). MCP e hook de agente vêm nos próximos marcos.
+> Status: marco 4 (envio com fila persistente, recebimento, chats, histórico, mídia, proxy por instância, eventos com webhooks assinados e SSE, servidor MCP em `/mcp` e `litezap mcp`). O hook de agente vem no próximo marco.
 > Design: `docs/superpowers/specs/2026-10-17-litezap-engine-design.md`
 
 ## Rodar
@@ -65,6 +65,8 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `GET\|PATCH\|DELETE /v1/webhooks/{id}` | idem (webhook de outra instância responde 404) |
 | `GET /v1/webhooks/{id}/deliveries[?status=pending\|delivered\|failed&limit=&cursor=]` | idem |
 | `POST /v1/webhooks/{id}/deliveries/{delivery_id}/retry` | idem |
+| `GET /v1/me` → `{admin, instance_id}` | qualquer token |
+| `POST /mcp` (MCP streamable HTTP, seção "MCP") | instância ou admin |
 | `GET /healthz`, `GET /readyz` | público (admin se o `listen_addr` não for loopback) |
 
 As ações respondem com a instância. `start` e `restart` respondem assim que o worker é disparado, então a resposta pode ainda mostrar o estado anterior: consulte `GET /v1/instances/{id}` até ver o novo estado.
@@ -253,6 +255,86 @@ function verify(secret, header, rawBody) {
 }
 ```
 
+## MCP (Claude, ChatGPT e outros clientes de IA)
+
+O LiteZap expõe as mesmas operações como ferramentas do [Model Context Protocol](https://modelcontextprotocol.io), para um assistente de IA ler conversas e enviar mensagens pelo seu número. Dois jeitos de conectar, com as mesmas ferramentas:
+
+- **HTTP** (streamable HTTP) em `http://<listen_addr>/mcp`, no próprio `litezap serve`, com o mesmo `Authorization: Bearer <token>` da API.
+- **stdio**: `litezap mcp`, uma ponte para clientes que iniciam um processo local (Claude Desktop, Claude Code). Ela não sobe supervisor: conversa via REST com um `litezap serve` já rodando, configurada por `LITEZAP_URL` (padrão `http://127.0.0.1:8787`) e `LITEZAP_TOKEN` (obrigatório).
+
+### Ferramentas
+
+| Ferramenta | O que faz |
+|---|---|
+| `list_instances` | instâncias visíveis para o token e seus estados (com token de instância, só a própria) |
+| `get_instance_status` | estado, número conectado e dica do próximo passo |
+| `get_qr` | QR de pareamento como imagem PNG (estado `qr_pending`) |
+| `send_message` | envia texto; espera o resultado por padrão (`timeout_seconds` 30, máx. 120) |
+| `send_media` | envia imagem, vídeo, áudio (ou nota de voz) ou documento a partir de uma URL pública |
+| `get_message_status` | `queued`, `in_flight`, `sent`, `delivered`, `read` ou `failed` |
+| `list_chats` | chats do log, mais recentes primeiro, com não lidas (paginado) |
+| `get_messages` | mensagens de um chat, mais novas primeiro (paginado por `cursor`) |
+| `mark_read` | marca o chat como lido (o contato vê os tiques azuis) |
+| `list_contacts` / `get_contact` | contatos da sessão (filtro `query`, `limit`) |
+| `check_numbers` | até 10 números por chamada; respeita o cache e a cota de consultas da instância |
+| `wait_for_events` | espera até 60s por eventos novos da instância (ex.: `message.received`), sem replay |
+
+`instance_id` é opcional com token de instância (é sempre a dela) e com token admin quando só existe uma instância. A busca de mensagens fica para o marco 2b.
+
+### Claude Desktop
+
+Em `claude_desktop_config.json` (Settings > Developer > Edit Config), com o caminho absoluto do binário:
+
+```json
+{
+  "mcpServers": {
+    "litezap": {
+      "command": "/caminho/absoluto/litezap",
+      "args": ["mcp"],
+      "env": {
+        "LITEZAP_URL": "http://127.0.0.1:8787",
+        "LITEZAP_TOKEN": "lzi_..."
+      }
+    }
+  }
+}
+```
+
+Reinicie o Claude Desktop com o `litezap serve` rodando.
+
+### Claude Code
+
+```bash
+# stdio (ponte local)
+claude mcp add litezap -e LITEZAP_URL=http://127.0.0.1:8787 -e LITEZAP_TOKEN=lzi_... -- /caminho/absoluto/litezap mcp
+# ou HTTP direto no serve
+claude mcp add --transport http litezap http://127.0.0.1:8787/mcp --header "Authorization: Bearer lzi_..."
+```
+
+### Clientes HTTP (OpenAI Agents SDK, Responses API e outros)
+
+Qualquer cliente MCP que aceite URL + cabeçalho funciona: URL `https://<seu-host>/mcp`, cabeçalho `Authorization: Bearer <token>`. O endpoint é *stateless* (não usa `Mcp-Session-Id`; cada requisição é autenticada de novo). Exemplo na Responses API da OpenAI:
+
+```json
+{
+  "type": "mcp",
+  "server_label": "litezap",
+  "server_url": "https://zap.exemplo.com/mcp",
+  "headers": { "Authorization": "Bearer lzi_..." },
+  "require_approval": "always"
+}
+```
+
+Serviços na nuvem (ChatGPT, OpenAI) precisam alcançar o servidor: publique-o atrás de um proxy reverso com TLS e defina `public_url`. Pedidos que chegam num `listen_addr` de loopback com um `Host` que não é loopback são recusados (proteção contra DNS rebinding); o host de `public_url` é a exceção, para o proxy na mesma máquina.
+
+### Segurança
+
+- **Use token de instância** (`lzi_...`) para dar ao assistente só um número: ele não lista nem opera outras instâncias, não cria, apaga nem troca token. O token admin dá acesso a todas.
+- **O assistente não fura o anti-ban**: todo envio passa pela mesma fila da API (intervalo mínimo, rampa diária de números novos, janela de envio, espera após conectar). Não há ferramenta para mudar settings, proxy ou `unsafe_pacing`. Uma mensagem que fica na fila volta com `sent: false` e uma nota dizendo que será enviada sozinha e não deve ser reenviada; `client_message_id` torna novas tentativas seguras.
+- **`check_numbers`** gasta a cota diária de consultas da instância e responde `rate_limited` quando ela acaba.
+- **Texto de terceiros**: mensagens, nomes e eventos vêm de outras pessoas. As instruções do servidor e as descrições das ferramentas pedem ao modelo para tratá-los como dados, mas prompt injection não é um problema resolvido: prefira clientes que pedem aprovação antes de `send_message`/`send_media` (por exemplo `require_approval`).
+- Erros chegam ao modelo como erro de ferramenta, com código, dica e se dá para tentar de novo (ex.: `instance_not_connected` sugere `get_instance_status`/`get_qr`). Erros internos aparecem só como `internal error` (o detalhe vai para o log do servidor).
+
 ## Como testar com seu WhatsApp
 
 Requer um número de teste no celular e um segundo número (contato) para conversar.
@@ -306,10 +388,20 @@ Com a instância conectada (passos acima):
 4. Retry e dead-letter: pare o receptor, mande uma mensagem e liste `GET /v1/webhooks/<wh_id>/deliveries?status=pending` (`attempts` subindo, `last_error` com o motivo). Suba o receptor de novo: a entrega chega no próximo retry (o intervalo dobra a cada falha, até 1h). Uma entrega que fica 24h sem sucesso aparece em `?status=failed` e pode ser reenviada com `POST .../deliveries/<delivery_id>/retry`.
 5. Restart: com o receptor parado, mande mensagens, pare e suba o `serve` e depois o receptor: as entregas pendentes são feitas depois do restart.
 
+### Testar o MCP com um cliente de IA
+
+1. Com o `serve` rodando e uma instância criada (`ID`, `TOK` acima), configure o Claude Desktop ou o Claude Code com `TOK` (seção "MCP").
+2. Peça "liste minhas instâncias do WhatsApp": o assistente chama `list_instances` e vê só a instância do token.
+3. Antes de parear, peça "mostre o QR para parear": `get_qr` devolve a imagem; escaneie no celular e peça o status até `connected`.
+4. Peça "quais são minhas conversas recentes?" e "o que Fulano disse por último?" (`list_chats`, `get_messages`).
+5. Peça para enviar uma mensagem ao contato de teste. Fora da janela de envio a resposta diz que ficou na fila (`sent: false`) e que sai sozinha depois; confirme com `get_message_status` ou no celular.
+6. Peça "espere a resposta dele" e responda pelo celular do contato em até 60s: `wait_for_events` devolve o `message.received`.
+
 ## Limitações conhecidas
 
 - Eventos ainda não emitidos: `message.revoked`, `chat.presence` e `group.updated` (o worker não os reporta). SSE não tem replay (`Last-Event-ID` é ignorado).
 - A garantia "pelo menos uma vez" vale a partir do outbox. Antes dele o evento passa por um buffer em memória (até 10.000): um crash do supervisor entre gravar a mensagem no log e gravar a entrega, ou um buffer cheio (logado), perde o evento para os webhooks. Um shutdown normal grava o buffer antes de sair.
+- `wait_for_events` (MCP) só vê eventos publicados enquanto espera; para o que chegou antes, use `get_messages`.
 - Streams SSE checam o token só na conexão: um stream aberto continua depois de o token ser rotacionado (reconecte para aplicar).
 - Se um recibo chegar antes da confirmação do envio, sai `message.status: delivered` (ou `read`) antes de `message.sent`, e o `message.status: sent` é omitido.
 - Sem busca full-text e sem envio de `sticker`, `location` e `contact` (marco 2b); essas mensagens são recebidas e registradas.

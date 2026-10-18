@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -108,7 +109,8 @@ func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
 	}
 	handler := api.New(svc, msg, api.Options{
 		// MCP streamable HTTP at /mcp, behind the same tokens (spec 3.1, 6.1).
-		MCP:        mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: msg, Events: bus, Logger: log}),
+		MCP: mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: msg, Events: bus, Logger: log,
+			PublicHost: publicHost(cfg.PublicURL)}),
 		AdminToken: cfg.AdminToken,
 		ProtectOps: !isLoopback(cfg.ListenAddr),
 		Ready:      st.Ping,
@@ -184,6 +186,15 @@ func workerEnv(st *store.Store, cfg config.Config) func(context.Context, string)
 		}
 		return []string{"LITEZAP_WORKER_PROXY_URL=" + set.ProxyURL}, nil
 	}
+}
+
+// publicHost is the host[:port] of public_url ("" when unset or invalid).
+func publicHost(publicURL string) string {
+	u, err := url.Parse(publicURL)
+	if err != nil {
+		return ""
+	}
+	return u.Host
 }
 
 func isLoopback(addr string) bool {

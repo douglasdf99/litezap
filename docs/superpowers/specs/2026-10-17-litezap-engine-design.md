@@ -243,6 +243,8 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 | `PUT /instances/{id}/agent-hook` · `PUT .../chats/{jid}/agent` | inst | hook de agente (4.3) |
 | `GET /instances/{id}/events` · `GET /events` | inst · admin | SSE |
 | `/webhooks...` | admin ou inst (só os da própria instância) | 5.3 |
+| `GET /me` | qualquer | quem é o token (`{admin, instance_id}`), usado por `litezap mcp` |
+| `POST /mcp` (fora do `/v1`) | admin ou inst | MCP streamable HTTP (seção 7) |
 | `GET /healthz` · `/readyz` · `/metrics` | sem auth em bind loopback; admin caso contrário | observabilidade |
 
 ### 6.1 Autenticação e tokens
@@ -257,6 +259,8 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 Todas mapeiam casos de uso do `service`:
 
 `list_instances` (com token de instância devolve só a própria), `get_instance_status`, `send_message` (texto, com `wait` por padrão), `send_media` (por URL), `list_chats`, `get_messages` (por chat, paginado), `search_messages`, `get_contact`, `check_numbers`, `mark_read`.
+
+Implementado no marco 4 (além das acima, exceto `search_messages`, que depende da busca do marco 2b): `get_qr` (imagem PNG), `get_message_status`, `list_contacts` e `wait_for_events` (espera curta por eventos novos, sem replay). O endpoint HTTP é *stateless* (cada POST autenticado ganha um servidor ligado ao escopo do token) e `litezap mcp` descobre o escopo do token por `GET /v1/me`. Envios sempre passam pela fila; mensagem que fica na fila volta como sucesso com `sent: false` e uma nota, não como erro.
 
 ## 8. Store (SQLite)
 

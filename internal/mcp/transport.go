@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 
 	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/service"
@@ -19,6 +21,10 @@ type HTTPDeps struct {
 	Events    *events.Bus
 	Version   string
 	Logger    *slog.Logger
+	// PublicHost is the host[:port] of public_url, if any. The SDK rejects requests that
+	// reach a loopback listener with a non-loopback Host (DNS rebinding protection); a
+	// reverse proxy on the same machine forwards the public Host, so that one is allowed.
+	PublicHost string
 }
 
 // NewHTTPHandler serves MCP streamable HTTP. It must sit behind the API authentication,
@@ -30,14 +36,39 @@ func NewHTTPHandler(d HTTPDeps) http.Handler {
 		d.Logger = slog.New(slog.DiscardHandler)
 	}
 	cache := sdk.NewSchemaCache()
-	return sdk.NewStreamableHTTPHandler(func(r *http.Request) *sdk.Server {
+	h := sdk.NewStreamableHTTPHandler(func(r *http.Request) *sdk.Server {
 		sc, ok := service.ScopeFrom(r.Context())
 		if !ok || (!sc.Admin && sc.InstanceID == "") {
 			return nil // unauthenticated: never reached behind the API middleware
 		}
 		b := &Local{Instances: d.Instances, Messaging: d.Messaging, Events: d.Events, Caller: sc}
 		return NewServer(b, Options{Version: d.Version, Logger: d.Logger, SchemaCache: cache})
-	}, &sdk.StreamableHTTPOptions{Stateless: true, Logger: d.Logger})
+	}, &sdk.StreamableHTTPOptions{Stateless: true, Logger: d.Logger, DisableLocalhostProtection: d.PublicHost != ""})
+	if d.PublicHost == "" {
+		return h
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The SDK check, with the public host also allowed.
+		if la, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && la != nil &&
+			isLoopbackHost(la.String()) && !isLoopbackHost(r.Host) && !strings.EqualFold(r.Host, d.PublicHost) {
+			http.Error(w, "Forbidden: invalid Host header", http.StatusForbidden)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// isLoopbackHost reports whether a host[:port] names the loopback interface.
+func isLoopbackHost(hostport string) bool {
+	host, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		host = strings.Trim(hostport, "[]")
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // RunStdio serves MCP over stdin/stdout, backed by the REST API of a running
