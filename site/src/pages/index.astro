@@ -20,7 +20,7 @@ const features = [
 	{ icon: 'image', title: 'Mídia', text: 'Imagem, vídeo, áudio (inclusive mensagem de voz), documento e reações. Mídia recebida sob demanda, com URLs assinadas temporárias.' },
 	{ icon: 'shield', title: 'Anti-ban por padrão', text: 'Ritmo com variação aleatória, rampa para números novos, janela de envio para contatos frios e verificação do número antes do primeiro envio.' },
 	{ icon: 'globe', title: 'Proxy por instância', text: 'HTTP, HTTPS ou SOCKS5 por número, fixo durante a sessão. Se o proxy cai, a instância espera: nunca vaza pela conexão direta.' },
-	{ icon: 'webhook', title: 'Webhooks e SSE', text: 'Eventos assinados com HMAC, retry e dead-letter, além de stream SSE por instância.', soon: true },
+	{ icon: 'webhook', title: 'Webhooks e SSE', text: 'Eventos com envelope único, assinados com HMAC, retry por 24h e dead-letter, além de streams SSE ao vivo.' },
 	{ icon: 'sparkles', title: 'MCP e atendente IA', text: 'Servidor MCP para Claude e outros clientes, e um hook de agente para respostas automáticas com pausa quando um humano assume.', soon: true },
 ] as const;
 
@@ -29,6 +29,97 @@ const modes = [
 	{ icon: 'server', title: 'No seu servidor', text: 'VPS ou servidor próprio com Docker ou systemd, atrás de um proxy reverso com TLS.', tag: 'Disponível', href: '/docs/self-hosted/' },
 	{ icon: 'cloud', title: 'Na nuvem LiteZap', text: 'Um projeto pré-instalado só seu, com upgrades, backups, monitoramento e IPs gerenciados.', tag: 'Em breve', soon: true, href: '#precos' },
 ] as const;
+
+// Amplitude de recursos, agrupada como a matriz de paridade. true = disponível; string = marco.
+const breadth: { group: string; href: string; items: [string, true | string][] }[] = [
+	{
+		group: 'Mensagens',
+		href: '/docs/api/mensagens/tipos/',
+		items: [
+			['Texto, imagem, vídeo, documento', true],
+			['Áudio e mensagem de voz', true],
+			['Reações', true],
+			['Fila, ritmo e idempotência', true],
+			['Figurinha, GIF, localização, contato', 'M6'],
+			['Responder citando e menções', 'M6'],
+			['Editar, apagar, fixar, encaminhar', 'M6'],
+			['Enquetes com votos', 'M6'],
+			['Botões e listas', 'Exp'],
+		],
+	},
+	{
+		group: 'Eventos',
+		href: '/docs/eventos/',
+		items: [
+			['Webhooks assinados (HMAC)', true],
+			['Streams SSE', true],
+			['Status de entrega e leitura', true],
+			['Retry de 24h e dead-letter', true],
+			['Presença, apagadas e editadas', 'M7'],
+			['Chamadas e rejeição automática', 'M7'],
+		],
+	},
+	{
+		group: 'Grupos',
+		href: '/docs/guias/grupos/',
+		items: [
+			['Enviar e receber em grupos', true],
+			['Criar e administrar grupos', 'M8'],
+			['Participantes, admins e convites', 'M8'],
+			['Comunidades', 'M8'],
+		],
+	},
+	{
+		group: 'Chats e contatos',
+		href: '/docs/api/chats/',
+		items: [
+			['Chats e histórico com cursor', true],
+			['Marcar como lido', true],
+			['Contatos e verificação de números', true],
+			['Arquivar, fixar, silenciar', 'M9'],
+			['Foto de perfil e bloqueio', 'M9'],
+		],
+	},
+	{
+		group: 'Perfil',
+		href: '/docs/api/em-breve/perfil-e-privacidade/',
+		items: [
+			['Nome, recado e foto', 'M9'],
+			['Privacidade', 'M9'],
+		],
+	},
+	{
+		group: 'Business e canais',
+		href: '/docs/api/em-breve/business/',
+		items: [
+			['Status (stories)', 'M10'],
+			['Canais', 'M10'],
+			['Etiquetas e perfil comercial', 'M10'],
+		],
+	},
+	{
+		group: 'Plataforma',
+		href: '/docs/self-hosted/',
+		items: [
+			['Multi-instância com token por número', true],
+			['Proxy por instância', true],
+			['Docker, systemd, app local', true],
+			['MCP para Claude e outros', 'M4'],
+			['Atendente IA (hook de agente)', 'M5'],
+			['Pareamento hospedado para parceiros', 'M11'],
+		],
+	},
+];
+
+const comparison: [string, string, string][] = [
+	['Código-fonte', 'Aberto, Apache-2.0', 'Fechado'],
+	['Onde roda', 'Seu PC, seu servidor ou nuvem LiteZap', 'Só na nuvem do fornecedor'],
+	['Seus dados', 'Na sua pasta data/, sob seu controle', 'Nos servidores do fornecedor'],
+	['Trocar de hospedagem', 'Mesma API; copie a pasta de dados', 'Reescrever a integração'],
+	['Anti-ban', 'Ritmo, rampa e janela configuráveis e auditáveis', 'Regras opacas'],
+	['Eventos', 'Webhooks assinados, retry de 24h, dead-letter e SSE', 'Varia; assinatura e reenvio nem sempre existem'],
+	['Custo', 'Grátis no self-host; nuvem opcional', 'Mensalidade por instância'],
+];
 
 const samples = [
 	{
@@ -164,7 +255,7 @@ print(r.json()["status"])  # "sent"`,
 				<div class="hero-bg" aria-hidden="true"></div>
 				<div class="wrap hero-inner">
 					<a class="pill" href="/docs/roadmap/">
-						<span class="pill-dot"></span> Open source · Apache-2.0 · Envio e recebimento disponíveis
+						<span class="pill-dot"></span> Open source · Apache-2.0 · Webhooks e SSE disponíveis
 						<Icon name="arrow" size={14} />
 					</a>
 					<h1>
@@ -233,6 +324,66 @@ print(r.json()["status"])  # "sent"`,
 								</h3>
 								<p>{f.text}</p>
 							</article>
+						))
+					}
+				</div>
+			</section>
+
+			<section class="wrap section" id="amplitude">
+				<p class="eyebrow">Amplitude</p>
+				<h2>O que já existe e o que vem a seguir</h2>
+				<p class="section-lead">
+					Cada recurso planejado tem marco definido e página na documentação. Nada é anunciado como disponível antes de
+					existir.
+				</p>
+				<div class="breadth">
+					{
+						breadth.map((g) => (
+							<a class="breadth-card" href={g.href}>
+								<h3>{g.group}</h3>
+								<ul>
+									{g.items.map(([label, st]) => (
+										<li>
+											<span>{label}</span>
+											{st === true ? (
+												<span class="tag">Disponível</span>
+											) : st === 'Exp' ? (
+												<span class="tag exp">Experimental</span>
+											) : (
+												<span class="tag soon">Em breve · {st}</span>
+											)}
+										</li>
+									))}
+								</ul>
+							</a>
+						))
+					}
+				</div>
+				<p class="breadth-foot">
+					<a class="link-arrow" href="/docs/roadmap/">Ver o roadmap completo <Icon name="arrow" size={16} /></a>
+					<a class="link-arrow" href="/docs/migrar-da-z-api/">Migrar de outra API <Icon name="arrow" size={16} /></a>
+				</p>
+			</section>
+
+			<section class="wrap section" id="comparativo">
+				<p class="eyebrow">Por que open source</p>
+				<h2>LiteZap vs APIs proprietárias</h2>
+				<p class="section-lead">Os mesmos recursos que você espera de uma API comercial, sem abrir mão do controle.</p>
+				<div class="compare">
+					<div class="compare-row compare-head">
+						<span></span>
+						<span class="compare-us">LiteZap</span>
+						<span>API proprietária típica</span>
+					</div>
+					{
+						comparison.map(([k, us, them]) => (
+							<div class="compare-row">
+								<span class="compare-k">{k}</span>
+								<span class="compare-us">
+									<Icon name="check" size={16} /> {us}
+								</span>
+								<span class="compare-them">{them}</span>
+							</div>
 						))
 					}
 				</div>
@@ -797,6 +948,106 @@ print(r.json()["status"])  # "sent"`,
 		padding: 1.8rem;
 	}
 
+	.tag.exp {
+		color: var(--lz-warning);
+		background: var(--lz-warning-bg);
+	}
+	.breadth {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+		gap: 1rem;
+	}
+	.breadth-card {
+		display: block;
+		padding: 1.4rem;
+		border-radius: 0.9rem;
+		border: 1px solid var(--lz-line);
+		background: var(--lz-surface);
+		color: var(--lz-text);
+		transition: border-color 0.15s;
+	}
+	.breadth-card:hover {
+		border-color: color-mix(in srgb, var(--lz-primary) 55%, transparent);
+	}
+	.breadth-card ul {
+		list-style: none;
+		padding: 0;
+		margin: 0.75rem 0 0;
+	}
+	.breadth-card li {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.45rem 0;
+		border-top: 1px solid var(--lz-line);
+		font-size: 0.9rem;
+		color: var(--lz-text-muted);
+	}
+	.breadth-card li .tag {
+		flex: none;
+	}
+	.breadth-foot {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1.5rem;
+		margin-top: 1.5rem;
+	}
+	.compare {
+		border: 1px solid var(--lz-line);
+		border-radius: 1rem;
+		overflow: hidden;
+		background: var(--lz-surface);
+	}
+	.compare-row {
+		display: grid;
+		grid-template-columns: 1fr 1.4fr 1.4fr;
+		gap: 1rem;
+		padding: 0.95rem 1.4rem;
+		border-top: 1px solid var(--lz-line);
+		font-size: 0.93rem;
+		align-items: center;
+	}
+	.compare-head {
+		border-top: 0;
+		background: var(--lz-bg-soft);
+		font-weight: 700;
+		font-size: 0.85rem;
+		color: var(--lz-text-muted);
+	}
+	.compare-head .compare-us {
+		color: var(--lz-link);
+	}
+	.compare-k {
+		font-weight: 600;
+	}
+	.compare-us {
+		display: flex;
+		gap: 0.5rem;
+		align-items: flex-start;
+		color: var(--lz-text);
+	}
+	.compare-us svg {
+		flex: none;
+		margin-top: 0.2rem;
+		color: var(--lz-success);
+	}
+	.compare-them {
+		color: var(--lz-text-subtle);
+	}
+	@media (max-width: 640px) {
+		.compare-row {
+			grid-template-columns: 1fr;
+			gap: 0.3rem;
+		}
+		.compare-head {
+			display: none;
+		}
+		.compare-them::before {
+			content: 'Proprietária: ';
+			font-weight: 600;
+		}
+	}
 	.arch {
 		display: grid;
 		grid-template-columns: 1fr 1.1fr;

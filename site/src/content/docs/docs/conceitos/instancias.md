@@ -29,7 +29,7 @@ created → starting → qr_pending → connecting → connected
 
 As ações (`start`, `stop`, `restart`, `logout`) respondem com a instância **logo após** a ação. `start` e `restart`
 respondem assim que o worker é disparado, então a resposta pode ainda mostrar o estado anterior. Acompanhe com
-`GET /v1/instances/{id}` até ver o estado esperado (eventos em tempo real chegam no marco 3).
+`GET /v1/instances/{id}` até ver o estado esperado, ou assine o evento [`instance.status`](/docs/eventos/instance-status/).
 
 ## Supervisão
 

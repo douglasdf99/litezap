@@ -17,6 +17,9 @@ variáveis `LITEZAP_*`, que **têm precedência** sobre o arquivo. Arquivo ausen
 | `worker_memory_max_mb` | `LITEZAP_WORKER_MEMORY_MAX_MB` | `512` | Limite de memória de cada worker. |
 | `default_proxy_url` | `LITEZAP_DEFAULT_PROXY_URL` | vazio | Proxy padrão para instâncias sem `proxy_url` (http, https ou socks5). Vazio: conexão direta. |
 | `media_allow_private_urls` | `LITEZAP_MEDIA_ALLOW_PRIVATE_URLS` | `false` | Libera `media.url` para IPs privados e loopback. Só para uso local. |
+| `webhook_allow_private_urls` | `LITEZAP_WEBHOOK_ALLOW_PRIVATE_URLS` | `false` | Libera webhooks para `127.0.0.1`, rede local etc. Só para uso local. |
+| `webhook_retention_days` | só no arquivo | `7` | Dias que entregas de webhook concluídas ficam guardadas. |
+| `webhook_failed_retention_days` | só no arquivo | `30` | Dias que a dead-letter fica guardada. |
 | `instance_defaults` | só no arquivo | veja abaixo | Padrões de envio de toda instância. |
 
 ## Exemplo completo
@@ -31,6 +34,11 @@ worker_memory_max_mb: 512
 
 default_proxy_url: ""
 media_allow_private_urls: false
+
+# Webhooks (marco 3)
+webhook_allow_private_urls: false
+webhook_retention_days: 7
+webhook_failed_retention_days: 30
 
 # Padrões de envio por instância (cada instância pode sobrescrever via PUT /settings).
 # Pisos: min_interval_ms >= 1000 e max_per_minute <= 60, salvo unsafe_pacing: true.

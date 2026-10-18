@@ -33,7 +33,7 @@ O mesmo binário roda de três formas:
 - Os workers encerram sozinhos se o supervisor morrer, mesmo à força. No próximo `serve`, as instâncias voltam sem
   novo QR e a fila continua de onde parou.
 
-## O que já funciona (marco 2)
+## O que já funciona (marco 3)
 
 <CardGrid>
 	<Card title="Instâncias e pareamento" icon="phone">
@@ -48,10 +48,16 @@ O mesmo binário roda de três formas:
 	<Card title="Anti-ban e proxy" icon="warning">
 		Ritmo, rampa, janela de envio, verificação de número e proxy HTTP/SOCKS5 por instância.
 	</Card>
+	<Card title="Webhooks e SSE" icon="seti:pipeline">
+		Eventos com envelope único, webhooks assinados com retry por 24h e dead-letter, e streams SSE ao vivo.
+	</Card>
+	<Card title="Auto-hospedável" icon="laptop">
+		Binário único sem dependências: no seu PC, com Docker ou systemd. Sem lock-in: a pasta `data/` é tudo.
+	</Card>
 </CardGrid>
 
-Ainda **não** existem eventos em tempo real: webhooks e SSE chegam no marco 3. Até lá, acompanhe por polling em
-`GET /chats` e `GET /messages/{id}`. Veja o [roadmap](/docs/roadmap/).
+Grupos, perfil, status, canais, MCP e mais estão no [roadmap](/docs/roadmap/), com páginas marcadas como
+**Em breve** na documentação. Vindo de outra API? Veja [Migrar da Z-API](/docs/migrar-da-z-api/).
 
 ## Próximos passos
 

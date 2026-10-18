@@ -1,0 +1,76 @@
+---
+// Introdução de um recurso da API (uma por tag do OpenAPI), com a lista de operações.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { tags, md, opHref, scopeLabel, eventHref, type Tag } from '../../../../lib/openapi';
+
+export function getStaticPaths() {
+	return tags().map((tag) => ({ params: { tag: tag.slug }, props: { tag } }));
+}
+
+const { tag } = Astro.props as { tag: Tag };
+const evs = [...new Set(tag.operations.flatMap((o) => o.events))];
+---
+
+<StarlightPage
+	frontmatter={{ title: tag.name, description: tag.description, editUrl: false }}
+	headings={[
+		{ depth: 2, slug: 'operacoes', text: 'Operações' },
+		...(evs.length ? [{ depth: 2, slug: 'eventos', text: 'Eventos relacionados' }] : []),
+	]}
+>
+	<Fragment set:html={md(tag.intro ?? tag.description)} />
+	{
+		tag.concept && (
+			<p>
+				Conceito: <a href={tag.concept}>leia antes de integrar</a>.
+			</p>
+		)
+	}
+
+	<h2 id="operacoes">Operações</h2>
+	<table class="lz-table lz-ops">
+		<thead>
+			<tr>
+				<th>Operação</th>
+				<th>Rota</th>
+				<th>Token</th>
+			</tr>
+		</thead>
+		<tbody>
+			{
+				tag.operations.map((op) => (
+					<tr>
+						<td>
+							<a href={opHref(op)}>{op.summary}</a>
+						</td>
+						<td>
+							<span class={`lz-method lz-method--${op.method}`}>{op.method.toUpperCase()}</span> <code>{op.path}</code>
+						</td>
+						<td>{scopeLabel[op.scope] ?? op.scope}</td>
+					</tr>
+				))
+			}
+		</tbody>
+	</table>
+
+	{
+		evs.length > 0 && (
+			<>
+				<h2 id="eventos">Eventos relacionados</h2>
+				<ul>
+					{evs.map((e) => (
+						<li>
+							<a href={eventHref(e)}>
+								<code>{e}</code>
+							</a>
+						</li>
+					))}
+				</ul>
+			</>
+		)
+	}
+	<p>
+		Gerado de <a href="/openapi.yaml">openapi.yaml</a>. Convenções gerais na <a href="/docs/api/">visão geral</a> e
+		todos os códigos em <a href="/docs/api/erros/">Erros</a>.
+	</p>
+</StarlightPage>

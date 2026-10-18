@@ -35,7 +35,7 @@ O token admin acessa tudo. O token de instância só acessa `/v1/instances/{id}/
 - Corpo em JSON (`Content-Type: application/json` é recomendado; o servidor lê o corpo como JSON de qualquer forma).
 - Corpo até 1 MB, exceto `POST /messages` (até 140 MB, para mídia em base64).
 - Datas em RFC 3339 (UTC), ex.: `2026-10-17T13:45:00Z`.
-- Ids com prefixo: `inst_` (instância), `msg_` (mensagem), `med_` (mídia).
+- Ids com prefixo: `inst_` (instância), `msg_` (mensagem), `med_` (mídia), `wh_` (webhook), `dlv_` (entrega), `evt_` (evento).
 - JIDs: `5511999999999@s.whatsapp.net` (pessoa), `...@g.us` (grupo), `...@lid` (id oculto). Nas rotas que recebem
   `{jid}`, um número com DDI também é aceito.
 
@@ -52,7 +52,7 @@ certo. A [tabela de erros](/docs/api/erros/) lista todos os códigos.
 
 ## Paginação
 
-`GET /chats` e `GET /chats/{jid}/messages` usam **cursor**:
+`GET /chats`, `GET /chats/{jid}/messages` e `GET /webhooks/{id}/deliveries` usam **cursor**:
 
 ```bash
 curl -s "$LITEZAP_URL/v1/instances/$ID/chats?limit=50" -H "Authorization: Bearer $TOK"
@@ -60,7 +60,7 @@ curl -s "$LITEZAP_URL/v1/instances/$ID/chats?limit=50" -H "Authorization: Bearer
 curl -s "$LITEZAP_URL/v1/instances/$ID/chats?limit=50&cursor=eyJ0Ijo..." -H "Authorization: Bearer $TOK"
 ```
 
-- `limit`: padrão 50, máximo 200.
+- `limit`: padrão 50, máximo 200 (100 em `GET /webhooks/{id}/deliveries`).
 - `next_cursor` ausente: última página. O cursor é opaco; cursor inválido responde `400 validation_failed`.
 - Ordem: chats pela última mensagem, mensagens da mais recente para a mais antiga.
 
@@ -110,6 +110,6 @@ A fila de envio nunca responde `429`: ela segura as mensagens e envia no ritmo c
 
 - [Instâncias](/docs/api/instancias/) · [Pareamento](/docs/api/pareamento/) · [Configurações](/docs/api/configuracoes/)
 - [Mensagens](/docs/api/mensagens/) · [Chats](/docs/api/chats/) · [Contatos](/docs/api/contatos/)
-- [Números](/docs/api/numeros/) · [Mídia](/docs/api/midia/) · [Operação](/docs/api/operacao/)
+- [Números](/docs/api/numeros/) · [Mídia](/docs/api/midia/) · [Webhooks](/docs/api/webhooks/) · [Eventos em tempo real](/docs/api/sse/) · [Operação](/docs/api/operacao/)
 
-Webhooks, SSE (marco 3) e MCP (marco 4) ainda não existem na API. Veja o [roadmap](/docs/roadmap/).
+Cada operação tem a própria página, com parâmetros, exemplos em cURL, Node.js, Python, Go e PHP, resposta, erros, eventos gerados e o equivalente na Z-API. Os payloads dos eventos estão no [catálogo de eventos](/docs/eventos/). Recursos planejados (grupos, perfil, status, canais...) estão em **Em breve** no menu, sem endpoints até existirem.

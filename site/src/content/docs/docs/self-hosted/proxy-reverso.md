@@ -56,7 +56,7 @@ server {
         # ?wait=true pode segurar a resposta por até 2 minutos; uploads lentos levam mais
         proxy_read_timeout 180s;
         proxy_send_timeout 300s;
-        # prepara para o stream SSE do marco 3
+        # necessário para o stream SSE (/events)
         proxy_buffering off;
     }
 }

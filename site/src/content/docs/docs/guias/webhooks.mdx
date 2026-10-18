@@ -1,0 +1,173 @@
+---
+title: Receber mensagens com webhooks
+description: Do zero a um receptor que valida a assinatura, deduplica e responde rápido.
+---
+
+import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+Webhooks são o jeito recomendado de receber eventos em produção: entregas persistentes, assinadas e com retry por
+24 horas.
+
+<Steps>
+
+1. **Escreva o receptor**
+
+   Ele precisa: ler o corpo **bruto**, validar a assinatura, deduplicar pelo id do evento, responder `2xx` rápido e
+   processar depois.
+
+   <Tabs syncKey="lang">
+   <TabItem label="Node.js">
+
+   ```js
+   import http from "node:http";
+   import crypto from "node:crypto";
+
+   const SECRET = process.env.LITEZAP_WEBHOOK_SECRET;
+   const seen = new Set(); // em produção: Redis/banco com expiração
+
+   function verify(header, rawBody) {
+     const parts = Object.fromEntries((header || "").split(",").map((p) => p.split("=", 2)));
+     const t = Number(parts.t);
+     if (!parts.v1 || !Number.isFinite(t) || Math.abs(Date.now() / 1000 - t) > 300) return false;
+     const want = crypto.createHmac("sha256", SECRET).update(`${parts.t}.${rawBody}`).digest("hex");
+     const a = Buffer.from(parts.v1, "hex"), b = Buffer.from(want, "hex");
+     return a.length === b.length && crypto.timingSafeEqual(a, b);
+   }
+
+   http.createServer((req, res) => {
+     let body = "";
+     req.setEncoding("utf8");
+     req.on("data", (c) => (body += c)).on("end", () => {
+       if (!verify(req.headers["x-litezap-signature"], body)) return res.writeHead(401).end();
+       const id = req.headers["x-litezap-event-id"];
+       res.writeHead(204).end(); // responda antes de processar
+       if (seen.has(id)) return;
+       seen.add(id);
+       const evt = JSON.parse(body);
+       if (evt.type === "message.received") console.log(evt.data.chat, evt.data.text);
+     });
+   }).listen(9000);
+   ```
+
+   </TabItem>
+   <TabItem label="Python">
+
+   ```python
+   import hashlib, hmac, json, os, time
+   from flask import Flask, request
+
+   app = Flask(__name__)
+   SECRET = os.environ["LITEZAP_WEBHOOK_SECRET"].encode()
+   seen = set()  # em produção: Redis/banco com expiração
+
+   def verify(header: str, raw: bytes) -> bool:
+       parts = dict(p.split("=", 1) for p in header.split(",") if "=" in p)
+       t = parts.get("t", "")
+       if not t.isdigit() or abs(time.time() - int(t)) > 300:
+           return False
+       want = hmac.new(SECRET, f"{t}.".encode() + raw, hashlib.sha256).hexdigest()
+       return hmac.compare_digest(parts.get("v1", ""), want)
+
+   @app.post("/litezap")
+   def litezap():
+       raw = request.get_data()
+       if not verify(request.headers.get("X-LiteZap-Signature", ""), raw):
+           return "", 401
+       evt_id = request.headers.get("X-LiteZap-Event-Id")
+       if evt_id not in seen:
+           seen.add(evt_id)
+           evt = json.loads(raw)
+           if evt["type"] == "message.received":
+               print(evt["data"]["chat"], evt["data"].get("text"))
+       return "", 204
+   ```
+
+   </TabItem>
+   <TabItem label="Go">
+
+   ```go
+   http.HandleFunc("/litezap", func(w http.ResponseWriter, r *http.Request) {
+   	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+   	if !verify(os.Getenv("LITEZAP_WEBHOOK_SECRET"), r.Header.Get("X-LiteZap-Signature"), body) {
+   		w.WriteHeader(http.StatusUnauthorized)
+   		return
+   	}
+   	w.WriteHeader(http.StatusNoContent)
+   	go handle(r.Header.Get("X-LiteZap-Event-Id"), body) // deduplique pelo id dentro de handle
+   })
+   ```
+
+   A função `verify` está em [Verificar assinatura](/docs/eventos/assinatura/).
+
+   </TabItem>
+   <TabItem label="PHP">
+
+   ```php
+   <?php
+   $raw = file_get_contents('php://input');
+   $sig = $_SERVER['HTTP_X_LITEZAP_SIGNATURE'] ?? '';
+   if (!litezap_verify(getenv('LITEZAP_WEBHOOK_SECRET'), $sig, $raw)) {
+       http_response_code(401);
+       exit;
+   }
+   $eventId = $_SERVER['HTTP_X_LITEZAP_EVENT_ID'] ?? '';
+   // deduplique por $eventId (ex.: tabela com chave única) e enfileire o processamento
+   $evt = json_decode($raw, true);
+   http_response_code(204);
+   ```
+
+   A função `litezap_verify` está em [Verificar assinatura](/docs/eventos/assinatura/).
+
+   </TabItem>
+   </Tabs>
+
+2. **Exponha o receptor**
+
+   Em produção, uma URL `https://` pública. Para testar no seu PC, rode o receptor em `127.0.0.1:9000` e libere
+   destinos locais no LiteZap (`webhook_allow_private_urls: true` no `litezap.yaml`, ou
+   `LITEZAP_WEBHOOK_ALLOW_PRIVATE_URLS=true`) e reinicie o `serve`. Em servidores, deixe essa opção desligada.
+
+3. **Cadastre o webhook e guarde o segredo**
+
+   ```bash
+   curl -s -X POST localhost:8787/v1/webhooks -H "Authorization: Bearer $TOK" \
+     -d '{"url":"https://seu-app.com/litezap","events":["message.*","instance.status"]}'
+   ```
+
+   A resposta traz `secret` (`whsec_...`) **uma única vez**. Guarde-o como `LITEZAP_WEBHOOK_SECRET`. Com token de
+   instância, o webhook é daquela instância; com token admin e sem `instance_id`, recebe eventos de todas.
+
+4. **Teste**
+
+   Mande uma mensagem para o número conectado: o receptor recebe `message.received`. Envie pela API: chegam
+   `message.sent` e `message.status`.
+
+</Steps>
+
+## Filtros
+
+`events` aceita tipos exatos (`message.status`), famílias (`message.*`) ou `*`. Assine só o que você usa: menos
+tráfego e menos entregas na fila. A lista de tipos está no [catálogo](/docs/eventos/).
+
+## Quando o receptor cai
+
+- Cada entrega tem 10s para receber um `2xx`. Falhas são repetidas com backoff (1s, 2s, 4s... até 1h) por 24 horas.
+- Um endpoint que falha segura as outras entregas dele pelo mesmo backoff; outros webhooks seguem normalmente.
+- Depois de 24 horas, a entrega vai para a dead-letter:
+
+  ```bash
+  curl -s "localhost:8787/v1/webhooks/$WH/deliveries?status=failed" -H "Authorization: Bearer $TOK"
+  curl -s -X POST "localhost:8787/v1/webhooks/$WH/deliveries/$DLV/retry" -H "Authorization: Bearer $TOK"
+  ```
+
+<Aside type="tip" title="Responda rápido">
+	Responda `204` assim que validar a assinatura e processe numa fila sua. Um receptor lento acumula timeouts,
+	retentativas e eventos fora de ordem.
+</Aside>
+
+## Trocar o segredo
+
+`PATCH /v1/webhooks/{id}` com `{"secret": ""}` gera um segredo novo (devolvido na resposta), ou passe o seu
+(16 a 256 caracteres). A troca vale para as próximas entregas: atualize o receptor logo em seguida.
+
+Veja também: [entrega e retentativas](/docs/eventos/entrega/) · [referência de webhooks](/docs/api/webhooks/).

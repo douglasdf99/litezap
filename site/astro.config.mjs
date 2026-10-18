@@ -1,6 +1,9 @@
 // @ts-check
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import { parse } from 'yaml';
+import { navFromSpec } from './src/lib/slug.mjs';
 
 const GITHUB = 'https://github.com/douglasdf99/litezap';
 const SITE = process.env.SITE_URL ?? 'http://localhost:4321';
@@ -8,18 +11,23 @@ const SITE = process.env.SITE_URL ?? 'http://localhost:4321';
 const FONTS =
 	'https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,300..800;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap';
 
-// Páginas da referência geradas a partir de public/openapi.yaml (src/pages/docs/api/[tag].astro).
-const apiPages = [
-	['Instâncias', 'instancias'],
-	['Pareamento', 'pareamento'],
-	['Configurações', 'configuracoes'],
-	['Mensagens', 'mensagens'],
-	['Chats', 'chats'],
-	['Contatos', 'contatos'],
-	['Números', 'numeros'],
-	['Mídia', 'midia'],
-	['Operação', 'operacao'],
-].map(([label, slug]) => ({ label, link: `/docs/api/${slug}/` }));
+// A referência da API e o catálogo de eventos são gerados de public/openapi.yaml.
+const nav = navFromSpec(parse(readFileSync(new URL('./public/openapi.yaml', import.meta.url), 'utf8')));
+
+const soon = (milestone) => ({ text: milestone ? `Em breve · ${milestone}` : 'Em breve', variant: 'note' });
+const exp = { text: 'Experimental', variant: 'caution' };
+/** @param {string} slug @param {string} [milestone] */
+const soonPage = (slug, milestone) => ({ slug, badge: soon(milestone) });
+
+const apiGroups = nav.tags.map((t) => ({
+	label: t.name,
+	collapsed: true,
+	items: [
+		{ label: 'Introdução', link: `/docs/api/${t.slug}/` },
+		...(t.slug === 'mensagens' ? [{ label: 'Tipos de mensagem', link: '/docs/api/mensagens/tipos/' }] : []),
+		...t.ops.map((o) => ({ label: o.summary, link: `/docs/api/${t.slug}/${o.slug}/` })),
+	],
+}));
 
 export default defineConfig({
 	site: SITE,
@@ -70,25 +78,53 @@ export default defineConfig({
 					label: 'Começar',
 					items: [
 						{ label: 'Introdução', link: '/docs/' },
-						{ label: 'Quickstart', link: '/docs/quickstart/' },
-						{ label: 'App local', link: '/docs/app-local/' },
+						'docs/quickstart',
+						'docs/escolha-como-rodar',
+						'docs/app-local',
+						'docs/primeiro-envio',
+						'docs/migrar-da-z-api',
+						'docs/glossario',
 					],
 				},
 				{
 					label: 'Conceitos',
+					collapsed: true,
 					items: [
 						'docs/conceitos/instancias',
 						'docs/conceitos/autenticacao',
+						'docs/conceitos/identificadores',
 						'docs/conceitos/fila-e-ritmo',
 						'docs/conceitos/rampa',
 						'docs/conceitos/janela-de-envio',
 						'docs/conceitos/verificacao-de-numeros',
+						'docs/conceitos/idempotencia',
 						'docs/conceitos/proxy',
 						'docs/conceitos/midia',
+						'docs/conceitos/eventos',
+						'docs/conceitos/erros-e-retentativas',
+						'docs/conceitos/limites',
+					],
+				},
+				{
+					label: 'Guias',
+					collapsed: true,
+					items: [
+						'docs/boas-praticas',
+						'docs/guias/webhooks',
+						'docs/guias/sse',
+						'docs/guias/enviar-midia',
+						'docs/guias/crm',
+						'docs/guias/automacao',
+						'docs/guias/solucao-de-problemas',
+						{ slug: 'docs/guias/multi-instancia', badge: { text: 'Parcial', variant: 'tip' } },
+						soonPage('docs/guias/atendimento-ia', 'M5'),
+						soonPage('docs/guias/grupos', 'M8'),
+						{ slug: 'docs/guias/mensagens-interativas', badge: exp },
 					],
 				},
 				{
 					label: 'Self-hosted',
+					collapsed: true,
 					items: [
 						'docs/self-hosted',
 						'docs/self-hosted/configuracao',
@@ -96,19 +132,69 @@ export default defineConfig({
 						'docs/self-hosted/systemd',
 						'docs/self-hosted/proxy-reverso',
 						'docs/self-hosted/seguranca',
+						'docs/self-hosted/backup-e-upgrade',
+						'docs/self-hosted/observabilidade',
+						'docs/self-hosted/dimensionamento',
 					],
 				},
-				{ label: 'Guias', items: ['docs/boas-praticas'] },
 				{
 					label: 'Referência da API',
 					items: [
 						{ label: 'Visão geral', link: '/docs/api/' },
 						{ label: 'Erros', link: '/docs/api/erros/' },
-						...apiPages,
+						...apiGroups,
+						{
+							label: 'Em breve',
+							collapsed: true,
+							items: [
+								soonPage('docs/api/em-breve/fila', 'M6'),
+								soonPage('docs/api/em-breve/chamadas', 'M7'),
+								soonPage('docs/api/em-breve/grupos', 'M8'),
+								soonPage('docs/api/em-breve/comunidades', 'M8'),
+								soonPage('docs/api/em-breve/chats-e-contatos', 'M9'),
+								soonPage('docs/api/em-breve/perfil-e-privacidade', 'M9'),
+								soonPage('docs/api/em-breve/status', 'M10'),
+								soonPage('docs/api/em-breve/canais', 'M10'),
+								soonPage('docs/api/em-breve/business', 'M10'),
+								soonPage('docs/api/em-breve/plataforma', 'M11'),
+							],
+						},
 						{ label: 'openapi.yaml', link: '/openapi.yaml', attrs: { target: '_blank' } },
 					],
 				},
-				{ label: 'Projeto', items: ['docs/roadmap'] },
+				{
+					label: 'Eventos',
+					collapsed: true,
+					items: [
+						{ label: 'Visão geral', link: '/docs/eventos/' },
+						'docs/eventos/assinatura',
+						'docs/eventos/entrega',
+						...nav.events.map((e) => ({ label: e.type, link: `/docs/eventos/${e.slug}/` })),
+						soonPage('docs/eventos/em-breve'),
+					],
+				},
+				{
+					label: 'MCP e IA',
+					collapsed: true,
+					items: [soonPage('docs/mcp', 'M4'), soonPage('docs/mcp/hook-de-agente', 'M5')],
+				},
+				{
+					label: 'SDKs e ferramentas',
+					collapsed: true,
+					items: [soonPage('docs/sdks'), 'docs/ferramentas/cli', 'docs/ferramentas/postman'],
+				},
+				{
+					label: 'Projeto',
+					collapsed: true,
+					items: [
+						'docs/roadmap',
+						'docs/changelog',
+						'docs/faq',
+						'docs/contribuir',
+						'docs/politica-de-seguranca',
+						'docs/uso-aceitavel',
+					],
+				},
 			],
 		}),
 	],

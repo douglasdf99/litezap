@@ -211,6 +211,56 @@ nav.sidebar a[aria-current='page']:hover {
 	width: 100%;
 	font-size: var(--sl-text-sm);
 }
+.lz-chip {
+	font-family: var(--sl-font);
+	font-size: 0.7rem;
+	font-weight: 600;
+	padding: 0.15rem 0.5rem;
+	border-radius: 999px;
+	background: var(--lz-primary-bg);
+	color: var(--lz-link);
+}
+.lz-extra,
+.lz-muted {
+	color: var(--lz-text-muted);
+	font-size: var(--sl-text-sm);
+}
+.lz-zapi {
+	margin-top: 2rem;
+	padding: 0.75rem 1rem;
+	border-left: 3px solid var(--lz-cyan);
+	background: var(--lz-bg-soft);
+	border-radius: 0 0.5rem 0.5rem 0;
+	font-size: var(--sl-text-sm);
+}
+.lz-details {
+	margin: 0.75rem 0;
+	border: 1px solid var(--lz-line);
+	border-radius: 0.6rem;
+	padding: 0.5rem 0.9rem;
+}
+.lz-details summary {
+	cursor: pointer;
+	font-weight: 600;
+	font-size: var(--sl-text-sm);
+}
+.lz-resp + .lz-resp {
+	margin-top: 1.5rem;
+}
+/* Selos de disponibilidade nas páginas de conteúdo */
+.lz-badge {
+	display: inline-block;
+	font-size: 0.72rem;
+	font-weight: 650;
+	padding: 0.12rem 0.55rem;
+	border-radius: 999px;
+	vertical-align: middle;
+	white-space: nowrap;
+}
+.lz-badge--ok { background: var(--lz-success-bg); color: var(--lz-success); }
+.lz-badge--soon { background: var(--lz-primary-bg); color: var(--lz-link); }
+.lz-badge--exp { background: var(--lz-warning-bg); color: var(--lz-warning); }
+.lz-badge--no { background: var(--lz-danger-bg); color: var(--lz-danger); }
 .lz-req {
 	font-size: 0.68rem;
 	font-weight: 600;

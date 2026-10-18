@@ -1,58 +1,80 @@
 ---
-title: Roadmap
-description: O que já existe no LiteZap e o que vem a seguir.
+title: Status e roadmap
+description: O que já existe no LiteZap, o que está em construção e o plano até a paridade com as APIs comerciais.
 ---
 
-O motor é construído em marcos, cada um testável sozinho. Datas não são prometidas; a ordem é.
+O motor é construído em marcos, cada um testável sozinho e entregue com REST, OpenAPI, docs e testes. Datas não são
+prometidas; a ordem é.
 
-## Pronto
+## Status
 
-### Marco 1: esqueleto
+| Marco | Escopo | Status |
+|---|---|---|
+| M1 | Esqueleto: binário, config, banco, supervisor + worker por número, estados, pareamento por QR e código | <span class="lz-badge lz-badge--ok">Entregue</span> |
+| M2 | Mensagens: fila com ritmo, rampa, janela e verificação de número; recebimento, chats, histórico; mídia; proxy por instância | <span class="lz-badge lz-badge--ok">Entregue</span> |
+| M3 | Eventos: envelope v1, webhooks assinados com retry e dead-letter, SSE | <span class="lz-badge lz-badge--ok">Entregue</span> |
+| M2b | Complementos: busca full-text, retenção e limpeza de mídia, `/metrics`, watchdog de conexão, nome de grupos | <span class="lz-badge lz-badge--soon">Planejado</span> |
+| M4 | MCP: `/mcp` (HTTP) e `litezap mcp` (stdio) | <span class="lz-badge lz-badge--soon">Próximo</span> |
+| M5 | Hook de agente (atendente IA) com pausa por humano | <span class="lz-badge lz-badge--soon">Planejado</span> |
+| M6 | Mensagens completas | <span class="lz-badge lz-badge--soon">Planejado</span> |
+| M7 | Eventos completos e chamadas | <span class="lz-badge lz-badge--soon">Planejado</span> |
+| M8 | Grupos e comunidades | <span class="lz-badge lz-badge--soon">Planejado</span> |
+| M9 | Chats, contatos, perfil, privacidade e conta | <span class="lz-badge lz-badge--soon">Planejado</span> |
+| M10 | Status, canais e Business | <span class="lz-badge lz-badge--soon">Planejado</span> |
+| M11 | Plataforma e parceiros | <span class="lz-badge lz-badge--soon">Planejado</span> |
+| App local | App desktop: bandeja, tela de QR, atualização automática, túnel opcional | <span class="lz-badge lz-badge--soon">Planejado</span> |
+| Nuvem | Projeto pré-instalado por cliente, IPs gerenciados, backups e upgrades | <span class="lz-badge lz-badge--soon">Planejado</span> |
 
-Binário único, config, banco SQLite com migrações, supervisor com um worker por número, máquina de estados,
-pareamento por QR e por código.
+Status da nuvem (uptime, incidentes): a página pública de status será publicada junto com a nuvem LiteZap.
 
-### Marco 2: mensagens
+## Próximos marcos
 
-Fila persistente com ritmo, rampa, janela de envio, verificação de números, idempotência e modo síncrono; recebimento,
-chats e histórico (inclusive o histórico sincronizado no pareamento); mídia com URLs assinadas; proxy por instância.
+### M4: MCP
 
-## Próximos
+Servidor MCP embutido e ponte stdio, com ferramentas para instâncias, envio, chats, histórico, contatos e números.
+Veja [MCP e IA](/docs/mcp/).
 
-### Marco 2b: complementos
+### M5: hook de agente
 
-Busca full-text nas mensagens, envio de `sticker`, `location` e `contact`, limpeza automática de mídia e retenção do
-log, confirmação de entrega worker → supervisor, mensagens editadas e apagadas no log, nome de grupos, métricas
-Prometheus em `/metrics` e watchdog de conexão "zumbi".
+Contrato HTTP para um agente responder mensagens, com contexto, ações e pausa automática quando um humano responde
+pelo celular. Veja [hook de agente](/docs/mcp/hook-de-agente/).
 
-### Marco 3: eventos em tempo real
+### M6: mensagens completas
 
-- Barramento de eventos com envelope versionado (`message.received`, `message.status`, `instance.status`,
-  `instance.qr` e outros).
-- **Webhooks** assinados com HMAC-SHA256 (cabeçalho com timestamp contra replay), retry com backoff por até 24h e
-  dead-letter com reenvio manual.
-- **SSE** por instância e global (admin).
+Figurinha, GIF, vídeo redondo, localização, contato(s), enquete com votos, link com prévia, responder citando,
+menções, editar, apagar, fixar, encaminhar, atraso por mensagem. Fila visível: listar, cancelar item, esvaziar.
 
-### Marco 4: MCP
+### M7: eventos completos e chamadas
 
-Servidor MCP embutido (`/mcp`, HTTP) e a ponte `litezap mcp` (stdio) para clientes como o Claude Desktop, com
-ferramentas para listar instâncias, enviar mensagens e mídia, ler chats, buscar mensagens e verificar números.
+`message.revoked`, `message.edited`, `message.button_reply`, `chat.presence`, `call.received`, `call.ended`; status
+`played`; rejeição automática de chamadas com mensagem; filtros de webhook por tipo de chat e de mensagem.
 
-### Marco 5: hook de agente (atendente IA)
+### M8: grupos e comunidades
 
-Contrato HTTP para um agente externo responder mensagens recebidas: contexto das últimas mensagens, ações
-(`mark_read`, `react`, `pause`, `handoff`), uma mensagem por vez por chat, falha fechada e **pausa automática quando
-um humano responde pelo celular**. Com um exemplo de referência usando o Claude.
+Gestão completa de grupos (criar, dados, configurações, participantes, admins, pedidos, convites) e comunidades, com
+evento `group.updated` e limite diário de criação.
 
-## Além do motor
+### M9: chats, contatos, perfil e privacidade
 
-- **App desktop**: bandeja do sistema, tela de QR, atualização automática e túnel opcional. Veja [app local](/docs/app-local/).
-- **Nuvem LiteZap**: um projeto pré-instalado e isolado por cliente, rodando o mesmo binário open source, com
-  upgrades, backups, monitoramento e pool gerenciado de IPs de saída (no máximo um cliente por IP). Cobrança mensal
-  por instância.
-- **Atendente IA completo**: memória, base de conhecimento e painel, por cima do hook de agente.
+Arquivar, fixar, silenciar, não lido, limpar, apagar e mensagens temporárias; foto de perfil, bloqueio e metadados de
+contatos; nome, recado e foto do perfil; privacidade; leitura automática; passkey no pareamento.
 
-## Fora do escopo
+### M10: status, canais e Business
 
-Listas de transmissão e chamadas (não suportadas pela biblioteca de protocolo), WebSocket (o stream será SSE) e
-qualquer recurso de "aquecimento" artificial de números.
+Publicar e receber status; criar, seguir, silenciar e publicar em canais; etiquetas e perfil comercial (leitura).
+
+### M11: plataforma e parceiros
+
+Página de pareamento hospedada e componente embutível, renomear e apagar instâncias em lote, paginação, allowlist de
+IP por token, evento `instance.proxy_failed`.
+
+## Fora da trilha principal
+
+- **Experimental**: botões, listas, OTP/PIX e carrossel, atrás de opção explícita, só depois do M10 e se houver
+  demanda. Veja [mensagens interativas](/docs/guias/mensagens-interativas/).
+- **Em avaliação**: catálogo e coleções, perfil comercial editável, administração avançada de canais, pedidos e
+  pagamentos.
+- **Fora**: registro do número sem celular, chamadas de voz/SIP, listas de transmissão, recursos de "aquecimento"
+  artificial de números, cobrança no motor (fica na nuvem).
+
+A correspondência recurso a recurso com a Z-API está em [Migrar da Z-API](/docs/migrar-da-z-api/).

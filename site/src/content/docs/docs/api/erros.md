@@ -17,8 +17,8 @@ de telefone nem tokens. `retryable` diz se vale tentar de novo.
 | `unauthorized` | 401 | não | Token ausente ou inválido. |
 | `forbidden` | 403 | não | Token sem acesso ao recurso (outra instância, rota de admin, `proxy_url`/`unsafe_pacing` sem admin); URL assinada inválida ou expirada. |
 | `instance_not_found` | 404 | não | Instância inexistente. |
-| `not_found` | 404 | não | Mensagem, chat, contato ou mídia inexistente. |
-| `conflict` | 409 | não | `client_message_id` reusado com outro conteúdo; URLs assinadas desativadas (fora de loopback sem `public_url`). |
+| `not_found` | 404 | não | Mensagem, chat, contato, mídia, webhook ou entrega inexistente (webhook de outra instância também responde 404). |
+| `conflict` | 409 | não | `client_message_id` reusado com outro conteúdo; URLs assinadas desativadas (fora de loopback sem `public_url`); reenvio de uma entrega de webhook que não está `failed`. |
 | `instance_not_connected` | 409 | depende | Worker da instância não está rodando (`retryable: true`) ou o número está deslogado (`false`). |
 | `instance_banned` | 409 | não | Número banido. Apague a instância. |
 | `instance_not_pairing` | 409 | depende | QR ou código pedidos fora de `qr_pending` (ex.: já conectada). |
@@ -30,7 +30,7 @@ de telefone nem tokens. `retryable` diz se vale tentar de novo.
 | `rate_limited` | 503 | sim | Muitos envios com corpo grande ao mesmo tempo e a requisição desistiu de esperar vaga. |
 | `worker_error` | 502 | sim | O worker da instância recusou ou falhou a operação. |
 | `worker_timeout` | 504 | sim | O worker da instância não respondeu a tempo. |
-| `shutting_down` | 503 | sim | O servidor está encerrando. |
+| `shutting_down` | 503 | sim | O servidor está encerrando (inclusive o reenvio de entregas de webhook durante o shutdown). |
 | `internal` | 500 | sim | Erro interno inesperado (registrado no log do servidor). |
 
 ## Erros de envio

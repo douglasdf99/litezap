@@ -1,11 +1,13 @@
 openapi: 3.1.0
 info:
   title: LiteZap API
-  version: "0.2.0"
+  version: "0.3.0"
   summary: API de WhatsApp não oficial, open source, que roda local, no seu servidor ou na nuvem.
   description: |
-    Referência da API REST do motor LiteZap (marco 2: instâncias, pareamento, envio com fila
-    persistente, recebimento, chats, contatos, verificação de números, mídia e proxy por instância).
+    Referência da API REST do motor LiteZap (marco 3: instâncias, pareamento, envio com fila
+    persistente, recebimento, chats, contatos, verificação de números, mídia, proxy por instância,
+    webhooks assinados e eventos em tempo real por SSE). Os eventos entregues por webhook estão
+    descritos na seção `webhooks` deste arquivo.
 
     Autenticação: `Authorization: Bearer <token>`. O token admin acessa tudo; o token de instância
     (prefixo `lzi_`) só acessa as rotas da própria instância.
@@ -25,36 +27,107 @@ tags:
   - name: Instâncias
     description: Criar, listar, controlar e apagar instâncias (um número de WhatsApp cada).
     x-slug: instancias
+    x-intro: |
+      Uma instância é um número de WhatsApp conectado ao LiteZap, com token próprio, configurações de
+      envio e um processo worker dedicado. Criar, listar, apagar e rotacionar token exigem o token admin;
+      as demais ações aceitam o token da própria instância.
+
+      As ações de ciclo de vida respondem logo depois de disparadas: acompanhe o estado com
+      `GET /v1/instances/{id}` ou pelo evento `instance.status`. Os estados estão em
+      [Instâncias e estados](/docs/conceitos/instancias/).
+    x-concept: /docs/conceitos/instancias/
   - name: Pareamento
     description: Conectar o número por QR code ou código de pareamento por telefone.
     x-slug: pareamento
+    x-intro: |
+      Uma instância nova (ou deslogada) fica em `qr_pending` até ser pareada. Há dois caminhos: escanear o
+      QR em WhatsApp > Aparelhos conectados, ou pedir um código e digitá-lo no celular. Os dois também
+      chegam como eventos (`instance.qr` e `instance.pair_code`), úteis para mostrar o QR numa tela sua
+      sem polling.
+    x-concept: /docs/quickstart/
   - name: Configurações
     description: Ritmo, rampa, janela de envio, fuso e proxy de cada instância.
     x-slug: configuracoes
+    x-intro: |
+      Cada instância herda os `instance_defaults` da configuração do servidor e guarda só os campos que
+      você alterar. As configurações controlam a [fila e o ritmo](/docs/conceitos/fila-e-ritmo/), a
+      [rampa](/docs/conceitos/rampa/), a [janela de envio](/docs/conceitos/janela-de-envio/) e o
+      [proxy](/docs/conceitos/proxy/). `proxy_url` e `unsafe_pacing` exigem o token admin.
+    x-concept: /docs/conceitos/fila-e-ritmo/
   - name: Mensagens
     description: Envio pela fila persistente e consulta de status.
     x-slug: mensagens
+    x-intro: |
+      Todo envio entra numa fila persistente por instância e sai no ritmo configurado, respeitando a
+      carência pós-conexão, a janela de envio, a rampa e a verificação de número. O envio responde `202`
+      na hora, ou espera o resultado com `?wait=true`. Os campos de cada tipo estão em
+      [Tipos de mensagem](/docs/api/mensagens/tipos/).
+    x-concept: /docs/conceitos/fila-e-ritmo/
   - name: Chats
     description: Chats e histórico do log de mensagens, marcar como lido.
     x-slug: chats
+    x-intro: |
+      O LiteZap guarda um log local de tudo o que a instância envia e recebe, inclusive o histórico
+      sincronizado no pareamento. Chats e histórico vêm desse log, com paginação por cursor, sem consultar
+      o WhatsApp a cada chamada. Use o `jid` que aparece em `GET /chats` nas rotas `/chats/{jid}/...`.
+    x-concept: /docs/conceitos/identificadores/
   - name: Contatos
     description: Contatos conhecidos pela sessão do WhatsApp.
     x-slug: contatos
+    x-intro: |
+      Contatos vêm da sessão do WhatsApp guardada pelo worker (agenda sincronizada e nomes de perfil). As
+      rotas consultam o worker, então a instância precisa estar rodando.
+    x-concept: /docs/conceitos/identificadores/
   - name: Números
     description: Verificar se números têm WhatsApp.
     x-slug: numeros
+    x-intro: |
+      Confere se números têm WhatsApp e devolve o JID que o WhatsApp usa (no Brasil, com ou sem o 9º
+      dígito). A fila já faz essa verificação antes do primeiro envio a cada número; este endpoint serve
+      para conferir contatos pontuais, com cache e cota diária.
+    x-concept: /docs/conceitos/verificacao-de-numeros/
   - name: Mídia
     description: Baixar mídia recebida e gerar URLs assinadas temporárias.
     x-slug: midia
+    x-intro: |
+      Mídia recebida é baixada sob demanda na primeira leitura e guardada em `data/media/`. Para repassar
+      um arquivo a outro serviço sem entregar seu token, gere uma URL assinada que vale 1 hora.
+    x-concept: /docs/conceitos/midia/
+  - name: Webhooks
+    description: Cadastrar endpoints que recebem eventos assinados, com retry e dead-letter.
+    x-slug: webhooks
+    x-intro: |
+      Um webhook recebe por `POST` cada evento que combina com os filtros dele, assinado com HMAC-SHA256.
+      Entregas ficam numa tabela (outbox), sobrevivem a restarts e são repetidas por até 24 horas; depois
+      vão para a dead-letter, de onde podem ser reenviadas. Com token admin o webhook pode ser global
+      (todas as instâncias) ou de uma instância; com token de instância é sempre da própria instância.
+
+      Payloads de cada evento estão no [catálogo de eventos](/docs/eventos/) e a verificação da assinatura
+      em [Verificar assinatura](/docs/eventos/assinatura/).
+    x-concept: /docs/guias/webhooks/
+  - name: Eventos em tempo real
+    description: Streams Server-Sent Events por instância e global.
+    x-slug: sse
+    x-intro: |
+      Os mesmos eventos dos webhooks, ao vivo por Server-Sent Events, sem precisar de um servidor público.
+      Não há replay: eventos de quando o cliente estava desconectado não voltam (para isso, use webhooks).
+    x-concept: /docs/guias/sse/
   - name: Operação
     description: Saúde do processo e prontidão.
     x-slug: operacao
+    x-intro: |
+      Rotas para monitoramento e orquestradores. São públicas quando o servidor escuta em loopback e
+      exigem o token admin em qualquer outro endereço.
+    x-concept: /docs/self-hosted/observabilidade/
 
 paths:
   /v1/instances:
     post:
       tags: [Instâncias]
       operationId: createInstance
+      x-litezap-milestone: M1
+      x-zapi: "Criar instância (parceiros)"
+      x-litezap-events: [instance.status]
       summary: Criar instância
       x-litezap-scope: admin
       description: |
@@ -91,6 +164,8 @@ paths:
     get:
       tags: [Instâncias]
       operationId: listInstances
+      x-litezap-milestone: M1
+      x-zapi: "Listar instâncias (parceiros)"
       summary: Listar instâncias
       x-litezap-scope: admin
       responses:
@@ -121,6 +196,8 @@ paths:
     get:
       tags: [Instâncias]
       operationId: getInstance
+      x-litezap-milestone: M1
+      x-zapi: "Status da instância / Dados da instância"
       summary: Consultar instância
       x-litezap-scope: instancia
       description: Estado atual e número conectado. Os estados mudam de forma assíncrona; use esta rota para acompanhar (polling) até haver eventos (marco 3).
@@ -143,6 +220,10 @@ paths:
     delete:
       tags: [Instâncias]
       operationId: deleteInstance
+      x-litezap-milestone: M1
+      x-zapi: "Apagar instância (parceiros)"
+      x-litezap-events: [instance.status]
+      x-litezap-notes: "Apaga sessão, mídia, fila e histórico da instância. Não há como desfazer."
       summary: Apagar instância
       x-litezap-scope: admin
       description: |
@@ -159,6 +240,9 @@ paths:
     post:
       tags: [Instâncias]
       operationId: startInstance
+      x-litezap-milestone: M1
+      x-zapi: "Reiniciar"
+      x-litezap-events: [instance.status]
       summary: Iniciar worker
       x-litezap-scope: instancia
       description: Sobe o worker de uma instância `stopped`, `failed` ou `logged_out` (nesse caso volta a `qr_pending`). Responde assim que o worker é disparado; a instância devolvida pode ainda mostrar o estado anterior.
@@ -174,6 +258,9 @@ paths:
     post:
       tags: [Instâncias]
       operationId: stopInstance
+      x-litezap-milestone: M1
+      x-zapi: "(sem equivalente)"
+      x-litezap-events: [instance.status]
       summary: Parar worker
       x-litezap-scope: instancia
       description: Para o worker e leva a instância a `stopped` (a sessão fica salva; `start` reconecta sem QR). Uma instância parada não sobe sozinha no próximo boot.
@@ -187,6 +274,9 @@ paths:
     post:
       tags: [Instâncias]
       operationId: restartInstance
+      x-litezap-milestone: M1
+      x-zapi: "Reiniciar"
+      x-litezap-events: [instance.status]
       summary: Reiniciar worker
       x-litezap-scope: instancia
       description: Para e sobe o worker de novo. Responde assim que o novo worker é disparado.
@@ -202,6 +292,10 @@ paths:
     post:
       tags: [Instâncias]
       operationId: logoutInstance
+      x-litezap-milestone: M1
+      x-zapi: "Desconectar"
+      x-litezap-events: [instance.status]
+      x-litezap-notes: "Depois do logout o número precisa ser pareado de novo."
       summary: Desconectar número
       x-litezap-scope: instancia
       description: Desloga a sessão do WhatsApp (o aparelho some da lista no celular) e leva a instância a `logged_out`. Para usar de novo, `start` e parear outra vez.
@@ -218,6 +312,9 @@ paths:
     post:
       tags: [Instâncias]
       operationId: rotateToken
+      x-litezap-milestone: M1
+      x-zapi: "(sem equivalente)"
+      x-litezap-notes: "O token antigo deixa de valer na hora: atualize suas integrações antes."
       summary: Rotacionar token da instância
       x-litezap-scope: admin
       description: Gera um novo token de instância; o anterior deixa de valer na hora. O novo token aparece só nesta resposta.
@@ -240,6 +337,10 @@ paths:
     get:
       tags: [Pareamento]
       operationId: getQR
+      x-litezap-sample: { query: { format: png }, binary: qr.png }
+      x-litezap-milestone: M1
+      x-zapi: "Pegar QRCode / QRCode imagem"
+      x-litezap-events: [instance.qr]
       summary: Obter QR code
       x-litezap-scope: instancia
       description: |
@@ -272,6 +373,9 @@ paths:
     post:
       tags: [Pareamento]
       operationId: pairPhone
+      x-litezap-milestone: M1
+      x-zapi: "Conectar com telefone"
+      x-litezap-events: [instance.pair_code]
       summary: Parear por código
       x-litezap-scope: instancia
       description: |
@@ -310,6 +414,8 @@ paths:
     get:
       tags: [Configurações]
       operationId: getSettings
+      x-litezap-milestone: M2
+      x-zapi: "Configurações da fila"
       summary: Ler configurações
       x-litezap-scope: instancia
       description: Configurações efetivas (padrões da config + overrides da instância). A senha do `proxy_url` vem mascarada.
@@ -335,6 +441,9 @@ paths:
     put:
       tags: [Configurações]
       operationId: updateSettings
+      x-litezap-milestone: M2
+      x-zapi: "Atualizar configurações da fila / Configurar proxy"
+      x-litezap-notes: "Baixar os pisos de ritmo com unsafe_pacing ou desligar rampa e janela aumenta o risco de banimento."
       summary: Alterar configurações
       x-litezap-scope: instancia
       description: |
@@ -368,6 +477,11 @@ paths:
     post:
       tags: [Mensagens]
       operationId: sendMessage
+      x-litezap-sample: { query: { wait: "true" } }
+      x-litezap-milestone: M2
+      x-zapi: "Enviar texto, imagem, áudio, vídeo, documento, reação"
+      x-litezap-events: [message.sent, message.status]
+      x-litezap-notes: "Instância desconectada não perde a mensagem: ela espera na fila até expires_after. Volume alto para contatos frios é o principal gatilho de banimento; veja Boas práticas."
       summary: Enviar mensagem
       x-litezap-scope: instancia
       description: |
@@ -468,6 +582,8 @@ paths:
     get:
       tags: [Mensagens]
       operationId: getMessage
+      x-litezap-milestone: M2
+      x-zapi: "(sem equivalente; status chega por webhook)"
       summary: Consultar mensagem
       x-litezap-scope: instancia
       description: |
@@ -512,6 +628,9 @@ paths:
     get:
       tags: [Chats]
       operationId: listChats
+      x-litezap-milestone: M2
+      x-zapi: "Pegar chats"
+      x-litezap-notes: "Chats sem nenhuma mensagem no log não aparecem."
       summary: Listar chats
       x-litezap-scope: instancia
       description: Chats do log de mensagens, do mais recente para o mais antigo. Paginação por cursor.
@@ -549,6 +668,8 @@ paths:
     get:
       tags: [Chats]
       operationId: chatMessages
+      x-litezap-milestone: M2
+      x-zapi: "(sem equivalente)"
       summary: Histórico do chat
       x-litezap-scope: instancia
       description: |
@@ -595,6 +716,8 @@ paths:
     post:
       tags: [Chats]
       operationId: markRead
+      x-litezap-milestone: M2
+      x-zapi: "Ler mensagens / Ler chats"
       summary: Marcar chat como lido
       x-litezap-scope: instancia
       description: Envia confirmação de leitura das últimas mensagens recebidas (até 100) e zera `unread_count`.
@@ -613,6 +736,8 @@ paths:
     get:
       tags: [Contatos]
       operationId: listContacts
+      x-litezap-milestone: M2
+      x-zapi: "Pegar contatos"
       summary: Listar contatos
       x-litezap-scope: instancia
       description: Contatos da sessão do WhatsApp (consulta o worker; a instância precisa estar rodando).
@@ -645,6 +770,8 @@ paths:
     get:
       tags: [Contatos]
       operationId: getContact
+      x-litezap-milestone: M2
+      x-zapi: "Metadata do contato"
       summary: Consultar contato
       x-litezap-scope: instancia
       responses:
@@ -671,6 +798,9 @@ paths:
     post:
       tags: [Números]
       operationId: checkNumbers
+      x-litezap-milestone: M2
+      x-zapi: "Número com WhatsApp / Validação em lote"
+      x-litezap-notes: "Consultas em massa de números são um padrão de risco; por isso as cotas são baixas de propósito."
       summary: Verificar números
       x-litezap-scope: instancia
       description: |
@@ -723,6 +853,10 @@ paths:
     get:
       tags: [Mídia]
       operationId: getMedia
+      x-litezap-sample: { binary: arquivo }
+      x-litezap-milestone: M2
+      x-zapi: "(mídia chega por URL no webhook)"
+      x-litezap-notes: "Mídia antiga pode não estar mais disponível no WhatsApp (410)."
       summary: Baixar mídia recebida
       x-litezap-scope: instancia
       description: |
@@ -762,6 +896,9 @@ paths:
     get:
       tags: [Mídia]
       operationId: getSignedMedia
+      x-litezap-sample: { query: { exp: "1792252800", sig: 9f86d081884c7d65 }, binary: arquivo }
+      x-litezap-milestone: M2
+      x-zapi: "(sem equivalente)"
       summary: Mídia por URL assinada
       x-litezap-scope: assinatura
       security: []
@@ -784,10 +921,302 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "410": { $ref: "#/components/responses/MediaUnavailable" }
 
+  /v1/webhooks:
+    post:
+      tags: [Webhooks]
+      operationId: createWebhook
+      x-litezap-milestone: M3
+      x-zapi: "Atualizar webhook (ao receber, ao enviar, status...)"
+      summary: Criar webhook
+      x-litezap-scope: instancia
+      description: |
+        Cadastra um endpoint que recebe por `POST` os eventos que combinam com `events` (tipos exatos,
+        famílias como `message.*`, ou `*`). Com token de instância o webhook é sempre daquela instância.
+        Com token admin, `instance_id` escolhe a instância; sem ele o webhook é **global** (todas as
+        instâncias).
+
+        `secret` é opcional (16 a 256 caracteres); sem ele um é gerado com prefixo `whsec_`. O segredo só
+        aparece nesta resposta (e na de um `PATCH` que o troque): guarde-o. Só URLs `http(s)`; endereços
+        privados, loopback e link-local são recusados na entrega, salvo `webhook_allow_private_urls: true`.
+        Redirecionamentos não são seguidos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookInput" }
+            example: { url: "https://exemplo.com/litezap", events: ["message.*", "instance.status"] }
+      responses:
+        "201":
+          description: Webhook criado, com o `secret`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Webhook" }
+              example:
+                id: wh_3c7e1a9f5b2d4806
+                instance_id: inst_7f3a9c2e5b1d4086
+                url: https://exemplo.com/litezap
+                events: ["message.*", "instance.status"]
+                version: 1
+                enabled: true
+                created_at: "2026-10-17T14:00:00Z"
+                updated_at: "2026-10-17T14:00:00Z"
+                secret: whsec_9Jd2kQm4xV7pR1tY6nB3cF8hL0sW5zA
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+    get:
+      tags: [Webhooks]
+      operationId: listWebhooks
+      x-litezap-milestone: M3
+      x-zapi: "(sem equivalente)"
+      summary: Listar webhooks
+      x-litezap-scope: instancia
+      description: |
+        Com token de instância, lista os webhooks da própria instância. Com token admin, lista todos
+        (globais e de instâncias); `instance_id` filtra por uma instância. O `secret` nunca aparece aqui.
+      parameters:
+        - name: instance_id
+          in: query
+          description: "Só admin: filtra pelos webhooks desta instância."
+          schema: { type: string }
+      responses:
+        "200":
+          description: Webhooks visíveis para o token.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhooks: { type: array, items: { $ref: "#/components/schemas/Webhook" } }
+              example:
+                webhooks:
+                  - id: wh_3c7e1a9f5b2d4806
+                    instance_id: inst_7f3a9c2e5b1d4086
+                    url: https://exemplo.com/litezap
+                    events: ["message.*", "instance.status"]
+                    version: 1
+                    enabled: true
+                    created_at: "2026-10-17T14:00:00Z"
+                    updated_at: "2026-10-17T14:00:00Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/webhooks/{wid}:
+    parameters: [{ $ref: "#/components/parameters/WebhookID" }]
+    get:
+      tags: [Webhooks]
+      operationId: getWebhook
+      x-litezap-milestone: M3
+      x-zapi: "(sem equivalente)"
+      summary: Consultar webhook
+      x-litezap-scope: instancia
+      description: Um webhook de outra instância responde `404 not_found` para o token de instância.
+      responses:
+        "200":
+          description: O webhook (sem o `secret`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Webhook" }
+              example:
+                id: wh_3c7e1a9f5b2d4806
+                instance_id: inst_7f3a9c2e5b1d4086
+                url: https://exemplo.com/litezap
+                events: ["message.*", "instance.status"]
+                version: 1
+                enabled: true
+                created_at: "2026-10-17T14:00:00Z"
+                updated_at: "2026-10-17T14:00:00Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/WebhookNotFound" }
+    patch:
+      tags: [Webhooks]
+      operationId: updateWebhook
+      x-litezap-milestone: M3
+      x-zapi: "Atualizar todos os webhooks"
+      summary: Atualizar webhook
+      x-litezap-scope: instancia
+      description: |
+        Atualização parcial de `url`, `events`, `enabled` e `secret`. `instance_id` não muda (crie outro
+        webhook). `{"secret": ""}` gera um segredo novo, devolvido nesta resposta. Desligar
+        (`"enabled": false`) para de gerar entregas novas e pausa as pendentes até religar.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookInput" }
+            example: { events: ["*"], enabled: true }
+      responses:
+        "200":
+          description: O webhook atualizado (com `secret` só se ele foi trocado).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Webhook" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/WebhookNotFound" }
+    delete:
+      tags: [Webhooks]
+      operationId: deleteWebhook
+      x-litezap-milestone: M3
+      x-zapi: "(sem equivalente)"
+      summary: Apagar webhook
+      x-litezap-scope: instancia
+      description: Apaga o webhook e as entregas dele.
+      responses:
+        "204": { description: Apagado. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/WebhookNotFound" }
+
+  /v1/webhooks/{wid}/deliveries:
+    parameters: [{ $ref: "#/components/parameters/WebhookID" }]
+    get:
+      tags: [Webhooks]
+      operationId: listDeliveries
+      x-litezap-sample: { query: { status: failed } }
+      x-litezap-milestone: M3
+      x-zapi: "(sem equivalente)"
+      summary: Listar entregas
+      x-litezap-scope: instancia
+      description: |
+        Entregas do webhook, mais recentes primeiro, com tentativas, último status HTTP, último erro e o
+        evento completo. `?status=failed` é a dead-letter: entregas que ficaram 24 horas sem sucesso.
+        Entregas concluídas ficam 7 dias e a dead-letter 30 dias (configurável).
+      parameters:
+        - name: status
+          in: query
+          description: "`pending`, `delivered` ou `failed`. Omitido: todas."
+          schema: { type: string, enum: [pending, delivered, failed] }
+        - name: limit
+          in: query
+          description: Itens por página. Padrão 50, máximo 100.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Uma página de entregas.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryPage" }
+              example:
+                deliveries:
+                  - id: dlv_8b1f4e2a6c9d3075
+                    webhook_id: wh_3c7e1a9f5b2d4806
+                    event_id: evt_5f2c9a1b7d3e4f60
+                    event_type: message.received
+                    instance_id: inst_7f3a9c2e5b1d4086
+                    status: failed
+                    attempts: 19
+                    expires_at: "2026-10-18T14:02:11Z"
+                    last_status_code: 503
+                    last_error: "http 503"
+                    created_at: "2026-10-17T14:02:11Z"
+                    updated_at: "2026-10-18T14:02:11Z"
+                    event: { id: evt_5f2c9a1b7d3e4f60, type: message.received, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T14:02:11.204Z", data: { id: msg_e29d4b8a0f6c1357, chat: 5511999999999@s.whatsapp.net, from_me: false, source: contact, type: text, text: "Oi!", timestamp: "2026-10-17T14:02:10Z" } }
+                next_cursor: eyJzIjo0Mn0
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/WebhookNotFound" }
+
+  /v1/webhooks/{wid}/deliveries/{delivery_id}/retry:
+    parameters:
+      - $ref: "#/components/parameters/WebhookID"
+      - name: delivery_id
+        in: path
+        required: true
+        description: "Id da entrega (`dlv_...`)."
+        schema: { type: string }
+    post:
+      tags: [Webhooks]
+      operationId: retryDelivery
+      x-litezap-milestone: M3
+      x-zapi: "(sem equivalente)"
+      summary: Reenviar entrega
+      x-litezap-scope: instancia
+      description: Recoloca uma entrega da dead-letter (`failed`) na fila, com mais 24 horas de prazo. Só entregas `failed` podem ser reenviadas.
+      responses:
+        "200":
+          description: A entrega, de volta a `pending`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Delivery" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/WebhookNotFound" }
+        "409": { $ref: "#/components/responses/RetryConflict" }
+        "503": { $ref: "#/components/responses/ShuttingDown" }
+
+  /v1/instances/{id}/events:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Eventos em tempo real]
+      operationId: instanceEvents
+      x-litezap-sample: { sse: true, query: { types: "message.*,instance.status" } }
+      x-litezap-milestone: M3
+      x-zapi: "(sem equivalente)"
+      x-litezap-notes: "Sem replay: para não perder eventos, use webhooks."
+      summary: Stream da instância
+      x-litezap-scope: instancia
+      description: |
+        Server-Sent Events com os eventos de uma instância. Cada evento sai como `id`, `event` (tipo) e
+        `data` (o envelope JSON). A cada 15 segundos vai um comentário `: ping`. Não há replay
+        (`Last-Event-ID` é ignorado). Um cliente mais de 256 eventos atrasado recebe `event: error`
+        (`slow_consumer`) e é desconectado: reconecte. O token é checado só na conexão.
+      parameters:
+        - $ref: "#/components/parameters/EventTypes"
+      responses:
+        "200":
+          description: Stream `text/event-stream`, aberto até o cliente sair.
+          content:
+            text/event-stream:
+              schema: { type: string }
+              example: |
+                retry: 3000
+                : connected
+
+                id: evt_5f2c9a1b7d3e4f60
+                event: message.received
+                data: {"id":"evt_5f2c9a1b7d3e4f60","type":"message.received","version":1,"instance_id":"inst_7f3a9c2e5b1d4086","timestamp":"2026-10-17T13:45:00.123Z","data":{"id":"msg_e29d4b8a0f6c1357","chat":"5511999999999@s.whatsapp.net","from_me":false,"source":"contact","type":"text","text":"Oi!","timestamp":"2026-10-17T13:45:00Z"}}
+
+                : ping
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+  /v1/events:
+    get:
+      tags: [Eventos em tempo real]
+      operationId: allEvents
+      x-litezap-sample: { sse: true }
+      x-litezap-milestone: M3
+      x-zapi: "(sem equivalente)"
+      x-litezap-notes: "Sem replay: para não perder eventos, use webhooks."
+      summary: Stream global
+      x-litezap-scope: admin
+      description: Server-Sent Events de todas as instâncias (só token admin). Mesmo formato do stream da instância; use `instance_id` do envelope para separar.
+      parameters:
+        - $ref: "#/components/parameters/EventTypes"
+      responses:
+        "200":
+          description: Stream `text/event-stream`.
+          content:
+            text/event-stream:
+              schema: { type: string }
+              example: |
+                retry: 3000
+                : connected
+
+                id: evt_0a7d3c9e1f5b2486
+                event: instance.status
+                data: {"id":"evt_0a7d3c9e1f5b2486","type":"instance.status","version":1,"instance_id":"inst_7f3a9c2e5b1d4086","timestamp":"2026-10-17T13:40:02.511Z","data":{"state":"connected"}}
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /healthz:
     get:
       tags: [Operação]
       operationId: healthz
+      x-litezap-milestone: M1
+      x-zapi: "(sem equivalente)"
       summary: Processo vivo
       x-litezap-scope: operacao
       security: []
@@ -804,6 +1233,8 @@ paths:
     get:
       tags: [Operação]
       operationId: readyz
+      x-litezap-milestone: M1
+      x-zapi: "(sem equivalente)"
       summary: Pronto para atender
       x-litezap-scope: operacao
       security: []
@@ -857,6 +1288,17 @@ components:
       in: query
       description: "`next_cursor` da página anterior (opaco)."
       schema: { type: string }
+    WebhookID:
+      name: wid
+      in: path
+      required: true
+      description: "Id do webhook (`wh_...`)."
+      schema: { type: string }
+    EventTypes:
+      name: types
+      in: query
+      description: "Filtro separado por vírgulas: tipos exatos (`instance.status`), famílias (`message.*`) ou `*`. Omitido: todos."
+      schema: { type: string, example: "message.*,instance.status" }
 
   schemas:
     Error:
@@ -1025,6 +1467,81 @@ components:
       properties:
         url: { type: string }
         expires_at: { type: string, format: date-time }
+    WebhookInput:
+      type: object
+      properties:
+        url: { type: string, description: "URL absoluta http(s), até 2048 caracteres. Obrigatório na criação." }
+        events:
+          type: array
+          maxItems: 32
+          items: { type: string }
+          description: "Filtros: tipos exatos, famílias (`message.*`) ou `*`. Obrigatório na criação."
+        secret: { type: string, description: "16 a 256 caracteres. Omitido na criação: gerado. Vazio no PATCH: gera outro." }
+        instance_id: { type: string, description: "Só na criação. Admin: instância do webhook (omitido = global). Token de instância: só a própria." }
+        enabled: { type: boolean, default: true }
+        version: { type: integer, enum: [1], description: Versão do envelope. Só 1 por enquanto. }
+    Webhook:
+      type: object
+      properties:
+        id: { type: string }
+        instance_id: { type: string, description: Ausente em webhook global. }
+        url: { type: string }
+        events: { type: array, items: { type: string } }
+        version: { type: integer }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        secret: { type: string, description: Só na criação e quando trocado por PATCH. }
+    Delivery:
+      type: object
+      properties:
+        id: { type: string }
+        webhook_id: { type: string }
+        event_id: { type: string }
+        event_type: { type: string }
+        instance_id: { type: string }
+        status: { type: string, enum: [pending, delivered, failed] }
+        attempts: { type: integer }
+        next_attempt_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time, description: Prazo para entregar antes de ir para a dead-letter. }
+        last_status_code: { type: integer }
+        last_error: { type: string, description: "Ex.: `http 503`, `timeout: ...`, `blocked: ...`." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        delivered_at: { type: string, format: date-time }
+        event: { $ref: "#/components/schemas/Envelope" }
+    DeliveryPage:
+      type: object
+      properties:
+        deliveries: { type: array, items: { $ref: "#/components/schemas/Delivery" } }
+        next_cursor: { type: string }
+    Envelope:
+      type: object
+      required: [id, type, version, instance_id, timestamp, data]
+      properties:
+        id: { type: string, description: "Id do evento (`evt_...`). Use para deduplicar." }
+        type: { type: string }
+        version: { type: integer, enum: [1] }
+        instance_id: { type: string }
+        timestamp: { type: string, format: date-time }
+        data: { type: object, description: Varia por tipo de evento. }
+    EventMessage:
+      type: object
+      description: Mensagem em `message.received`, `message.sent` e `message.reaction`.
+      properties:
+        id: { type: string, description: "Id LiteZap (em envios pela API, o id do item da fila)." }
+        wa_message_id: { type: string }
+        chat: { type: string }
+        sender: { type: string }
+        from_me: { type: boolean }
+        is_group: { type: boolean }
+        push_name: { type: string, description: Nome de perfil de quem enviou. }
+        source: { type: string, enum: [contact, api, device] }
+        type: { type: string }
+        text: { type: string, description: "Texto, legenda ou emoji da reação." }
+        media: { $ref: "#/components/schemas/MediaInfo" }
+        reaction_to: { type: string }
+        timestamp: { type: string, format: date-time }
 
   responses:
     InstanceOK:
@@ -1062,6 +1579,18 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: { code: instance_not_found, message: "instance not found", retryable: false } }
+    WebhookNotFound:
+      description: "`not_found`: webhook inexistente ou de outra instância."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: not_found, message: "webhook not found", retryable: false } }
+    RetryConflict:
+      description: "`conflict`: só entregas `failed` podem ser reenviadas."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: conflict, message: "only failed deliveries can be retried (status: pending)", retryable: false } }
     NotFound:
       description: "`not_found` (mensagem, chat, contato ou mídia) ou `instance_not_found`."
       content:
@@ -1146,3 +1675,222 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: { code: worker_timeout, message: "instance worker did not answer in time", retryable: true } }
+
+# Eventos entregues por webhook e SSE (catálogo v1). Fonte no motor: internal/events.
+webhooks:
+  instance.status:
+    post:
+      summary: Estado da instância mudou
+      x-slug: instance-status
+      x-litezap-milestone: M3
+      x-zapi: Ao conectar / Ao desconectar
+      description: |
+        Emitido em toda transição de estado da instância (`starting`, `qr_pending`, `connecting`,
+        `connected`, `reconnecting`, `logged_out`, `banned`, `failed`, `stopped`). `reason` explica alguns
+        estados, como `proxy_unreachable` em `reconnecting` ou `temp_banned:<duração>` em `failed`.
+      x-related: [instance.qr, instance.pair_code]
+      x-fields:
+        - [state, string, "Novo estado. Veja Instâncias e estados."]
+        - [reason, string, "Motivo, quando houver (opcional)."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            examples:
+              conectada:
+                summary: Conectou
+                value: { id: evt_0a7d3c9e1f5b2486, type: instance.status, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:40:02.511Z", data: { state: connected } }
+              proxy:
+                summary: Proxy fora do ar
+                value: { id: evt_6b2e8d0a4c1f7395, type: instance.status, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T15:12:44.020Z", data: { state: reconnecting, reason: proxy_unreachable } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  instance.qr:
+    post:
+      summary: Novo QR de pareamento
+      x-slug: instance-qr
+      x-litezap-milestone: M3
+      x-zapi: (sem equivalente; QR por polling)
+      description: |
+        Emitido a cada novo QR enquanto a instância está em `qr_pending`. Mostre `code` como QR (qualquer
+        biblioteca de QR serve) em vez de fazer polling em `GET /qr`. `timeout_ms` é a validade aproximada
+        deste código.
+      x-related: [instance.status, instance.pair_code]
+      x-fields:
+        - [code, string, "Conteúdo do QR."]
+        - [timeout_ms, integer, "Validade do código em milissegundos (opcional)."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_1c8f3a6e9d2b4057, type: instance.qr, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:39:10.004Z", data: { code: "2@kQ3x...,Zm9v...,YmFy...,MQ==", timeout_ms: 20000 } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  instance.pair_code:
+    post:
+      summary: Código de pareamento gerado
+      x-slug: instance-pair-code
+      x-litezap-milestone: M3
+      x-zapi: (sem equivalente)
+      description: Emitido quando `POST /pair-phone` gera um código para digitar no celular.
+      x-related: [instance.status, instance.qr]
+      x-fields:
+        - [code, string, "Código para digitar em Aparelhos conectados > Conectar com número de telefone."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_9e4b1d7a3f0c6285, type: instance.pair_code, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:39:30.718Z", data: { code: "ABCD-EFGH" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  message.received:
+    post:
+      summary: Mensagem recebida
+      x-slug: message-received
+      x-litezap-milestone: M3
+      x-zapi: Ao receber
+      description: |
+        Emitido para cada mensagem nova de outra pessoa (`source: "contact"`), em chat direto ou grupo.
+        Mídia vem descrita em `media`, com `url` para baixar pela API (autenticada). Mensagens do histórico
+        sincronizado no pareamento não geram este evento (só um `history.synced`), e uma mensagem que chega
+        duas vezes (reconexão do worker) gera um único evento. Reações chegam como `message.reaction`.
+      x-related: [message.reaction, message.sent, history.synced]
+      x-fields:
+        - [id, string, "Id LiteZap da mensagem no log."]
+        - [wa_message_id, string, "Id da mensagem no WhatsApp."]
+        - [chat, string, "JID do chat (pessoa ou grupo)."]
+        - [sender, string, "JID de quem enviou (em grupos, o participante)."]
+        - [from_me, boolean, "Sempre false aqui."]
+        - [is_group, boolean, "true em grupos."]
+        - [push_name, string, "Nome de perfil de quem enviou."]
+        - [source, string, "contact."]
+        - [type, string, "text, image, video, audio, document, sticker, location, contact..."]
+        - [text, string, "Texto ou legenda."]
+        - [media, object, "id, kind, mime, size, file_name, seconds, ptt, url (opcional)."]
+        - [timestamp, string, "Hora da mensagem (RFC 3339)."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            examples:
+              texto:
+                summary: Texto
+                value: { id: evt_5f2c9a1b7d3e4f60, type: message.received, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:45:00.123Z", data: { id: msg_e29d4b8a0f6c1357, wa_message_id: 3A9F2C7D1E0B4A5C6D7E, chat: 5511999999999@s.whatsapp.net, sender: 5511999999999@s.whatsapp.net, from_me: false, push_name: Maria, source: contact, type: text, text: "Oi, meu pedido já saiu?", timestamp: "2026-10-17T13:45:00Z" } }
+              imagem:
+                summary: Imagem com legenda
+                value: { id: evt_2d6a9f1c4e8b3075, type: message.received, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:46:12.877Z", data: { id: msg_4f0b7c2e9a1d6358, wa_message_id: 3A1B5D9F2C7E4A0B8C6D, chat: 5511999999999@s.whatsapp.net, sender: 5511999999999@s.whatsapp.net, from_me: false, push_name: Maria, source: contact, type: image, text: "Foto do produto", media: { id: med_5b8e1f3c9d2a7046, kind: image, mime: image/jpeg, size: 182345, url: /v1/instances/inst_7f3a9c2e5b1d4086/media/med_5b8e1f3c9d2a7046 }, timestamp: "2026-10-17T13:46:12Z" } }
+              voz:
+                summary: Mensagem de voz
+                value: { id: evt_7a3d0f6b2c9e1484, type: message.received, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:47:30.402Z", data: { id: msg_9c2e5a8d1f4b7063, wa_message_id: 3A7E2B9D4F1C6A0E5B8D, chat: 5511999999999@s.whatsapp.net, sender: 5511999999999@s.whatsapp.net, from_me: false, push_name: Maria, source: contact, type: audio, media: { id: med_1d6f3b9e4a2c8057, kind: audio, mime: "audio/ogg; codecs=opus", size: 23110, seconds: 7, ptt: true, url: /v1/instances/inst_7f3a9c2e5b1d4086/media/med_1d6f3b9e4a2c8057 }, timestamp: "2026-10-17T13:47:30Z" } }
+              grupo:
+                summary: Texto em grupo
+                value: { id: evt_3e9b6d2a0f7c5148, type: message.received, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:50:05.611Z", data: { id: msg_6a1d8f3c0e5b9274, wa_message_id: 3A0C4E8B2D6F1A9C7E3B, chat: 120363025246125888@g.us, sender: 5511988887777@s.whatsapp.net, from_me: false, is_group: true, push_name: João, source: contact, type: text, text: "Reunião às 15h", timestamp: "2026-10-17T13:50:05Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  message.sent:
+    post:
+      summary: Mensagem enviada
+      x-slug: message-sent
+      x-litezap-milestone: M3
+      x-zapi: Ao enviar / Notificar enviadas por mim
+      description: |
+        Emitido quando um envio pela API é confirmado pelo WhatsApp (`source: "api"`, `id` = id do item da
+        fila) ou quando alguém envia uma mensagem pelo celular do número conectado (`source: "device"`).
+        Útil para detectar que um humano respondeu pelo celular.
+      x-related: [message.status, message.received]
+      x-fields:
+        - [id, string, "Id LiteZap (em envios pela API, o id devolvido por POST /messages)."]
+        - [wa_message_id, string, "Id no WhatsApp."]
+        - [chat, string, "JID do chat."]
+        - [from_me, boolean, "Sempre true."]
+        - [source, string, "api ou device."]
+        - [type, string, "Tipo da mensagem."]
+        - [text, string, "Texto ou legenda."]
+        - [timestamp, string, "Hora do envio."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            examples:
+              api:
+                summary: Enviada pela API
+                value: { id: evt_8c4f1a7d3b0e6259, type: message.sent, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:50:03.090Z", data: { id: msg_a41c9e07d2b35f68, wa_message_id: 3EB0A1B2C3D4E5F6A7B8C9, chat: 5511999999999@s.whatsapp.net, from_me: true, source: api, type: text, text: "Seu pedido saiu para entrega!", timestamp: "2026-10-17T13:50:03Z" } }
+              celular:
+                summary: Enviada pelo celular
+                value: { id: evt_4b0e7c3a9f2d6158, type: message.sent, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:55:41.330Z", data: { id: msg_2e7a4c9f1b6d3085, wa_message_id: 3AF1C8E2B5D9A4F7C0E1, chat: 5511999999999@s.whatsapp.net, from_me: true, source: device, type: text, text: "Já está a caminho!", timestamp: "2026-10-17T13:55:41Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  message.status:
+    post:
+      summary: Status de mensagem enviada
+      x-slug: message-status
+      x-litezap-milestone: M3
+      x-zapi: Status da mensagem
+      description: |
+        Acompanha as mensagens enviadas pela API: `sent`, `delivered`, `read` ou `failed` (com `error` no
+        formato `codigo: detalhe`). Se um recibo chegar antes da confirmação do envio, `delivered` (ou
+        `read`) pode chegar antes de `message.sent`, e o `sent` é omitido. Ainda não emite `played`
+        (áudio ouvido) nem `revoked` (M7).
+      x-related: [message.sent]
+      x-fields:
+        - [id, string, "Id devolvido por POST /messages."]
+        - [wa_message_id, string, "Id no WhatsApp (opcional)."]
+        - [chat, string, "JID do chat."]
+        - [status, string, "sent, delivered, read ou failed."]
+        - [error, string, "Motivo, em failed (opcional)."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            examples:
+              lida:
+                summary: Lida
+                value: { id: evt_0f5c2a8e6d1b9374, type: message.status, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:51:20.144Z", data: { id: msg_a41c9e07d2b35f68, wa_message_id: 3EB0A1B2C3D4E5F6A7B8C9, chat: 5511999999999@s.whatsapp.net, status: read } }
+              falhou:
+                summary: Falhou
+                value: { id: evt_6d1a9e4c2f7b0583, type: message.status, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:52:00.010Z", data: { id: msg_0c5e8b2f9a7d4613, chat: 5511888888888@s.whatsapp.net, status: failed, error: "invalid_number: number is not on WhatsApp" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  message.reaction:
+    post:
+      summary: Reação recebida
+      x-slug: message-reaction
+      x-litezap-milestone: M3
+      x-zapi: Ao receber (reação)
+      description: Emitido quando alguém reage a uma mensagem. `text` é o emoji (vazio = reação removida) e `reaction_to` o id WhatsApp da mensagem reagida.
+      x-related: [message.received]
+      x-fields:
+        - [type, string, "reaction."]
+        - [text, string, "Emoji; vazio quando a reação foi removida."]
+        - [reaction_to, string, "wa_message_id da mensagem reagida."]
+        - [chat, string, "JID do chat."]
+        - [sender, string, "Quem reagiu."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_2a7e4c1f9b6d3058, type: message.reaction, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:53:08.555Z", data: { id: msg_7d3b0e6a2c9f4185, wa_message_id: 3A5D8F1B4E7C0A3D6F9B, chat: 5511999999999@s.whatsapp.net, sender: 5511999999999@s.whatsapp.net, from_me: false, push_name: Maria, source: contact, type: reaction, text: "👍", reaction_to: 3EB0A1B2C3D4E5F6A7B8C9, timestamp: "2026-10-17T13:53:08Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  history.synced:
+    post:
+      summary: Histórico sincronizado
+      x-slug: history-synced
+      x-litezap-milestone: M3
+      x-zapi: (sem equivalente)
+      description: |
+        Depois do pareamento, o WhatsApp envia o histórico de conversas em blocos. O LiteZap grava tudo no log
+        sem gerar um evento por mensagem e emite um único `history.synced` por sync, 15 segundos depois do
+        último bloco. Bom momento para recarregar `GET /chats`.
+      x-related: [instance.status]
+      x-fields:
+        - [chats, integer, "Blocos de histórico ingeridos (cerca de um por chat)."]
+        - [messages, integer, "Mensagens nesses blocos."]
+        - [new_messages, integer, "Mensagens que ainda não estavam no log."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_5c1e8a4d0b7f2396, type: history.synced, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:41:30.902Z", data: { chats: 48, messages: 3120, new_messages: 3120 } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
