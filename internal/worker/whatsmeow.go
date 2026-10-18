@@ -205,7 +205,7 @@ func (w *Whatsmeow) connectLoop(ctx context.Context) {
 			return
 		}
 		w.log.Warn("connect failed; retrying", "err", err, "in", delay)
-		w.sink.ConnState("reconnecting", w.connectFailReason(err), w.jid())
+		reportConnDetail(w.sink, "reconnecting", w.connectFailReason(err), w.jid(), err)
 		if !sleep(ctx, delay) {
 			return
 		}
@@ -257,7 +257,7 @@ func (w *Whatsmeow) pairLoop(ctx context.Context) {
 			}
 			w.log.Error("connect for pairing", "err", err, "in", backoff)
 			if reason := w.connectFailReason(err); reason == "proxy_unreachable" {
-				w.sink.ConnState("reconnecting", reason, "")
+				reportConnDetail(w.sink, "reconnecting", reason, "", err)
 			}
 			if !sleep(ctx, backoff) {
 				return

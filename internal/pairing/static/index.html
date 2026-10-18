@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>Conectar WhatsApp</title>
+<link rel="stylesheet" href="pair.css">
+<script src="pair.js" defer></script>
+</head>
+<body>
+<main class="card" aria-live="polite">
+  <h1>Conectar WhatsApp</h1>
+  <p id="status" class="muted">Carregando…</p>
+
+  <section id="qr-box" hidden>
+    <img id="qr" alt="QR code para conectar o WhatsApp" width="264" height="264">
+    <ol class="steps">
+      <li>Abra o WhatsApp no celular.</li>
+      <li>Toque em <b>Configurações</b> › <b>Aparelhos conectados</b> › <b>Conectar um aparelho</b>.</li>
+      <li>Aponte a câmera para este código.</li>
+    </ol>
+    <button id="show-phone" type="button" class="link">Prefiro conectar com o número de telefone</button>
+  </section>
+
+  <section id="phone-box" hidden>
+    <label for="phone">Número com DDI e DDD</label>
+    <div class="row">
+      <input id="phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="5511999999999" maxlength="20">
+      <button id="phone-go" type="button">Gerar código</button>
+    </div>
+    <p id="code" class="code" hidden></p>
+    <p id="code-help" class="muted" hidden>No WhatsApp: <b>Aparelhos conectados</b> › <b>Conectar um aparelho</b> › <b>Conectar com número de telefone</b> e digite o código.</p>
+    <button id="show-qr" type="button" class="link">Voltar para o QR code</button>
+  </section>
+
+  <section id="start-box" hidden>
+    <button id="start" type="button">Iniciar conexão</button>
+  </section>
+
+  <section id="done-box" hidden>
+    <p class="ok">WhatsApp conectado. Pode fechar esta janela.</p>
+  </section>
+
+  <p id="error" class="error" role="alert" hidden></p>
+</main>
+</body>
+</html>

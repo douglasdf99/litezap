@@ -131,6 +131,9 @@ message ConnState {
   string state = 1;
   string reason = 2;
   string jid = 3;
+  // detail is the connect error behind a failure reason (e.g. proxy_unreachable), with
+  // credentials removed; empty otherwise (marco 11).
+  string detail = 4;
 }
 
 message QR {

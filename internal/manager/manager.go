@@ -513,6 +513,9 @@ func (m *Manager) runWorker(ctx context.Context, s *supervised, h spawner.Worker
 				m.observer.WorkerEvent(s.id, ev) // message or receipt
 				continue
 			}
+			if c.Detail != "" {
+				m.observer.WorkerEvent(s.id, ev) // the error behind the reason (instance.proxy_failed)
+			}
 			st := instance.State(c.State)
 			if st != instance.QRPending {
 				s.setQR("")

@@ -144,6 +144,9 @@ type Options struct {
 	// Hold, when set, pauses an instance's queue while it returns true (operator send
 	// suspension); whoever releases it must call Wake.
 	Hold func(instanceID string) bool
+	// SendLatency, when set, observes the seconds from enqueue to sent of each send
+	// (the /metrics histogram).
+	SendLatency interface{ Observe(float64) }
 }
 
 // Queues owns the per-instance dispatchers. It is a manager.Observer: reaching connected
@@ -896,6 +899,9 @@ func (d *dispatcher) sent(item store.Outbound, p Payload, at time.Time) error {
 		return err
 	}
 	d.applyUpdate(item, p, at)
+	if h := d.q.opt.SendLatency; h != nil && !item.CreatedAt.IsZero() {
+		h.Observe(max(at.Sub(item.CreatedAt).Seconds(), 0))
+	}
 	if pub := d.q.opt.Events; pub != nil {
 		if !Updates(p.Type) {
 			m := events.Message{ID: item.ID, WAMessageID: item.WAMessageID, Chat: item.ChatJID, FromMe: true,

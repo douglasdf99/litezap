@@ -17,6 +17,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/ops"
 	"github.com/douglasdf99/litezap/internal/retention"
 	"github.com/douglasdf99/litezap/internal/service"
+	"github.com/douglasdf99/litezap/internal/spawner"
 	"github.com/douglasdf99/litezap/internal/store"
 	"github.com/douglasdf99/litezap/internal/usage"
 )
@@ -38,6 +39,8 @@ type cloud struct {
 	proxy   *usage.ProxyWatch
 	health  *ops.Health
 	sweeper *retention.Sweeper
+	// latency is the queue latency histogram for /metrics (marco 11).
+	latency *ops.Histogram
 
 	// remoteCodes are the one-click dashboard logins minted by the operator (E7); nil
 	// without an operator token or with the dashboard disabled.
@@ -54,6 +57,7 @@ func newCloud(cfg config.Config, st *store.Store, log *slog.Logger) *cloud {
 		usage:   &usage.Recorder{Store: st, Log: log},
 		proxy:   &usage.ProxyWatch{},
 		health:  &ops.Health{Ping: st.Ping},
+		latency: ops.NewHistogram(ops.QueueLatencyBuckets),
 		sweeper: &retention.Sweeper{Store: st, Log: log, Media: cfg.MediaRetentionDays > 0,
 			Messages: time.Duration(cfg.MessageRetentionDays) * 24 * time.Hour},
 	}
@@ -106,7 +110,8 @@ func (c *cloud) beforeBoot(ctx context.Context) error {
 
 func (c *cloud) metrics() http.Handler {
 	return ops.Metrics(ops.Source{Store: c.st, Usage: c.usage, Proxy: c.proxy, Health: c.health,
-		Sending: c.sending, Version: Version})
+		Sending: c.sending, Version: Version, SendLatency: c.latency,
+		WorkerMemory: func() map[string]int64 { return spawner.WorkerMemory(c.cfg.DataDir) }})
 }
 
 // serveOps starts the unauthenticated ops listener, if bound.

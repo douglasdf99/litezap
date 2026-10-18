@@ -20,19 +20,24 @@ type Instance struct {
 	SettingsJSON string
 	// FirstConnectedAt is when the instance first reached connected (zero if never); the ramp counts from it.
 	FirstConnectedAt time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// Tags label the instance for the partner's own management (marco 11).
+	Tags []string
+	// IPAllowlist restricts where the instance token is accepted from (CIDRs; empty: anywhere).
+	IPAllowlist []string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
-const instanceCols = `id, name, state, state_reason, jid, token_hash, settings_json, first_connected_at, created_at, updated_at`
+const instanceCols = `id, name, state, state_reason, jid, token_hash, settings_json, first_connected_at, created_at, updated_at,
+	tags_json, ip_allowlist_json`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanInstance(row scanner) (Instance, error) {
 	var in Instance
-	var state, firstConn, created, updated string
+	var state, firstConn, created, updated, tags, allow string
 	err := row.Scan(&in.ID, &in.Name, &state, &in.StateReason, &in.JID, &in.TokenHash,
-		&in.SettingsJSON, &firstConn, &created, &updated)
+		&in.SettingsJSON, &firstConn, &created, &updated, &tags, &allow)
 	if errors.Is(err, sql.ErrNoRows) {
 		return in, ErrNotFound
 	}
@@ -43,6 +48,7 @@ func scanInstance(row scanner) (Instance, error) {
 	in.FirstConnectedAt = parseTS(firstConn)
 	in.CreatedAt, _ = time.Parse(tsLayout, created)
 	in.UpdatedAt, _ = time.Parse(tsLayout, updated)
+	in.Tags, in.IPAllowlist = jsonStrings(tags), jsonStrings(allow)
 	return in, nil
 }
 
@@ -52,9 +58,9 @@ func (s *Store) CreateInstance(ctx context.Context, in Instance) error {
 		in.SettingsJSON = "{}"
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO instances (`+instanceCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO instances (`+instanceCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.ID, in.Name, string(in.State), in.StateReason, in.JID, in.TokenHash, in.SettingsJSON,
-		fmtTS(in.FirstConnectedAt), ts, ts)
+		fmtTS(in.FirstConnectedAt), ts, ts, toJSONStrings(in.Tags), toJSONStrings(in.IPAllowlist))
 	return err
 }
 

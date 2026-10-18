@@ -756,10 +756,13 @@ func (x *Call) GetFromHosted() bool {
 // ConnState.state uses the instance.State strings:
 // qr_pending | connecting | connected | reconnecting | logged_out | banned | failed
 type ConnState struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	State         string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
-	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
-	Jid           string                 `protobuf:"bytes,3,opt,name=jid,proto3" json:"jid,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	State  string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
+	Reason string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	Jid    string                 `protobuf:"bytes,3,opt,name=jid,proto3" json:"jid,omitempty"`
+	// detail is the connect error behind a failure reason (e.g. proxy_unreachable), with
+	// credentials removed; empty otherwise (marco 11).
+	Detail        string `protobuf:"bytes,4,opt,name=detail,proto3" json:"detail,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -811,6 +814,13 @@ func (x *ConnState) GetReason() string {
 func (x *ConnState) GetJid() string {
 	if x != nil {
 		return x.Jid
+	}
+	return ""
+}
+
+func (x *ConnState) GetDetail() string {
+	if x != nil {
+		return x.Detail
 	}
 	return ""
 }
@@ -4342,11 +4352,12 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x06reason\x18\a \x01(\tR\x06reason\x12\x1b\n" +
 	"\tfrom_self\x18\b \x01(\bR\bfromSelf\x12\x1f\n" +
 	"\vfrom_hosted\x18\t \x01(\bR\n" +
-	"fromHosted\"K\n" +
+	"fromHosted\"c\n" +
 	"\tConnState\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x10\n" +
-	"\x03jid\x18\x03 \x01(\tR\x03jid\"7\n" +
+	"\x03jid\x18\x03 \x01(\tR\x03jid\x12\x16\n" +
+	"\x06detail\x18\x04 \x01(\tR\x06detail\"7\n" +
 	"\x02QR\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x1d\n" +
 	"\n" +

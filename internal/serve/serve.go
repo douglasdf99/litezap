@@ -24,6 +24,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/manager"
 	"github.com/douglasdf99/litezap/internal/mcp"
 	"github.com/douglasdf99/litezap/internal/media"
+	"github.com/douglasdf99/litezap/internal/pairing"
 	"github.com/douglasdf99/litezap/internal/queue"
 	"github.com/douglasdf99/litezap/internal/realtime"
 	"github.com/douglasdf99/litezap/internal/service"
@@ -117,7 +118,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	cl.attach(bus)
 	history := events.NewHistoryTracker(bus, nil, 15*time.Second)
 	q := queue.New(st, mgr, queue.Options{Defaults: cfg.InstanceDefaults, Log: log, Resolver: resolver,
-		ConnectGrace: 15 * time.Second, Events: bus, Hold: cl.sending.Held})
+		ConnectGrace: 15 * time.Second, Events: bus, Hold: cl.sending.Held, SendLatency: cl.latency})
 	cl.sending.Wake = q.Wake
 	// Calls and presence (marco 7); its sender is set below, once messaging exists.
 	rt := &realtime.Handler{Workers: mgr, Events: bus, Log: log,
@@ -133,9 +134,11 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	// Marco 9: chat state from the app state, and auto-read; their services are set below.
 	acct := &service.Account{Store: st, Events: bus, Sending: cl.sending}
 	reader := &autoread.Reader{Workers: mgr, Unread: st, Log: log, Settings: rt.Settings}
+	// Marco 11: instance.paired, which also spends the hosted pairing links.
+	paired := &pairing.Observer{Store: st, Events: bus, Log: log}
 	mgr.SetObserver(manager.Observers{
 		&ingest.Ingestor{Store: st, Log: log, Events: bus, History: history}, q, events.Observer{Bus: bus}, cl.proxy, rt,
-		groupEvents, acct, reader,
+		groupEvents, acct, reader, paired,
 	})
 	stopAll := func() {
 		actx, acancel := context.WithTimeout(context.Background(), scaled(5*time.Second, scale))
@@ -145,6 +148,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		rt.Close() // reject messages being queued, presence retries
 		groupEvents.Close()
 		reader.Close()
+		paired.Close()
 		cctx, cancel := context.WithTimeout(context.Background(), scaled(5*time.Second, scale))
 		cl.close(cctx)
 		cancel()
@@ -178,7 +182,14 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		stopAll()
 		return fmt.Errorf("media key: %w", err)
 	}
+	pairingKey, err := media.LoadOrCreateKey(filepath.Join(cfg.DataDir, "pairing_key"))
+	if err != nil {
+		stopAll()
+		return fmt.Errorf("pairing key: %w", err)
+	}
 	svc := &service.Instances{Store: st, Manager: mgr, DataDir: cfg.DataDir, Queues: q, Events: bus, Policy: cl.policy}
+	links := &pairing.Links{Store: st, Key: pairingKey, BaseURL: baseURL}
+	trusted, adminIPs, operatorIPs := cfg.IPLists()
 	msg := &service.Messaging{
 		Store: st, Manager: mgr, Queues: q, Resolver: resolver,
 		Fetcher:  &media.Fetcher{AllowPrivate: cfg.MediaAllowPrivateURLs},
@@ -215,6 +226,12 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		AgentHook:  &agenthook.Admin{Store: st},
 		Groups:     groups,
 		Account:    acct,
+		// Marco 11: IP allowlists, scoped API keys, metadata, bulk, hosted pairing.
+		Platform: &service.Platform{Store: st, Instances: svc},
+		Pairing:  links,
+		PairingPage: pairing.Handler(pairing.PageOptions{Links: links, Instances: svc,
+			FrameAncestors: cfg.PairingFrameAncestors, Log: log}),
+		Access: api.AccessOptions{TrustedProxies: trusted, AdminAllow: adminIPs, OperatorAllow: operatorIPs},
 	}, log)
 	var codes *dashboard.LaunchCodes
 	if loopback {

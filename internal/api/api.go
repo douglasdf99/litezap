@@ -13,6 +13,7 @@ import (
 
 	"github.com/douglasdf99/litezap/internal/apierr"
 	"github.com/douglasdf99/litezap/internal/events"
+	"github.com/douglasdf99/litezap/internal/ipallow"
 	"github.com/douglasdf99/litezap/internal/secure"
 	"github.com/douglasdf99/litezap/internal/service"
 	"github.com/douglasdf99/litezap/internal/settings"
@@ -84,6 +85,16 @@ type Options struct {
 	Account AccountService
 	// Groups, when set, serves the group and community routes (marco 8).
 	Groups GroupService
+	// Platform, when set, authenticates instance tokens and API keys (with their IP
+	// allowlists) and serves instance metadata, filtered listing, bulk operations and API
+	// keys (marco 11).
+	Platform PlatformService
+	// Pairing, when set, serves the pairing-link routes; PairingPage, when set, is the
+	// hosted pairing page mounted at /pair/ (no token: the link is the credential).
+	Pairing     PairingService
+	PairingPage http.Handler
+	// Access holds the server-wide IP allowlists and trusted proxies (marco 11).
+	Access AccessOptions
 }
 
 type server struct {
@@ -99,6 +110,9 @@ type principal struct {
 	admin      bool
 	operator   bool // managed hosting: above the admin (always also admin)
 	instanceID string
+	// keyID and scopes are set for a scoped API key (marco 11).
+	keyID  string
+	scopes []string
 }
 
 type ctxKey struct{}
@@ -130,15 +144,19 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 	r.Get("/media/{id}/{media_id}", s.signedMedia)
 
 	if opt.MCP != nil {
-		r.With(s.authenticate).Handle("/mcp", opt.MCP)
+		r.With(s.authenticate, s.denyKeys).Handle("/mcp", opt.MCP)
+	}
+	if opt.PairingPage != nil {
+		r.Mount("/pair", opt.PairingPage)
 	}
 
 	r.Route("/v1", func(r chi.Router) {
-		r.Use(s.authenticate)
+		r.Use(s.authenticate, s.enforceKeyScope)
 		r.Get("/me", s.me)
 		r.With(s.requireAdmin).Post("/instances", s.createInstance)
 		r.With(s.requireAdmin).Get("/instances", s.listInstances)
 		s.operatorRoutes(r)
+		s.platformRoutes(r)
 		if opt.Webhooks != nil {
 			r.Route("/webhooks", s.webhookRoutes)
 		}
@@ -149,6 +167,7 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 			r.Use(s.requireInstance)
 			r.Get("/", s.getInstance)
 			r.With(s.requireAdmin).Delete("/", s.deleteInstance)
+			s.instancePlatformRoutes(r)
 			r.Post("/start", s.action(svc.Start))
 			r.Post("/stop", s.action(svc.Stop))
 			r.Post("/restart", s.action(svc.Restart))
@@ -191,10 +210,18 @@ func (s *server) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		var p principal
+		var own ipallow.List
 		if s.isOperator(tok) {
 			p.admin, p.operator = true, true
 		} else if secure.Equal(tok, s.opt.AdminToken) {
 			p.admin = true
+		} else if s.opt.Platform != nil {
+			a, err := s.opt.Platform.Authenticate(r.Context(), tok)
+			if err != nil {
+				s.writeErr(w, err)
+				return
+			}
+			p.instanceID, p.keyID, p.scopes, own = a.InstanceID, a.KeyID, a.Scopes, a.IPAllowlist
 		} else {
 			id, err := s.svc.Authenticate(r.Context(), tok)
 			if err != nil {
@@ -202,6 +229,10 @@ func (s *server) authenticate(next http.Handler) http.Handler {
 				return
 			}
 			p.instanceID = id
+		}
+		if err := s.checkIP(r, p, own); err != nil {
+			s.writeErr(w, err)
+			return
 		}
 		ctx := context.WithValue(r.Context(), ctxKey{}, p)
 		ctx = service.WithScope(ctx, p.scope())
@@ -288,6 +319,9 @@ func (s *server) me(w http.ResponseWriter, r *http.Request) {
 	if p.instanceID != "" {
 		out["instance_id"] = p.instanceID
 	}
+	if p.keyID != "" {
+		out["key_id"], out["scopes"] = p.keyID, p.scopes
+	}
 	writeJSON(w, 200, out)
 }
 
@@ -319,6 +353,10 @@ func (s *server) createInstance(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) listInstances(w http.ResponseWriter, r *http.Request) {
+	if s.opt.Platform != nil {
+		s.searchInstances(w, r)
+		return
+	}
 	list, err := s.svc.List(r.Context())
 	if err != nil {
 		s.writeErr(w, err)
