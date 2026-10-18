@@ -272,8 +272,18 @@ func TestRejectFromOwnDevice(t *testing.T) {
 	if c := lastEvent(t, w).GetCall(); c.GetKind() != "reject" || !c.GetFromSelf() || c.GetCaller() != caller.String() {
 		t.Fatalf("reject = %+v", c)
 	}
+	if _, ok := w.calls.get("S1", time.Now()); !ok {
+		t.Fatal("call forgotten after own-device reject")
+	}
+	// The reject seen on real calls: from a WhatsApp-hosted device, with a reason attribute.
+	hosted := types.JID{User: "123456", Server: types.HostedLIDServer, Device: 99}
+	w.handle(&events.CallReject{BasicCallMeta: types.BasicCallMeta{From: hosted, CallCreator: caller, CallID: "S1"},
+		Data: &waBinary.Node{Tag: "reject", Attrs: waBinary.Attrs{"call-id": "S1", "call-creator": caller, "reason": "unavailable"}}})
+	if c := lastEvent(t, w).GetCall(); !c.GetFromHosted() || c.GetFromSelf() || c.GetReason() != "unavailable" {
+		t.Fatalf("hosted reject = %+v", c)
+	}
 	if err := w.RejectCall(context.Background(), "S1"); err != nil {
-		t.Fatalf("call forgotten after own-device reject: %v", err)
+		t.Fatalf("call forgotten after hosted reject: %v", err)
 	}
 	// A reject from the other party ends it.
 	w.handle(&events.CallOffer{BasicCallMeta: types.BasicCallMeta{From: caller, CallCreator: caller, CallID: "S2"}})

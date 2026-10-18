@@ -187,6 +187,9 @@ func (w *Whatsmeow) toCall(evt any) (*workerv1.Call, types.BasicCallMeta, bool) 
 		c.Kind, c.Reason, meta, data = "terminate", e.Reason, e.BasicCallMeta, e.Data
 	case *events.CallReject:
 		c.Kind, meta, data = "reject", e.BasicCallMeta, e.Data
+		if e.Data != nil { // whatsmeow does not parse it; real rejects carry one
+			c.Reason = e.Data.AttrGetter().OptionalString("reason")
+		}
 	default:
 		return nil, meta, false
 	}
@@ -194,10 +197,11 @@ func (w *Whatsmeow) toCall(evt any) (*workerv1.Call, types.BasicCallMeta, bool) 
 		return nil, meta, false
 	}
 	c.FromSelf = w.ownUser(meta.From)
+	c.FromHosted = meta.From.Server == types.HostedServer || meta.From.Server == types.HostedLIDServer
 	// Trace of call signalling on real devices (a few lines per call, at Info so the default
 	// log shows it); users are never logged, only servers and device numbers.
 	tag, children, attrs := callData(data)
-	w.log.Info("call signal", "kind", c.Kind, "from_self", c.FromSelf, "from_server", meta.From.Server,
+	w.log.Info("call signal", "kind", c.Kind, "from_self", c.FromSelf, "from_hosted", c.FromHosted, "from_server", meta.From.Server,
 		"from_device", meta.From.Device, "creator_self", w.ownUser(meta.CallCreator), "reason", c.Reason,
 		"data_tag", tag, "data_children", children, "data_attrs", attrs)
 	creator := meta.CallCreator
@@ -264,7 +268,7 @@ func (w *Whatsmeow) onRealtime(evt any) bool {
 	case "terminate":
 		w.calls.remove(c.CallId)
 	case "reject":
-		if !c.FromSelf { // our own devices' rejects do not end the call (see realtime package)
+		if !c.FromSelf && !c.FromHosted { // these do not end the call (see realtime package)
 			w.calls.remove(c.CallId)
 		}
 	}

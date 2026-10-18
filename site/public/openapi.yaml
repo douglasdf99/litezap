@@ -1513,7 +1513,7 @@ components:
         is_group: { type: boolean }
         media: { type: string, enum: [audio, video] }
         rejected: { type: boolean, description: "call.received: rejeitada por `calls.auto_reject`." }
-        reason: { type: string, description: "call.ended: motivo do WhatsApp (ex.: `accepted_elsewhere`), `rejected` (por esta instância), `rejected_by_peer` ou `timeout` (sem sinal de fim em 2 min)." }
+        reason: { type: string, description: "call.ended: `caller_hangup`, `accepted_elsewhere`, `ended`, `rejected` (por esta instância), `rejected_by_peer`, `timeout` ou outro motivo do WhatsApp." }
         missed: { type: boolean, description: "call.ended: tocou sem ninguém atender." }
         timestamp: { type: string, format: date-time }
     SettingsPatch:
@@ -2181,10 +2181,13 @@ webhooks:
       x-zapi: Webhook de chamadas
       description: |
         A chamada terminou; sai uma vez por chamada. `missed: true` quando tocou sem ninguém atender e
-        não foi rejeitada. `reason` traz o motivo do WhatsApp (ex.: `accepted_elsewhere`), `rejected`
-        (rejeitada por esta instância), `rejected_by_peer` ou `timeout` (nenhum sinal de fim em 2
-        minutos). O celular manda aos aparelhos vinculados um "reject" logo depois da oferta, atendendo
-        ou não; esse sinal dos nossos próprios aparelhos não encerra a chamada.
+        não foi rejeitada. `reason`: `caller_hangup` (tocou sem atender até quem ligou desistir),
+        `accepted_elsewhere` (atendida no celular ou em outro aparelho da conta; sai logo depois de
+        `call.accepted`, no atendimento: o aparelho vinculado não é avisado do fim da conversa),
+        `ended` (encerrada depois de atendida), `rejected` (por `calls.auto_reject`),
+        `rejected_by_peer` (o outro lado rejeitou e nenhum fim chegou em 5 segundos), `timeout`
+        (nenhum sinal em 2 minutos) ou outro motivo enviado pelo WhatsApp. O "reject" que um aparelho
+        hospedado do WhatsApp (`hosted.lid`, aparelho 99) manda logo após toda oferta é ignorado.
       x-related: [call.received, call.accepted]
       x-fields:
         - [call_id, string, "Id da chamada."]

@@ -408,7 +408,7 @@ func (f *Fake) EmitCall(c *workerv1.Call) {
 	case "terminate":
 		delete(f.WA.offers, c.CallId)
 	case "reject":
-		if !c.FromSelf { // our own devices' rejects do not end the call
+		if !c.FromSelf && !c.FromHosted { // our own and hosted devices' rejects do not end the call
 			delete(f.WA.offers, c.CallId)
 		}
 	}
