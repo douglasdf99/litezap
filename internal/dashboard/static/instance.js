@@ -478,6 +478,10 @@ function settingsTab(ctx) {
     const tz = h('input', { value: s.timezone, list: 'tz-list', placeholder: 'vazio = fuso do servidor (ex.: America/Sao_Paulo)' });
     const unsafe = h('input', { type: 'checkbox', checked: s.unsafe_pacing });
     const proxy = h('input', { class: 'mono', value: s.proxy_url, placeholder: 'vazio = proxy padrão do servidor (ou conexão direta)', autocomplete: 'off' });
+    // Settings the server's operator manages (hosted plans) are read-only here.
+    const locked = new Set(s.locked || []);
+    proxy.disabled = locked.has('proxy_url');
+    unsafe.disabled = locked.has('unsafe_pacing');
     const save = h('button', { class: 'btn primary', type: 'submit' }, 'Salvar');
 
     const form = h('form', {
@@ -499,9 +503,9 @@ function settingsTab(ctx) {
         const win = noWin.checked ? { start: '', end: '' } : { start: winStart.value, end: winEnd.value };
         if (win.start !== s.send_window.start || win.end !== s.send_window.end) p.send_window = win;
         if (tz.value.trim() !== s.timezone) p.timezone = tz.value.trim();
-        if (unsafe.checked !== s.unsafe_pacing) p.unsafe_pacing = unsafe.checked;
+        if (!unsafe.disabled && unsafe.checked !== s.unsafe_pacing) p.unsafe_pacing = unsafe.checked;
         // The server masks the proxy password: send it only when the user changed it.
-        if (proxy.value.trim() !== s.proxy_url) {
+        if (!proxy.disabled && proxy.value.trim() !== s.proxy_url) {
           if (proxy.value.includes(':xxxxx@')) {
             toast('O proxy mudou mas a senha continua mascarada (xxxxx): digite a senha real de novo.', 'error');
             return;
@@ -534,6 +538,7 @@ function settingsTab(ctx) {
       h('label', { class: 'check' }, noWin, ' Sem janela (enviar a qualquer hora)'),
       h('div', { class: 'grid3' }, field('Início', winStart), field('Fim', winEnd), field('Fuso horário', tz)), tzList),
     h('fieldset', null, h('legend', null, 'Somente admin'),
+      locked.size ? h('p', { class: 'small muted' }, 'Campos bloqueados são gerenciados pelo provedor deste servidor.') : null,
       field('Proxy (socks5:// ou http://)', proxy, 'A senha aparece mascarada; só é enviada se você alterar o campo. Vazio volta ao proxy padrão. Trocar reinicia o worker; se o proxy não responder, a instância fica "reconectando" (nunca cai para conexão direta).'),
       h('label', { class: 'check' }, unsafe, ' Ritmo inseguro (libera os pisos de intervalo e máximo por minuto; aumenta o risco de banimento)')),
     h('div', { class: 'row end' }, save));

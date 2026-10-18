@@ -245,7 +245,7 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 | `/webhooks...` | admin ou inst (só os da própria instância) | 5.3 |
 | `GET /me` | qualquer | quem é o token (`{admin, instance_id}`), usado por `litezap mcp` |
 | `POST /mcp` (fora do `/v1`) | admin ou inst | MCP streamable HTTP (seção 7) |
-| `GET /healthz` · `/readyz` · `/metrics` | sem auth em bind loopback; admin caso contrário | observabilidade |
+| `GET /healthz` · `/readyz` · `/metrics` | sem auth em bind loopback; admin caso contrário; sem auth no `ops_listen_addr` | observabilidade |
 
 ### 6.1 Autenticação e tokens
 
@@ -308,7 +308,7 @@ Toda transição é persistida e emitida como `instance.status`.
 ### 9.2 Supervisão
 
 - **Heartbeat** `Ping` a cada 10s; 3 falhas seguidas → kill do processo + restart.
-- **Watchdog de conexão** no worker: em `connected` sem nenhum evento/keepalive por `zombie_timeout` (padrão 5min) → força reconexão. *Ainda não implementado* (marco 2b/3); `zombie_timeout` não é lido da configuração.
+- **Watchdog de conexão** no worker (`zombie_timeout`, padrão `0` = desligado para não mudar o self-host; a nuvem usa `5m`): worker logado cujo estado reportado diverge do socket por mais que o limite — `connected` sem socket, ou `reconnecting`/`keepalive_timeout` com socket ainda "aberto" — é forçado a reconectar (`state_reason: zombie_watchdog`). O whatsmeow já força reconexão após 3 min de keepalive falhando; o watchdog é a rede de segurança para evento perdido ou socket travado. Ficar sem eventos não conta (número ocioso é normal).
 - **Restart com backoff exponencial** (1s → 5min). **Circuit breaker**: 5 crashes em 10min → `failed` + evento; sem restart até ação manual.
 - **Limite de memória** por worker: `GOMEMLIMIT` + kill acima de `worker_memory_max_mb` (padrão 512).
 - **Erros terminais** (`logged_out`, `banned`): sem retry.
@@ -322,12 +322,17 @@ Códigos estáveis: `unauthorized`, `forbidden`, `instance_not_found`, `not_foun
 ### 9.4 Observabilidade
 
 - Logs estruturados (`slog`) com `instance_id` em toda linha.
-- `/metrics` (Prometheus): mensagens enviadas/recebidas, latência e profundidade da fila, restarts, estado por instância, entregas de webhook por status.
-- `/healthz` (processo vivo) e `/readyz` (store ok e manager pronto).
+- `/metrics` (Prometheus, texto 0.0.4): instâncias por estado, profundidade da fila por status, entregas de webhook por status, mensagens enviadas/recebidas, bytes de mídia, mudanças de estado (inclui starts de worker), falhas de proxy, envio suspenso, pronto/encerrando e runtime Go do supervisor. Latência da fila em histograma e memória por worker ficam para depois.
+- `/healthz` (processo vivo) e `/readyz` (store ok; `503 draining` assim que o shutdown começa).
+- `ops_listen_addr` serve os três sem token num listener separado (rede privada da plataforma).
+- `LITEZAP_LOG_FORMAT=json` troca os logs para JSON.
+- Uso persistido por instância e dia (`usage_daily`, `GET /v1/usage`, só operador) para cobrança; independe das métricas.
 
 ## 10. Configuração
 
-`litezap.yaml` + variáveis `LITEZAP_*` (env sobrescreve arquivo): `listen_addr` (padrão `127.0.0.1:8787`), `public_url`, `data_dir`, `admin_token`, `default_proxy_url`, `media_allow_private_urls` (padrão `false`), `instance_defaults` (ritmo, janela, fuso, rampa e `unsafe_pacing`; só no arquivo), `worker_memory_max_mb`, `zombie_timeout` (ainda não implementado, marco 2b/3), limites de mídia, `media_retention_days`, `message_retention_days`.
+`litezap.yaml` + variáveis `LITEZAP_*` (env sobrescreve arquivo): `listen_addr` (padrão `127.0.0.1:8787`), `public_url`, `data_dir`, `admin_token`, `default_proxy_url`, `media_allow_private_urls` (padrão `false`), `instance_defaults` (ritmo, janela, fuso, rampa e `unsafe_pacing`; `LITEZAP_INSTANCE_DEFAULTS_JSON`), `worker_memory_max_mb`, `zombie_timeout` (padrão `0`), `shutdown_timeout`, `media_retention_days` e `message_retention_days` (padrão `0` = guardar para sempre), `webhook_retention_days`, `webhook_failed_retention_days`. O documento inteiro também pode vir em `LITEZAP_CONFIG_JSON` (aplicado depois do arquivo; variáveis individuais vencem).
+
+Hospedagem gerenciada (todas desligadas por padrão; detalhes no README e no spec da nuvem): `operator_token` (até dois, rotação), `locked_settings` (`proxy_url`, `unsafe_pacing`), `max_instances` (ajustável em tempo de execução pelo operador), `require_proxy`, `ops_listen_addr`.
 
 ## 11. Testes
 

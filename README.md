@@ -31,10 +31,20 @@ Configuração (`litezap.yaml`; variáveis `LITEZAP_*` têm precedência):
 | `default_proxy_url` | `LITEZAP_DEFAULT_PROXY_URL` | vazio (conexão direta) |
 | `media_allow_private_urls` | `LITEZAP_MEDIA_ALLOW_PRIVATE_URLS` | `false` |
 | `webhook_allow_private_urls` | `LITEZAP_WEBHOOK_ALLOW_PRIVATE_URLS` | `false` (`true` libera webhooks para `127.0.0.1`, rede local etc.) |
-| `webhook_retention_days` | só no arquivo | `7` (entregas concluídas) |
-| `webhook_failed_retention_days` | só no arquivo | `30` (dead-letter) |
+| `webhook_retention_days` | `LITEZAP_WEBHOOK_RETENTION_DAYS` | `7` (entregas concluídas) |
+| `webhook_failed_retention_days` | `LITEZAP_WEBHOOK_FAILED_RETENTION_DAYS` | `30` (dead-letter) |
 | `disable_dashboard` | `LITEZAP_DISABLE_DASHBOARD` | `false` (`true` desliga o painel em `/app/`; a API continua) |
-| `instance_defaults` (bloco) | só no arquivo | ritmo 3s + 0–2s, 20/min, digitando ligado, rampa 50→150 em 14 dias, janela 08:00–20:00 no fuso do servidor |
+| `instance_defaults` (bloco) | `LITEZAP_INSTANCE_DEFAULTS_JSON` | ritmo 3s + 0–2s, 20/min, digitando ligado, rampa 50→150 em 14 dias, janela 08:00–20:00 no fuso do servidor |
+| `message_retention_days` | `LITEZAP_MESSAGE_RETENTION_DAYS` | `0` (guarda o log para sempre) |
+| `media_retention_days` | `LITEZAP_MEDIA_RETENTION_DAYS` | `0` (cópias locais de mídia nunca são apagadas) |
+| `zombie_timeout` | `LITEZAP_ZOMBIE_TIMEOUT` | `0` (watchdog de conexão desligado; ex.: `5m`) |
+| `shutdown_timeout` | `LITEZAP_SHUTDOWN_TIMEOUT` | `0` (fases padrão, até ~40s; ex.: `25s` para caber num `kill_timeout` de 30s) |
+| `ops_listen_addr` | `LITEZAP_OPS_LISTEN_ADDR` | vazio (veja [Hospedagem gerenciada](#hospedagem-gerenciada-operador)) |
+| `operator_token`, `locked_settings`, `max_instances`, `require_proxy` | `LITEZAP_OPERATOR_TOKEN`, `LITEZAP_LOCKED_SETTINGS`, `LITEZAP_MAX_INSTANCES`, `LITEZAP_REQUIRE_PROXY` | desligados (veja [Hospedagem gerenciada](#hospedagem-gerenciada-operador)) |
+
+Plataformas configuradas só por ambiente podem passar o documento inteiro em `LITEZAP_CONFIG_JSON` (as mesmas chaves do YAML, em JSON); ele é aplicado depois do arquivo, e as variáveis individuais acima ainda vencem. `LITEZAP_LOG_FORMAT=json` troca os logs (supervisor e workers) para JSON por linha.
+
+Com `message_retention_days`, uma limpeza de hora em hora apaga mensagens mais velhas que o prazo, a mídia delas e os envios já concluídos. Com `media_retention_days`, a cópia local de um anexo é apagada N dias depois de baixada; o próximo `GET .../media/{id}` baixa de novo enquanto o WhatsApp ainda tiver o arquivo (depois disso, `410 media_unavailable`).
 
 Workers rodam em grupo de processos próprio e encerram sozinhos assim que o supervisor morre, mesmo à força (SIGKILL): cada worker vigia um pipe no stdin mantido aberto pelo supervisor e sai ao receber EOF. A limpeza de órfãos no próximo `serve` (via `data/run/*.pid`) é só um fallback.
 
@@ -52,7 +62,7 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `POST /v1/instances/{id}/pair-phone` `{"phone"}` → `{code}` | instância ou admin |
 | `POST /v1/instances/{id}/token/rotate` | admin |
 | `DELETE /v1/instances/{id}` | admin |
-| `GET\|PUT /v1/instances/{id}/settings` | instância ou admin (`proxy_url` e `unsafe_pacing` só admin) |
+| `GET\|PUT /v1/instances/{id}/settings` | instância ou admin (`proxy_url` e `unsafe_pacing` só admin; só operador quando travados em `locked_settings`) |
 | `POST /v1/instances/{id}/messages[?wait=true&timeout=30s]` | instância ou admin |
 | `GET /v1/instances/{id}/messages/{msg_id}` | instância ou admin |
 | `GET /v1/instances/{id}/chats[?limit=&cursor=]` | instância ou admin |
@@ -68,11 +78,14 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `GET\|PATCH\|DELETE /v1/webhooks/{id}` | idem (webhook de outra instância responde 404) |
 | `GET /v1/webhooks/{id}/deliveries[?status=pending\|delivered\|failed&limit=&cursor=]` | idem |
 | `POST /v1/webhooks/{id}/deliveries/{delivery_id}/retry` | idem |
-| `GET /v1/me` → `{admin, instance_id}` | qualquer token |
+| `GET /v1/me` → `{admin, role, instance_id}` (`role`: `operator`, `admin` ou `instance`) | qualquer token |
+| `POST /v1/export` `{"include_media"?, "upload_url"?}` → `tar.gz` | admin (`upload_url` só operador) |
+| `GET /v1/usage[?from=&to=&instance_id=]` | operador |
+| `GET\|PUT /v1/operator/limits` · `GET\|PUT /v1/operator/sending` · `PUT /v1/operator/instances/{id}/sending` · `POST /v1/operator/dashboard-login` | operador |
 | `POST /mcp` (MCP streamable HTTP, seção "MCP") | instância ou admin |
-| `GET /healthz`, `GET /readyz` | público (admin se o `listen_addr` não for loopback) |
+| `GET /healthz`, `GET /readyz`, `GET /metrics` | público (admin se o `listen_addr` não for loopback); sem token no `ops_listen_addr` |
 | `GET /app/` (painel) · `GET /app/api/info` | público (arquivos estáticos; o painel pede o token admin) |
-| `POST /app/api/session` `{"code"}` → `{token}` | código de uso único do app de bandeja; só em loopback |
+| `POST /app/api/session` `{"code"}` → `{token}` | código de uso único do app de bandeja (só em loopback) ou emitido pelo operador |
 
 As ações respondem com a instância. `start` e `restart` respondem assim que o worker é disparado, então a resposta pode ainda mostrar o estado anterior: consulte `GET /v1/instances/{id}` até ver o novo estado.
 
@@ -167,6 +180,7 @@ Adicionar campos em `data` não muda a versão; remover ou mudar o sentido de um
 | `message.status` | `sent`, `delivered`, `read` ou `failed` de uma mensagem nossa | `{id, wa_message_id?, chat, status, error?}` |
 | `message.reaction` | reação recebida | mensagem com `type: "reaction"`, `text` = emoji (vazio = reação removida), `reaction_to` |
 | `history.synced` | fim da ingestão de um history sync (um evento por sync, 15s depois do último bloco) | `{chats, messages, new_messages}` |
+| `instance.proxy_failed` | a instância não alcança o WhatsApp pelo proxy (entra em `reconnecting`/`proxy_unreachable`), repetido a cada 5 min enquanto durar; a volta é o próximo `instance.status` | `{reason, since, duration_seconds, outages_last_hour, repeat}` |
 
 Mensagem: `{id, wa_message_id, chat, sender, from_me, is_group, push_name, source, type, text, media?, reaction_to?, timestamp}`, os mesmos campos de `GET /messages/{id}`. `media` traz `{id, kind, mime, size, file_name, seconds, ptt, url}`; `url` é a rota autenticada de download (`GET /v1/instances/{id}/media/{media_id}`). Mensagens de history sync não geram eventos individuais (só o `history.synced`); uma mensagem que chega duas vezes (reconexão do worker) gera um único evento.
 
@@ -439,6 +453,25 @@ Compilar (o `litezap` principal continua sem CGO; só o app de bandeja usa [fyne
 
 Ainda não (em breve): instaladores (`.dmg`, `.msi`, `.deb`), assinatura de código e notarização (no macOS, abra com botão direito > Abrir na primeira vez), ícone do `.app`, auto-update, iniciar com o sistema, túnel opcional, envio de mídia pelo painel e login no painel com token de instância.
 
+## Hospedagem gerenciada (operador)
+
+Opções para rodar o LiteZap como serviço para terceiros (a nuvem gerenciada usa o mesmo binário). Todas vêm desligadas: sem elas o servidor se comporta como no self-host.
+
+- **Token de operador** (`operator_token`, até dois valores separados por vírgula para rotação, mínimo 20 caracteres, diferente do admin). Fica só com quem opera a plataforma. Tem tudo o que o admin tem e mais: muda as settings travadas, cria instâncias além do limite e chama `/v1/operator/*` e `/v1/usage`. Webhooks criados com ele ficam invisíveis para o admin e para tokens de instância (ex.: o `instance.status` que a plataforma monitora).
+- **Admin "de cliente"**: com `locked_settings: [proxy_url, unsafe_pacing]`, o token admin recebe `403 forbidden` ao mudar esses campos e o `GET /settings` mostra só esquema e host do proxy (sem usuário e senha), com `"locked": [...]`. O painel desabilita os campos travados.
+- **Limite de instâncias** (`max_instances`): o admin acima do limite recebe `403 plan_limit`. O operador ajusta sem reiniciar: `PUT /v1/operator/limits {"max_instances": 5}` (persistido; `null` volta ao valor configurado).
+- **Proxy obrigatório** (`require_proxy: true`): nenhum worker sobe sem proxy (nunca conexão direta). Instância criada sem proxy fica `stopped` com `state_reason: proxy_required`; `start`/`restart` respondem `409 proxy_required` até o operador definir `proxy_url`. Limpar o proxy é recusado.
+- **Envio suspenso**: `PUT /v1/operator/sending {"suspended": true, "reason": "..."}` (todas as instâncias) ou `PUT /v1/operator/instances/{id}/sending`. Novos envios (REST e MCP) respondem `403 sending_suspended`; o que já estava na fila fica retido até liberar. Recepção, webhooks e leitura continuam.
+- **Uso**: `GET /v1/usage?from=2026-10-01&to=2026-10-31` devolve, por instância e dia (UTC), envios pela API que chegaram ao WhatsApp, mensagens recebidas, bytes de mídia, segundos conectada e entregas a webhooks do cliente. Gravado a cada 30s e no shutdown; sobrevive à exclusão da instância.
+- **Login de um clique**: `POST /v1/operator/dashboard-login` → `{code, url, expires_at}`. A `url` (`<public_url>/app/#code=...`) abre o painel já logado com o token admin (nunca o de operador). O código vale uma vez, por 2 minutos.
+- **Endpoint de ops** (`ops_listen_addr`, ex.: `[::]:9090` numa rede privada): `/healthz`, `/readyz` e `/metrics` sem token, para health checks da plataforma e o coletor Prometheus. Não exponha esse endereço à internet.
+- **Upgrade gracioso**: ao receber SIGTERM o `/readyz` passa a `503 {"status":"draining"}` na hora; `shutdown_timeout` encolhe todas as fases do encerramento para caber no prazo da plataforma.
+- **Exportação**: `POST /v1/export` (admin) devolve um `tar.gz` com `manifest.json`, `litezap.db` (cópia online, sem webhooks e dados do operador) e `media/`. Com `upload_url` (só operador; HTTPS, ex.: URL pré-assinada de S3) o arquivo é enviado por `PUT` e a resposta traz `bytes` e `sha256`. Uma exportação por vez.
+
+Métricas em `/metrics`: `litezap_instances{state}`, `litezap_queue_messages{status}`, `litezap_webhook_deliveries{status}`, `litezap_messages_sent_total`, `litezap_messages_received_total`, `litezap_media_bytes_total`, `litezap_instance_state_changes_total{state}`, `litezap_proxy_failures_total`, `litezap_proxy_unreachable_instances`, `litezap_sending_suspended`, `litezap_sending_suspended_instances`, `litezap_ready`, `litezap_draining`, `litezap_build_info{version}` e métricas básicas do runtime Go do supervisor.
+
+Exemplo (Fly.io, só por segredos): `LITEZAP_LISTEN_ADDR=0.0.0.0:8080`, `LITEZAP_OPS_LISTEN_ADDR=[::]:9090`, `LITEZAP_PUBLIC_URL`, `LITEZAP_ADMIN_TOKEN`, `LITEZAP_OPERATOR_TOKEN`, `LITEZAP_LOCKED_SETTINGS=proxy_url,unsafe_pacing`, `LITEZAP_REQUIRE_PROXY=true`, `LITEZAP_MAX_INSTANCES`, `LITEZAP_ZOMBIE_TIMEOUT=5m`, `LITEZAP_SHUTDOWN_TIMEOUT=25s`, `LITEZAP_MEDIA_RETENTION_DAYS=7`, `LITEZAP_MESSAGE_RETENTION_DAYS=90`, `LITEZAP_LOG_FORMAT=json`.
+
 ## Limitações conhecidas
 
 - Eventos ainda não emitidos: `message.revoked`, `chat.presence` e `group.updated` (o worker não os reporta). SSE não tem replay (`Last-Event-ID` é ignorado).
@@ -447,7 +480,9 @@ Ainda não (em breve): instaladores (`.dmg`, `.msi`, `.deb`), assinatura de cód
 - Streams SSE checam o token só na conexão: um stream aberto continua depois de o token ser rotacionado (reconecte para aplicar).
 - Se um recibo chegar antes da confirmação do envio, sai `message.status: delivered` (ou `read`) antes de `message.sent`, e o `message.status: sent` é omitido.
 - Sem busca full-text e sem envio de `sticker`, `location` e `contact` (marco 2b); essas mensagens são recebidas e registradas.
-- Mídia recebida baixada fica em `data/media/` sem limpeza automática ainda (o prazo de 7 dias é gravado, a limpeza vem no marco 2b).
+- Mídia recebida baixada fica em `data/media/` para sempre, a menos que `media_retention_days` esteja definido.
+- `instance.proxy_failed` não traz a mensagem de erro do worker, só o motivo `proxy_unreachable`.
+- A exportação (`POST /v1/export`) não inclui as sessões do WhatsApp: restaurar em outro servidor exige parear de novo. A importação ainda não existe.
 - Mídia passa entre supervisor e worker por arquivos em `data/` (mesma máquina). Um spawner em container (nuvem) vai precisar de um volume compartilhado.
 - Se o supervisor morrer entre o worker entregar um evento e o supervisor gravá-lo, esse evento se perde (sem confirmação de entrega worker→supervisor ainda).
 - Mensagens editadas e apagadas ainda não atualizam o log.

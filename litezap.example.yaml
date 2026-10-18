@@ -20,6 +20,21 @@ webhook_failed_retention_days: 30
 # Painel web em /app/ (pede o token admin). true desliga o painel; a API continua igual.
 disable_dashboard: false
 
+# Retenção (0 = guardar para sempre): log de mensagens e cópias locais de mídia baixada.
+message_retention_days: 0
+media_retention_days: 0
+# Watchdog de conexão zumbi (0 = desligado; ex.: 5m) e prazo total do encerramento
+# (0 = fases padrão, até ~40s; ex.: 25s para caber num kill_timeout de 30s).
+zombie_timeout: 0s
+shutdown_timeout: 0s
+
+# Hospedagem gerenciada (deixe desligado no self-host; veja o README).
+# ops_listen_addr: "[::]:9090"     # /healthz, /readyz e /metrics sem token (rede privada)
+# operator_token: ""               # até dois, separados por vírgula (rotação)
+# locked_settings: [proxy_url, unsafe_pacing]
+# max_instances: 0                 # 0 = sem limite
+# require_proxy: false
+
 # Padrões de envio por instância (cada instância pode sobrescrever via PUT /settings).
 # Pisos: min_interval_ms >= 1000 e max_per_minute <= 60, salvo unsafe_pacing: true.
 instance_defaults:

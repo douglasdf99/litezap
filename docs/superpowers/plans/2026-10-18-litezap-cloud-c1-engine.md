@@ -25,6 +25,8 @@ Regra geral: **sem a configuração nova o motor se comporta exatamente como hoj
 
 Fica para depois (não é C1 no spec): E8 importação, E10, E14, E16, E18, E20, E21 (C2); E19 (C3).
 
+Desvios do texto do spec da nuvem (a atualizar no `docs/cloud-spec`): E7 usa código aleatório de 256 bits emitido por `POST /v1/operator/dashboard-login` (autenticado pelo token de operador) em vez de HMAC com um segredo compartilhado — mesmo efeito (curto, uso único, emitido pelo control plane) sem mais um segredo para guardar e rotacionar. E5 ganhou ajuste em tempo de execução para que mudar a quantidade de slots não exija reiniciar a Machine. E8 não exporta as sessões do WhatsApp (chaves do aparelho); migrar sem novo QR fica para a importação (C2), com opção explícita.
+
 Limitações aceitas no C1: `instance.proxy_failed` não traz a mensagem de erro do worker (exigiria campo novo no proto, que o marco 6 está mudando); latência da fila em histograma fica para o C2; métricas de memória por worker ficam para o C2.
 
 ## Ordem (TDD, um commit por bloco)
