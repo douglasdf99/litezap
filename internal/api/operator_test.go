@@ -254,6 +254,20 @@ func TestSendingSuspension(t *testing.T) {
 	if code, out := e.do("POST", "/v1/instances/"+id+"/check-numbers", tok, `{"phones":["5511988887777"]}`); code != 403 || errCode(out) != "sending_suspended" {
 		t.Fatalf("check-numbers while suspended = %d %v", code, out)
 	}
+	// Every send type (marco 6) goes through the same guard.
+	for _, body := range []string{
+		`{"to":"5511988887777","type":"location","location":{"latitude":-23.5,"longitude":-46.6}}`,
+		`{"type":"edit","message_id":"msg_x","text":"oi!"}`,
+		`{"type":"revoke","message_id":"msg_x"}`,
+	} {
+		if code, out := e.do("POST", "/v1/instances/"+id+"/messages", tok, body); code != 403 || errCode(out) != "sending_suspended" {
+			t.Fatalf("%s while suspended = %d %v", body, code, out)
+		}
+	}
+	// Managing the held queue stays allowed (it only removes sends).
+	if code, _ := e.do("GET", "/v1/instances/"+id+"/queue", tok, ""); code != 200 {
+		t.Fatalf("queue listing while suspended = %d", code)
+	}
 	_, out := e.do("GET", "/v1/operator/sending", operator, "")
 	if out["suspended"] != false || len(out["instances"].([]any)) != 1 {
 		t.Fatalf("status = %v", out)

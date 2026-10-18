@@ -112,6 +112,34 @@ func (s *server) getMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, v)
 }
 
+func (s *server) listQueue(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, err := s.msg.Queue(r.Context(), chi.URLParam(r, "id"), q.Get("status"), limitParam(r), q.Get("cursor"))
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, page)
+}
+
+func (s *server) cancelQueued(w http.ResponseWriter, r *http.Request) {
+	v, err := s.msg.CancelQueued(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "msg_id"))
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+func (s *server) clearQueue(w http.ResponseWriter, r *http.Request) {
+	n, err := s.msg.ClearQueue(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]int{"canceled": n})
+}
+
 func limitParam(r *http.Request) int {
 	n, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	return n

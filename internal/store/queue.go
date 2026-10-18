@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -39,11 +40,11 @@ type Outbound struct {
 const outboundCols = `id, instance_id, COALESCE(client_message_id, ''), chat_jid, wa_message_id, payload_json, status,
 	attempts, next_attempt_at, last_error, new_recipient, created_at, updated_at, sent_at, expires_at, request_hash, lookup_failures`
 
-func scanOutbound(row scanner) (Outbound, error) {
+func scanOutbound(row scanner, extra ...any) (Outbound, error) {
 	var o Outbound
 	var next, created, updated, sent, expires string
-	err := row.Scan(&o.ID, &o.InstanceID, &o.ClientMessageID, &o.ChatJID, &o.WAMessageID, &o.Payload, &o.Status,
-		&o.Attempts, &next, &o.LastError, &o.NewRecipient, &created, &updated, &sent, &expires, &o.RequestHash, &o.LookupFailures)
+	err := row.Scan(append([]any{&o.ID, &o.InstanceID, &o.ClientMessageID, &o.ChatJID, &o.WAMessageID, &o.Payload, &o.Status,
+		&o.Attempts, &next, &o.LastError, &o.NewRecipient, &created, &updated, &sent, &expires, &o.RequestHash, &o.LookupFailures}, extra...)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return o, ErrNotFound
 	}
@@ -118,9 +119,10 @@ func (s *Store) NextDue(ctx context.Context, instanceID string) (time.Time, bool
 }
 
 // MarkInFlight moves a queued item to in_flight (newRecipient: it counts against the ramp)
-// and logs m as "pending" in the same transaction, so a receipt that arrives before
-// MarkSent still finds the row.
-func (s *Store) MarkInFlight(ctx context.Context, id string, newRecipient bool, m Message) error {
+// and logs m (if not nil) as "pending" in the same transaction, so a receipt that arrives
+// before MarkSent still finds the row. It returns ErrNotFound when the item is no longer
+// queued (canceled meanwhile).
+func (s *Store) MarkInFlight(ctx context.Context, id string, newRecipient bool, m *Message) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -137,9 +139,11 @@ func (s *Store) MarkInFlight(ctx context.Context, id string, newRecipient bool, 
 		WHERE id = ?`, newRecipient, now(), id); err != nil {
 		return err
 	}
-	m.Status = "pending"
-	if _, err := insertMessage(ctx, tx, instanceID, m, nil); err != nil {
-		return err
+	if m != nil {
+		m.Status = "pending"
+		if _, err := insertMessage(ctx, tx, instanceID, *m, nil); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -248,4 +252,76 @@ func (s *Store) IsOwnSent(ctx context.Context, instanceID, waID string) (bool, e
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM outbound_queue WHERE instance_id = ? AND wa_message_id = ?`,
 		instanceID, waID).Scan(&n)
 	return n > 0, err
+}
+
+// ErrNotQueued means the item exists but is no longer queued (in flight or final).
+var ErrNotQueued = errors.New("item is not queued")
+
+// canceledPrefix starts the last_error of a canceled item.
+const canceledPrefix = "canceled: "
+
+// CancelOutbound finishes a queued item without sending it (status failed, last_error
+// "canceled: ..."). ErrNotQueued when it is in flight or already final, ErrNotFound when
+// it does not exist.
+func (s *Store) CancelOutbound(ctx context.Context, instanceID, id, reason string) (Outbound, error) {
+	o, err := scanOutbound(s.db.QueryRowContext(ctx, `UPDATE outbound_queue SET status = 'failed', last_error = ?, updated_at = ?
+		WHERE instance_id = ? AND id = ? AND status = 'queued' RETURNING `+outboundCols,
+		canceledPrefix+reason, now(), instanceID, id))
+	if errors.Is(err, ErrNotFound) {
+		if _, gerr := s.GetOutbound(ctx, instanceID, id); gerr == nil {
+			return Outbound{}, ErrNotQueued
+		}
+	}
+	return o, err
+}
+
+// CancelQueued cancels every queued item of an instance and returns them (in-flight items
+// are left alone: they are being sent).
+func (s *Store) CancelQueued(ctx context.Context, instanceID, reason string) ([]Outbound, error) {
+	rows, err := s.db.QueryContext(ctx, `UPDATE outbound_queue SET status = 'failed', last_error = ?, updated_at = ?
+		WHERE instance_id = ? AND status = 'queued' RETURNING `+outboundCols, canceledPrefix+reason, now(), instanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Outbound
+	for rows.Next() {
+		o, err := scanOutbound(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// ListOutbound returns an instance's queue items with one of the statuses, oldest first,
+// after the item with sequence afterSeq (0: from the start), plus the sequence of the last
+// returned item (the next cursor).
+func (s *Store) ListOutbound(ctx context.Context, instanceID string, statuses []string, limit int, afterSeq int64) ([]Outbound, int64, error) {
+	q := `SELECT ` + outboundCols + `, seq FROM outbound_queue WHERE instance_id = ? AND seq > ?`
+	args := []any{instanceID, afterSeq}
+	if len(statuses) > 0 {
+		q += ` AND status IN (?` + strings.Repeat(",?", len(statuses)-1) + `)`
+		for _, st := range statuses {
+			args = append(args, st)
+		}
+	}
+	q += ` ORDER BY seq LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []Outbound{}
+	var last int64
+	for rows.Next() {
+		o, err := scanOutbound(rows, &last)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, o)
+	}
+	return out, last, rows.Err()
 }

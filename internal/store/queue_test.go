@@ -24,7 +24,7 @@ func inFlight(t *testing.T, s *Store, id string, newRecipient bool) error {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s.MarkInFlight(context.Background(), id, newRecipient, Message{ID: id, WAMessageID: o.WAMessageID,
+	return s.MarkInFlight(context.Background(), id, newRecipient, &Message{ID: id, WAMessageID: o.WAMessageID,
 		ChatJID: o.ChatJID, FromMe: true, Source: "api", Type: "text", Text: "oi", Timestamp: t0})
 }
 

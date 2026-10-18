@@ -7,6 +7,7 @@ import (
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"github.com/douglasdf99/litezap/internal/clock"
 	"github.com/douglasdf99/litezap/internal/instance"
+	"github.com/douglasdf99/litezap/internal/store"
 )
 
 // Publisher is what producers need from the bus (nil-safe helpers below accept it).
@@ -59,6 +60,35 @@ type Message struct {
 	Media       *Media    `json:"media,omitempty"`
 	ReactionTo  string    `json:"reaction_to,omitempty"`
 	Timestamp   time.Time `json:"timestamp"`
+	// Structured content: reply_to, mentions, forwarded, location, contacts, poll, link_preview.
+	store.MessageMeta
+}
+
+// MessageUpdate is the data of message.edited (Text is the new text) and message.revoked.
+type MessageUpdate struct {
+	ID          string    `json:"id,omitempty"` // LiteZap id of the changed message (empty if not in the log)
+	WAMessageID string    `json:"wa_message_id"`
+	Chat        string    `json:"chat"`
+	Sender      string    `json:"sender,omitempty"` // who edited or deleted it
+	FromMe      bool      `json:"from_me"`
+	Source      string    `json:"source"` // api | device | contact
+	Text        string    `json:"text,omitempty"`
+	Timestamp   time.Time `json:"timestamp"`
+}
+
+// PollVote is the data of message.poll_vote: the voter's current choice (an empty list
+// means the vote was removed).
+type PollVote struct {
+	PollID          string   `json:"poll_id,omitempty"` // LiteZap id of the poll (empty if not in the log)
+	PollWAMessageID string   `json:"poll_wa_message_id"`
+	Chat            string   `json:"chat"`
+	Voter           string   `json:"voter"`
+	PushName        string   `json:"push_name,omitempty"`
+	FromMe          bool     `json:"from_me"`
+	SelectedOptions []string `json:"selected_options"`
+	// UnknownOptions counts selected hashes that match no option of the logged poll.
+	UnknownOptions int       `json:"unknown_options,omitempty"`
+	Timestamp      time.Time `json:"timestamp"`
 }
 
 // MessageStatus is the data of message.status.

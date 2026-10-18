@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -47,6 +49,10 @@ type Whatsmeow struct {
 	groupLID  map[types.JID]bool // group -> addresses members by LID (successful lookups only)
 	groupInfo func(context.Context, types.JID) (*types.GroupInfo, error)
 	lidFor    func(context.Context, types.JID) (types.JID, error)
+	// upload, decryptPoll and decryptSecret default to the client; tests replace them.
+	upload        func(context.Context, io.Reader, whatsmeow.MediaType) (whatsmeow.UploadResponse, error)
+	decryptPoll   func(context.Context, *events.Message) (*waE2E.PollVoteMessage, error)
+	decryptSecret func(context.Context, *events.Message) (*waE2E.Message, error)
 
 	// Signals to pairLoop; all are buffered (1) and sent to without blocking.
 	restart    chan struct{} // from PairPhone: end the current round now

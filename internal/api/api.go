@@ -52,6 +52,9 @@ type MessagingService interface {
 	Media(ctx context.Context, instanceID, mediaID string) (service.MediaFile, error)
 	SignedMediaURL(ctx context.Context, instanceID, mediaID string) (string, time.Time, error)
 	VerifyMediaSignature(instanceID, mediaID, exp, sig string) bool
+	Queue(ctx context.Context, instanceID, status string, limit int, cursor string) (service.QueuePage, error)
+	CancelQueued(ctx context.Context, instanceID, id string) (service.MessageView, error)
+	ClearQueue(ctx context.Context, instanceID string) (int, error)
 }
 
 type Options struct {
@@ -151,6 +154,9 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 			r.Put("/settings", s.putSettings)
 			r.Post("/messages", s.sendMessage)
 			r.Get("/messages/{msg_id}", s.getMessage)
+			r.Get("/queue", s.listQueue)
+			r.Delete("/queue", s.clearQueue)
+			r.Delete("/queue/{msg_id}", s.cancelQueued)
 			r.Get("/chats", s.listChats)
 			r.Get("/chats/{jid}/messages", s.chatMessages)
 			r.Post("/chats/{jid}/read", s.markRead)
