@@ -30,7 +30,7 @@ Legenda:
 | SEC-1 | Credencial por instância (ID + token) | ID e Token | N/A | Pronto — token `lzi_` por instância, só hash SHA-256 guardado, `Authorization: Bearer` | — | LiteZap usa header Bearer em vez de token na URL (não vaza em logs de proxy) | M1 |
 | SEC-2 | Token de conta que vale para todas as instâncias | Token de segurança da conta (`Client-Token`) | N/A | Pronto — token admin | — | Equivalente; o admin também cria/lista/apaga instâncias | M1 |
 | SEC-3 | Rotação de token | (não documentado) | N/A | Pronto — `POST /instances/{id}/token/rotate` | — | Vantagem LiteZap | M1 |
-| SEC-4 | Restrição de chamadas por IP | Restrição por IP | N/A | Falta | S | Lista de CIDRs por token; atrás de proxy reverso precisa de `trusted_proxies` | M11 |
+| SEC-4 | Restrição de chamadas por IP | Restrição por IP | N/A | Pronto — `ip_allowlist` por instância e por chave de API, `admin_allowed_ips`/`operator_allowed_ips`; `X-Forwarded-For` só de `trusted_proxies` (M11) | S | Lista de CIDRs por token; atrás de proxy reverso precisa de `trusted_proxies` | M11 |
 | SEC-5 | 2FA no painel | Autenticação de dois fatores | N/A | Fora | — | Não há painel no motor; é da nuvem (peça #3) e do app local | — |
 | SEC-6 | Proteção anti-golpe em grupos de avisos (apaga mensagens de não-admins) | Proteção Anti-Golpe | Manual — detectar remetente não-admin em grupo `announce` (`GetGroupInfo`, group.go) e apagar com `BuildRevoke(chat, sender, id)` (send.go) | Falta | M | Exige a instância ser admin; risco de falso positivo em grupos com muitos admins; depende de M8 | M8 |
 
@@ -46,7 +46,7 @@ Legenda:
 | INS-6 | Desconectar (logout) | Desconectar | Sim — `Logout` (client.go) | Pronto — `POST .../logout` | — | | M1 |
 | INS-7 | Status da instância | Status da instância | Sim — `IsConnected`, `IsLoggedIn` (client.go) | Pronto — `GET /instances/{id}` (estado, motivo, jid) + `instance.status` | — | Máquina de estados mais rica que a da Z-API (banido, temp_banned, failed) | M1 |
 | INS-8 | Dados do celular (plataforma, nome, conta business) | Dados do celular | Parcial — `store.Device.Platform/PushName/BusinessName` (store/store.go); modelo do aparelho não exposto (incerto) | Pronto — `GET /profile` (`platform`, `name`, `business_name`, `about`, foto) (M9) | S | | M9 |
-| INS-9 | Renomear instância | Renomear instância | N/A | Falta — nome só na criação | S | `PATCH /instances/{id}` | M11 |
+| INS-9 | Renomear instância | Renomear instância | N/A | Pronto — `PATCH /instances/{id}` (`name`; `tags` e `ip_allowlist` com admin) (M11) | S | `PATCH /instances/{id}` | M11 |
 | INS-10 | Dados da instância (me) | Dados da instância | N/A | Pronto — `GET /instances/{id}` + `GET /profile` (M9) | S | Juntar com INS-8 | M9 |
 | INS-11 | Token de extensão (conector no navegador) | Gerar token de extensão | Não (produto próprio da Z-API) | Fora | — | O equivalente LiteZap é o app local (peça #2) | — |
 | INS-12 | Leitura automática de mensagens | Ler mensagens automaticamente | Sim — `MarkRead` (receipt.go) | Pronto — setting `auto_read {enabled, groups}`: lote por chat, 2–5s, 1 recibo/s; `read-self` com confirmação de leitura desligada (M9) | S | Setting por instância; respeitar privacidade de confirmação de leitura | M9 |
@@ -257,7 +257,7 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 | WHK-6 | Mensagem apagada / editada | (no recebimento) | Sim — `ProtocolMessage` REVOKE/EDIT em `events.Message` | Pronto — `message.edited`/`message.revoked` (M6), log atualizado; só do autor ou admin | S | Base em M2b item 5 | M7 |
 | WHK-7 | URLs por tipo e "atualizar todos" | Atualizar todos os webhooks | N/A | Pronto — vários webhooks, globais ou por instância, com filtro de tipos (`message.*`) | — | Superconjunto | M3 |
 | WHK-8 | Filtros por tipo de mensagem (grupo, privado, texto, imagem…) | Filtros de webhook | N/A | Pronto — `filters {chat, chats, exclude_chats, message_types, from_me}` no webhook | S | Campo `filters` no webhook (`chat: group\|direct`, `message_types`) | M7 |
-| WHK-9 | Webhook de falha de proxy | Webhook de falha de proxy | N/A | Falta | S | Evento `instance.proxy_failed` (o estado `reconnecting` com motivo já aparece) | M11 |
+| WHK-9 | Webhook de falha de proxy | Webhook de falha de proxy | N/A | Pronto — `instance.proxy_failed` (nuvem E6) com `error` do worker sem credenciais (M11) | S | Evento `instance.proxy_failed` (o estado `reconnecting` com motivo já aparece) | M11 |
 | WHK-10 | Assinatura HMAC, anti-replay, retry 24h, dead-letter, SSE | (não há) | N/A | Pronto | — | Vantagem LiteZap | M3 |
 
 ### 2.18 Parceiros e multi-instância (Z-API: Partners)
@@ -266,10 +266,10 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 |---|---|---|---|---|---|---|---|
 | PAR-1 | Criar instância por API | Criar instância | N/A | Pronto — `POST /instances` (admin) | — | | M1 |
 | PAR-2 | Assinar / cancelar / atualizar assinatura | 3 páginas | N/A | Fora do motor | — | É cobrança: control plane da nuvem (peça #3) | — |
-| PAR-3 | Apagar instância (uma e em lote) | 2 páginas | N/A | Parcial — `DELETE /instances/{id}`; sem lote | S | | M11 |
-| PAR-4 | Listar instâncias | Listar instâncias | N/A | Pronto — `GET /instances` | — | Falta paginação/filtro por estado | M1 |
+| PAR-3 | Apagar instância (uma e em lote) | 2 páginas | N/A | Pronto — `DELETE /instances/{id}` e `POST /instances/bulk` (start/stop/restart/delete por ids ou etiqueta, `confirm` no delete) (M11) | S | | M11 |
+| PAR-4 | Listar instâncias | Listar instâncias | N/A | Pronto — `GET /instances` com `state`, `tag`, `q`, `limit`, `cursor` (M11) | — | | M1 |
 | PAR-5 | Proxy por instância | Configurar proxy | Sim — `SetProxyAddress` (client.go) | Pronto — `proxy_url` (admin) | — | | M2 |
-| PAR-6 | Componente de conexão embutível (modal de QR para o software do parceiro) | SDK de conexão; Gerar token do SDK | N/A | Falta | M | Página de pareamento hospedada com token de uso único e curto (link assinado) + web component | M11 |
+| PAR-6 | Componente de conexão embutível (modal de QR para o software do parceiro) | SDK de conexão; Gerar token do SDK | N/A | Pronto — `POST /instances/{id}/pairing-links` (HMAC, ≤10 min, uso único), página `/pair/` e `<litezap-pair>`, evento `instance.paired` (M11) | M | Página de pareamento hospedada com token de uso único e curto (link assinado) + web component | M11 |
 | PAR-7 | Conexão por extensão para parceiros | Extensão para parceiros | N/A | Fora | — | | — |
 
 ### 2.19 IA (Z-API: MCP Server)
@@ -292,9 +292,9 @@ Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-AP
 | — whatsmeow `Parcial` | 10 |
 | — whatsmeow `Não` | 21 |
 | Recursos só da camada LiteZap (`N/A`) | 27 |
-| **LiteZap `Pronto`** | **76** |
-| LiteZap `Parcial` | 2 |
-| LiteZap `Falta` | 63 |
+| **LiteZap `Pronto`** | **81** |
+| LiteZap `Parcial` | 1 |
+| LiteZap `Falta` | 59 |
 | LiteZap `Fora` | 18 |
 
 Viáveis com whatsmeow (`Sim` + `Manual` + `Parcial`): **111 de 132** recursos de protocolo. Os 21 inviáveis hoje: INS-11 (extensão, produto próprio da Z-API), MOB-1…4 (registro como aparelho principal), CON-8 (denúncia), CAL-1/2 (chamadas de voz e SIP), COM-8 (desativar comunidade), CHN-2/5/7/9/10/11 (administração avançada de canais), BRD-1 (listas de transmissão), BUS-1/2/3/6/7 (catálogo, coleções, notas, perfil comercial editável).
@@ -398,6 +398,8 @@ Aceite:
 3. Rotas de etiqueta em conta não-Business respondem `business_account_required` (409).
 
 ### M11 — Plataforma e parceiros
+
+Entregue em 2026-10-18 (branch `feat/m11-platform`, plano `docs/superpowers/plans/2026-10-18-litezap-m11-platform.md`). Além do escopo: chaves de API `lzk_` com escopos `read`/`send` presas a uma instância (negadas no `/mcp`), allowlist também para os tokens admin e operador, `GET /instances/{id}/usage`, etiquetas (`tags`) para filtro e lote, evento `instance.paired`, métricas `litezap_queue_send_latency_seconds` e `litezap_worker_memory_rss_bytes` (Linux), e painel com edição e gerador de links. O link vale até 10 min ou até 2 min depois do pareamento (para a página mostrar o sucesso); o token vai no fragmento da URL e nas chamadas da página pelo cabeçalho `X-Pairing-Token`; `frame-ancestors` vem de `pairing_frame_ancestors` (padrão: não embutível). Adiados: metadados livres além de `tags`, escopos além de `read`/`send` e chaves multi-instância, memória por worker fora do Linux. A confirmar com celular real: pareamento completo pela página (QR e código) e `via_link`.
 
 Escopo: SEC-4, INS-9, PAR-3, PAR-6, WHK-9.
 

@@ -154,7 +154,6 @@ export default defineConfig({
 								soonPage('docs/api/em-breve/status', 'M10'),
 								soonPage('docs/api/em-breve/canais', 'M10'),
 								soonPage('docs/api/em-breve/business', 'M10'),
-								soonPage('docs/api/em-breve/plataforma', 'M11'),
 							],
 						},
 						{ label: 'openapi.yaml', link: '/openapi.yaml', attrs: { target: '_blank' } },

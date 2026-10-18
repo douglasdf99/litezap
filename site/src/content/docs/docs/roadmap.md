@@ -22,7 +22,7 @@ prometidas; a ordem é.
 | M8 | Grupos e comunidades | <span class="lz-badge lz-badge--soon">Planejado</span> |
 | M9 | Chats, contatos, perfil, privacidade e conta | <span class="lz-badge lz-badge--soon">Planejado</span> |
 | M10 | Status, canais e Business | <span class="lz-badge lz-badge--soon">Planejado</span> |
-| M11 | Plataforma e parceiros | <span class="lz-badge lz-badge--soon">Planejado</span> |
+| M11 | Plataforma e parceiros | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | App local v2 | Instaladores, assinatura de código, atualização automática, iniciar com o sistema, túnel opcional | <span class="lz-badge lz-badge--soon">Planejado</span> |
 | Nuvem | Projeto pré-instalado por cliente, IPs gerenciados, backups e upgrades | <span class="lz-badge lz-badge--soon">Planejado</span> |
 
@@ -61,8 +61,11 @@ Publicar e receber status; criar, seguir, silenciar e publicar em canais; etique
 
 ### M11: plataforma e parceiros
 
-Página de pareamento hospedada e componente embutível, renomear e apagar instâncias em lote, paginação, allowlist de
-IP por token, evento `instance.proxy_failed`.
+Entregue: página de pareamento hospedada (link assinado de até 10 minutos, uso único) e web component
+`<litezap-pair>`, evento `instance.paired`, renomear e etiquetar instâncias, operações em lote (iniciar, parar,
+reiniciar, apagar), filtros e paginação em `GET /v1/instances`, allowlist de IP por instância, por chave e para os
+tokens admin/operador (com `trusted_proxies`), chaves de API com escopo (`read`, `send`), uso por instância,
+`instance.proxy_failed` com o erro do worker e métricas de latência da fila e memória por worker.
 
 ## Fora da trilha principal
 

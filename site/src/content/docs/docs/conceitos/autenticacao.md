@@ -20,15 +20,32 @@ Toda rota em `/v1` exige `Authorization: Bearer <token>`. Existem dois tipos de 
 - Pode enviar, ler chats, alterar ritmo, janela, fuso e rampa, mas não `proxy_url` nem `unsafe_pacing`.
 - Rotacione com `POST /v1/instances/{id}/token/rotate` (só admin): o token antigo deixa de valer na hora.
 
+## Chave de API com escopo
+
+Desde o M11, uma instância pode ter chaves `lzk_` para entregar acesso limitado a terceiros
+([criar chave](/docs/api/plataforma/criar-chave-de-api/)). Cada chave é presa a uma instância e tem escopo `read`
+(rotas de leitura, sem QR, configurações nem hook de agente) e/ou `send` (`POST /messages` e o status do envio).
+Qualquer outra rota responde `403 forbidden`, inclusive `/mcp`. Só o hash fica guardado; a chave pode expirar e é
+revogada na hora com `DELETE`.
+
+## Allowlist de IP
+
+O token de instância e as chaves aceitam uma lista de IPs/CIDRs (`ip_allowlist`); os tokens admin e operador usam
+`admin_allowed_ips` e `operator_allowed_ips` da configuração. Fora da lista: `403 forbidden`. Atrás de proxy
+reverso, configure `trusted_proxies` — o `X-Forwarded-For` só é lido quando a conexão vem de um deles. Veja
+[Multi-instância e parceiros](/docs/guias/multi-instancia/#allowlist-de-ip).
+
 ## Escopo por rota
 
 | Rotas | Token |
 |---|---|
-| `POST /v1/instances`, `GET /v1/instances` | admin |
-| `DELETE /v1/instances/{id}`, `POST .../token/rotate` | admin |
+| `POST /v1/instances`, `GET /v1/instances`, `POST /v1/instances/bulk` | admin |
+| `DELETE /v1/instances/{id}`, `POST .../token/rotate`, `POST`/`DELETE .../pairing-links` | admin |
+| `PATCH /v1/instances/{id}` com `tags` ou `ip_allowlist` | admin (só `name`: instância ou admin) |
 | Demais rotas de `/v1/instances/{id}/...` | instância ou admin |
 | `PUT .../settings` com `proxy_url` ou `unsafe_pacing` | admin |
 | `GET /media/{id}/{media_id}?exp=&sig=` | nenhum (a assinatura é a credencial) |
+| `/pair/` (página de pareamento) | nenhum (o link assinado é a credencial, no cabeçalho `X-Pairing-Token`) |
 | `GET /healthz`, `GET /readyz` | público em loopback; admin fora dele |
 
 O esquema `Bearer` não diferencia maiúsculas de minúsculas. Respostas que trazem segredos (token, QR, código de

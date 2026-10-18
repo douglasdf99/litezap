@@ -51,13 +51,18 @@ Workers rodam em grupo de processos próprio e encerram sozinhos assim que o sup
 
 ## API
 
-Autenticação: `Authorization: Bearer <token>`. O token de instância só acessa rotas da própria instância.
+Autenticação: `Authorization: Bearer <token>`. O token de instância só acessa rotas da própria instância; uma chave de API (`lzk_`, marco 11) só as rotas dos seus escopos numa instância (seção "Plataforma e parceiros"). Tokens e chaves podem ter allowlist de IP.
 
 | Rota | Token |
 |---|---|
 | `POST /v1/instances` `{"name"}` → `{instance, token}` | admin |
-| `GET /v1/instances` | admin |
+| `GET /v1/instances[?state=&tag=&q=&limit=&cursor=]` (sem `limit`: todas) | admin |
 | `GET /v1/instances/{id}` | instância ou admin |
+| `PATCH /v1/instances/{id}` `{"name"?, "tags"?, "ip_allowlist"?}` | instância ou admin (`tags` e `ip_allowlist` só admin) |
+| `POST /v1/instances/bulk` `{"action": start\|stop\|restart\|delete, "ids"\|"tag", "confirm"?}` | admin |
+| `POST\|DELETE /v1/instances/{id}/pairing-links` `{"ttl_seconds"?}` → `{id, url, token, expires_at}` | admin |
+| `GET\|POST /v1/instances/{id}/api-keys` · `DELETE /v1/instances/{id}/api-keys/{key_id}` | instância ou admin |
+| `GET /v1/instances/{id}/usage[?from=&to=]` | instância ou admin |
 | `POST /v1/instances/{id}/start\|stop\|restart\|logout` | instância ou admin |
 | `GET /v1/instances/{id}/qr[?format=png]` | instância ou admin |
 | `POST /v1/instances/{id}/pair-phone` `{"phone"}` → `{code}` | instância ou admin |
@@ -75,6 +80,7 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `POST /v1/instances/{id}/check-numbers` `{"phones":[...]}` | instância ou admin |
 | `GET /v1/instances/{id}/media/{media_id}[?signed=1]` | instância ou admin (`?signed=1` exige `public_url` se o `listen_addr` não for loopback) |
 | `GET /media/{id}/{media_id}?exp=&sig=` (URL assinada, vale 1h) | nenhum |
+| `GET /pair/` (página de pareamento hospedada) · `GET /pair/api/state` · `POST /pair/api/phone\|start` · `GET /pair/embed.js` | nenhum (o link assinado vai no cabeçalho `X-Pairing-Token`) |
 | `POST /v1/instances/{id}/presence/subscribe` `{"to"}` (presença online/offline de um contato; exige `presence.online`) | instância ou admin |
 | `GET\|POST /v1/instances/{id}/groups` · `GET\|PATCH /groups/{jid}` · `PUT\|DELETE /groups/{jid}/photo` (seção "Grupos e comunidades") | instância ou admin |
 | `POST /groups/{jid}/participants` `{"action","participants"}` · `GET\|POST /groups/{jid}/requests` · `GET /groups/{jid}/invite` · `POST /groups/{jid}/invite/reset` · `POST /groups/{jid}/leave` | instância ou admin |
@@ -92,7 +98,7 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `GET\|PATCH\|DELETE /v1/webhooks/{id}` | idem (webhook de outra instância responde 404) |
 | `GET /v1/webhooks/{id}/deliveries[?status=pending\|delivered\|failed&limit=&cursor=]` | idem |
 | `POST /v1/webhooks/{id}/deliveries/{delivery_id}/retry` | idem |
-| `GET /v1/me` → `{admin, role, instance_id}` (`role`: `operator`, `admin` ou `instance`) | qualquer token |
+| `GET /v1/me` → `{admin, role, instance_id, key_id?, scopes?}` (`role`: `operator`, `admin` ou `instance`) | qualquer token |
 | `POST /v1/export` `{"include_media"?, "upload_url"?}` → `tar.gz` | admin (`upload_url` só operador) |
 | `GET /v1/usage[?from=&to=&instance_id=]` | operador |
 | `GET\|PUT /v1/operator/limits` · `GET\|PUT /v1/operator/sending` · `PUT /v1/operator/instances/{id}/sending` · `POST /v1/operator/dashboard-login` | operador |
@@ -281,6 +287,32 @@ curl -s -X POST $G/join -H "Authorization: Bearer $TOK" -d '{"code":"https://cha
 
 `POST /check-numbers` aceita de 1 a 10 números por chamada (DDI + DDD + número, 10–15 dígitos) e devolve `exists` e o `jid` que o WhatsApp usa. Resultados ficam em cache (30 dias para quem tem WhatsApp, 24h para quem não tem). Consultas novas têm cota de 10 por minuto por instância, separada da cota de 30 por minuto da fila de envio; acima disso, `429 rate_limited`.
 
+### Plataforma e parceiros (marco 11)
+
+Para quem oferece WhatsApp a clientes (uma instância por cliente):
+
+```bash
+B=localhost:8787; A="Authorization: Bearer $ADMIN"; J="Content-Type: application/json"
+# renomear, etiquetar e restringir o token da instância a alguns IPs (tags e ip_allowlist: admin)
+curl -X PATCH $B/v1/instances/$ID -H "$A" -H "$J" -d '{"name":"Loja Centro","tags":["cliente-acme","vip"],"ip_allowlist":["203.0.113.7","10.0.0.0/8"]}'
+# listar com filtros e paginação (sem limit: todas, como antes)
+curl "$B/v1/instances?tag=cliente-acme&state=connected,qr_pending&limit=50" -H "$A"   # → {instances, next_cursor?}
+# lote: start|stop|restart|delete por ids ou por etiqueta (até 100; delete exige confirm)
+curl -X POST $B/v1/instances/bulk -H "$A" -H "$J" -d '{"action":"stop","tag":"cliente-acme"}'
+# link de pareamento hospedado: o cliente abre e escaneia o QR (ou pede o código por telefone)
+curl -X POST $B/v1/instances/$ID/pairing-links -H "$A" -H "$J" -d '{"ttl_seconds":600}'
+# → {"url":"https://zap.exemplo.com/pair/#t=pl1....","expires_at":...}; DELETE no mesmo caminho revoga
+# chave só de leitura (ou "send") para entregar a terceiros
+curl -X POST $B/v1/instances/$ID/api-keys -H "Authorization: Bearer $TOK" -H "$J" -d '{"name":"bi","scopes":["read"]}'
+# uso diário da instância
+curl "$B/v1/instances/$ID/usage?from=2026-10-01" -H "$A"
+```
+
+- **Allowlist de IP**: `ip_allowlist` (instância e chaves) e `admin_allowed_ips`/`operator_allowed_ips` (config) aceitam IPs e CIDRs; fora da lista, `403 forbidden` em todas as rotas, inclusive `/mcp`. O `X-Forwarded-For` só é lido quando a conexão vem de `trusted_proxies` (da direita para a esquerda, parando no primeiro endereço não confiável); sem `trusted_proxies`, o cliente é o par TCP.
+- **Chaves de API** (`lzk_`, presas a uma instância, só o hash é guardado, até 50 por instância, `expires_in_seconds` e `ip_allowlist` opcionais): `read` = rotas `GET` de leitura (instância, mensagens, fila, chats, contatos, mídia, grupos, comunidades, perfil, privacidade, bloqueados, eventos SSE, uso — nunca QR, configurações, hook de agente ou convites); `send` = `POST /messages` e `GET /messages/{msg_id}`. Todo o resto responde `403`, inclusive `/mcp`, webhooks, ciclo de vida e a gestão de chaves. Tokens existentes não mudam.
+- **Pareamento hospedado**: o link é assinado (HMAC-SHA256, chave `data/pairing_key`), registrado no banco (revogável), vale até 10 min ou até o primeiro pareamento concluído e nunca expõe o token da instância (a página só vê estado, QR e código). O token do link vai no fragmento `#t=` (não chega a logs nem a `Referer`) e a página o tira da barra de endereço; as chamadas da página usam o cabeçalho `X-Pairing-Token`. CSP estrita (`script-src 'self'`, sem inline), `Referrer-Policy: no-referrer`; num iframe só nas origens de `pairing_frame_ancestors` (vazio = não pode ser embutida). Web component: `<script src="$B/pair/embed.js">` + `<litezap-pair url="...">` (eventos `litezap-state`, `litezap-paired`, `litezap-expired`). Até 5 códigos por telefone e 5 "iniciar" por link. A base do link é `public_url` (ou `listen_addr`).
+- `instance.paired` sai uma vez por pareamento (qr_pending → connected), com `via_link: true` quando um link foi consumido.
+
 ## Eventos, webhooks e SSE
 
 Tudo o que acontece numa instância vira um evento com o mesmo envelope, entregue por webhook (persistente, assinado, com retry) e por SSE (ao vivo, sem persistência).
@@ -324,7 +356,8 @@ Adicionar campos em `data` não muda a versão; remover ou mudar o sentido de um
 | `history.synced` | fim da ingestão de um history sync (um evento por sync, 15s depois do último bloco) | `{chats, messages, new_messages}` |
 | `agent.failed` | uma chamada do hook de agente falhou (nada foi enviado) ou o limite de respostas pausou o chat | `{chat, message_id, wa_message_id, reason, error?, http_status?}`; `reason`: `timeout`, `http_error`, `network_error`, `invalid_response`, `send_failed`, `loop_guard`, `internal` |
 | `agent.handoff` | o agente passou o chat para um humano (ação `handoff`) | `{chat, message_id, wa_message_id, note?}` |
-| `instance.proxy_failed` | a instância não alcança o WhatsApp pelo proxy (entra em `reconnecting`/`proxy_unreachable`), repetido a cada 5 min enquanto durar; a volta é o próximo `instance.status` | `{reason, since, duration_seconds, outages_last_hour, repeat}` |
+| `instance.proxy_failed` | a instância não alcança o WhatsApp pelo proxy (entra em `reconnecting`/`proxy_unreachable`), repetido a cada 5 min enquanto durar; a volta é o próximo `instance.status` | `{reason, since, duration_seconds, outages_last_hour, repeat, error?}` (`error` = último erro de conexão do worker, sem usuário/senha do proxy, telefones nem tokens) |
+| `instance.paired` | pareamento concluído (a instância esperava QR/código e conectou); não sai em reconexões | `{phone, via_link}` (`via_link: true` = um link de pareamento hospedado foi consumido) |
 
 Mensagem: `{id, wa_message_id, chat, sender, from_me, is_group, push_name, source, type, text, media?, reaction_to?, timestamp}` mais o conteúdo estruturado quando houver: `reply_to` (wa id citado), `mentions`, `forwarded`, `location {latitude, longitude, name, address, url}`, `contacts [{display_name, vcard}]`, `poll {name, options, selectable}` e `link_preview {url, title, description}`; os mesmos campos de `GET /messages/{id}`. Tipos recebidos: os de envio, mais `unknown`. Votos chegam cifrados e só são decifrados para enquetes cujo segredo a sessão conhece (criadas ou recebidas depois do pareamento); as opções são casadas pelo SHA-256 contra as opções guardadas no log (`unknown_options` conta as que não casaram). `media` traz `{id, kind, mime, size, file_name, seconds, ptt, url}`; `url` é a rota autenticada de download (`GET /v1/instances/{id}/media/{media_id}`). Mensagens de history sync não geram eventos individuais (só o `history.synced`); uma mensagem que chega duas vezes (reconexão do worker) gera um único evento.
 
@@ -641,6 +674,14 @@ Com o SSE aberto em `?types=chat.updated` e o celular à mão (`JID` = um chat d
 6. `PATCH /privacy {"last_seen":"contacts"}`: em Configurações > Privacidade do celular o visto por último muda.
 7. Ligue `{"auto_read":{"enabled":true}}` e mande uma mensagem do celular do contato: 2–5s depois ela aparece lida (tiques azuis se a confirmação de leitura estiver ligada).
 
+### Testar o pareamento hospedado (marco 11)
+
+1. Com `public_url` apontando para o servidor, crie uma instância nova e gere o link: `POST /v1/instances/$ID/pairing-links`.
+2. Abra a `url` num navegador (ou celular de outra pessoa): a página mostra o QR. Escaneie com o celular do número: a página mostra "WhatsApp conectado", sai `instance.paired` com `via_link: true` e `phone`.
+3. Abra o mesmo link de novo depois de 2 minutos: "link expirou ou já foi usado".
+4. Gere outro link para uma instância deslogada e use "Prefiro conectar com o número de telefone": o código aparece na página e funciona em Aparelhos conectados > Conectar com número de telefone.
+5. Embutido: ponha a origem do seu app em `pairing_frame_ancestors`, use `<litezap-pair>` e confirme que de outra origem o navegador bloqueia o iframe.
+
 ### Testar o atendente IA
 
 1. Libere destinos locais (`webhook_allow_private_urls: true`) e reinicie o `serve`.
@@ -675,6 +716,7 @@ Com o SSE aberto em `?types=chat.updated` e o celular à mão (`JID` = um chat d
 - **Grupos**: grupos do número, metadados e configurações, participantes (promover, rebaixar, remover, adicionar com os limites anti-ban), link de convite (mostrar, copiar, redefinir), criar grupo e sair.
 - **Webhooks**: criar (o segredo aparece uma vez), ligar/desligar, excluir, ver entregas por status e reenviar as da dead-letter. Há também a página de webhooks globais.
 - **Eventos ao vivo**: os mesmos eventos dos webhooks, com o JSON de cada um.
+- **Editar** (marco 11): renomear a instância, etiquetas e IPs permitidos para o token; as etiquetas aparecem na lista. Na aba **Parear**, "Link de pareamento para o cliente" gera (2, 5 ou 10 min), copia e revoga links da página hospedada.
 
 **Login**: cole o token admin (`data/admin_token`). Ele fica só no navegador (`sessionStorage`, ou `localStorage` se marcar "lembrar"), vai apenas no header `Authorization` (nunca na URL) e "Sair" o apaga. "Lembrar" vale para o endereço (host e porta): não marque em computador compartilhado. Não há cookies, então não há superfície de CSRF; o painel tem CSP estrita (`script-src 'self'`, sem scripts inline) e monta a página só com texto (nada de HTML vindo de dados). Para desligar o painel num servidor: `disable_dashboard: true`.
 
@@ -759,7 +801,7 @@ Com Docker, o mesmo arquivo vai em `docker run --env-file /etc/litezap/env --sto
 - Fixar mensagem não emite evento, e fixações feitas pelo celular não são registradas.
 - A prévia de link `auto` lê só `og:*`/`twitter:*`/`<title>` da página (sem JavaScript); miniatura só de JPEG, PNG ou GIF.
 - Mídia recebida baixada fica em `data/media/` para sempre, a menos que `media_retention_days` esteja definido.
-- `instance.proxy_failed` não traz a mensagem de erro do worker, só o motivo `proxy_unreachable`.
+- Marco 11: chaves de API só têm os escopos `read` e `send` e valem para uma instância; não há metadados livres além de `tags`; `litezap_worker_memory_rss_bytes` só existe no Linux; o rate limit da página de pareamento é em memória (reiniciar o servidor zera); a página de pareamento é só em português.
 - A exportação (`POST /v1/export`) não inclui as sessões do WhatsApp: restaurar em outro servidor exige parear de novo. A importação ainda não existe.
 - Mídia passa entre supervisor e worker por arquivos em `data/` (mesma máquina). Um spawner em container (nuvem) vai precisar de um volume compartilhado.
 - Se o supervisor morrer entre o worker entregar um evento e o supervisor gravá-lo, esse evento se perde (sem confirmação de entrega worker→supervisor ainda).

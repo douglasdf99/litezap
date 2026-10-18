@@ -44,6 +44,13 @@ curl -s -H "Authorization: Bearer $ADMIN" https://api.seu-dominio.com/readyz
 `GET /metrics` no formato Prometheus, com mensagens enviadas e recebidas, profundidade e latência da fila, restarts
 de worker, estado por instância e entregas de webhook por status.
 
+Desde o M11 também:
+
+| Métrica | Tipo | O que mede |
+|---|---|---|
+| `litezap_queue_send_latency_seconds` | histograma | Segundos entre entrar na fila e sair enviado (inclui ritmo, agendamento e janela de envio). |
+| `litezap_worker_memory_rss_bytes{instance_id}` | gauge | Memória residente de cada worker (só Linux, lida de `/proc`). |
+
 ## Watchdog de conexão
 
 <span class="lz-badge lz-badge--soon">Em breve</span>
