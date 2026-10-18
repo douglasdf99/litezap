@@ -18,8 +18,8 @@ import (
 // Version is the current envelope version.
 const Version = 1
 
-// Event types of catalog v1 (spec 5.2). chat.presence and group.updated are not produced
-// yet: the worker does not report them.
+// Event types of catalog v1 (spec 5.2); the marco 7 ones are in realtime.go. group.updated
+// is not produced yet (marco 8).
 const (
 	TypeInstanceStatus   = "instance.status"
 	TypeInstanceQR       = "instance.qr"
@@ -42,7 +42,7 @@ var Types = []string{
 }
 
 // Envelope is a published event. JSON is its encoding (spec 5.1), shared by every
-// consumer: never modify it.
+// consumer: never modify it. Attrs summarizes data for filters without decoding JSON.
 type Envelope struct {
 	ID         string
 	Type       string
@@ -50,6 +50,21 @@ type Envelope struct {
 	InstanceID string
 	Timestamp  time.Time
 	JSON       []byte
+	Attrs      Attrs
+}
+
+// Attrs are the filterable fields of an event's data; empty fields mean the event has no
+// such field (instance.* events have none).
+type Attrs struct {
+	Chat        string // chat JID
+	MessageType string // message events: text, image, reaction...
+	HasFromMe   bool   // FromMe is meaningful
+	FromMe      bool
+}
+
+// Attributed is implemented by event data that carries filterable fields.
+type Attributed interface {
+	EventAttrs() Attrs
 }
 
 type wireEnvelope struct {
@@ -66,7 +81,7 @@ type wireEnvelope struct {
 func Match(pattern, typ string) bool {
 	switch {
 	case pattern == "*":
-		return true
+		return !optIn[typ]
 	case strings.HasSuffix(pattern, ".*"):
 		return strings.HasPrefix(typ, pattern[:len(pattern)-1])
 	default:
@@ -113,7 +128,10 @@ func (f Filter) match(e Envelope) bool {
 	if f.InstanceID != "" && f.InstanceID != e.InstanceID {
 		return false
 	}
-	return len(f.Types) == 0 || MatchAny(f.Types, e.Type)
+	if len(f.Types) == 0 {
+		return !optIn[e.Type]
+	}
+	return MatchAny(f.Types, e.Type)
 }
 
 // Bus fans events out to sinks and subscriptions.
@@ -149,6 +167,9 @@ func (b *Bus) Publish(instanceID, typ string, data any) {
 		return
 	}
 	e.JSON = js
+	if a, ok := data.(Attributed); ok {
+		e.Attrs = a.EventAttrs()
+	}
 	for _, s := range b.sinks {
 		s.Enqueue(e)
 	}

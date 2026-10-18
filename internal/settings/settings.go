@@ -24,6 +24,27 @@ type Window struct {
 	End   string `json:"end" yaml:"end"`
 }
 
+// Calls is the incoming call policy (marco 7).
+type Calls struct {
+	// AutoReject rejects every incoming call as soon as it rings.
+	AutoReject bool `json:"auto_reject" yaml:"auto_reject"`
+	// RejectMessage, when set, is sent to the caller (1:1 calls) after an automatic
+	// rejection, through the send queue (pacing, window and ramp apply); at most once per
+	// caller every 10 minutes.
+	RejectMessage string `json:"reject_message" yaml:"reject_message"`
+}
+
+// Presence controls the account's own online status (marco 7).
+type Presence struct {
+	// Online marks the account "available" while connected. Needed to receive typing
+	// events and contacts' online status, but while it is on WhatsApp treats the account
+	// as active on this device and the phone stops showing notifications. Off by default.
+	Online bool `json:"online" yaml:"online"`
+}
+
+// MaxRejectMessage bounds calls.reject_message (bytes).
+const MaxRejectMessage = 1000
+
 // Settings are the effective settings of an instance.
 type Settings struct {
 	MinIntervalMS    int    `json:"min_interval_ms" yaml:"min_interval_ms"`
@@ -40,7 +61,9 @@ type Settings struct {
 	UnsafePacing bool `json:"unsafe_pacing" yaml:"unsafe_pacing"`
 	// ProxyURL is never read from the instance_defaults config block: the global
 	// default proxy is config.DefaultProxyURL.
-	ProxyURL string `json:"proxy_url" yaml:"-"`
+	ProxyURL string   `json:"proxy_url" yaml:"-"`
+	Calls    Calls    `json:"calls" yaml:"calls"`
+	Presence Presence `json:"presence" yaml:"presence"`
 }
 
 // Defaults follows spec 4.1: 3s + 0-2s jitter, 20/min, typing on, ramp 50 -> 150 over 14
@@ -82,6 +105,9 @@ func (s Settings) Validate() error {
 	}
 	if err := s.SendWindow.validate(); err != nil {
 		return err
+	}
+	if len(s.Calls.RejectMessage) > MaxRejectMessage {
+		return fmt.Errorf("calls.reject_message is limited to %d bytes", MaxRejectMessage)
 	}
 	return ValidateProxyURL(s.ProxyURL)
 }
@@ -194,6 +220,16 @@ type RampPatch struct {
 	Days        *int  `json:"days,omitempty"`
 }
 
+// CallsPatch and PresencePatch are partial updates of Calls and Presence.
+type CallsPatch struct {
+	AutoReject    *bool   `json:"auto_reject,omitempty"`
+	RejectMessage *string `json:"reject_message,omitempty"`
+}
+
+type PresencePatch struct {
+	Online *bool `json:"online,omitempty"`
+}
+
 // Patch is both the PUT body and what is stored per instance (instances.settings_json):
 // only overridden fields are kept, so instances follow later changes of the defaults.
 type Patch struct {
@@ -206,7 +242,9 @@ type Patch struct {
 	Timezone         *string    `json:"timezone,omitempty"`
 	UnsafePacing     *bool      `json:"unsafe_pacing,omitempty"` // admin only
 	// ProxyURL "" clears the override (the instance falls back to the default proxy). Admin only.
-	ProxyURL *string `json:"proxy_url,omitempty"`
+	ProxyURL *string        `json:"proxy_url,omitempty"`
+	Calls    *CallsPatch    `json:"calls,omitempty"`
+	Presence *PresencePatch `json:"presence,omitempty"`
 }
 
 // Merge returns p with every field set in q overriding it.
@@ -241,6 +279,29 @@ func (p Patch) Merge(q Patch) Patch {
 	}
 	if q.ProxyURL != nil {
 		out.ProxyURL = q.ProxyURL
+	}
+	if p.Calls != nil || q.Calls != nil {
+		var a, b CallsPatch
+		if p.Calls != nil {
+			a = *p.Calls
+		}
+		if q.Calls != nil {
+			b = *q.Calls
+		}
+		out.Calls = &CallsPatch{AutoReject: pickB(a.AutoReject, b.AutoReject), RejectMessage: a.RejectMessage}
+		if b.RejectMessage != nil {
+			out.Calls.RejectMessage = b.RejectMessage
+		}
+	}
+	if p.Presence != nil || q.Presence != nil {
+		var a, b PresencePatch
+		if p.Presence != nil {
+			a = *p.Presence
+		}
+		if q.Presence != nil {
+			b = *q.Presence
+		}
+		out.Presence = &PresencePatch{Online: pickB(a.Online, b.Online)}
 	}
 	if p.Ramp != nil || q.Ramp != nil {
 		var a, b RampPatch
@@ -292,6 +353,17 @@ func (s Settings) Apply(p Patch) Settings {
 	}
 	if p.ProxyURL != nil && *p.ProxyURL != "" {
 		s.ProxyURL = *p.ProxyURL
+	}
+	if c := p.Calls; c != nil {
+		if c.AutoReject != nil {
+			s.Calls.AutoReject = *c.AutoReject
+		}
+		if c.RejectMessage != nil {
+			s.Calls.RejectMessage = *c.RejectMessage
+		}
+	}
+	if p.Presence != nil && p.Presence.Online != nil {
+		s.Presence.Online = *p.Presence.Online
 	}
 	return s
 }

@@ -53,6 +53,11 @@ type Whatsmeow struct {
 	upload        func(context.Context, io.Reader, whatsmeow.MediaType) (whatsmeow.UploadResponse, error)
 	decryptPoll   func(context.Context, *events.Message) (*waE2E.PollVoteMessage, error)
 	decryptSecret func(context.Context, *events.Message) (*waE2E.Message, error)
+	// Calls and presence (realtime.go); the funcs default to the client, tests replace them.
+	calls             callBook
+	rejectCall        func(context.Context, types.JID, string) error
+	sendPresence      func(context.Context, types.Presence) error
+	subscribePresence func(context.Context, types.JID) error
 
 	// Signals to pairLoop; all are buffered (1) and sent to without blocking.
 	restart    chan struct{} // from PairPhone: end the current round now
@@ -405,7 +410,7 @@ func (w *Whatsmeow) reportTerminal(state, reason, jid string) {
 }
 
 func (w *Whatsmeow) handle(evt any) {
-	if w.onData(evt) {
+	if w.onData(evt) || w.onRealtime(evt) {
 		return
 	}
 	loggedIn := w.cli.Store.ID != nil

@@ -37,7 +37,8 @@ export function webhooksPanel(instanceId) {
           h('div', { class: 'mono wh-url' }, w.url),
           h('div', { class: 'small muted' },
             w.instance_id ? `instância ${w.instance_id}` : 'global (todas as instâncias)',
-            ' · eventos: ', (w.events || []).join(', ') || '*', ' · ', h('span', { class: 'mono' }, w.id))),
+            ' · eventos: ', (w.events || []).join(', ') || '*',
+            w.filters ? ` · filtros: ${JSON.stringify(w.filters)}` : '', ' · ', h('span', { class: 'mono' }, w.id))),
         h('div', { class: 'actions' },
           h('label', { class: 'check' }, enabled, ' ligado'),
           h('button', {

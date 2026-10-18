@@ -47,11 +47,16 @@ Cada entrega é um `POST` com o envelope como corpo (`Content-Type: application/
 | [`instance.pair_code`](/docs/eventos/instance-pair-code/) | Código de pareamento gerado | M3 |
 | [`message.received`](/docs/eventos/message-received/) | Mensagem nova de outra pessoa | M3 |
 | [`message.sent`](/docs/eventos/message-sent/) | Envio pela API confirmado, ou mensagem enviada pelo celular | M3 |
-| [`message.status`](/docs/eventos/message-status/) | `sent`, `delivered`, `read` ou `failed` de uma mensagem enviada | M3 |
+| [`message.status`](/docs/eventos/message-status/) | `sent`, `delivered`, `read`, `played` (M7) ou `failed` de uma mensagem enviada | M3 |
 | [`message.reaction`](/docs/eventos/message-reaction/) | Reação recebida | M3 |
+| [`message.button_reply`](/docs/eventos/message-button-reply/) | Resposta a botão, lista, template ou interativa | M7 |
+| [`chat.presence`](/docs/eventos/chat-presence/) | Digitando, gravando, online/offline (opt-in) | M7 |
+| [`call.received`](/docs/eventos/call-received/) | Chamada tocando (e se foi rejeitada automaticamente) | M7 |
+| [`call.accepted`](/docs/eventos/call-accepted/) | Chamada atendida num aparelho da conta | M7 |
+| [`call.ended`](/docs/eventos/call-ended/) | Chamada encerrada (`missed` quando perdida) | M7 |
 | [`history.synced`](/docs/eventos/history-synced/) | Fim da sincronização de histórico | M3 |
 
-Tipos planejados (`message.revoked`, `chat.presence`, `call.received`, `group.updated`...) estão em
+Tipos planejados (`group.updated`, `chat.updated`...) estão em
 [Eventos em breve](/docs/eventos/em-breve/).
 
 ## Filtros
@@ -60,6 +65,10 @@ Webhooks (`events`) e SSE (`?types=`) aceitam:
 
 - um tipo exato: `message.status`;
 - uma família: `message.*`, `instance.*`;
-- tudo: `*`.
+- tudo: `*` (exceto `chat.presence`, que só chega quando pedido pelo nome ou por `chat.*`).
+
+Webhooks também aceitam `filters` (M7) para restringir por chat e tipo de mensagem:
+`{"chat":"direct"|"group", "chats":[...], "exclude_chats":[...], "message_types":["text",...], "from_me":true|false}`.
+Cada filtro só restringe eventos que têm o campo (`instance.*` sempre passam).
 
 Um filtro com tipo desconhecido responde `400 validation_failed`, com a lista de tipos válidos na mensagem.

@@ -12,6 +12,15 @@ type MessageMeta struct {
 	Contacts    []ContactCard `json:"contacts,omitempty"`
 	Poll        *Poll         `json:"poll,omitempty"`
 	LinkPreview *LinkPreview  `json:"link_preview,omitempty"`
+	ButtonReply *ButtonReply  `json:"button_reply,omitempty"`
+}
+
+// ButtonReply is a received answer to a button, list, template or interactive message.
+type ButtonReply struct {
+	Kind        string `json:"kind"`         // button | list | template | interactive
+	ID          string `json:"id,omitempty"` // selected button/row id (interactive: flow name)
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"` // list row description; interactive: params JSON
 }
 
 type Location struct {
@@ -44,7 +53,7 @@ type LinkPreview struct {
 // Empty reports whether m carries nothing.
 func (m MessageMeta) Empty() bool {
 	return m.ReplyTo == "" && len(m.Mentions) == 0 && !m.Forwarded && m.Location == nil &&
-		len(m.Contacts) == 0 && m.Poll == nil && m.LinkPreview == nil
+		len(m.Contacts) == 0 && m.Poll == nil && m.LinkPreview == nil && m.ButtonReply == nil
 }
 
 // JSON encodes m for meta_json ("" when empty).

@@ -847,7 +847,7 @@ func (d *dispatcher) finish(item store.Outbound, p Payload, resp *workerv1.SendR
 		return d.sent(item, p, at)
 	}
 	// A receipt already proved delivery (the worker's answer was lost or late): it was sent.
-	if m, err := st.GetMessage(ctx, d.id, item.ID); err == nil && (m.Status == "delivered" || m.Status == "read") {
+	if m, err := st.GetMessage(ctx, d.id, item.ID); err == nil && (m.Status == "delivered" || m.Status == "read" || m.Status == "played") {
 		return d.sent(item, p, opt.Clock.Now())
 	}
 	s := status.Convert(sendErr)
@@ -911,10 +911,10 @@ func (d *dispatcher) sent(item store.Outbound, p Payload, at time.Time) error {
 			}
 			pub.Publish(d.id, events.TypeMessageSent, m)
 		}
-		// A receipt that beat this confirmation already published delivered/read: a later
+		// A receipt that beat this confirmation already published delivered/read/played: a later
 		// "sent" would move the status backwards for consumers.
 		if logged, err := d.q.store.GetMessage(context.Background(), d.id, item.ID); err != nil ||
-			(logged.Status != "delivered" && logged.Status != "read") {
+			(logged.Status != "delivered" && logged.Status != "read" && logged.Status != "played") {
 			pub.Publish(d.id, events.TypeMessageStatus, events.MessageStatus{ID: item.ID, WAMessageID: item.WAMessageID,
 				Chat: item.ChatJID, Status: store.OutSent})
 		}

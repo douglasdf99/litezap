@@ -212,20 +212,22 @@ Regra de versionamento: adicionar campos em `data` não muda a versão; remover 
 | `instance.pair_code` | código de pareamento gerado |
 | `message.received` | mensagem recebida de outra pessoa |
 | `message.sent` | mensagem enviada (pela API ou `from_me` pelo celular; campo `source: api\|device`) |
-| `message.status` | `sent`, `delivered`, `read`, `failed` de mensagem enviada |
+| `message.status` | `sent`, `delivered`, `read`, `played` (marco 7), `failed` de mensagem enviada |
 | `message.reaction` | reação recebida |
 | `message.edited` | mensagem editada (API, celular ou contato) — marco 6 |
 | `message.revoked` | mensagem apagada para todos — marco 6 |
 | `message.poll_vote` | voto em enquete, com as opções decifradas (casadas por SHA-256 com as opções guardadas) — marco 6 |
-| `chat.presence` | digitando/gravando/online |
-| `group.updated` | entrada/saída de participantes, mudança de nome |
+| `message.button_reply` | resposta a botão/lista/template/interativa recebida (só recebimento) — marco 7 |
+| `chat.presence` | digitando/gravando/parou, online/offline de contato assinado — marco 7; opt-in: exige `presence.online` e não entra em `*` |
+| `call.received` · `call.accepted` · `call.ended` | chamada tocando (com `rejected` se `calls.auto_reject`), atendida num aparelho da conta, encerrada (`reason`, `missed`) — marco 7 |
+| `group.updated` | entrada/saída de participantes, mudança de nome — marco 8 |
 | `history.synced` | ingestão de history sync concluída |
 | `agent.failed` | falha no hook de agente |
 | `agent.handoff` | ação `handoff` do agente |
 
 ### 5.3 Webhooks
 
-- Cadastro: `POST /v1/webhooks {url, secret?, events: ["message.*", ...], instance_id?, version?}`. Sem `instance_id` = global (todas as instâncias). Também `GET/PATCH/DELETE /v1/webhooks/{id}`.
+- Cadastro: `POST /v1/webhooks {url, secret?, events: ["message.*", ...], instance_id?, version?, filters?}`. `filters` (marco 7): `chat` (`direct|group`), `chats`, `exclude_chats`, `message_types`, `from_me`; cada filtro só restringe eventos que têm o campo (o bus anexa chat/tipo/from_me ao envelope, sem decodificar o JSON). Sem `instance_id` = global (todas as instâncias). Também `GET/PATCH/DELETE /v1/webhooks/{id}`.
 - Assinatura: header `X-LiteZap-Signature: t=<unix>,v1=<hex>` onde `v1 = HMAC-SHA256(secret, "<t>.<corpo>")`. O receptor deve rejeitar `t` com mais de 5 minutos (anti-replay). Header `X-LiteZap-Event-Id` para deduplicação.
 - Entrega: timeout 10s; 2xx = sucesso. Retry com backoff exponencial (1s → 1h), por no máximo 24h; depois vai para a dead-letter.
 - Dead-letter: `GET /v1/webhooks/{id}/deliveries?status=failed` e `POST /v1/webhooks/{id}/deliveries/{delivery_id}/retry`.
@@ -244,7 +246,8 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 | `POST /instances/{id}/logout` | inst | desconecta o número |
 | `POST /instances/{id}/token/rotate` | admin | gera novo token de instância |
 | `GET /instances/{id}/qr` · `POST .../pair-phone` | inst | pareamento |
-| `GET/PUT /instances/{id}/settings` | inst (`proxy_url` e `unsafe_pacing`: admin) | ritmo, janela, fuso, rampa, proxy |
+| `GET/PUT /instances/{id}/settings` | inst (`proxy_url` e `unsafe_pacing`: admin) | ritmo, janela, fuso, rampa, proxy, `calls {auto_reject, reject_message}`, `presence {online}` (marco 7) |
+| `POST /instances/{id}/presence/subscribe` | inst | presença de um contato (exige `presence.online`; 20/min e 200/dia; bloqueada por suspensão de envio) — marco 7 |
 | `POST /instances/{id}/messages` | inst | enviar (4.1) |
 | `GET /instances/{id}/messages/{msg_id}` | inst | status de uma mensagem |
 | `GET /instances/{id}/queue` · `DELETE .../queue/{msg_id}` · `DELETE .../queue` | inst | fila visível: listar, cancelar item `queued`, esvaziar (marco 6) |

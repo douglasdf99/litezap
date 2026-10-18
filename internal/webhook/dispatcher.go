@@ -106,8 +106,9 @@ type Dispatcher struct {
 
 	hooksMu sync.RWMutex
 	hooks   map[string]store.Webhook
-	loadMu  sync.Mutex  // serializes LoadWebhooks
-	stale   atomic.Bool // the last LoadWebhooks failed
+	filters map[string]events.Filters // webhook id -> parsed filters (only non-empty ones)
+	loadMu  sync.Mutex                // serializes LoadWebhooks
+	stale   atomic.Bool               // the last LoadWebhooks failed
 
 	wake chan struct{}
 
@@ -173,11 +174,24 @@ func (d *Dispatcher) LoadWebhooks(ctx context.Context) error {
 		return err
 	}
 	m := make(map[string]store.Webhook, len(list))
+	fs := map[string]events.Filters{}
 	for _, w := range list {
 		m[w.ID] = w
+		if w.FiltersJSON == "" {
+			continue
+		}
+		f, err := events.ParseFilters(w.FiltersJSON)
+		if err != nil {
+			// Never widen a filtered webhook: a broken filter matches nothing.
+			d.log.Error("webhook: invalid filters; the webhook receives no events", "webhook_id", w.ID, "err", err)
+			w.Enabled = false
+			m[w.ID] = w
+			continue
+		}
+		fs[w.ID] = f
 	}
 	d.hooksMu.Lock()
-	d.hooks = m
+	d.hooks, d.filters = m, fs
 	d.hooksMu.Unlock()
 	d.stale.Store(false)
 	d.mu.Lock()
@@ -322,6 +336,9 @@ func (d *Dispatcher) write(batch []events.Envelope) {
 	for _, e := range batch {
 		for _, w := range d.hooks {
 			if !matches(w, e) {
+				continue
+			}
+			if f, ok := d.filters[w.ID]; ok && !f.Match(e) {
 				continue
 			}
 			ds = append(ds, store.Delivery{ID: secure.NewID("dlv_"), WebhookID: w.ID, EventID: e.ID, EventType: e.Type,

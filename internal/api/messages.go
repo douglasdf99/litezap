@@ -78,7 +78,7 @@ func (s *server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	code := http.StatusAccepted
 	switch v.Status {
-	case "sent", "delivered", "read":
+	case "sent", "delivered", "read", "played":
 		code = http.StatusOK
 	}
 	writeJSON(w, code, v)

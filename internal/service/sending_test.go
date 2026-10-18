@@ -38,4 +38,7 @@ func TestGuardedMessagingRefusesEverySendWhileSuspended(t *testing.T) {
 	if _, err := g.CheckNumbers(ctx, "i1", []string{"5511988887777"}); err == nil {
 		t.Fatal("check-numbers allowed while suspended")
 	}
+	if err := g.SubscribePresence(ctx, "i1", "5511988887777"); err == nil {
+		t.Fatal("presence subscription allowed while suspended")
+	}
 }

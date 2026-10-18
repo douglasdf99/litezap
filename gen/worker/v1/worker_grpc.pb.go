@@ -19,17 +19,20 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Worker_Ping_FullMethodName          = "/worker.v1.Worker/Ping"
-	Worker_PairPhone_FullMethodName     = "/worker.v1.Worker/PairPhone"
-	Worker_Logout_FullMethodName        = "/worker.v1.Worker/Logout"
-	Worker_Events_FullMethodName        = "/worker.v1.Worker/Events"
-	Worker_Send_FullMethodName          = "/worker.v1.Worker/Send"
-	Worker_SendPresence_FullMethodName  = "/worker.v1.Worker/SendPresence"
-	Worker_MarkRead_FullMethodName      = "/worker.v1.Worker/MarkRead"
-	Worker_DownloadMedia_FullMethodName = "/worker.v1.Worker/DownloadMedia"
-	Worker_GetContacts_FullMethodName   = "/worker.v1.Worker/GetContacts"
-	Worker_GetContact_FullMethodName    = "/worker.v1.Worker/GetContact"
-	Worker_CheckNumbers_FullMethodName  = "/worker.v1.Worker/CheckNumbers"
+	Worker_Ping_FullMethodName              = "/worker.v1.Worker/Ping"
+	Worker_PairPhone_FullMethodName         = "/worker.v1.Worker/PairPhone"
+	Worker_Logout_FullMethodName            = "/worker.v1.Worker/Logout"
+	Worker_Events_FullMethodName            = "/worker.v1.Worker/Events"
+	Worker_Send_FullMethodName              = "/worker.v1.Worker/Send"
+	Worker_SendPresence_FullMethodName      = "/worker.v1.Worker/SendPresence"
+	Worker_MarkRead_FullMethodName          = "/worker.v1.Worker/MarkRead"
+	Worker_DownloadMedia_FullMethodName     = "/worker.v1.Worker/DownloadMedia"
+	Worker_GetContacts_FullMethodName       = "/worker.v1.Worker/GetContacts"
+	Worker_GetContact_FullMethodName        = "/worker.v1.Worker/GetContact"
+	Worker_CheckNumbers_FullMethodName      = "/worker.v1.Worker/CheckNumbers"
+	Worker_RejectCall_FullMethodName        = "/worker.v1.Worker/RejectCall"
+	Worker_SetPresence_FullMethodName       = "/worker.v1.Worker/SetPresence"
+	Worker_SubscribePresence_FullMethodName = "/worker.v1.Worker/SubscribePresence"
 )
 
 // WorkerClient is the client API for Worker service.
@@ -61,6 +64,13 @@ type WorkerClient interface {
 	GetContacts(ctx context.Context, in *GetContactsRequest, opts ...grpc.CallOption) (*GetContactsResponse, error)
 	GetContact(ctx context.Context, in *GetContactRequest, opts ...grpc.CallOption) (*GetContactResponse, error)
 	CheckNumbers(ctx context.Context, in *CheckNumbersRequest, opts ...grpc.CallOption) (*CheckNumbersResponse, error)
+	// Calls and presence (marco 7). RejectCall only rejects a call this worker reported
+	// (unknown or finished call ids answer NotFound). SetPresence marks the account
+	// available/unavailable: while available the phone stops showing notifications.
+	// SubscribePresence asks for a contact's online/last seen updates.
+	RejectCall(ctx context.Context, in *RejectCallRequest, opts ...grpc.CallOption) (*RejectCallResponse, error)
+	SetPresence(ctx context.Context, in *SetPresenceRequest, opts ...grpc.CallOption) (*SetPresenceResponse, error)
+	SubscribePresence(ctx context.Context, in *SubscribePresenceRequest, opts ...grpc.CallOption) (*SubscribePresenceResponse, error)
 }
 
 type workerClient struct {
@@ -190,6 +200,36 @@ func (c *workerClient) CheckNumbers(ctx context.Context, in *CheckNumbersRequest
 	return out, nil
 }
 
+func (c *workerClient) RejectCall(ctx context.Context, in *RejectCallRequest, opts ...grpc.CallOption) (*RejectCallResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RejectCallResponse)
+	err := c.cc.Invoke(ctx, Worker_RejectCall_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) SetPresence(ctx context.Context, in *SetPresenceRequest, opts ...grpc.CallOption) (*SetPresenceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetPresenceResponse)
+	err := c.cc.Invoke(ctx, Worker_SetPresence_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerClient) SubscribePresence(ctx context.Context, in *SubscribePresenceRequest, opts ...grpc.CallOption) (*SubscribePresenceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SubscribePresenceResponse)
+	err := c.cc.Invoke(ctx, Worker_SubscribePresence_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkerServer is the server API for Worker service.
 // All implementations must embed UnimplementedWorkerServer
 // for forward compatibility.
@@ -219,6 +259,13 @@ type WorkerServer interface {
 	GetContacts(context.Context, *GetContactsRequest) (*GetContactsResponse, error)
 	GetContact(context.Context, *GetContactRequest) (*GetContactResponse, error)
 	CheckNumbers(context.Context, *CheckNumbersRequest) (*CheckNumbersResponse, error)
+	// Calls and presence (marco 7). RejectCall only rejects a call this worker reported
+	// (unknown or finished call ids answer NotFound). SetPresence marks the account
+	// available/unavailable: while available the phone stops showing notifications.
+	// SubscribePresence asks for a contact's online/last seen updates.
+	RejectCall(context.Context, *RejectCallRequest) (*RejectCallResponse, error)
+	SetPresence(context.Context, *SetPresenceRequest) (*SetPresenceResponse, error)
+	SubscribePresence(context.Context, *SubscribePresenceRequest) (*SubscribePresenceResponse, error)
 	mustEmbedUnimplementedWorkerServer()
 }
 
@@ -261,6 +308,15 @@ func (UnimplementedWorkerServer) GetContact(context.Context, *GetContactRequest)
 }
 func (UnimplementedWorkerServer) CheckNumbers(context.Context, *CheckNumbersRequest) (*CheckNumbersResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckNumbers not implemented")
+}
+func (UnimplementedWorkerServer) RejectCall(context.Context, *RejectCallRequest) (*RejectCallResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RejectCall not implemented")
+}
+func (UnimplementedWorkerServer) SetPresence(context.Context, *SetPresenceRequest) (*SetPresenceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetPresence not implemented")
+}
+func (UnimplementedWorkerServer) SubscribePresence(context.Context, *SubscribePresenceRequest) (*SubscribePresenceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SubscribePresence not implemented")
 }
 func (UnimplementedWorkerServer) mustEmbedUnimplementedWorkerServer() {}
 func (UnimplementedWorkerServer) testEmbeddedByValue()                {}
@@ -474,6 +530,60 @@ func _Worker_CheckNumbers_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Worker_RejectCall_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RejectCallRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).RejectCall(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_RejectCall_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).RejectCall(ctx, req.(*RejectCallRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_SetPresence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetPresenceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).SetPresence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_SetPresence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).SetPresence(ctx, req.(*SetPresenceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Worker_SubscribePresence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubscribePresenceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).SubscribePresence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_SubscribePresence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).SubscribePresence(ctx, req.(*SubscribePresenceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Worker_ServiceDesc is the grpc.ServiceDesc for Worker service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -520,6 +630,18 @@ var Worker_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CheckNumbers",
 			Handler:    _Worker_CheckNumbers_Handler,
+		},
+		{
+			MethodName: "RejectCall",
+			Handler:    _Worker_RejectCall_Handler,
+		},
+		{
+			MethodName: "SetPresence",
+			Handler:    _Worker_SetPresence_Handler,
+		},
+		{
+			MethodName: "SubscribePresence",
+			Handler:    _Worker_SubscribePresence_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -41,17 +41,21 @@ type WebhookInput struct {
 	InstanceID *string  `json:"instance_id"`
 	Version    *int     `json:"version"`
 	Enabled    *bool    `json:"enabled"`
+	// Filters narrow the events by chat, message type and from_me ({} clears them).
+	Filters *events.Filters `json:"filters"`
 }
 
 type WebhookView struct {
-	ID         string    `json:"id"`
-	InstanceID string    `json:"instance_id,omitempty"` // empty: every instance
-	URL        string    `json:"url"`
-	Events     []string  `json:"events"`
-	Version    int       `json:"version"`
-	Enabled    bool      `json:"enabled"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID         string   `json:"id"`
+	InstanceID string   `json:"instance_id,omitempty"` // empty: every instance
+	URL        string   `json:"url"`
+	Events     []string `json:"events"`
+	Version    int      `json:"version"`
+	Enabled    bool     `json:"enabled"`
+	// Filters is omitted when the webhook has none.
+	Filters   *events.Filters `json:"filters,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
 	// Secret is returned only when it is set (creation, or a patch that changes it).
 	Secret string `json:"secret,omitempty"`
 }
@@ -80,8 +84,24 @@ type DeliveryPage struct {
 }
 
 func webhookView(w store.Webhook) WebhookView {
-	return WebhookView{ID: w.ID, InstanceID: w.InstanceID, URL: w.URL, Events: w.Events, Version: w.Version,
+	v := WebhookView{ID: w.ID, InstanceID: w.InstanceID, URL: w.URL, Events: w.Events, Version: w.Version,
 		Enabled: w.Enabled, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt}
+	if f, err := events.ParseFilters(w.FiltersJSON); err == nil && !f.Empty() {
+		v.Filters = &f
+	}
+	return v
+}
+
+// validateFilters normalizes webhook filters and returns their stored form.
+func validateFilters(f *events.Filters) (string, error) {
+	if f == nil {
+		return "", nil
+	}
+	n, err := f.Normalize()
+	if err != nil {
+		return "", apierr.Validation(err.Error())
+	}
+	return n.JSON(), nil
 }
 
 func deliveryView(d store.Delivery) DeliveryView {
@@ -175,6 +195,9 @@ func (s *Webhooks) Create(ctx context.Context, sc Scope, in WebhookInput) (Webho
 		return WebhookView{}, err
 	}
 	w.Events = evs
+	if w.FiltersJSON, err = validateFilters(in.Filters); err != nil {
+		return WebhookView{}, err
+	}
 	if in.Version != nil && *in.Version != events.Version {
 		return WebhookView{}, apierr.Validation("unsupported version (supported: 1)")
 	}
@@ -265,6 +288,11 @@ func (s *Webhooks) Update(ctx context.Context, sc Scope, id string, in WebhookIn
 	}
 	if in.Enabled != nil {
 		w.Enabled = *in.Enabled
+	}
+	if in.Filters != nil {
+		if w.FiltersJSON, err = validateFilters(in.Filters); err != nil {
+			return WebhookView{}, err
+		}
 	}
 	newSecret := ""
 	if in.Secret != nil {
