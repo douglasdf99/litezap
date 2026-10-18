@@ -154,6 +154,17 @@ Disparo: só para `message.received` de chats não ignorados, não pausados e n�
 
 Exemplo de referência em `examples/agent-claude/`: servidor mínimo em Go que implementa este contrato com o Claude padrão.
 
+Implementado no marco 5 (pacote `agenthook`, consumidor do barramento como os webhooks), com estas definições:
+
+- **Envio**: a resposta segue o mesmo caminho de `POST /messages` (fila, ritmo, janela, rampa e suspensão do operador), com `client_message_id = agent:<id da mensagem>` (uma resposta por mensagem) e expiração de 1h. `reply` objeto aceita só tipos de conteúdo (`text`, mídias, `location`, `contact`, `poll`); `to` e `client_message_id` do agente são ignorados (sempre o chat que disparou). `react` também passa pela fila. Com envio suspenso pelo operador, o hook nem é chamado.
+- **Elegibilidade**: override `true` liga o hook no chat mesmo com `enabled: false` na instância; nunca `status@broadcast` nem canais; `ignore` vale para chat ou remetente.
+- **Um por vez com coalescência**: mensagens que chegam durante uma chamada esperam; ao fim, só a mais nova gera a próxima chamada (as demais estão no `context`, que termina com a própria mensagem). Até 8 chamadas simultâneas no servidor.
+- **Revalidação**: depois da resposta o estado do chat é relido; se um humano respondeu (ou o chat foi pausado/desligado) durante a chamada, a resposta é descartada. A pausa por humano também descarta a mensagem que esperava a vez.
+- **Fail-closed**: além de erro/timeout/JSON inválido, redirecionamento (nunca seguido) e ação conhecida malformada contam como falha; `agent.failed.reason` ∈ `timeout`, `http_error`, `network_error`, `invalid_response`, `send_failed`, `loop_guard`.
+- **Proteção contra loop** (dois robôs conversando, agente descontrolado): no máximo `max_replies_per_window` (padrão 10) respostas por chat em `reply_window` (padrão 10min); acima disso o chat pausa por `human_pause` (ou pela janela, se a pausa for 0) com `agent.failed` (`loop_guard`).
+- **Rede**: mesmo filtro SSRF dos webhooks (`webhook_allow_private_urls` libera endereços locais), sem proxy de ambiente; o segredo (gerado se ausente, mostrado uma vez) nunca volta na API.
+- **Rotas extras**: `GET`/`DELETE /instances/{id}/agent-hook`, `GET .../agent-hook/chats` (overrides e pausas) e `GET .../agent-hook/calls` (log das últimas 500 chamadas: `ok`, `failed`, `skipped`, `discarded`, `paused`). `PUT .../chats/{jid}/agent` com `true` ou `null` também encerra uma pausa. Store: tabelas `agent_hooks` e `agent_calls` (migração 0006). Painel: aba "Atendente IA".
+
 ### 4.4 Conexão
 
 - `POST /v1/instances` cria a instância (devolve o token da instância) e sobe o worker.
@@ -243,7 +254,7 @@ Prefixo `/v1`. Erros no formato `{"error":{"code","message","retryable"}}` (9.3)
 | `POST /instances/{id}/check-numbers` | inst | verifica se números têm WhatsApp |
 | `GET /instances/{id}/media/{media_id}` | inst | mídia recebida (`?signed=1` → URL assinada) |
 | `GET /media/{id}/{media_id}?exp=&sig=` | assinatura | mídia recebida via URL assinada (4.5) |
-| `PUT /instances/{id}/agent-hook` · `PUT .../chats/{jid}/agent` | inst | hook de agente (4.3) |
+| `GET/PUT/DELETE /instances/{id}/agent-hook` · `PUT .../chats/{jid}/agent` · `GET .../agent-hook/chats` · `GET .../agent-hook/calls` | inst | hook de agente (4.3) |
 | `GET /instances/{id}/events` · `GET /events` | inst · admin | SSE |
 | `/webhooks...` | admin ou inst (só os da própria instância) | 5.3 |
 | `GET /me` | qualquer | quem é o token (`{admin, instance_id}`), usado por `litezap mcp` |

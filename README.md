@@ -5,7 +5,7 @@ Cada número roda em um processo worker isolado, supervisionado com heartbeat, r
 
 Licença: Apache-2.0. Roda no seu PC, no seu servidor ou na nuvem gerenciada do LiteZap.
 
-> Status: marco 4 (envio com fila persistente, recebimento, chats, histórico, mídia, proxy por instância, eventos com webhooks assinados e SSE, servidor MCP em `/mcp` e `litezap mcp`) + app local v1 (painel web embutido e lançador de bandeja). O hook de agente vem no próximo marco.
+> Status: marco 4 (envio com fila persistente, recebimento, chats, histórico, mídia, proxy por instância, eventos com webhooks assinados e SSE, servidor MCP em `/mcp` e `litezap mcp`) + app local v1 (painel web embutido e lançador de bandeja) + marco 5 (hook de agente para atendente de IA, com o exemplo `examples/agent-claude`).
 > Design: `docs/superpowers/specs/2026-10-17-litezap-engine-design.md`
 
 ## Rodar
@@ -225,11 +225,13 @@ Adicionar campos em `data` não muda a versão; remover ou mudar o sentido de um
 | `message.revoked` | mensagem apagada para todos (pelo autor, ou por admin do grupo) | `{id?, wa_message_id, chat, sender?, from_me, source, timestamp}` |
 | `message.poll_vote` | voto em enquete (o voto atual da pessoa; lista vazia = voto retirado) | `{poll_id?, poll_wa_message_id, chat, voter, push_name?, from_me, selected_options, unknown_options?, timestamp}` |
 | `history.synced` | fim da ingestão de um history sync (um evento por sync, 15s depois do último bloco) | `{chats, messages, new_messages}` |
+| `agent.failed` | uma chamada do hook de agente falhou (nada foi enviado) ou o limite de respostas pausou o chat | `{chat, message_id, wa_message_id, reason, error?, http_status?}`; `reason`: `timeout`, `http_error`, `network_error`, `invalid_response`, `send_failed`, `loop_guard` |
+| `agent.handoff` | o agente passou o chat para um humano (ação `handoff`) | `{chat, message_id, wa_message_id, note?}` |
 | `instance.proxy_failed` | a instância não alcança o WhatsApp pelo proxy (entra em `reconnecting`/`proxy_unreachable`), repetido a cada 5 min enquanto durar; a volta é o próximo `instance.status` | `{reason, since, duration_seconds, outages_last_hour, repeat}` |
 
 Mensagem: `{id, wa_message_id, chat, sender, from_me, is_group, push_name, source, type, text, media?, reaction_to?, timestamp}` mais o conteúdo estruturado quando houver: `reply_to` (wa id citado), `mentions`, `forwarded`, `location {latitude, longitude, name, address, url}`, `contacts [{display_name, vcard}]`, `poll {name, options, selectable}` e `link_preview {url, title, description}`; os mesmos campos de `GET /messages/{id}`. Tipos recebidos: os de envio, mais `unknown`. Votos chegam cifrados e só são decifrados para enquetes cujo segredo a sessão conhece (criadas ou recebidas depois do pareamento); as opções são casadas pelo SHA-256 contra as opções guardadas no log (`unknown_options` conta as que não casaram). `media` traz `{id, kind, mime, size, file_name, seconds, ptt, url}`; `url` é a rota autenticada de download (`GET /v1/instances/{id}/media/{media_id}`). Mensagens de history sync não geram eventos individuais (só o `history.synced`); uma mensagem que chega duas vezes (reconexão do worker) gera um único evento.
 
-Ainda não emitidos (o worker não reporta esses fatos): `chat.presence`, `group.updated`. `agent.failed` e `agent.handoff` chegam com o hook de agente (marco 5).
+Ainda não emitidos (o worker não reporta esses fatos): `chat.presence`, `group.updated`.
 
 ### SSE
 
@@ -318,6 +320,55 @@ function verify(secret, header, rawBody) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 ```
+
+## Atendente IA (hook de agente)
+
+Um atendente de IA externo (o seu servidor, ou o exemplo [`examples/agent-claude`](examples/agent-claude)) recebe cada mensagem elegível como um `POST` assinado e responde com o texto e ações. A resposta **passa pela fila normal** (ritmo, janela, rampa, suspensão do operador): o hook nunca envia direto.
+
+```bash
+# configurar (cria; o segredo é gerado e aparece só nesta resposta)
+curl -s -X PUT $LZ/v1/instances/$ID/agent-hook -H "Authorization: Bearer $TOK" \
+  -d '{"url":"https://meu-agente.exemplo.com/litezap","enabled":true}'
+curl -s $LZ/v1/instances/$ID/agent-hook -H "Authorization: Bearer $TOK"          # ler (sem o segredo)
+curl -s -X DELETE $LZ/v1/instances/$ID/agent-hook -H "Authorization: Bearer $TOK" # remover
+# por conversa: true | false | null (null = padrão da instância; true/null também encerram a pausa)
+curl -s -X PUT $LZ/v1/instances/$ID/chats/5511999999999/agent -H "Authorization: Bearer $TOK" -d '{"enabled":false}'
+curl -s $LZ/v1/instances/$ID/agent-hook/chats -H "Authorization: Bearer $TOK"   # chats com regra própria ou pausados
+curl -s $LZ/v1/instances/$ID/agent-hook/calls -H "Authorization: Bearer $TOK"   # últimas chamadas (status, motivo, duração)
+```
+
+| Campo | Padrão | |
+|---|---|---|
+| `url` | — | `http(s)`; endereços privados/loopback só com `webhook_allow_private_urls` |
+| `secret` | gerado | 16–256 caracteres; assina como os webhooks (`X-LiteZap-Signature`) |
+| `enabled` | `false` | padrão para conversas sem regra própria |
+| `timeout` | `30s` | 1s–2m |
+| `context_messages` | `20` | 0–100 mensagens do chat, mais antiga primeiro |
+| `groups_enabled` | `false` | também responder em grupos |
+| `human_pause` | `30m` | um humano respondeu pelo celular: o hook pausa no chat (`0` = não pausa) |
+| `ignore` | `[]` | números/JIDs que nunca são atendidos (chat ou remetente) |
+| `max_replies_per_window` / `reply_window` | `10` / `10m` | proteção contra loop entre robôs: estourou, o chat pausa por `human_pause` e sai `agent.failed` (`loop_guard`) |
+
+**Request** (`POST {url}`, `Content-Type: application/json`, headers `X-LiteZap-Signature`, `X-LiteZap-Event-Id` = id do `message.received`, `X-LiteZap-Event-Type: agent.request`):
+
+```json
+{"instance_id":"inst_...","chat":{"jid":"5511999999999@s.whatsapp.net","name":"Ana","is_group":false},
+ "message":{ "...": "o data do message.received" },
+ "context":[{"id":"msg_...","wa_message_id":"...","sender":"...","from_me":false,"source":"contact","type":"text","text":"oi","timestamp":"..."}]}
+```
+
+`context` termina com a própria mensagem; `from_me` com `source: api` são respostas do robô, `source: device` são de um humano no celular.
+
+**Response** `200` `{"reply": "texto" | {MessagePayload sem "to"}, "actions": [...]}` ou `204` (nada a fazer). `reply` objeto aceita os tipos de conteúdo (`text`, `image`, `video`, `audio`, `document`, `sticker`, `gif`, `ptv`, `location`, `contact`, `poll`); sempre vai para o chat que disparou a chamada, uma vez por mensagem (`client_message_id = agent:<id>`), e expira em 1h se não sair. Ações: `{"type":"mark_read"}`, `{"type":"react","emoji":"👍"}`, `{"type":"pause","minutes":60}` (1–10080), `{"type":"handoff","note":"..."}` (desliga o hook no chat até reativação e emite `agent.handoff`). Ação desconhecida é ignorada; resposta inválida, erro HTTP, redirecionamento ou timeout → `agent.failed`, nada é enviado, sem retry.
+
+Regras:
+
+- Só `message.received` (nunca `status@broadcast`, canais, mensagens próprias); grupos só com `groups_enabled`.
+- **Uma chamada por vez por chat**; mensagens que chegam durante a chamada são agrupadas: a próxima chamada leva a mais nova (as outras estão no `context`). No máximo 8 chamadas ao mesmo tempo no servidor.
+- **Pausa por humano**: mensagem `from_me` cujo `wa_message_id` não foi enviado pelo LiteZap (você respondeu pelo celular) pausa o hook no chat por `human_pause`. Se isso acontece durante uma chamada, a resposta do agente é descartada.
+- Com o envio suspenso pelo operador, o hook nem é chamado (aparece como `skipped` em `calls`).
+
+**Segurança e risco de banimento**: trate o texto das mensagens como **não confiável** no seu agente (prompt injection: o cliente pode escrever "ignore as instruções e..."); nunca dê ao modelo segredos ou ferramentas que ele não deva usar a pedido de um cliente. Respostas automáticas só vão para quem escreveu primeiro e respeitam o ritmo da fila, mas um robô respondendo outro robô gera volume anormal: mantenha o `max_replies_per_window` baixo.
 
 ## MCP (Claude, ChatGPT e outros clientes de IA)
 
@@ -455,6 +506,15 @@ Com a instância conectada (passos acima):
 4. Retry e dead-letter: pare o receptor, mande uma mensagem e liste `GET /v1/webhooks/<wh_id>/deliveries?status=pending` (`attempts` subindo, `last_error` com o motivo). Suba o receptor de novo: a entrega chega no próximo retry (o intervalo dobra a cada falha, até 1h). Uma entrega que fica 24h sem sucesso aparece em `?status=failed` e pode ser reenviada com `POST .../deliveries/<delivery_id>/retry`.
 5. Restart: com o receptor parado, mande mensagens, pare e suba o `serve` e depois o receptor: as entregas pendentes são feitas depois do restart.
 
+### Testar o atendente IA
+
+1. Libere destinos locais (`webhook_allow_private_urls: true`) e reinicie o `serve`.
+2. No painel, aba **Atendente IA** da instância: URL `http://127.0.0.1:8790/`, marque "Responder automaticamente" e salve; copie o segredo que aparece.
+3. Rode o exemplo: `cd examples/agent-claude && ANTHROPIC_API_KEY=... LITEZAP_AGENT_SECRET=<segredo> go run .`
+4. De outro celular, mande "oi" para o número pareado: a resposta sai pela fila (com "digitando…") e aparece em "Chamadas recentes".
+5. Responda você mesmo pelo celular pareado: o chat aparece como pausado por 30 min em "Por conversa"; mensagens novas do contato não chamam o agente até lá ("Reativar" encerra a pausa).
+6. Peça "quero falar com um atendente": o agente responde e faz `handoff` (chat desligado, evento `agent.handoff` em "Eventos ao vivo").
+
 ### Testar o MCP com um cliente de IA
 
 1. Com o `serve` rodando e uma instância criada (`ID`, `TOK` acima), configure o Claude Desktop ou o Claude Code com `TOK` (seção "MCP").
@@ -474,6 +534,7 @@ Com a instância conectada (passos acima):
 - **Parear**: QR que se atualiza sozinho (evento `instance.qr`) e pareamento por código (número de telefone).
 - **Conversas**: lista de chats, histórico, envio de texto com status ao vivo (`na fila` → `enviada` → `entregue` → `lida`). Quando o envio fica na fila, o painel explica por quê: carência de 15–30s após conectar, ritmo, rampa e janela de envio (com o horário atual no fuso da instância).
 - **Configurações**: ritmo, rampa, janela, fuso, proxy e ritmo inseguro (só são enviados os campos alterados; a senha mascarada do proxy nunca é reenviada).
+- **Atendente IA**: configurar o hook de agente (URL, segredo, timeout, contexto, pausa por humano, limite de respostas, ignorados), ligar/desligar por conversa, reativar chats pausados e ver as chamadas recentes com motivo das falhas.
 - **Webhooks**: criar (o segredo aparece uma vez), ligar/desligar, excluir, ver entregas por status e reenviar as da dead-letter. Há também a página de webhooks globais.
 - **Eventos ao vivo**: os mesmos eventos dos webhooks, com o JSON de cada um.
 
