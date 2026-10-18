@@ -5,7 +5,7 @@ Cada número roda em um processo worker isolado, supervisionado com heartbeat, r
 
 Licença: Apache-2.0. Roda no seu PC, no seu servidor ou na nuvem gerenciada do LiteZap.
 
-> Status: marco 2 (envio com fila persistente, recebimento, chats, histórico, mídia e proxy por instância). Webhooks/SSE, MCP e hook de agente vêm nos próximos marcos.
+> Status: marco 3 (envio com fila persistente, recebimento, chats, histórico, mídia, proxy por instância, eventos com webhooks assinados e SSE). MCP e hook de agente vêm nos próximos marcos.
 > Design: `docs/superpowers/specs/2026-10-17-litezap-engine-design.md`
 
 ## Rodar
@@ -28,6 +28,9 @@ Configuração (`litezap.yaml`; variáveis `LITEZAP_*` têm precedência):
 | `worker_memory_max_mb` | `LITEZAP_WORKER_MEMORY_MAX_MB` | `512` |
 | `default_proxy_url` | `LITEZAP_DEFAULT_PROXY_URL` | vazio (conexão direta) |
 | `media_allow_private_urls` | `LITEZAP_MEDIA_ALLOW_PRIVATE_URLS` | `false` |
+| `webhook_allow_private_urls` | `LITEZAP_WEBHOOK_ALLOW_PRIVATE_URLS` | `false` (`true` libera webhooks para `127.0.0.1`, rede local etc.) |
+| `webhook_retention_days` | só no arquivo | `7` (entregas concluídas) |
+| `webhook_failed_retention_days` | só no arquivo | `30` (dead-letter) |
 | `instance_defaults` (bloco) | só no arquivo | ritmo 3s + 0–2s, 20/min, digitando ligado, rampa 50→150 em 14 dias, janela 08:00–20:00 no fuso do servidor |
 
 Workers rodam em grupo de processos próprio e encerram sozinhos assim que o supervisor morre, mesmo à força (SIGKILL): cada worker vigia um pipe no stdin mantido aberto pelo supervisor e sai ao receber EOF. A limpeza de órfãos no próximo `serve` (via `data/run/*.pid`) é só um fallback.
@@ -56,6 +59,12 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `POST /v1/instances/{id}/check-numbers` `{"phones":[...]}` | instância ou admin |
 | `GET /v1/instances/{id}/media/{media_id}[?signed=1]` | instância ou admin (`?signed=1` exige `public_url` se o `listen_addr` não for loopback) |
 | `GET /media/{id}/{media_id}?exp=&sig=` (URL assinada, vale 1h) | nenhum |
+| `GET /v1/instances/{id}/events[?types=]` (SSE) | instância ou admin |
+| `GET /v1/events[?types=]` (SSE, todas as instâncias) | admin |
+| `POST /v1/webhooks` · `GET /v1/webhooks[?instance_id=]` | admin (global ou de uma instância) ou instância (só a própria) |
+| `GET\|PATCH\|DELETE /v1/webhooks/{id}` | idem (webhook de outra instância responde 404) |
+| `GET /v1/webhooks/{id}/deliveries[?status=pending\|delivered\|failed&limit=&cursor=]` | idem |
+| `POST /v1/webhooks/{id}/deliveries/{delivery_id}/retry` | idem |
 | `GET /healthz`, `GET /readyz` | público (admin se o `listen_addr` não for loopback) |
 
 As ações respondem com a instância. `start` e `restart` respondem assim que o worker é disparado, então a resposta pode ainda mostrar o estado anterior: consulte `GET /v1/instances/{id}` até ver o novo estado.
@@ -120,6 +129,130 @@ Erros: `{"error":{"code","message","retryable"}}`. Códigos:
 
 `POST /check-numbers` aceita de 1 a 10 números por chamada (DDI + DDD + número, 10–15 dígitos) e devolve `exists` e o `jid` que o WhatsApp usa. Resultados ficam em cache (30 dias para quem tem WhatsApp, 24h para quem não tem). Consultas novas têm cota de 10 por minuto por instância, separada da cota de 30 por minuto da fila de envio; acima disso, `429 rate_limited`.
 
+## Eventos, webhooks e SSE
+
+Tudo o que acontece numa instância vira um evento com o mesmo envelope, entregue por webhook (persistente, assinado, com retry) e por SSE (ao vivo, sem persistência).
+
+### Envelope (v1)
+
+```json
+{
+  "id": "evt_5f2c9a1b7d3e4f60",
+  "type": "message.received",
+  "version": 1,
+  "instance_id": "inst_123",
+  "timestamp": "2026-10-17T13:45:00.123Z",
+  "data": { }
+}
+```
+
+Adicionar campos em `data` não muda a versão; remover ou mudar o sentido de um campo criaria `version: 2`.
+
+### Catálogo
+
+| type | quando | `data` |
+|---|---|---|
+| `instance.status` | toda transição de estado | `{state, reason?}` |
+| `instance.qr` | novo QR de pareamento | `{code, timeout_ms}` |
+| `instance.pair_code` | código gerado por `POST /pair-phone` | `{code}` |
+| `message.received` | mensagem nova de outra pessoa | mensagem (abaixo), `source: "contact"` |
+| `message.sent` | envio pela API concluído (`source: "api"`) ou mensagem enviada pelo celular (`source: "device"`) | mensagem |
+| `message.status` | `sent`, `delivered`, `read` ou `failed` de uma mensagem nossa | `{id, wa_message_id?, chat, status, error?}` |
+| `message.reaction` | reação recebida | mensagem com `type: "reaction"`, `text` = emoji (vazio = reação removida), `reaction_to` |
+| `history.synced` | fim da ingestão de um history sync (um evento por sync, 15s depois do último bloco) | `{chats, messages, new_messages}` |
+
+Mensagem: `{id, wa_message_id, chat, sender, from_me, is_group, push_name, source, type, text, media?, reaction_to?, timestamp}`, os mesmos campos de `GET /messages/{id}`. `media` traz `{id, kind, mime, size, file_name, seconds, ptt, url}`; `url` é a rota autenticada de download (`GET /v1/instances/{id}/media/{media_id}`). Mensagens de history sync não geram eventos individuais (só o `history.synced`); uma mensagem que chega duas vezes (reconexão do worker) gera um único evento.
+
+Ainda não emitidos (o worker não reporta esses fatos): `message.revoked`, `chat.presence`, `group.updated`. `agent.failed` e `agent.handoff` chegam com o hook de agente (marco 5).
+
+### SSE
+
+```bash
+curl -N "localhost:8787/v1/instances/$ID/events?types=message.*,instance.status" -H "Authorization: Bearer $TOK"
+curl -N "localhost:8787/v1/events" -H "Authorization: Bearer $ADMIN"   # todas as instâncias
+```
+
+Cada evento sai como `id: <evt>`, `event: <type>` e `data: <envelope>`; a cada 15s vai um comentário `: ping` para manter a conexão. `types` aceita tipos exatos, famílias (`message.*`) e `*`. Não há replay: eventos de quando o cliente estava desconectado não são reenviados (use webhooks para isso). Um cliente que fica mais de 256 eventos atrasado recebe `event: error` (`slow_consumer`) e é desconectado; reconecte.
+
+### Webhooks
+
+```bash
+curl -s -X POST localhost:8787/v1/webhooks -H "Authorization: Bearer $TOK" \
+  -d '{"url":"https://exemplo.com/litezap","events":["message.*","instance.status"]}'
+# 201 {"id":"wh_...","instance_id":"inst_...","url":...,"events":[...],"version":1,"enabled":true,"secret":"whsec_..."}
+```
+
+- Com token de instância o webhook é sempre daquela instância. Com token admin, `instance_id` escolhe a instância; sem ele o webhook é global (todas as instâncias).
+- `secret` é opcional (16 a 256 caracteres); sem ele um é gerado. **Ele só aparece na resposta da criação** (e de um `PATCH` que o troque; `{"secret":""}` gera um novo). Guarde-o.
+- `PATCH` aceita `url`, `events`, `enabled` e `secret`; `instance_id` não muda.
+- Só URLs `http(s)`. Por padrão endereços privados, loopback e link-local são bloqueados (checados depois do DNS, a cada conexão); para um receptor no próprio PC use `webhook_allow_private_urls: true`. Redirecionamentos não são seguidos (um `3xx` conta como falha).
+
+Cada entrega é um `POST` com o envelope como corpo e os headers:
+
+| Header | Valor |
+|---|---|
+| `X-LiteZap-Signature` | `t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<corpo>")>` |
+| `X-LiteZap-Event-Id` | id do evento (`evt_...`), para deduplicar |
+| `X-LiteZap-Event-Type` | tipo do evento |
+
+**Retry**: timeout de 10s por tentativa; qualquer `2xx` é sucesso. Falhas são repetidas com backoff exponencial (1s, 2s, 4s... até 1h entre tentativas) por até 24h; depois a entrega vai para a dead-letter (`status: failed`). Um endpoint que falha também segura as outras entregas dele pelo mesmo backoff (não martelamos um servidor fora do ar); outros endpoints seguem normalmente. No máximo 8 entregas simultâneas no total e 2 por webhook.
+
+**Garantia**: pelo menos uma vez. As entregas ficam numa tabela (outbox) e sobrevivem a restarts; uma tentativa interrompida por um crash é repetida, então o mesmo evento pode chegar duas vezes: deduplique por `X-LiteZap-Event-Id`. A ordem entre eventos não é garantida (retries reordenam); use `timestamp`.
+
+**Dead-letter**: `GET /v1/webhooks/{id}/deliveries?status=failed` lista as entregas que desistimos de fazer, com `attempts`, `last_status_code`, `last_error` e o `event` completo; `POST /v1/webhooks/{id}/deliveries/{delivery_id}/retry` recoloca uma na fila com mais 24h de prazo. Entregas concluídas ficam 7 dias e a dead-letter 30 dias (configurável).
+
+#### Verificar a assinatura
+
+Rejeite assinaturas inválidas e `t` com mais de 5 minutos de diferença (anti-replay). Use o corpo **bruto**, antes de qualquer parse de JSON.
+
+Go:
+
+```go
+func verify(secret, header string, body []byte) bool {
+	var ts string
+	var sigs []string
+	for _, p := range strings.Split(header, ",") {
+		k, v, _ := strings.Cut(p, "=")
+		switch k {
+		case "t":
+			ts = v
+		case "v1":
+			sigs = append(sigs, v)
+		}
+	}
+	t, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil || math.Abs(float64(time.Now().Unix()-t)) > 300 {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ts + "." + string(body)))
+	want := hex.EncodeToString(mac.Sum(nil))
+	for _, s := range sigs {
+		if hmac.Equal([]byte(s), []byte(want)) {
+			return true
+		}
+	}
+	return false
+}
+```
+
+(Dentro deste repositório, `webhook.Verify` em `internal/webhook` faz o mesmo.)
+
+Node:
+
+```js
+const crypto = require("node:crypto");
+
+function verify(secret, header, rawBody) {
+  const parts = Object.fromEntries(header.split(",").map((p) => p.split("=", 2)));
+  const t = Number(parts.t);
+  if (!parts.v1 || !Number.isFinite(t) || Math.abs(Date.now() / 1000 - t) > 300) return false;
+  const want = crypto.createHmac("sha256", secret).update(`${parts.t}.${rawBody}`).digest("hex");
+  const a = Buffer.from(parts.v1, "hex"), b = Buffer.from(want, "hex");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+```
+
 ## Como testar com seu WhatsApp
 
 Requer um número de teste no celular e um segundo número (contato) para conversar.
@@ -142,11 +275,42 @@ Requer um número de teste no celular e um segundo número (contato) para conver
 7. Pare o `serve` (Ctrl+C) e suba de novo: a instância reconecta sem QR e mensagens que estavam na fila são enviadas.
 8. Logout: `curl -s -X POST localhost:8787/v1/instances/$ID/logout -H "Authorization: Bearer $TOK"` leva o estado a `logged_out` e o aparelho some da lista no celular.
 
-Os estados mudam de forma assíncrona: depois de cada ação, repita o `GET` do passo 4 até ver o estado esperado.
+Os estados mudam de forma assíncrona: depois de cada ação, repita o `GET` do passo 4 até ver o estado esperado (ou acompanhe `instance.status` pelo SSE).
 
-## Limitações conhecidas (marco 2)
+### Testar eventos e webhooks
 
-- Sem eventos, SSE ou webhooks ainda (marco 3): acompanhe por polling em `GET /chats` e `GET /messages/{id}`.
+Com a instância conectada (passos acima):
+
+1. SSE: em outro terminal, `curl -N "localhost:8787/v1/instances/$ID/events" -H "Authorization: Bearer $TOK"`. Mande uma mensagem do celular do contato: aparece `event: message.received`. Envie pela API: aparecem `message.sent` e `message.status` (`sent`, depois `delivered` e `read` quando o contato recebe e abre). Reaja a uma mensagem no celular do contato: `message.reaction`. Responda pelo celular do número conectado: `message.sent` com `"source":"device"`.
+2. Receptor local: salve como `receiver.js` e rode `LITEZAP_SECRET=... node receiver.js` (o segredo vem do passo 3; rode de novo depois de criar o webhook):
+   ```js
+   const http = require("node:http"), crypto = require("node:crypto");
+   http.createServer((req, res) => {
+     let body = "";
+     req.setEncoding("utf8"); // não quebra caracteres multibyte divididos entre pedaços
+     req.on("data", (c) => (body += c)).on("end", () => {
+       const sig = Object.fromEntries((req.headers["x-litezap-signature"] || "").split(",").map((p) => p.split("=", 2)));
+       const want = crypto.createHmac("sha256", process.env.LITEZAP_SECRET || "").update(`${sig.t}.${body}`).digest("hex");
+       console.log(req.headers["x-litezap-event-type"], sig.v1 === want ? "assinatura ok" : "ASSINATURA INVÁLIDA", body);
+       res.writeHead(204).end();
+     });
+   }).listen(9000);
+   ```
+3. Libere destinos locais (`webhook_allow_private_urls: true` no `litezap.yaml`, ou `LITEZAP_WEBHOOK_ALLOW_PRIVATE_URLS=true`), reinicie o `serve` e cadastre o webhook guardando o segredo:
+   ```bash
+   SECRET=$(curl -s -X POST localhost:8787/v1/webhooks -H "Authorization: Bearer $TOK" \
+     -d '{"url":"http://127.0.0.1:9000/","events":["*"]}' | jq -r .secret)
+   echo "$SECRET"
+   ```
+   Reinicie o receptor com `LITEZAP_SECRET=$SECRET` e troque mensagens: cada evento aparece com "assinatura ok".
+4. Retry e dead-letter: pare o receptor, mande uma mensagem e liste `GET /v1/webhooks/<wh_id>/deliveries?status=pending` (`attempts` subindo, `last_error` com o motivo). Suba o receptor de novo: a entrega chega no próximo retry (o intervalo dobra a cada falha, até 1h). Uma entrega que fica 24h sem sucesso aparece em `?status=failed` e pode ser reenviada com `POST .../deliveries/<delivery_id>/retry`.
+5. Restart: com o receptor parado, mande mensagens, pare e suba o `serve` e depois o receptor: as entregas pendentes são feitas depois do restart.
+
+## Limitações conhecidas
+
+- Eventos ainda não emitidos: `message.revoked`, `chat.presence` e `group.updated` (o worker não os reporta). SSE não tem replay (`Last-Event-ID` é ignorado).
+- Um evento passa por um buffer em memória (até 10.000) antes de ser gravado no outbox dos webhooks: um crash do supervisor nesse intervalo, ou um buffer cheio (logado), perde o evento para os webhooks. Um shutdown normal grava o buffer antes de sair.
+- Se um recibo `delivered` chegar antes da confirmação do envio, `message.status: delivered` pode sair antes de `sent`.
 - Sem busca full-text e sem envio de `sticker`, `location` e `contact` (marco 2b); essas mensagens são recebidas e registradas.
 - Mídia recebida baixada fica em `data/media/` sem limpeza automática ainda (o prazo de 7 dias é gravado, a limpeza vem no marco 2b).
 - Mídia passa entre supervisor e worker por arquivos em `data/` (mesma máquina). Um spawner em container (nuvem) vai precisar de um volume compartilhado.
