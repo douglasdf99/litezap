@@ -15,6 +15,7 @@ import (
 
 	"github.com/douglasdf99/litezap/internal/api"
 	"github.com/douglasdf99/litezap/internal/config"
+	"github.com/douglasdf99/litezap/internal/dashboard"
 	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/ingest"
 	"github.com/douglasdf99/litezap/internal/lookup"
@@ -29,8 +30,41 @@ import (
 	"github.com/douglasdf99/litezap/internal/webhook"
 )
 
+// Options configure RunWith beyond the config file.
+type Options struct {
+	ConfigPath string
+	// Base is the configuration the file and LITEZAP_* variables apply on top of
+	// (zero value: config.Default()).
+	Base *config.Config
+	// LaunchCodes enables one-click dashboard login with codes minted by the caller (the
+	// tray app). Ignored unless the server listens on loopback.
+	LaunchCodes *dashboard.LaunchCodes
+	// OnListening is called once the HTTP server accepts connections.
+	OnListening func(Info)
+}
+
+// Info describes a running server.
+type Info struct {
+	// URL is the base URL of the API (http://<listen_addr>); the dashboard is URL+"/app/".
+	URL        string
+	DataDir    string
+	AdminToken string
+	// Dashboard reports whether /app/ is served; OneClickLogin whether launch codes from
+	// Options.LaunchCodes are accepted (dashboard on and a loopback listen address).
+	Dashboard     bool
+	OneClickLogin bool
+}
+
 func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
-	cfg, err := config.Load(cfgPath)
+	return RunWith(ctx, Options{ConfigPath: cfgPath}, log)
+}
+
+func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
+	base := config.Default()
+	if opt.Base != nil {
+		base = *opt.Base
+	}
+	cfg, err := config.LoadWith(opt.ConfigPath, base)
 	if err != nil {
 		return err
 	}
@@ -107,18 +141,23 @@ func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
 		// A URL built from a non-loopback listen address may be unreachable for third parties.
 		SignedURLs: cfg.PublicURL != "" || isLoopback(cfg.ListenAddr),
 	}
+	loopback := isLoopback(cfg.ListenAddr)
 	handler := api.New(svc, msg, api.Options{
 		// MCP streamable HTTP at /mcp, behind the same tokens (spec 3.1, 6.1).
 		MCP: mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: msg, Events: bus, Logger: log,
 			PublicHost: publicHost(cfg.PublicURL)}),
 		AdminToken: cfg.AdminToken,
-		ProtectOps: !isLoopback(cfg.ListenAddr),
+		ProtectOps: !loopback,
 		Ready:      st.Ping,
 		Webhooks:   &service.Webhooks{Store: st, Dispatcher: hooks},
 		Events:     bus,
 	}, log)
+	var codes *dashboard.LaunchCodes
+	if loopback {
+		codes = opt.LaunchCodes
+	}
 	srv := &http.Server{
-		Handler:           handler,
+		Handler:           withDashboard(handler, !cfg.DisableDashboard, cfg.AdminToken, codes),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -132,8 +171,16 @@ func Run(ctx context.Context, cfgPath string, log *slog.Logger) error {
 	go func() {
 		log.Info("litezap listening", "addr", cfg.ListenAddr, "data_dir", cfg.DataDir,
 			"admin_token_file", filepath.Join(cfg.DataDir, "admin_token"))
+		if !cfg.DisableDashboard {
+			log.Info("dashboard", "url", dashboardURL(ln.Addr().String())+dashboard.Prefix)
+		}
 		errc <- srv.Serve(ln)
 	}()
+	if opt.OnListening != nil {
+		opt.OnListening(Info{URL: dashboardURL(ln.Addr().String()), DataDir: cfg.DataDir,
+			AdminToken: cfg.AdminToken, Dashboard: !cfg.DisableDashboard,
+			OneClickLogin: !cfg.DisableDashboard && codes != nil})
+	}
 
 	var serveErr error
 	select {
@@ -195,6 +242,32 @@ func publicHost(publicURL string) string {
 		return ""
 	}
 	return u.Host
+}
+
+// withDashboard mounts the embedded dashboard at /app/ (and redirects / there) in front
+// of the API router.
+func withDashboard(apiHandler http.Handler, enabled bool, adminToken string, codes *dashboard.LaunchCodes) http.Handler {
+	if !enabled {
+		return apiHandler
+	}
+	mux := http.NewServeMux()
+	mux.Handle(dashboard.Prefix, dashboard.Handler(dashboard.Options{AdminToken: adminToken, LaunchCodes: codes}))
+	mux.Handle("GET /{$}", http.RedirectHandler(dashboard.Prefix, http.StatusFound))
+	mux.Handle("/", apiHandler)
+	return mux
+}
+
+// dashboardURL turns the bound address into a browsable base URL (an unspecified host
+// such as 0.0.0.0 becomes 127.0.0.1).
+func dashboardURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "http://" + addr
+	}
+	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 func isLoopback(addr string) bool {

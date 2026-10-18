@@ -3,3 +3,4 @@
 /litezap.yaml
 *.test
 *.out
+/dist/

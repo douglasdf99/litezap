@@ -3,6 +3,7 @@ module github.com/douglasdf99/litezap
 go 1.26.7
 
 require (
+	fyne.io/systray v1.12.2
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/google/jsonschema-go v0.4.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0
@@ -56,6 +57,7 @@ require (
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/gofrs/flock v0.13.1 // indirect
 	github.com/google/go-containerregistry v0.22.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect

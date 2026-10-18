@@ -5,7 +5,7 @@ Cada número roda em um processo worker isolado, supervisionado com heartbeat, r
 
 Licença: Apache-2.0. Roda no seu PC, no seu servidor ou na nuvem gerenciada do LiteZap.
 
-> Status: marco 4 (envio com fila persistente, recebimento, chats, histórico, mídia, proxy por instância, eventos com webhooks assinados e SSE, servidor MCP em `/mcp` e `litezap mcp`). O hook de agente vem no próximo marco.
+> Status: marco 4 (envio com fila persistente, recebimento, chats, histórico, mídia, proxy por instância, eventos com webhooks assinados e SSE, servidor MCP em `/mcp` e `litezap mcp`) + app local v1 (painel web embutido e lançador de bandeja). O hook de agente vem no próximo marco.
 > Design: `docs/superpowers/specs/2026-10-17-litezap-engine-design.md`
 
 ## Rodar
@@ -16,6 +16,8 @@ go build -o litezap ./cmd/litezap
 ```
 
 O token admin fica em `data/admin_token` (ou defina `LITEZAP_ADMIN_TOKEN`). O segredo das URLs assinadas de mídia fica em `data/media_key` (apagá-lo invalida as URLs já emitidas).
+
+O painel web abre em `http://127.0.0.1:8787/` (redireciona para `/app/`). Veja [Painel web e app de bandeja](#painel-web-e-app-de-bandeja).
 
 Configuração (`litezap.yaml`; variáveis `LITEZAP_*` têm precedência):
 
@@ -31,6 +33,7 @@ Configuração (`litezap.yaml`; variáveis `LITEZAP_*` têm precedência):
 | `webhook_allow_private_urls` | `LITEZAP_WEBHOOK_ALLOW_PRIVATE_URLS` | `false` (`true` libera webhooks para `127.0.0.1`, rede local etc.) |
 | `webhook_retention_days` | só no arquivo | `7` (entregas concluídas) |
 | `webhook_failed_retention_days` | só no arquivo | `30` (dead-letter) |
+| `disable_dashboard` | `LITEZAP_DISABLE_DASHBOARD` | `false` (`true` desliga o painel em `/app/`; a API continua) |
 | `instance_defaults` (bloco) | só no arquivo | ritmo 3s + 0–2s, 20/min, digitando ligado, rampa 50→150 em 14 dias, janela 08:00–20:00 no fuso do servidor |
 
 Workers rodam em grupo de processos próprio e encerram sozinhos assim que o supervisor morre, mesmo à força (SIGKILL): cada worker vigia um pipe no stdin mantido aberto pelo supervisor e sai ao receber EOF. A limpeza de órfãos no próximo `serve` (via `data/run/*.pid`) é só um fallback.
@@ -68,6 +71,8 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `GET /v1/me` → `{admin, instance_id}` | qualquer token |
 | `POST /mcp` (MCP streamable HTTP, seção "MCP") | instância ou admin |
 | `GET /healthz`, `GET /readyz` | público (admin se o `listen_addr` não for loopback) |
+| `GET /app/` (painel) · `GET /app/api/info` | público (arquivos estáticos; o painel pede o token admin) |
+| `POST /app/api/session` `{"code"}` → `{token}` | código de uso único do app de bandeja; só em loopback |
 
 As ações respondem com a instância. `start` e `restart` respondem assim que o worker é disparado, então a resposta pode ainda mostrar o estado anterior: consulte `GET /v1/instances/{id}` até ver o novo estado.
 
@@ -396,6 +401,43 @@ Com a instância conectada (passos acima):
 4. Peça "quais são minhas conversas recentes?" e "o que Fulano disse por último?" (`list_chats`, `get_messages`).
 5. Peça para enviar uma mensagem ao contato de teste. Fora da janela de envio a resposta diz que ficou na fila (`sent: false`) e que sai sozinha depois; confirme com `get_message_status` ou no celular.
 6. Peça "espere a resposta dele" e responda pelo celular do contato em até 55s: `wait_for_events` devolve o `message.received`.
+
+## Painel web e app de bandeja
+
+### Painel (`/app/`)
+
+`litezap serve` serve um painel web embutido no binário (sem Node, sem arquivos extras) em `/app/`; `/` redireciona para lá. O mesmo painel funciona no PC e num servidor próprio. Ele usa a própria API REST com o **token admin**:
+
+- **Instâncias**: lista com estado ao vivo (SSE), criar (o token da instância aparece uma vez), iniciar/parar/reiniciar/deslogar, excluir.
+- **Parear**: QR que se atualiza sozinho (evento `instance.qr`) e pareamento por código (número de telefone).
+- **Conversas**: lista de chats, histórico, envio de texto com status ao vivo (`na fila` → `enviada` → `entregue` → `lida`). Quando o envio fica na fila, o painel explica por quê: carência de 15–30s após conectar, ritmo, rampa e janela de envio (com o horário atual no fuso da instância).
+- **Configurações**: ritmo, rampa, janela, fuso, proxy e ritmo inseguro (só são enviados os campos alterados; a senha mascarada do proxy nunca é reenviada).
+- **Webhooks**: criar (o segredo aparece uma vez), ligar/desligar, excluir, ver entregas por status e reenviar as da dead-letter. Há também a página de webhooks globais.
+- **Eventos ao vivo**: os mesmos eventos dos webhooks, com o JSON de cada um.
+
+**Login**: cole o token admin (`data/admin_token`). Ele fica só no navegador (`sessionStorage`, ou `localStorage` se marcar "lembrar"), vai apenas no header `Authorization` (nunca na URL) e "Sair" o apaga. "Lembrar" vale para o endereço (host e porta): não marque em computador compartilhado. Não há cookies, então não há superfície de CSRF; o painel tem CSP estrita (`script-src 'self'`, sem scripts inline) e monta a página só com texto (nada de HTML vindo de dados). Para desligar o painel num servidor: `disable_dashboard: true`.
+
+Num servidor exposto, use HTTPS (proxy reverso) antes de abrir o painel pela internet: o token admin trafega em cada requisição.
+
+### App de bandeja (`litezap-app`)
+
+Para quem não quer terminal: um executável que sobe o motor no próprio processo, põe o ícone do LiteZap na bandeja/barra de menus e abre o painel já logado.
+
+- Menu: estado (`N de M conectada(s)`), **Abrir painel**, **Abrir pasta de dados**, **Ver log**, **Sair** (encerra as instâncias com calma antes de sair).
+- Pasta de dados: `~/Library/Application Support/LiteZap` (macOS), `%APPDATA%\LiteZap` (Windows), `$XDG_DATA_HOME/litezap` ou `~/.local/share/litezap` (Linux). Dentro dela: `data/` (sessões, banco, `admin_token`), `litezap.log` e, se quiser, um `litezap.yaml` (mesmas chaves do servidor; `LITEZAP_*` continuam valendo). `LITEZAP_APP_DIR` troca a pasta (útil para testes).
+- API e painel em `127.0.0.1:8787` (só a sua máquina). Se a porta estiver ocupada (outro LiteZap aberto?), o menu mostra o erro.
+- **Login em um clique**: cada "Abrir painel" cria um código de uso único (vale 1 minuto; usar um descarta os outros pendentes) e abre `http://127.0.0.1:8787/app/#code=...`. O código vai no fragmento (não chega a logs nem a `Referer`), o painel o apaga da barra de endereço e o troca pelo token admin em `POST /app/api/session`. Esse endpoint só existe no app de bandeja com o servidor em loopback e só aceita conexões de loopback com `Host` de loopback (contra DNS rebinding), `Origin` igual ao host e `Content-Type: application/json`. `litezap serve` puro não aceita códigos (login colando o token). Limite conhecido: num computador compartilhado, outro usuário local que veja a linha de comando do navegador no instante da abertura poderia tentar usar o código antes; ele vale uma vez só e por 1 minuto (e o painel legítimo mostraria a falha).
+- `litezap-app --no-browser` sobe sem abrir o navegador.
+
+Compilar (o `litezap` principal continua sem CGO; só o app de bandeja usa [fyne.io/systray](https://github.com/fyne-io/systray)):
+
+| SO | Comando | Observações |
+|---|---|---|
+| macOS | `go build -o litezap-app ./cmd/litezap-app` ou `cmd/litezap-app/package-macos.sh` (gera `dist/LiteZap.app`, só na barra de menus) | precisa de CGO e das Xcode Command Line Tools (`xcode-select --install`); sem outras dependências |
+| Windows | `GOOS=windows go build -ldflags "-H windowsgui" -o litezap-app.exe ./cmd/litezap-app` | sem CGO; `-H windowsgui` evita a janela de console. Não testado no Windows ainda |
+| Linux | `CGO_ENABLED=0 go build -o litezap-app ./cmd/litezap-app` | sem CGO; a bandeja usa DBus (StatusNotifierItem): GNOME precisa da extensão AppIndicator |
+
+Ainda não (em breve): instaladores (`.dmg`, `.msi`, `.deb`), assinatura de código e notarização (no macOS, abra com botão direito > Abrir na primeira vez), ícone do `.app`, auto-update, iniciar com o sistema, túnel opcional, envio de mídia pelo painel e login no painel com token de instância.
 
 ## Limitações conhecidas
 
