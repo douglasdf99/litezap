@@ -4,7 +4,9 @@ package ingest
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -66,6 +68,7 @@ func record(m *workerv1.Message, source string) store.Message {
 	if m.FromMe {
 		rec.Status = "sent"
 	}
+	rec.MetaJSON = meta(m).JSON()
 	if md := m.Media; md != nil {
 		info := store.MediaInfo{ID: secure.NewID("med_"), Kind: md.Kind, Mime: md.Mime, Size: int64(md.Size),
 			FileName: md.FileName, Seconds: int(md.Seconds), PTT: md.Ptt}
@@ -74,6 +77,21 @@ func record(m *workerv1.Message, source string) store.Message {
 		rec.Media = &store.Media{ID: info.ID, Kind: md.Kind, Mime: md.Mime, Size: info.Size, FileName: md.FileName, Ref: md.Ref}
 	}
 	return rec
+}
+
+// meta converts the structured parts of a worker message.
+func meta(m *workerv1.Message) store.MessageMeta {
+	mm := store.MessageMeta{ReplyTo: m.QuotedId, Mentions: m.Mentions, Forwarded: m.Forwarded}
+	if l := m.Location; l != nil {
+		mm.Location = &store.Location{Latitude: l.Latitude, Longitude: l.Longitude, Name: l.Name, Address: l.Address, URL: l.Url}
+	}
+	for _, c := range m.Contacts {
+		mm.Contacts = append(mm.Contacts, store.ContactCard{DisplayName: c.DisplayName, VCard: c.Vcard})
+	}
+	if p := m.Poll; p != nil {
+		mm.Poll = &store.Poll{Name: p.Name, Options: p.Options, Selectable: int(p.Selectable)}
+	}
+	return mm
 }
 
 func chatUpdate(m *workerv1.Message, live bool) store.ChatUpdate {
@@ -85,23 +103,34 @@ func chatUpdate(m *workerv1.Message, live bool) store.ChatUpdate {
 	return cu
 }
 
+// source says who wrote a message: a contact, the API, or the account's other devices.
+func (in *Ingestor) source(ctx context.Context, instanceID string, m *workerv1.Message) (string, error) {
+	if !m.FromMe {
+		return "contact", nil
+	}
+	// from_me events come from the account's other devices. Our own API sends are not
+	// echoed, but check anyway: a from_me message the API did not send means a human
+	// answered from the phone (the agent hook pauses on it, marco 5).
+	own, err := in.Store.IsOwnSent(ctx, instanceID, m.Id)
+	if err != nil || !own {
+		return "device", err
+	}
+	return "api", nil
+}
+
 func (in *Ingestor) message(ctx context.Context, instanceID string, m *workerv1.Message) error {
 	if m.Chat == "" || m.Id == "" {
 		return nil
 	}
-	source := "contact"
-	if m.FromMe {
-		// from_me events come from the account's other devices. Our own API sends are not
-		// echoed, but check anyway: a from_me message the API did not send means a human
-		// answered from the phone (the agent hook pauses on it, marco 5).
-		own, err := in.Store.IsOwnSent(ctx, instanceID, m.Id)
-		if err != nil {
-			return err
-		}
-		source = "device"
-		if own {
-			source = "api"
-		}
+	switch m.Type {
+	case "edit", "revoke":
+		return in.update(ctx, instanceID, m)
+	case "poll_vote":
+		return in.pollVote(ctx, instanceID, m)
+	}
+	source, err := in.source(ctx, instanceID, m)
+	if err != nil {
+		return err
 	}
 	rec := record(m, source)
 	isNew, err := in.Store.InsertMessage(ctx, instanceID, rec, chatUpdate(m, true))
@@ -124,7 +153,7 @@ func eventMessage(instanceID string, m *workerv1.Message, rec store.Message) eve
 	e := events.Message{
 		ID: rec.ID, WAMessageID: rec.WAMessageID, Chat: rec.ChatJID, Sender: rec.SenderJID, FromMe: rec.FromMe,
 		IsGroup: m.IsGroup, PushName: m.PushName, Source: rec.Source, Type: rec.Type, Text: rec.Text,
-		ReactionTo: rec.ReactionTo, Timestamp: rec.Timestamp,
+		ReactionTo: rec.ReactionTo, Timestamp: rec.Timestamp, MessageMeta: store.ParseMeta(rec.MetaJSON),
 	}
 	if md := rec.Media; md != nil {
 		e.Media = &events.Media{ID: md.ID, Kind: md.Kind, Mime: md.Mime, Size: md.Size, FileName: md.FileName,
@@ -132,6 +161,73 @@ func eventMessage(instanceID string, m *workerv1.Message, rec store.Message) eve
 			URL: "/v1/instances/" + instanceID + "/media/" + md.ID}
 	}
 	return e
+}
+
+// update applies a received edit or revoke to the logged message and publishes
+// message.edited / message.revoked (also when the message is not in the log).
+func (in *Ingestor) update(ctx context.Context, instanceID string, m *workerv1.Message) error {
+	if m.TargetId == "" {
+		return nil
+	}
+	source, err := in.source(ctx, instanceID, m)
+	if err != nil {
+		return err
+	}
+	at := time.UnixMilli(m.TimestampMs).UTC()
+	var rec store.Message
+	typ := events.TypeMessageEdited
+	if m.Type == "edit" {
+		rec, err = in.Store.EditMessage(ctx, instanceID, m.Chat, m.TargetId, m.Text, at)
+	} else {
+		typ = events.TypeMessageRevoked
+		rec, err = in.Store.RevokeMessage(ctx, instanceID, m.Chat, m.TargetId, at)
+	}
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	if in.Events != nil {
+		u := events.MessageUpdate{ID: rec.ID, WAMessageID: m.TargetId, Chat: m.Chat, Sender: m.Sender,
+			FromMe: m.FromMe, Source: source, Timestamp: at}
+		if m.Type == "edit" {
+			u.Text = m.Text
+		}
+		in.Events.Publish(instanceID, typ, u)
+	}
+	return nil
+}
+
+// pollVote publishes message.poll_vote with the options matched by their SHA-256 against
+// the poll in the log. Votes are not logged as messages.
+func (in *Ingestor) pollVote(ctx context.Context, instanceID string, m *workerv1.Message) error {
+	if m.TargetId == "" || in.Events == nil {
+		return nil
+	}
+	v := events.PollVote{PollWAMessageID: m.TargetId, Chat: m.Chat, Voter: m.Sender, PushName: m.PushName,
+		FromMe: m.FromMe, SelectedOptions: []string{}, Timestamp: time.UnixMilli(m.TimestampMs).UTC()}
+	byHash := map[[32]byte]string{}
+	if poll, err := in.Store.MessageByWAID(ctx, instanceID, m.Chat, m.TargetId); err == nil {
+		v.PollID = poll.ID
+		if p := store.ParseMeta(poll.MetaJSON).Poll; p != nil {
+			for _, o := range p.Options {
+				byHash[sha256.Sum256([]byte(o))] = o
+			}
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	for _, h := range m.PollHashes {
+		var k [32]byte
+		if len(h) == len(k) {
+			copy(k[:], h)
+			if o, ok := byHash[k]; ok {
+				v.SelectedOptions = append(v.SelectedOptions, o)
+				continue
+			}
+		}
+		v.UnknownOptions++
+	}
+	in.Events.Publish(instanceID, events.TypeMessagePollVote, v)
+	return nil
 }
 
 func (in *Ingestor) history(ctx context.Context, instanceID string, h *workerv1.HistoryChunk) error {

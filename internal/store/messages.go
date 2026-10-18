@@ -22,6 +22,9 @@ type Message struct {
 	ReactionTo  string
 	Status      string // received | pending | sent | delivered | read
 	Timestamp   time.Time
+	MetaJSON    string    // structured content (MessageMeta)
+	EditedAt    time.Time // zero: never edited
+	RevokedAt   time.Time // zero: not deleted for everyone
 	// Media, when set, is inserted with the message (same transaction). Not read back by queries.
 	Media *Media
 }
@@ -58,17 +61,21 @@ type Media struct {
 	ExpiresAt  time.Time
 }
 
-const messageCols = `id, wa_message_id, chat_jid, sender_jid, from_me, source, type, text, media_json, reaction_to, status, timestamp`
+const messageCols = `id, wa_message_id, chat_jid, sender_jid, from_me, source, type, text, media_json, reaction_to, status, timestamp, meta_json, edited_at, revoked_at`
 
-func scanMessage(row scanner) (Message, error) {
+// messageInsertCols are the columns written by insertMessage (edits and revokes come later).
+const messageInsertCols = `id, wa_message_id, chat_jid, sender_jid, from_me, source, type, text, media_json, reaction_to, status, timestamp, meta_json`
+
+func scanMessage(row scanner, extra ...any) (Message, error) {
 	var m Message
-	var ts string
-	err := row.Scan(&m.ID, &m.WAMessageID, &m.ChatJID, &m.SenderJID, &m.FromMe, &m.Source, &m.Type,
-		&m.Text, &m.MediaJSON, &m.ReactionTo, &m.Status, &ts)
+	var ts, edited, revoked string
+	dest := append([]any{&m.ID, &m.WAMessageID, &m.ChatJID, &m.SenderJID, &m.FromMe, &m.Source, &m.Type,
+		&m.Text, &m.MediaJSON, &m.ReactionTo, &m.Status, &ts, &m.MetaJSON, &edited, &revoked}, extra...)
+	err := row.Scan(dest...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return m, ErrNotFound
 	}
-	m.Timestamp = parseTS(ts)
+	m.Timestamp, m.EditedAt, m.RevokedAt = parseTS(ts), parseTS(edited), parseTS(revoked)
 	return m, err
 }
 
@@ -79,10 +86,10 @@ type execer interface {
 // insertMessage inserts m (ignoring duplicates of the same chat and WhatsApp id) and,
 // when inserted, its media and (if cu is not nil) the chat update. It reports whether m was new.
 func insertMessage(ctx context.Context, x execer, instanceID string, m Message, cu *ChatUpdate) (bool, error) {
-	res, err := x.ExecContext(ctx, `INSERT OR IGNORE INTO messages (instance_id, `+messageCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	res, err := x.ExecContext(ctx, `INSERT OR IGNORE INTO messages (instance_id, `+messageInsertCols+`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		instanceID, m.ID, m.WAMessageID, m.ChatJID, m.SenderJID, m.FromMe, m.Source, m.Type,
-		m.Text, m.MediaJSON, m.ReactionTo, m.Status, fmtTS(m.Timestamp))
+		m.Text, m.MediaJSON, m.ReactionTo, m.Status, fmtTS(m.Timestamp), m.MetaJSON)
 	if err != nil {
 		return false, err
 	}
@@ -215,6 +222,22 @@ func (s *Store) MessageByWAID(ctx context.Context, instanceID, chatJID, waID str
 		instanceID, chatJID, waID))
 }
 
+// EditMessage replaces the text of a logged message (an edit from the API or received)
+// and returns the updated row; ErrNotFound when the message is not in the log.
+func (s *Store) EditMessage(ctx context.Context, instanceID, chatJID, waID, text string, at time.Time) (Message, error) {
+	return scanMessage(s.db.QueryRowContext(ctx, `UPDATE messages SET text = ?, edited_at = ?
+		WHERE instance_id = ? AND chat_jid = ? AND wa_message_id = ? AND revoked_at = ''
+		RETURNING `+messageCols, text, fmtTS(at), instanceID, chatJID, waID))
+}
+
+// RevokeMessage marks a logged message as deleted for everyone (its text is cleared) and
+// returns it; ErrNotFound when it is not in the log or was already revoked.
+func (s *Store) RevokeMessage(ctx context.Context, instanceID, chatJID, waID string, at time.Time) (Message, error) {
+	return scanMessage(s.db.QueryRowContext(ctx, `UPDATE messages SET text = '', revoked_at = ?
+		WHERE instance_id = ? AND chat_jid = ? AND wa_message_id = ? AND revoked_at = ''
+		RETURNING `+messageCols, fmtTS(at), instanceID, chatJID, waID))
+}
+
 // MessageCursor points at the last message of a page (newest-first order).
 type MessageCursor struct {
 	Timestamp time.Time
@@ -241,13 +264,10 @@ func (s *Store) ListMessages(ctx context.Context, instanceID, chatJID string, li
 	out := []Message{}
 	var cur MessageCursor
 	for rows.Next() {
-		var m Message
-		var ts string
-		if err := rows.Scan(&m.ID, &m.WAMessageID, &m.ChatJID, &m.SenderJID, &m.FromMe, &m.Source, &m.Type,
-			&m.Text, &m.MediaJSON, &m.ReactionTo, &m.Status, &ts, &cur.Seq); err != nil {
+		m, err := scanMessage(rows, &cur.Seq)
+		if err != nil {
 			return nil, MessageCursor{}, err
 		}
-		m.Timestamp = parseTS(ts)
 		cur.Timestamp = m.Timestamp
 		out = append(out, m)
 	}
