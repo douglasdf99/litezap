@@ -15,6 +15,7 @@ import (
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"github.com/douglasdf99/litezap/internal/clock"
+	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/instance"
 	"github.com/douglasdf99/litezap/internal/lookup"
 	"github.com/douglasdf99/litezap/internal/manager"
@@ -66,6 +67,8 @@ type Options struct {
 	// Resolver, when set, resolves a phone number before the first send to it.
 	Resolver *lookup.Resolver
 	Log      *slog.Logger
+	// Events, when set, receives message.sent and message.status (sent, failed) for API sends.
+	Events events.Publisher
 }
 
 // Queues owns the per-instance dispatchers. It is a manager.Observer: reaching connected
@@ -115,7 +118,7 @@ func (q *Queues) WorkerEvent(string, *workerv1.Event) {}
 // notReady marks an instance whose connected notice has not arrived yet.
 var notReady = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 
-func (q *Queues) StateChanged(id string, st instance.State) {
+func (q *Queues) StateChanged(id string, st instance.State, _ string) {
 	g := q.opt.ConnectGrace
 	if st != instance.Connected {
 		if g > 0 {
@@ -770,6 +773,19 @@ func (d *dispatcher) sent(item store.Outbound, p Payload, at time.Time) error {
 		d.log().Error("queue: mark sent", "err", err)
 		return err
 	}
+	if pub := d.q.opt.Events; pub != nil {
+		m := events.Message{ID: item.ID, WAMessageID: item.WAMessageID, Chat: item.ChatJID, FromMe: true,
+			Source: "api", Type: p.Type, Text: p.Text, Timestamp: at.UTC()}
+		if p.Reaction != nil {
+			m.ReactionTo = p.Reaction.WAMessageID
+		}
+		if p.MediaFile != "" {
+			m.Media = &events.Media{Kind: p.Type, Mime: p.Mime, Size: p.Size, FileName: p.FileName, PTT: p.PTT}
+		}
+		pub.Publish(d.id, events.TypeMessageSent, m)
+		pub.Publish(d.id, events.TypeMessageStatus, events.MessageStatus{ID: item.ID, WAMessageID: item.WAMessageID,
+			Chat: item.ChatJID, Status: store.OutSent})
+	}
 	d.done(item, p)
 	return nil
 }
@@ -780,6 +796,10 @@ func (d *dispatcher) fail(item store.Outbound, attempts int, msg string) error {
 	if err := d.q.store.MarkFailed(context.Background(), item.ID, attempts, msg); err != nil {
 		d.log().Error("queue: mark failed", "err", err)
 		return err
+	}
+	if pub := d.q.opt.Events; pub != nil {
+		pub.Publish(d.id, events.TypeMessageStatus, events.MessageStatus{ID: item.ID, Chat: item.ChatJID,
+			Status: store.OutFailed, Error: msg})
 	}
 	var p Payload
 	_ = json.Unmarshal([]byte(item.Payload), &p)

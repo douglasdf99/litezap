@@ -114,7 +114,7 @@ func (e *env) connect() {
 	if err := e.st.UpdateInstanceState(context.Background(), "i1", instance.Connected, ""); err != nil {
 		e.t.Fatal(err)
 	}
-	e.q.StateChanged("i1", instance.Connected)
+	e.q.StateChanged("i1", instance.Connected, "")
 }
 
 func (e *env) eventually(what string, cond func() bool) {
@@ -178,7 +178,7 @@ func TestPausedWhileNotConnected(t *testing.T) {
 	if err := e.st.UpdateInstanceState(context.Background(), "i1", instance.Connected, ""); err != nil {
 		t.Fatal(err)
 	}
-	e.q.StateChanged("i1", instance.Connected)
+	e.q.StateChanged("i1", instance.Connected, "")
 	e.eventually("sent after connect", func() bool { return e.status(id).Status == store.OutSent })
 	if a := e.status(id).Attempts; a != 0 {
 		t.Fatalf("attempts = %d", a)
@@ -264,6 +264,11 @@ func TestRampDefersNewRecipientsToNextWindow(t *testing.T) {
 	s.Ramp = settings.Ramp{Enabled: true, StartPerDay: 1, EndPerDay: 1, Days: 1}
 	s.SendWindow = settings.Window{Start: "08:00", End: "20:00"}
 	e := newEnv(t, s, instance.Connected)
+	// No server timestamp: sent_at comes from the fake clock. A wall-clock timestamp
+	// would land on "tomorrow" of the fake clock whenever the real UTC date is past t0's.
+	e.fake.WA.SetSendFunc(func(r *workerv1.SendRequest) (*workerv1.SendResponse, error) {
+		return &workerv1.SendResponse{MessageId: r.MessageId}, nil
+	})
 	ctx := context.Background()
 	// chatC already wrote to us: replies never count against the ramp.
 	if _, err := e.st.InsertMessage(ctx, "i1", store.Message{ID: "in1", WAMessageID: "IN1", ChatJID: chatC,
@@ -515,7 +520,7 @@ func TestLookupInterruptedByShutdownIsNotAFailure(t *testing.T) {
 // out until the notice starts the grace period.
 func TestGraceStartsWithTheConnectedNotice(t *testing.T) {
 	e := newEnvAt(t, t0, fastSettings(), instance.Reconnecting, func(o *Options) { o.ConnectGrace = 20 * time.Second })
-	e.q.StateChanged("i1", instance.Reconnecting)
+	e.q.StateChanged("i1", instance.Reconnecting, "")
 	if err := e.st.UpdateInstanceState(context.Background(), "i1", instance.Connected, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +529,7 @@ func TestGraceStartsWithTheConnectedNotice(t *testing.T) {
 	if n := len(e.fake.WA.Sent()); n != 0 {
 		t.Fatalf("sent %d before the connected notice", n)
 	}
-	e.q.StateChanged("i1", instance.Connected)
+	e.q.StateChanged("i1", instance.Connected, "")
 	e.eventually("grace timer", func() bool { return e.clock.Waiters() > 0 })
 	e.clock.Advance(30 * time.Second)
 	e.eventually("sent after grace", func() bool { return e.status(id).Status == store.OutSent })
@@ -642,7 +647,7 @@ func TestWorkerNotConnectedKeepsAttempts(t *testing.T) {
 func TestReceiptBeatsFailedAnswer(t *testing.T) {
 	e := newEnv(t, fastSettings(), instance.Connected)
 	e.fake.WA.SetSendFunc(func(req *workerv1.SendRequest) (*workerv1.SendResponse, error) {
-		_ = e.st.ApplyReceipt(context.Background(), "i1", []string{req.MessageId}, "delivered")
+		_, _ = e.st.ApplyReceipt(context.Background(), "i1", []string{req.MessageId}, "delivered")
 		return nil, status.Error(codes.Unknown, "worker_error: answer lost")
 	})
 	id := e.enqueue(chatA, Payload{Type: "text", Text: "oi"})
@@ -776,7 +781,7 @@ func TestForgetStopsTheDispatcher(t *testing.T) {
 	e := newEnvAt(t, t0, fastSettings(), instance.Reconnecting, func(o *Options) { o.ConnectGrace = 20 * time.Second })
 	ctx := context.Background()
 	id := e.enqueue(chatA, Payload{Type: "text", Text: "oi"})
-	e.q.StateChanged("i1", instance.Reconnecting) // records readyAt
+	e.q.StateChanged("i1", instance.Reconnecting, "") // records readyAt
 	e.q.Wake("i1")
 	e.eventually("dispatcher running", func() bool { return e.q.Dispatchers() == 1 })
 	waited := make(chan error, 1)

@@ -21,13 +21,13 @@ var (
 	ErrShuttingDown = errors.New("manager is shutting down")
 )
 
-// Observer receives worker data events (messages, receipts, history) and every persisted
-// state change. Calls are synchronous, sometimes with the Manager's lock held: they must
+// Observer receives worker data events (messages, receipts, history, QR codes) and every
+// persisted state change. Calls are synchronous, sometimes with the Manager's lock held: they must
 // be quick and must never call into the Manager. History chunks arrive on a separate
 // goroutine, concurrently with the other calls, so observers must be safe for concurrent use.
 type Observer interface {
 	WorkerEvent(instanceID string, ev *workerv1.Event)
-	StateChanged(instanceID string, st instance.State)
+	StateChanged(instanceID string, st instance.State, reason string)
 }
 
 // Observers fans out to several observers, in order.
@@ -39,16 +39,16 @@ func (obs Observers) WorkerEvent(id string, ev *workerv1.Event) {
 	}
 }
 
-func (obs Observers) StateChanged(id string, st instance.State) {
+func (obs Observers) StateChanged(id string, st instance.State, reason string) {
 	for _, o := range obs {
-		o.StateChanged(id, st)
+		o.StateChanged(id, st, reason)
 	}
 }
 
 type nopObserver struct{}
 
-func (nopObserver) WorkerEvent(string, *workerv1.Event) {}
-func (nopObserver) StateChanged(string, instance.State) {}
+func (nopObserver) WorkerEvent(string, *workerv1.Event)         {}
+func (nopObserver) StateChanged(string, instance.State, string) {}
 
 type Options struct {
 	HeartbeatInterval time.Duration
@@ -488,6 +488,7 @@ func (m *Manager) runWorker(ctx context.Context, s *supervised, h spawner.Worker
 		case ev := <-evs:
 			if qr := ev.GetQr(); qr != nil {
 				s.setQR(qr.Code) // an empty code clears it: the worker's pairing round ended
+				m.observer.WorkerEvent(s.id, ev)
 				continue
 			}
 			c := ev.GetConn()
@@ -563,6 +564,6 @@ func (m *Manager) setState(id string, to instance.State, reason string) bool {
 		}
 	}
 	m.log.Info("instance state", "instance_id", id, "from", in.State, "to", to, "reason", reason)
-	m.observer.StateChanged(id, to)
+	m.observer.StateChanged(id, to, reason)
 	return true
 }

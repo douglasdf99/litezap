@@ -462,7 +462,7 @@ func (r *recObserver) WorkerEvent(_ string, ev *workerv1.Event) {
 	r.events = append(r.events, ev)
 }
 
-func (r *recObserver) StateChanged(_ string, st instance.State) {
+func (r *recObserver) StateChanged(_ string, st instance.State, _ string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.states = append(r.states, st)
@@ -502,6 +502,52 @@ func TestObserverGetsDataEventsAndStates(t *testing.T) {
 	if _, err := m.Client("nope"); !errors.Is(err, ErrNotRunning) {
 		t.Fatalf("client of unknown = %v", err)
 	}
+}
+
+type reasonObserver struct {
+	recObserver
+	mu      sync.Mutex
+	reasons []string
+}
+
+func (r *reasonObserver) StateChanged(id string, st instance.State, reason string) {
+	r.mu.Lock()
+	r.reasons = append(r.reasons, string(st)+"/"+reason)
+	r.mu.Unlock()
+	r.recObserver.StateChanged(id, st, reason)
+}
+
+func (r *reasonObserver) has(s string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, x := range r.reasons {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// QR codes reach the observer (instance.qr) and state changes carry their reason.
+func TestObserverGetsQRAndReasons(t *testing.T) {
+	m, _, sp := setup(t, "i1")
+	obs := &reasonObserver{}
+	m.SetObserver(obs)
+	sp.OnStart = func(f *workertest.Fake) { f.Emit("qr_pending"); f.EmitQR("QR-1") }
+	if err := m.Start(context.Background(), "i1"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "qr observed", func() bool {
+		evs, _ := obs.snapshot()
+		for _, ev := range evs {
+			if ev.GetQr().GetCode() == "QR-1" {
+				return true
+			}
+		}
+		return false
+	})
+	sp.Last("i1").EmitConn("reconnecting", "proxy_unreachable")
+	eventually(t, "reason observed", func() bool { return obs.has("reconnecting/proxy_unreachable") })
 }
 
 type blockingHistory struct {
@@ -603,7 +649,7 @@ func (s *slowHistory) WorkerEvent(_ string, ev *workerv1.Event) {
 		s.mu.Unlock()
 	}
 }
-func (s *slowHistory) StateChanged(string, instance.State) {}
+func (s *slowHistory) StateChanged(string, instance.State, string) {}
 func (s *slowHistory) count() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -153,7 +153,7 @@ func TestReceiptBeforeMarkSentIsKept(t *testing.T) {
 	if err := inFlight(t, s, "q1", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ApplyReceipt(ctx, "i1", []string{"WA-q1"}, "read"); err != nil {
+	if _, err := s.ApplyReceipt(ctx, "i1", []string{"WA-q1"}, "read"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.MarkSent(ctx, "q1", t0.Add(time.Second)); err != nil {
@@ -234,7 +234,7 @@ func TestDeferFailRetargetAndRecover(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.ApplyReceipt(ctx, "i1", []string{"WA-q3"}, "delivered"); err != nil {
+	if _, err := s.ApplyReceipt(ctx, "i1", []string{"WA-q3"}, "delivered"); err != nil {
 		t.Fatal(err)
 	}
 	n, err := s.RecoverInFlight(ctx)

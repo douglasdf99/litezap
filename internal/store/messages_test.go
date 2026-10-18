@@ -101,9 +101,15 @@ func TestApplyReceiptOnlyRaisesStatus(t *testing.T) {
 	if _, err := s.InsertMessage(ctx, "i1", m, ChatUpdate{}); err != nil {
 		t.Fatal(err)
 	}
-	for _, st := range []string{"read", "delivered", "bogus"} {
-		if err := s.ApplyReceipt(ctx, "i1", []string{"WA1", "WA-other"}, st); err != nil {
+	for i, st := range []string{"read", "delivered", "bogus"} {
+		changed, err := s.ApplyReceipt(ctx, "i1", []string{"WA1", "WA-other"}, st)
+		if err != nil {
 			t.Fatal(err)
+		}
+		// Only the first receipt raised the status.
+		if want := map[bool]int{true: 1, false: 0}[i == 0]; len(changed) != want ||
+			(want == 1 && (changed[0].ID != "msg_1" || changed[0].ChatJID != "c@s.whatsapp.net")) {
+			t.Fatalf("receipt %s changed %+v", st, changed)
 		}
 	}
 	if got, _ := s.GetMessage(ctx, "i1", "msg_1"); got.Status != "read" {

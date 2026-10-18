@@ -1,5 +1,5 @@
 // Package ingest writes worker events (messages, receipts, history sync) into the message
-// log (spec 4.2). Webhooks and SSE consume the same events from marco 3 on.
+// log (spec 4.2) and publishes the matching events (spec 5.2) once they are stored.
 package ingest
 
 import (
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
+	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/instance"
 	"github.com/douglasdf99/litezap/internal/secure"
 	"github.com/douglasdf99/litezap/internal/store"
@@ -18,9 +19,14 @@ import (
 type Ingestor struct {
 	Store *store.Store
 	Log   *slog.Logger
+	// Events, when set, receives message.received/sent/reaction for new messages and
+	// message.status for receipts that raised a status.
+	Events events.Publisher
+	// History, when set, aggregates history chunks into one history.synced per sync.
+	History *events.HistoryTracker
 }
 
-func (in *Ingestor) StateChanged(string, instance.State) {}
+func (in *Ingestor) StateChanged(string, instance.State, string) {}
 
 func (in *Ingestor) WorkerEvent(instanceID string, ev *workerv1.Event) {
 	ctx := context.Background()
@@ -34,7 +40,14 @@ func (in *Ingestor) WorkerEvent(instanceID string, ev *workerv1.Event) {
 		if st == "played" {
 			st = "read"
 		}
-		err = in.Store.ApplyReceipt(ctx, instanceID, r.MessageIds, st)
+		var changed []store.ReceiptChange
+		changed, err = in.Store.ApplyReceipt(ctx, instanceID, r.MessageIds, st)
+		if in.Events != nil {
+			for _, c := range changed {
+				in.Events.Publish(instanceID, events.TypeMessageStatus, events.MessageStatus{
+					ID: c.ID, WAMessageID: c.WAMessageID, Chat: c.ChatJID, Status: st})
+			}
+		}
 	case ev.GetHistory() != nil:
 		err = in.history(ctx, instanceID, ev.GetHistory())
 	}
@@ -90,8 +103,35 @@ func (in *Ingestor) message(ctx context.Context, instanceID string, m *workerv1.
 			source = "api"
 		}
 	}
-	_, err := in.Store.InsertMessage(ctx, instanceID, record(m, source), chatUpdate(m, true))
-	return err
+	rec := record(m, source)
+	isNew, err := in.Store.InsertMessage(ctx, instanceID, rec, chatUpdate(m, true))
+	if err != nil || !isNew || in.Events == nil {
+		return err
+	}
+	typ := events.TypeMessageReceived
+	switch {
+	case m.FromMe:
+		typ = events.TypeMessageSent
+	case m.Type == "reaction":
+		typ = events.TypeMessageReaction
+	}
+	in.Events.Publish(instanceID, typ, eventMessage(instanceID, m, rec))
+	return nil
+}
+
+// eventMessage is the event data of a logged message.
+func eventMessage(instanceID string, m *workerv1.Message, rec store.Message) events.Message {
+	e := events.Message{
+		ID: rec.ID, WAMessageID: rec.WAMessageID, Chat: rec.ChatJID, Sender: rec.SenderJID, FromMe: rec.FromMe,
+		IsGroup: m.IsGroup, PushName: m.PushName, Source: rec.Source, Type: rec.Type, Text: rec.Text,
+		ReactionTo: rec.ReactionTo, Timestamp: rec.Timestamp,
+	}
+	if md := rec.Media; md != nil {
+		e.Media = &events.Media{ID: md.ID, Kind: md.Kind, Mime: md.Mime, Size: md.Size, FileName: md.FileName,
+			Seconds: int(m.Media.GetSeconds()), PTT: m.Media.GetPtt(),
+			URL: "/v1/instances/" + instanceID + "/media/" + md.ID}
+	}
+	return e
 }
 
 func (in *Ingestor) history(ctx context.Context, instanceID string, h *workerv1.HistoryChunk) error {
@@ -109,6 +149,9 @@ func (in *Ingestor) history(ctx context.Context, instanceID string, h *workerv1.
 	n, err := in.Store.InsertMessages(ctx, instanceID, msgs, ups)
 	if err == nil {
 		in.Log.Info("history synced", "instance_id", instanceID, "chat_messages", len(msgs), "new", n)
+		if in.History != nil {
+			in.History.Add(instanceID, len(msgs), n)
+		}
 	}
 	return err
 }

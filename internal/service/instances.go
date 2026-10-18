@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/douglasdf99/litezap/internal/apierr"
+	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/instance"
 	"github.com/douglasdf99/litezap/internal/manager"
 	"github.com/douglasdf99/litezap/internal/queue"
@@ -27,6 +28,8 @@ type Instances struct {
 	DataDir string
 	// Queues, when set, has a deleted instance's send dispatcher stopped.
 	Queues *queue.Queues
+	// Events, when set, receives instance.pair_code.
+	Events events.Publisher
 }
 
 type InstanceView struct {
@@ -240,7 +243,13 @@ func (s *Instances) PairPhone(ctx context.Context, id, phone string) (string, er
 			"instance is not waiting to be paired (state: "+string(in.State)+")", in.State.Active())
 	}
 	code, err := s.Manager.PairPhone(ctx, id, digits)
-	return code, mapErr(err)
+	if err != nil {
+		return "", mapErr(err)
+	}
+	if s.Events != nil {
+		s.Events.Publish(id, events.TypeInstancePairCode, events.PairCode{Code: code})
+	}
+	return code, nil
 }
 
 // Authenticate resolves an instance token to its instance ID.

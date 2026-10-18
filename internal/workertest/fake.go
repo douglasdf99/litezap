@@ -309,6 +309,9 @@ func (f *Fake) Emit(state string) {
 	f.WA.getSink().ConnState(state, "", jid)
 }
 
+// EmitConn reports a connection state with a reason.
+func (f *Fake) EmitConn(state, reason string) { f.WA.getSink().ConnState(state, reason, "") }
+
 func (f *Fake) EmitQR(code string) { f.WA.getSink().QR(code, time.Minute) }
 
 // EmitMessage, EmitReceipt and EmitHistory simulate data events from WhatsApp.
