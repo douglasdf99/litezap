@@ -51,7 +51,21 @@ func (g *GroupsServer) admin() (GroupAdmin, error) {
 	if !ok {
 		return nil, status.Error(codes.Unimplemented, "groups not supported by this worker")
 	}
+	if r, ok := a.(interface{ GroupsReady() error }); ok {
+		if err := r.GroupsReady(); err != nil {
+			return nil, err
+		}
+	}
 	return a, nil
+}
+
+// GroupsReady fails fast while the session is not paired: WhatsApp never answers group
+// queries sent over the pairing socket (they would wait for the RPC timeout).
+func (w *Whatsmeow) GroupsReady() error {
+	if w.gapi == nil && (w.cli.Store == nil || w.cli.Store.ID == nil) {
+		return grpcErr(codes.FailedPrecondition, "logged_out", "the instance is not paired yet")
+	}
+	return nil
 }
 
 func (g *GroupsServer) ListGroups(ctx context.Context, _ *workerv1.ListGroupsRequest) (*workerv1.ListGroupsResponse, error) {

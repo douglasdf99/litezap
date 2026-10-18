@@ -3,12 +3,14 @@ package worker
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"go.mau.fi/whatsmeow"
 	waBinary "go.mau.fi/whatsmeow/binary"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/grpc/codes"
@@ -341,6 +343,15 @@ func TestDescriptionKeepsErrorCode(t *testing.T) {
 	w := newGroupAdapter(t, f)
 	_, err := w.UpdateGroup(context.Background(), &workerv1.UpdateGroupRequest{Jid: grp.String(), Description: proto.String("x")})
 	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// An unpaired session answers group calls at once instead of waiting for the timeout.
+func TestGroupsFailFastWhenUnpaired(t *testing.T) {
+	w := NewWhatsmeow(whatsmeow.NewClient(&store.Device{}, nil), slog.New(slog.DiscardHandler))
+	g := NewGroupsServer(NewServer(w))
+	if _, err := g.ListGroups(context.Background(), &workerv1.ListGroupsRequest{}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("err = %v", err)
 	}
 }

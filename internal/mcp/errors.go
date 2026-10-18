@@ -18,7 +18,7 @@ var hints = map[string]string{
 	"not_found":              "Check the id or chat; list_chats and get_messages show what exists.",
 	"conflict":               "This client_message_id was already used for a different message; use a new id.",
 	"invalid_number":         "The recipient number is malformed or has no WhatsApp; verify it with check_numbers.",
-	"rate_limited":           "LiteZap limits number lookups per instance to protect it from bans. Wait and try later; do not retry in a loop.",
+	"rate_limited":           "LiteZap limits this per instance (number lookups, group adds and creations) to protect it from bans. Wait and try later; do not retry in a loop.",
 	"validation_failed":      "Fix the arguments and call the tool again.",
 	"media_fetch_failed":     "The media URL could not be downloaded; check that it is public and reachable.",
 	"media_too_large":        "The file is over the size limit for this media type.",
