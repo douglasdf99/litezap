@@ -11,8 +11,8 @@ O WhatsApp endereça tudo por **JID** (Jabber ID). Onde a API pede um destino (`
 |---|---|---|
 | Telefone com DDI | `5511999999999` (10 a 15 dígitos; separadores são ignorados) | O jeito mais simples para pessoas. |
 | JID de pessoa | `5511999999999@s.whatsapp.net` | O que a API devolve em `chat` e `sender`. |
-| JID de grupo | `120363025246125888@g.us` | Grupos (envio para grupos em que o número já está). |
-| LID | `27409184731123@lid` | Id oculto que o WhatsApp usa em alguns contextos no lugar do telefone. |
+| JID de grupo | `120363000000000001@g.us` | Grupos (envio para grupos em que o número já está). |
+| LID | `100000000000001@lid` | Id oculto que o WhatsApp usa em alguns contextos no lugar do telefone. |
 
 A parte de aparelho de um JID (`5511999999999:12@s.whatsapp.net`) é descartada.
 

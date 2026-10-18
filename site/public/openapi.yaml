@@ -801,7 +801,7 @@ paths:
                     is_group: false
                     last_message_at: "2026-10-17T13:52:10Z"
                     unread_count: 2
-                  - jid: 120363025246125888@g.us
+                  - jid: 120363000000000001@g.us
                     name: Equipe
                     is_group: true
                     last_message_at: "2026-10-17T12:00:00Z"
@@ -4755,7 +4755,7 @@ webhooks:
                 value: { id: evt_7a3d0f6b2c9e1484, type: message.received, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:47:30.402Z", data: { id: msg_9c2e5a8d1f4b7063, wa_message_id: 3A7E2B9D4F1C6A0E5B8D, chat: 5511999999999@s.whatsapp.net, sender: 5511999999999@s.whatsapp.net, from_me: false, push_name: Maria, source: contact, type: audio, media: { id: med_1d6f3b9e4a2c8057, kind: audio, mime: "audio/ogg; codecs=opus", size: 23110, seconds: 7, ptt: true, url: /v1/instances/inst_7f3a9c2e5b1d4086/media/med_1d6f3b9e4a2c8057 }, timestamp: "2026-10-17T13:47:30Z" } }
               grupo:
                 summary: Texto em grupo
-                value: { id: evt_3e9b6d2a0f7c5148, type: message.received, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:50:05.611Z", data: { id: msg_6a1d8f3c0e5b9274, wa_message_id: 3A0C4E8B2D6F1A9C7E3B, chat: 120363025246125888@g.us, sender: 5511988887777@s.whatsapp.net, from_me: false, is_group: true, push_name: João, source: contact, type: text, text: "Reunião às 15h", timestamp: "2026-10-17T13:50:05Z" } }
+                value: { id: evt_3e9b6d2a0f7c5148, type: message.received, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:50:05.611Z", data: { id: msg_6a1d8f3c0e5b9274, wa_message_id: 3A0C4E8B2D6F1A9C7E3B, chat: 120363000000000001@g.us, sender: 5511988887777@s.whatsapp.net, from_me: false, is_group: true, push_name: João, source: contact, type: text, text: "Reunião às 15h", timestamp: "2026-10-17T13:50:05Z" } }
       responses:
         "2XX": { description: Qualquer 2xx confirma a entrega. }
   message.sent:
