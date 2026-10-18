@@ -225,7 +225,8 @@ func (w *Whatsmeow) hooks() accountHooks {
 		h.setDisappearing = w.cli.SetDefaultDisappearingTimer
 	}
 	if h.httpClient == nil {
-		tr := &http.Transport{Proxy: nil, ResponseHeaderTimeout: 20 * time.Second}
+		// No keep-alive: a picture download is rare, and a client is built per call.
+		tr := &http.Transport{Proxy: nil, ResponseHeaderTimeout: 20 * time.Second, DisableKeepAlives: true}
 		if u, err := url.Parse(h.proxyURL); err == nil && h.proxyURL != "" {
 			tr.Proxy = http.ProxyURL(u) // http(s) and socks5, as for the websocket
 		}
@@ -360,14 +361,10 @@ func (w *Whatsmeow) ChatAction(ctx context.Context, req *workerv1.ChatActionRequ
 		if m == nil || m.Id == "" {
 			return grpcErr(codes.InvalidArgument, "validation_failed", "star needs the message")
 		}
+		// Our own messages (and the contact's, in direct chats) are indexed with sender "0":
+		// BuildStar writes "0" when sender and target are the same user.
 		sender := target
-		if m.FromMe {
-			if pn, lid := w.ownJIDs(); target.Server == types.HiddenUserServer && !lid.IsEmpty() {
-				sender = lid
-			} else if !pn.IsEmpty() {
-				sender = pn
-			}
-		} else if target.Server == types.GroupServer {
+		if !m.FromMe && target.Server == types.GroupServer {
 			s, err := types.ParseJID(m.Sender)
 			if err != nil || s.User == "" {
 				return grpcErr(codes.InvalidArgument, "validation_failed", "star in a group needs the sender")
@@ -640,11 +637,9 @@ func (w *Whatsmeow) UpdateProfile(ctx context.Context, req *workerv1.UpdateProfi
 		if name == "" || len([]rune(name)) > maxPushName {
 			return nil, grpcErr(codes.InvalidArgument, "validation_failed", fmt.Sprintf("name must have 1 to %d characters", maxPushName))
 		}
+		// whatsmeow saves the new push name when the app state echo comes back.
 		if err := h.sendAppState(ctx, appstate.BuildSettingPushName(name)); err != nil {
 			return nil, accountErr(err)
-		}
-		if st := w.cli.Store; st != nil {
-			st.PushName = name // the app state echo saves it too
 		}
 	}
 	if req.SetAbout {

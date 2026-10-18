@@ -99,8 +99,10 @@ export function profilePanel(ctx) {
   const renderPrivacy = (pv) => {
     const selects = PRIVACY.map(([key, label, values]) => {
       const sel = h('select', { 'aria-label': label }, values.map((v) => h('option', { value: v }, VALUE_LABEL[v] || v)));
-      sel.value = pv[key] || values[0];
-      return [key, label, sel];
+      // A value the form does not offer (or none) shows as "(atual)" and is never sent back.
+      if (!values.includes(pv[key])) sel.insertBefore(h('option', { value: '' }, pv[key] ? `(atual: ${pv[key]})` : '(atual)'), sel.firstChild);
+      sel.value = values.includes(pv[key]) ? pv[key] : '';
+      return [key, label, sel, sel.value];
     });
     const timer = h('select', { 'aria-label': 'Mensagens temporárias' }, TIMERS.map(([s, l]) => h('option', { value: String(s) }, l)));
     timer.value = '-';
@@ -109,7 +111,7 @@ export function profilePanel(ctx) {
       onsubmit: async (ev) => {
         ev.preventDefault();
         const body = {};
-        for (const [key, , sel] of selects) if (sel.value !== pv[key]) body[key] = sel.value;
+        for (const [key, , sel, initial] of selects) if (sel.value !== initial && sel.value !== '') body[key] = sel.value;
         if (timer.value !== '' && timer.value !== '-') body.default_disappearing_seconds = Number(timer.value);
         if (!Object.keys(body).length) { toast('Nada mudou'); return; }
         save.disabled = true;

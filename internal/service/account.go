@@ -322,6 +322,11 @@ func (a *Account) UpdateChat(ctx context.Context, instanceID, raw string, p Chat
 		k := pendingKey(instanceID, c.JID, ch.Field)
 		a.markPending(k, 1)
 		defer a.markPending(k, -1)
+		if req.Action == "archive" { // archiving also unpins: its pin echo is ours too
+			kp := pendingKey(instanceID, c.JID, "pinned")
+			a.markPending(kp, 1)
+			defer a.markPending(kp, -1)
+		}
 		rctx, cancel := context.WithTimeout(ctx, rpcTimeout)
 		defer cancel()
 		if _, err := cli.ChatAction(rctx, req); err != nil {
@@ -409,7 +414,12 @@ func (a *Account) DeleteChat(ctx context.Context, instanceID, raw string, delete
 	if _, err := cli.ChatAction(rctx, req); err != nil {
 		return accountErr(err)
 	}
-	_, err = a.ApplyChange(ctx, instanceID, c.JID, store.ChatChange{Field: "deleted", Value: true}, "api")
+	// The chat's newest message time (WhatsApp's clock) hides it, whatever the local clock says.
+	at := time.Now()
+	if req.Message != nil && req.Message.TimestampMs > 0 {
+		at = time.UnixMilli(req.Message.TimestampMs)
+	}
+	_, err = a.ApplyChange(ctx, instanceID, c.JID, store.ChatChange{Field: "deleted", Value: true, At: at}, "api")
 	return err
 }
 
@@ -475,6 +485,22 @@ func (a *Account) applyStar(ctx context.Context, instanceID, chat, waID string, 
 	return nil
 }
 
+// applySilently records a full-sync chat state without publishing chat.updated.
+func (a *Account) applySilently(ctx context.Context, instanceID string, u *workerv1.ChatUpdate) {
+	switch u.Field {
+	case "starred":
+		_, _ = a.st().SetStarred(ctx, instanceID, u.Chat, u.MessageId, u.Value)
+	case "archived", "pinned", "unread":
+		_, _, _ = a.st().ApplyChatChange(ctx, instanceID, u.Chat, store.ChatChange{Field: u.Field, Value: u.Value})
+	case "muted":
+		ch := store.ChatChange{Field: "muted", Value: u.Value}
+		if u.Value && u.MutedUntilMs > 0 {
+			ch.MutedUntil = time.UnixMilli(u.MutedUntilMs)
+		}
+		_, _, _ = a.st().ApplyChatChange(ctx, instanceID, u.Chat, ch)
+	}
+}
+
 // StateChanged implements manager.Observer (nothing to do).
 func (a *Account) StateChanged(string, instance.State, string) {}
 
@@ -490,6 +516,11 @@ func (a *Account) WorkerEvent(instanceID string, ev *workerv1.Event) {
 	source := "device"
 	if a.isPending(pendingKey(instanceID, u.Chat, u.Field)) {
 		source = "api"
+	}
+	if u.FullSync {
+		// The whole app state again (pairing, recovery): record it without an event per chat.
+		a.applySilently(ctx, instanceID, u)
+		return
 	}
 	switch u.Field {
 	case "starred":

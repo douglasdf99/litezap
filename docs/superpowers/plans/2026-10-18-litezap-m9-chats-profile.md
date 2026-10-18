@@ -33,3 +33,11 @@ Em paralelo, outro agente faz o M8 (grupos) a partir de `main`: este marco fica 
 3. Service `Account` (chats, contatos, perfil, privacidade) + observador `chatstate` (eventos do celular) + `autoread`; testes com manager + fake.
 4. API, eventos, settings, MCP (leitura: foto, recado, bloqueados; escrita segura: bloquear, arquivar/fixar/silenciar), painel (ações na aba Conversas, seção Perfil/Privacidade), README, OpenAPI, spec.
 5. gofmt, vet, `go test -p 2 -race ./...`; revisão independente; smoke em 127.0.0.1:18799.
+
+## Revisão independente (feita) e correções
+
+- Eco do `DELETE /chats` duplicava `chat.updated` (o horário da API e o do app state nunca batiam): chat já escondido não muda de novo, e a API marca com o horário da última mensagem (relógio do WhatsApp, não o local).
+- O estado que já existia no celular não chegava à tabela (`EmitAppStateEventsOnFullSync` desligado): o worker agora liga a opção e o serviço grava o sync completo sem publicar um evento por chat.
+- Estrela em mensagem nossa usava o próprio JID como remetente; o índice certo é `"0"` (remetente = alvo).
+- Menores: cliente HTTP de foto sem keep-alive, eco do "desafixar" de um arquivamento marcado como `api`, formulário de privacidade não reenvia valores que não carregou, sem escrita concorrente do push name no worker.
+- Não corrigidos (anotados): o download da foto em cache ainda refaz a consulta da URL no worker quando o arquivo expira; `actionLocks`/cache de fotos não são podados quando a instância é apagada; `auto_read` lê as settings do banco a cada mensagem recebida.

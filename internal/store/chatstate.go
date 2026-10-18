@@ -110,6 +110,9 @@ func (s *Store) ApplyChatChange(ctx context.Context, instanceID, jid string, c C
 			next.UnreadCount = 0 // read on some device
 		}
 	case "deleted":
+		if !cur.DeletedAt.IsZero() && !cur.DeletedAt.Before(cur.LastMessageAt) {
+			return cur, false, nil // already hidden: the app state echo of our delete
+		}
 		at := c.At
 		if at.IsZero() {
 			at = time.Now()

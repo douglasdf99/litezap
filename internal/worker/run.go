@@ -82,6 +82,9 @@ func Run(ctx context.Context, opt Options, log *slog.Logger) error {
 	if opt.ProxyURL != "" {
 		log.Info("using proxy", "proxy", settings.RedactProxy(opt.ProxyURL))
 	}
+	// Marco 9: the chat state of the initial (and recovery) app state sync also arrives as
+	// events, so archived/pinned/muted chats set before pairing reach the log.
+	cli.EmitAppStateEventsOnFullSync = true
 	wa := NewWhatsmeow(cli, log)
 	wa.proxied = opt.ProxyURL != ""
 	wa.acct.proxyURL = opt.ProxyURL

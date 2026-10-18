@@ -122,6 +122,22 @@ func TestChatActions(t *testing.T) {
 	if a := f.WA.ChatActions(); a[len(a)-1].Action != "delete" || !a[len(a)-1].DeleteMedia {
 		t.Fatalf("delete action = %+v", a[len(a)-1])
 	}
+	// Skip the events of the unread/read steps, then exactly one "deleted" (the echo of
+	// our own delete, with WhatsApp's timestamp, is not a second change).
+	for {
+		ev := chatData(t, sse.next(events.TypeChatUpdated))
+		if ev.Changed[0] == "deleted" {
+			if !ev.Deleted || ev.Source != "api" {
+				t.Fatalf("delete event = %+v", ev)
+			}
+			break
+		}
+	}
+	f.EmitChatUpdate(&workerv1.ChatUpdate{Chat: contact, Field: "deleted", Value: true, TimestampMs: time.Now().UnixMilli()})
+	f.EmitChatUpdate(&workerv1.ChatUpdate{Chat: contact, Field: "archived", Value: true})
+	if ev := chatData(t, sse.next(events.TypeChatUpdated)); ev.Changed[0] != "archived" {
+		t.Fatalf("duplicate delete event: %+v", ev)
+	}
 	_, list = e.do("GET", "/v1/instances/"+id+"/chats", tok, "")
 	if len(list["chats"].([]any)) != 0 {
 		t.Fatalf("deleted chat listed: %v", list)
@@ -372,5 +388,25 @@ func TestAutoReadSetting(t *testing.T) {
 	ar, _ := set["auto_read"].(map[string]any)
 	if code != 200 || ar["enabled"] != true || ar["groups"] != false {
 		t.Fatalf("settings = %d %v", code, set)
+	}
+}
+
+// The initial (full) app state sync is recorded without one chat.updated per chat.
+func TestFullSyncIsSilent(t *testing.T) {
+	e := newEnv(t)
+	id, tok := e.connected("FullSync")
+	f := e.sp.Last(id)
+	e.inbound(id, "F1", contact)
+	sse, _ := e.sse("/v1/instances/"+id+"/events?types=chat.updated", tok)
+	f.EmitChatUpdate(&workerv1.ChatUpdate{Chat: contact, Field: "archived", Value: true, FullSync: true})
+	f.EmitChatUpdate(&workerv1.ChatUpdate{Chat: contact, Field: "muted", Value: true, MutedUntilMs: -1, FullSync: true})
+	e.eventually("full sync applied", func() bool {
+		_, list := e.do("GET", "/v1/instances/"+id+"/chats", tok, "")
+		c, _ := list["chats"].([]any)
+		return len(c) == 1 && c[0].(map[string]any)["archived"] == true && c[0].(map[string]any)["muted"] == true
+	})
+	f.EmitChatUpdate(&workerv1.ChatUpdate{Chat: contact, Field: "pinned", Value: true})
+	if ev := chatData(t, sse.next(events.TypeChatUpdated)); ev.Changed[0] != "pinned" {
+		t.Fatalf("full sync published an event: %+v", ev)
 	}
 }

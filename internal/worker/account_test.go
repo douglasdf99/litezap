@@ -282,3 +282,27 @@ func TestPrivacy(t *testing.T) {
 		t.Fatal("invalid timer must be refused")
 	}
 }
+
+// Our own starred messages are indexed with sender "0" (direct chats and groups).
+func TestStarOwnMessageIndex(t *testing.T) {
+	w := newMsgAdapter(t)
+	var idx [][]string
+	w.acct.sendAppState = func(_ context.Context, p appstate.PatchInfo) error {
+		idx = append(idx, p.Mutations[0].Index)
+		return nil
+	}
+	w.acct.chatSettings = func(context.Context, types.JID) (types.LocalChatSettings, error) {
+		return types.LocalChatSettings{}, nil
+	}
+	for _, chat := range []string{"5511888887777@s.whatsapp.net", "120363@g.us"} {
+		if err := w.ChatAction(context.Background(), &workerv1.ChatActionRequest{Chat: chat, Action: "star",
+			Message: &workerv1.MessageRef{Id: "OWN", FromMe: true}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, i := range idx {
+		if i[3] != "1" || i[4] != "0" {
+			t.Fatalf("index = %v", i)
+		}
+	}
+}
