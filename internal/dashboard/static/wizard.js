@@ -58,7 +58,7 @@ function statusBox(inst, onRetry) {
     retry = h('button', { class: 'btn small primary', type: 'button' }, icon('refresh', 16), 'Gerar novo QR');
     retry.addEventListener('click', async () => {
       retry.disabled = true;
-      try { await onRetry(); } catch (e) { toast(errMsg(e), 'error'); } finally { retry.disabled = false; }
+      try { await onRetry(); } catch (e) { toast(e, 'error'); } finally { retry.disabled = false; }
     });
   }
   return h('div', { class: `status-box tone-${d.tone}`, role: 'status', 'aria-live': 'polite' },
@@ -152,7 +152,7 @@ export function connectPanel(id, { onState = () => {}, compact = false } = {}) {
       const digits = phone.value.replace(/\D/g, '');
       if (digits.length < 10) { toast('Digite o número com DDI e DDD, ex.: 55 11 99999-9999.', 'error'); phone.focus(); return; }
       codeBtn.disabled = true;
-      try { showCode((await api.post(`${base}/pair-phone`, { phone: digits })).code); } catch (e) { toast(errMsg(e), 'error'); } finally { codeBtn.disabled = false; }
+      try { showCode((await api.post(`${base}/pair-phone`, { phone: digits })).code); } catch (e) { toast(e, 'error'); } finally { codeBtn.disabled = false; }
     },
   },
   h('p', { class: 'pane-note' }, 'Sem câmera por perto? Receba um código de 8 caracteres e digite no celular.'),
@@ -187,7 +187,7 @@ export function connectPanel(id, { onState = () => {}, compact = false } = {}) {
       const r = await api.del(`${base}/pairing-links`);
       clear(linkOut); linkOut.hidden = true;
       toast(`Links revogados: ${r && r.revoked !== undefined ? r.revoked : 0}`);
-    } catch (e) { toast(errMsg(e), 'error'); } finally { revoke.disabled = false; }
+    } catch (e) { toast(e, 'error'); } finally { revoke.disabled = false; }
   });
   const linkPane = h('div', { class: 'connect-main' },
     h('p', { class: 'pane-note' }, 'Gere uma página com o QR e o código para enviar a quem está com o celular. O token não é exposto.'),
@@ -361,7 +361,7 @@ export function openWizard({ inst = null, aiClients = false, onChange = () => {}
           go(1);
         } catch (e) {
           prog.el.remove();
-          toast(errMsg(e), 'error');
+          toast(e, 'error');
           btn.disabled = false;
           name.disabled = proxy.disabled = false;
           // Created but a later step failed: continue from the connect step anyway.
@@ -420,7 +420,7 @@ export function openWizard({ inst = null, aiClients = false, onChange = () => {}
           tokens.set(id, r.token);
           renderToken();
           toast('Novo token gerado');
-        } catch (e) { toast(errMsg(e), 'error'); rot.disabled = false; }
+        } catch (e) { toast(e, 'error'); rot.disabled = false; }
       });
       mount(tokenSlot, h('div', { class: 'stack' },
         h('p', { class: 'small muted' }, 'Por segurança, o token só aparece quando é criado. Se você não guardou, gere um novo.'),
@@ -446,7 +446,7 @@ export function openWizard({ inst = null, aiClients = false, onChange = () => {}
           try {
             const r = await api.post(`/v1/instances/${enc(id)}/messages`, { to: digits, type: 'text', text: txt.value, client_message_id: uuid() });
             toast(r.status === 'queued' ? 'Mensagem na fila: sai em instantes (o LiteZap respeita um ritmo seguro).' : 'Mensagem enviada');
-          } catch (e) { toast(errMsg(e), 'error'); } finally { send.disabled = false; }
+          } catch (e) { toast(e, 'error'); } finally { send.disabled = false; }
         },
       }, field('Para (com DDI e DDD)', to), field('Mensagem', txt), h('div', { class: 'row end' }, send)));
       testBox.hidden = false;

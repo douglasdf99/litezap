@@ -114,7 +114,9 @@ export function phoneOf(jid) {
 // ---------- toasts ----------
 
 let toastBox = null;
+// toast shows msg: a string, a node, or an error (rendered with errView).
 export function toast(msg, kind = 'info') {
+  if (msg && typeof msg === 'object' && !(msg instanceof Node)) msg = errView(msg);
   if (!toastBox || !toastBox.isConnected) {
     toastBox = h('div', { class: 'toasts', role: 'status', 'aria-live': 'polite' });
     document.body.appendChild(toastBox);
@@ -127,18 +129,138 @@ export function toast(msg, kind = 'info') {
   setTimeout(() => t.remove(), kind === 'error' ? 8000 : 3500);
 }
 
+// ---------- errors ----------
+// The API answers {error:{code,message,retryable}} with English messages (by design).
+// The dashboard shows a pt-BR text for the code (and, for validation_failed, for the most
+// common messages) and keeps the raw code and message in a small muted line for debugging.
+
 const FRIENDLY = {
-  instance_not_pairing: 'A instância não está esperando pareamento agora.',
-  instance_not_connected: 'A instância não está conectada.',
+  unauthorized: 'Sessão expirada ou token inválido. Entre de novo.',
   forbidden: 'Sem permissão para isso.',
-  unauthorized: 'Sessão expirada. Entre de novo.',
+  not_found: 'Não encontrado: talvez tenha sido apagado. Recarregue a página.',
+  instance_not_found: 'Instância não encontrada: talvez tenha sido apagada. Recarregue a página.',
+  group_not_found: 'Grupo não encontrado (ou este número não participa mais dele).',
+  conflict: 'Conflito: isso já existe ou mudou enquanto você editava. Recarregue e tente de novo.',
+  rate_limited: 'Muitos pedidos em pouco tempo. Espere alguns segundos e tente de novo.',
+  instance_not_pairing: 'A instância não está esperando pareamento agora.',
+  instance_not_connected: 'A instância não está conectada. Conecte o WhatsApp e tente de novo.',
+  instance_banned: 'Este número foi bloqueado pelo WhatsApp.',
+  sending_suspended: 'Os envios desta instância estão pausados. Retome os envios nas configurações da instância.',
+  daily_cap: 'Limite diário de envios atingido. Tente amanhã ou ajuste o limite nas configurações da instância.',
+  limit_reached: 'Limite atingido: apague algo que não usa mais ou ajuste o limite nas configurações.',
+  plan_limit: 'Limite do plano atingido.',
+  pin_limit: 'Limite de conversas fixadas atingido: desafixe uma antes.',
+  worker_timeout: 'O WhatsApp demorou para responder. Tente de novo em instantes.',
+  worker_error: 'O WhatsApp não aceitou o pedido. Tente de novo em instantes.',
+  shutting_down: 'O LiteZap está sendo encerrado. Abra-o de novo e tente outra vez.',
+  internal: 'Erro interno do LiteZap. Tente de novo; se continuar, veja o log (menu do app > Ver log).',
+  not_implemented: 'Isso ainda não é suportado pelo LiteZap.',
+  not_supported: 'Isso não é suportado pelo WhatsApp neste caso.',
+  not_configured: 'Este recurso não está configurado neste LiteZap.',
+  media_too_large: 'Arquivo grande demais para o WhatsApp.',
+  media_fetch_failed: 'Não deu para baixar a mídia do link informado. Confira se o link abre no navegador.',
+  media_unavailable: 'Esta mídia não está mais disponível no WhatsApp.',
+  unsupported_media_type: 'Tipo de arquivo não suportado.',
+  upload_failed: 'Falha ao enviar o arquivo para o WhatsApp. Tente de novo.',
+  invalid_number: 'Número inválido ou sem WhatsApp. Use DDI + DDD + número, ex.: 5511988887777.',
+  app_state_not_synced: 'O WhatsApp ainda está sincronizando as conversas. Tente de novo em alguns minutos.',
+  revoke_window_expired: 'Passou do prazo para apagar esta mensagem para todos.',
+  edit_window_expired: 'Passou do prazo de 15 minutos para editar esta mensagem.',
+  message_expired: 'A mensagem expirou na fila sem ser enviada.',
+  message_canceled: 'A mensagem foi cancelada.',
+  link_expired: 'Este link expirou. Gere um novo.',
+  invite_invalid: 'Convite inválido. Confira o link.',
+  invite_revoked: 'Este convite foi revogado. Peça um link novo.',
+  group_forbidden: 'Só administradores do grupo podem fazer isso.',
+  community_not_allowed: 'Isso não é permitido em comunidades.',
+  business_account_required: 'Isso precisa de uma conta do WhatsApp Business.',
+  agent_active: 'Um agente de IA está atendendo esta conversa. Pause o agente antes.',
+  server_unreachable: 'Servidor indisponível. Confira se o LiteZap está aberto.',
 };
 
+// Codes whose message already is pt-BR (the desktop app's own errors, local network errors).
+const PT_MESSAGE = new Set(['timeout', 'network', 'config_malformed', 'app_not_installed', 'ai_client_error', 'extension_unavailable', 'app_not_running']);
+
+const FIELD = { name: 'O nome', about: 'O recado', description: 'A descrição', reason: 'O motivo' };
+
+// Common validation_failed messages: [pattern, pt-BR text or (match) => text]. First match wins.
+const VALIDATION = [
+  [/digits including country code|mentions must be phone numbers/i, 'Número inválido: use DDI + DDD + número, ex.: 5511988887777.'],
+  [/phones must have 1 to 10/i, 'Informe de 1 a 10 números.'],
+  [/invalid JSON body/i, 'Os dados enviados são inválidos. Recarregue a página e tente de novo.'],
+  [/^text(?: \(the new text\))? is required/i, 'Escreva a mensagem.'],
+  [/each message is limited to (\d+) characters/i, (m) => `Cada mensagem aceita no máximo ${m[1]} caracteres.`],
+  [/^(name|about|description|reason) is limited to (\d+) characters/i, (m) => `${FIELD[m[1].toLowerCase()]} aceita no máximo ${m[2]} caracteres.`],
+  [/name must have 1 to (\d+) characters/i, (m) => `O nome precisa ter de 1 a ${m[1]} caracteres.`],
+  [/^name is required/i, 'Informe um nome.'],
+  [/points to a private or local address/i, 'O link da mídia aponta para um endereço local ou privado: use um link público.'],
+  [/must be an absolute http\(s\) URL|invalid upload_url/i, 'Use um link completo, começando com https://.'],
+  [/base64 or url|url or base64/i, 'Envie um arquivo ou informe um link.'],
+  [/base64 is not valid/i, 'O arquivo enviado está corrompido. Escolha-o de novo.'],
+  [/a sticker must be a WebP/i, 'Figurinhas precisam ser imagens WebP.'],
+  [/a gif must be an MP4/i, 'GIFs precisam ser vídeos MP4.'],
+  [/secret must have 16 to 256/i, 'O segredo precisa ter de 16 a 256 caracteres (ou deixe em branco para gerar um).'],
+  [/tags must be 1-40 characters/i, 'Etiquetas: de 1 a 40 caracteres (letras, números e _ . : -), começando com letra ou número.'],
+  [/expires_after must be a duration/i, 'A validade precisa ficar entre 1 minuto e 7 dias.'],
+  [/no instance exists yet/i, 'Crie uma instância primeiro.'],
+  [/invalid group JID|a group JID ends with @g\.us/i, 'Grupo inválido.'],
+  [/participants must list at least one/i, 'Informe pelo menos um participante (número com DDI e DDD).'],
+  [/poll\.options needs 2 to 12/i, 'A enquete precisa de 2 a 12 opções.'],
+  [/only text messages can be edited/i, 'Só mensagens de texto podem ser editadas.'],
+  [/only your own messages can be edited/i, 'Só dá para editar as suas próprias mensagens.'],
+  [/only your own messages can be deleted/i, 'Só dá para apagar as suas próprias mensagens (em grupos, admins podem apagar as dos outros).'],
+  [/has not been sent yet/i, 'A mensagem ainda não foi enviada.'],
+  [/the message was deleted/i, 'A mensagem foi apagada.'],
+  [/nothing to (change|update)/i, 'Nada para mudar.'],
+  [/emoji must be a single emoji/i, 'Use um único emoji.'],
+];
+
+function validationText(msg) {
+  const s = String(msg || '');
+  for (const [re, out] of VALIDATION) {
+    const m = re.exec(s);
+    if (m) return typeof out === 'function' ? out(m) : out;
+  }
+  return 'Dados inválidos: confira os campos e tente de novo.';
+}
+
+function byStatus(status) {
+  if (status === 400) return 'Pedido inválido: confira os campos e tente de novo.';
+  if (status === 401) return FRIENDLY.unauthorized;
+  if (status === 403) return FRIENDLY.forbidden;
+  if (status === 404) return FRIENDLY.not_found;
+  if (status === 409) return FRIENDLY.conflict;
+  if (status === 413) return FRIENDLY.media_too_large;
+  if (status === 429) return FRIENDLY.rate_limited;
+  if (status >= 500) return 'Erro no servidor do LiteZap. Tente de novo em instantes.';
+  return '';
+}
+
+// errMsg is the pt-BR text for an error (ApiError, any Error or a string).
 export function errMsg(e) {
   if (!e) return 'Erro desconhecido';
-  if (e.code && FRIENDLY[e.code]) return FRIENDLY[e.code];
-  const code = e.code && e.code !== 'timeout' && e.code !== 'network' ? ` (${e.code})` : '';
-  return `${e.message || String(e)}${code}`;
+  if (typeof e === 'string') return e;
+  const code = e.code || '';
+  if (PT_MESSAGE.has(code) && e.message) return e.message;
+  if (code === 'validation_failed') return validationText(e.message);
+  if (FRIENDLY[code]) return FRIENDLY[code];
+  if (typeof e.status === 'number') {
+    const s = byStatus(e.status);
+    if (s) return s;
+  }
+  return e.message || String(e);
+}
+
+// errDetail is the raw code and message for the muted line ('' when it adds nothing).
+export function errDetail(e) {
+  if (!e || typeof e !== 'object' || !e.code || PT_MESSAGE.has(e.code)) return '';
+  return e.message && e.message !== e.code ? `${e.code}: ${e.message}` : e.code;
+}
+
+// errView is errMsg plus the muted detail line, as DOM.
+export function errView(e) {
+  const detail = errDetail(e);
+  return h('span', { class: 'err-view' }, h('span', null, errMsg(e)), detail ? h('span', { class: 'err-detail' }, detail) : null);
 }
 
 // ---------- dialogs ----------
@@ -338,7 +460,7 @@ export function busy(btn, fn) {
   return async (ev) => {
     if (ev) ev.preventDefault();
     btn.disabled = true;
-    try { await fn(); } catch (e) { toast(errMsg(e), 'error'); } finally { btn.disabled = false; }
+    try { await fn(); } catch (e) { toast(e, 'error'); } finally { btn.disabled = false; }
   };
 }
 

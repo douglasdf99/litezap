@@ -526,6 +526,8 @@ ul.plain li { padding: .25rem 0; }
 .toast-error { border-color: var(--lz-danger); }
 .toast-error > .icon { color: var(--lz-danger); }
 .toast-msg { flex: 1; }
+.err-view { display: inline-flex; flex-direction: column; gap: .15rem; }
+.err-detail { font-size: .72rem; color: var(--lz-text-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; }
 .toast-x { border: 0; background: none; color: var(--lz-text-subtle); cursor: pointer; padding: .1rem; border-radius: .3rem; display: grid; place-items: center; }
 .toast-x:hover { color: var(--lz-text); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }

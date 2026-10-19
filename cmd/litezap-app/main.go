@@ -35,6 +35,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/dashboard"
 	"github.com/douglasdf99/litezap/internal/desktop"
 	"github.com/douglasdf99/litezap/internal/mcp"
+	"github.com/douglasdf99/litezap/internal/mcpb"
 	"github.com/douglasdf99/litezap/internal/serve"
 	"github.com/douglasdf99/litezap/internal/worker"
 )
@@ -101,6 +102,19 @@ func main() {
 		log.Warn("Conectar a IA disabled", "err", err)
 	} else {
 		a.ai = conn
+		conn.OnChange = func() { signalOnce(a.aiChanged) }
+		conn.Log = log.Info
+		conn.Notify = func(title, msg string) {
+			if err := desktop.Alert(title, msg); err != nil {
+				log.Warn("alert failed", "err", err, "msg", msg)
+			}
+		}
+		// The Claude Desktop extension (LiteZap.mcpb) finds this app through this file.
+		if conn.ExeProblem() == nil {
+			if err := mcpb.RecordAppExe(dir, conn.Exe); err != nil {
+				log.Warn("record app executable", "err", err)
+			}
+		}
 	}
 	if !a.window {
 		// systray.Run must own the main thread (Cocoa on macOS).

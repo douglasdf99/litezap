@@ -1,6 +1,10 @@
 #!/bin/sh
 # Builds an unsigned LiteZap.app (a window with the dashboard, Dock icon and menu bar
 # icon) from this checkout and, with DMG=1, a LiteZap-macos.dmg with the app and a shortcut to /Applications.
+# It also builds LiteZap.mcpb, the Claude Desktop extension (scripts/mcpb: a small shim,
+# cmd/litezap-mcpb, that finds the installed app and runs `litezap-app mcp`), for macOS
+# and Windows: into $OUT/LiteZap.mcpb (release asset) and into the app's Resources (the
+# "Instalar extensão" option of "Conectar a IA").
 #
 # Usage: cmd/litezap-app/package-macos.sh [out_dir]
 #   VERSION=v0.1.0   stamps the version (default: dev)
@@ -49,6 +53,24 @@ if [ $# -gt 1 ]; then
 else
 	cp "$1" "$BIN"
 fi
+
+# Claude Desktop extension: universal macOS shim + Windows shim (both CGO-free).
+SHIMS=""
+for arch in $ARCHS; do
+	CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -trimpath -ldflags "-s -w" -o "$TMP/litezap-mcpb-$arch" ./cmd/litezap-mcpb
+	SHIMS="$SHIMS $TMP/litezap-mcpb-$arch"
+done
+set -- $SHIMS
+if [ $# -gt 1 ]; then
+	lipo -create -output "$TMP/litezap-mcpb" "$@"
+else
+	cp "$1" "$TMP/litezap-mcpb"
+fi
+codesign --force --sign - "$TMP/litezap-mcpb"
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$TMP/litezap-mcpb.exe" ./cmd/litezap-mcpb
+mkdir -p "$OUT"
+go run ./scripts/mcpb -version "$VERSION" -darwin "$TMP/litezap-mcpb" -windows "$TMP/litezap-mcpb.exe" -out "$OUT/LiteZap.mcpb"
+cp "$OUT/LiteZap.mcpb" "$APP/Contents/Resources/LiteZap.mcpb"
 
 go run ./scripts/appicon "$TMP/LiteZap.iconset"
 iconutil -c icns -o "$APP/Contents/Resources/LiteZap.icns" "$TMP/LiteZap.iconset"

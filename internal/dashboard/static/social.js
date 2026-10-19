@@ -13,7 +13,7 @@ function button(label, fn, cls = 'btn small') {
   const b = h('button', { class: cls, type: 'button' }, label);
   b.addEventListener('click', async () => {
     b.disabled = true;
-    try { await fn(); } catch (e) { toast(errMsg(e), 'error'); } finally { b.disabled = false; }
+    try { await fn(); } catch (e) { toast(e, 'error'); } finally { b.disabled = false; }
   });
   return b;
 }
@@ -73,7 +73,7 @@ export function statusPanel(ctx) {
         text.value = '';
         file.value = '';
         load();
-      } catch (e) { toast(errMsg(e), 'error'); } finally { send.disabled = false; }
+      } catch (e) { toast(e, 'error'); } finally { send.disabled = false; }
     },
   },
   h('h3', null, 'Novo status'),
@@ -112,7 +112,7 @@ export function statusPanel(ctx) {
               await api.post(`${ctx.base}/status/${encodeURIComponent(m.id)}/reply`, { text: reply.value });
               reply.value = '';
               toast('Resposta na fila');
-            } catch (e) { toast(errMsg(e), 'error'); }
+            } catch (e) { toast(e, 'error'); }
           },
         }, reply, h('button', { class: 'btn small', type: 'submit' }, 'Enviar'))));
   };
@@ -191,7 +191,7 @@ export function channelsPanel(ctx, rest) {
           toast('Publicado');
           postText.value = ''; postFile.value = '';
           showChannel(jid);
-        } catch (e) { toast(errMsg(e), 'error'); }
+        } catch (e) { toast(e, 'error'); }
       },
     }, h('h3', null, 'Publicar'), postText, h('div', { class: 'row' }, postFile, h('button', { class: 'btn small', type: 'submit' }, 'Publicar'))) : null;
 
@@ -234,7 +234,7 @@ export function channelsPanel(ctx, rest) {
           const v = await api.post(`${ctx.base}/channels/preview`, { invite: invite.value.trim() });
           invite.value = '';
           location.hash = ctx.href('channels', v.jid);
-        } catch (e) { toast(errMsg(e), 'error'); }
+        } catch (e) { toast(e, 'error'); }
       },
     }, invite, h('button', { class: 'btn small', type: 'submit' }, 'Abrir'));
   };
@@ -250,7 +250,7 @@ export function channelsPanel(ctx, rest) {
           toast('Canal criado'); name.value = '';
           await loadList();
           location.hash = ctx.href('channels', v.jid);
-        } catch (e) { toast(errMsg(e), 'error'); }
+        } catch (e) { toast(e, 'error'); }
       },
     }, name, h('button', { class: 'btn small', type: 'submit' }, 'Criar'));
   };
@@ -301,7 +301,7 @@ export function labelsPanel(ctx) {
           onsubmit: async (ev) => {
             ev.preventDefault();
             if (!chat.value.trim()) return;
-            try { await api.put(`${ctx.base}/labels/${encodeURIComponent(l.id)}/chats/${encodeURIComponent(chat.value.trim())}`); load(); } catch (e) { toast(errMsg(e), 'error'); }
+            try { await api.put(`${ctx.base}/labels/${encodeURIComponent(l.id)}/chats/${encodeURIComponent(chat.value.trim())}`); load(); } catch (e) { toast(e, 'error'); }
           },
         }, chat, h('button', { class: 'btn small', type: 'submit' }, 'Etiquetar')),
         button('Renomear', async () => {
@@ -333,7 +333,7 @@ export function labelsPanel(ctx) {
         onsubmit: async (ev) => {
           ev.preventDefault();
           if (!name.value.trim()) return;
-          try { await api.post(`${ctx.base}/labels`, { name: name.value.trim(), color: Number(color.value) }); toast('Etiqueta criada'); load(); } catch (e) { toast(errMsg(e), 'error'); }
+          try { await api.post(`${ctx.base}/labels`, { name: name.value.trim(), color: Number(color.value) }); toast('Etiqueta criada'); load(); } catch (e) { toast(e, 'error'); }
         },
       }, name, color, h('button', { class: 'btn small', type: 'submit' }, 'Criar')),
       labels.length ? h('div', { class: 'table-card' }, h('table', { class: 'table small' },

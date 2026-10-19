@@ -59,14 +59,14 @@ export function profilePanel(ctx) {
           const v = await api.put(`${ctx.base}/profile/picture`, { base64: await fileToBase64(f) });
           toast('Foto atualizada');
           renderProfile(v);
-        } catch (e) { toast(errMsg(e), 'error'); upload.disabled = false; }
+        } catch (e) { toast(e, 'error'); upload.disabled = false; }
       },
     }, 'Enviar foto');
     const removePic = p.picture ? h('button', {
       class: 'btn small danger', type: 'button',
       onclick: async () => {
         if (!(await confirmDanger('Remover a foto do perfil?'))) return;
-        try { await api.del(`${ctx.base}/profile/picture`); toast('Foto removida'); loadProfile(); } catch (e) { toast(errMsg(e), 'error'); }
+        try { await api.del(`${ctx.base}/profile/picture`); toast('Foto removida'); loadProfile(); } catch (e) { toast(e, 'error'); }
       },
     }, 'Remover foto') : null;
     mount(profileBox, h('form', {
@@ -77,7 +77,7 @@ export function profilePanel(ctx) {
         if (about.value !== (p.about || '')) body.about = about.value;
         if (!Object.keys(body).length) { toast('Nada mudou'); return; }
         save.disabled = true;
-        try { renderProfile(await api.patch(`${ctx.base}/profile`, body)); toast('Perfil salvo'); } catch (e) { toast(errMsg(e), 'error'); save.disabled = false; }
+        try { renderProfile(await api.patch(`${ctx.base}/profile`, body)); toast('Perfil salvo'); } catch (e) { toast(e, 'error'); save.disabled = false; }
       },
     },
     h('h2', null, 'Perfil'),
@@ -115,7 +115,7 @@ export function profilePanel(ctx) {
         if (timer.value !== '' && timer.value !== '-') body.default_disappearing_seconds = Number(timer.value);
         if (!Object.keys(body).length) { toast('Nada mudou'); return; }
         save.disabled = true;
-        try { renderPrivacy(await api.patch(`${ctx.base}/privacy`, body)); toast('Privacidade salva'); } catch (e) { toast(errMsg(e), 'error'); save.disabled = false; }
+        try { renderPrivacy(await api.patch(`${ctx.base}/privacy`, body)); toast('Privacidade salva'); } catch (e) { toast(e, 'error'); save.disabled = false; }
       },
     },
     h('h2', null, 'Privacidade'),
@@ -138,7 +138,7 @@ export function profilePanel(ctx) {
         h('span', { class: 'mono' }, phoneOf(jid)),
         h('button', {
           class: 'btn small', onclick: async () => {
-            try { renderBlocked((await api.post(`${ctx.base}/contacts/${encodeURIComponent(jid)}/unblock`)).blocked || []); toast('Desbloqueado'); } catch (e) { toast(errMsg(e), 'error'); }
+            try { renderBlocked((await api.post(`${ctx.base}/contacts/${encodeURIComponent(jid)}/unblock`)).blocked || []); toast('Desbloqueado'); } catch (e) { toast(e, 'error'); }
           },
         }, 'Desbloquear')))) : h('p', { class: 'muted small' }, 'Ninguém bloqueado.'),
       h('form', {
@@ -147,7 +147,7 @@ export function profilePanel(ctx) {
           const v = input.value.trim();
           const to = v.includes('@') ? v : v.replace(/\D/g, '');
           if (!to || !(await confirmDanger(`Bloquear ${phoneOf(to)}? O contato não consegue mais te mandar mensagens nem ligar.`))) return;
-          try { renderBlocked((await api.post(`${ctx.base}/contacts/${encodeURIComponent(to)}/block`)).blocked || []); toast('Bloqueado'); } catch (e) { toast(errMsg(e), 'error'); }
+          try { renderBlocked((await api.post(`${ctx.base}/contacts/${encodeURIComponent(to)}/block`)).blocked || []); toast('Bloqueado'); } catch (e) { toast(e, 'error'); }
         },
       }, input, h('button', { class: 'btn small danger', type: 'submit' }, 'Bloquear')));
   };
@@ -169,7 +169,7 @@ export function profilePanel(ctx) {
           ctx.settingsCache = next;
           toast('Leitura automática salva');
           renderRead(next);
-        } catch (e) { toast(errMsg(e), 'error'); save.disabled = false; }
+        } catch (e) { toast(e, 'error'); save.disabled = false; }
       },
     },
     h('h2', null, 'Leitura automática'),

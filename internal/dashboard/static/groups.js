@@ -39,7 +39,7 @@ export function groupsPanel(ctx, rest) {
     const b = h('button', { class: cls, type: 'button' }, label);
     b.addEventListener('click', async () => {
       b.disabled = true;
-      try { await fn(); } catch (e) { toast(errMsg(e), 'error'); } finally { b.disabled = false; }
+      try { await fn(); } catch (e) { toast(e, 'error'); } finally { b.disabled = false; }
     });
     return b;
   };
@@ -103,7 +103,7 @@ export function groupsPanel(ctx, rest) {
             ev.preventDefault();
             const who = addBox.value.split(/[\s,;]+/).filter(Boolean);
             if (!who.length) return;
-            try { await participantsOp(jid, 'add', who); addBox.value = ''; } catch (e) { toast(errMsg(e), 'error'); }
+            try { await participantsOp(jid, 'add', who); addBox.value = ''; } catch (e) { toast(e, 'error'); }
           },
         }, addBox, h('button', { class: 'btn small', type: 'submit' }, 'Adicionar')),
         h('p', { class: 'small muted' }, 'Adicione só quem já conversa com este número: adicionar desconhecidos é motivo de banimento. O LiteZap pula números sem conversa que não confirmam no WhatsApp e limita as adições por hora e por dia.'),
@@ -131,7 +131,7 @@ export function groupsPanel(ctx, rest) {
           name.value = '';
           await loadList();
           location.hash = ctx.href('groups', res.group.jid);
-        } catch (e) { toast(errMsg(e), 'error'); } finally { btn.disabled = false; }
+        } catch (e) { toast(e, 'error'); } finally { btn.disabled = false; }
       },
     }, name, btn);
   };

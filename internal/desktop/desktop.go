@@ -4,11 +4,11 @@
 package desktop
 
 import (
-	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
+
+	"github.com/douglasdf99/litezap/internal/mcpb"
 )
 
 // AppDir is the per-user folder of the tray app: config (litezap.yaml), data/ and logs.
@@ -21,42 +21,7 @@ import (
 func AppDir() (string, error) { return appDir(runtime.GOOS, os.Getenv, os.UserHomeDir) }
 
 func appDir(goos string, getenv func(string) string, home func() (string, error)) (string, error) {
-	if d := getenv("LITEZAP_APP_DIR"); d != "" {
-		if !filepath.IsAbs(d) {
-			return "", errors.New("LITEZAP_APP_DIR must be an absolute path")
-		}
-		return d, nil
-	}
-	switch goos {
-	case "darwin":
-		h, err := home()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(h, "Library", "Application Support", "LiteZap"), nil
-	case "windows":
-		if d := getenv("APPDATA"); d != "" {
-			return filepath.Join(d, "LiteZap"), nil
-		}
-		h, err := home()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(h, "AppData", "Roaming", "LiteZap"), nil
-	default:
-		// The XDG spec says relative values are invalid and must be ignored.
-		if d := getenv("XDG_DATA_HOME"); d != "" && filepath.IsAbs(d) {
-			return filepath.Join(d, "litezap"), nil
-		}
-		h, err := home()
-		if err != nil {
-			return "", err
-		}
-		if h == "" {
-			return "", errors.New("no home directory")
-		}
-		return filepath.Join(h, ".local", "share", "litezap"), nil
-	}
+	return mcpb.AppDirFor(goos, getenv, home)
 }
 
 // Open opens a URL in the default browser, or a file/folder in the file manager.

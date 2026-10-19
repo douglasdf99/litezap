@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -60,15 +61,25 @@ func ClientName(id string) string {
 	return ""
 }
 
-// RestartHint tells the user what to do after connecting id.
-func RestartHint(id string) string {
+// RestartHint tells the user what to do after connecting id on goos; running says
+// whether the client is open right now.
+func RestartHint(goos, id string, running bool) string {
 	switch id {
 	case ClaudeCode:
-		return "Abra uma nova sessão do Claude Code para ver as ferramentas do LiteZap."
+		return "Feche a sessão do Claude Code e abra uma nova (ou reinicie o Claude Code) para ver as ferramentas do LiteZap."
 	case Cursor:
-		return "Reinicie o Cursor para ver as ferramentas do LiteZap."
+		if running {
+			return "O Cursor está aberto: recarregue a janela (Ctrl/Cmd+Shift+P > \"Developer: Reload Window\") ou reinicie o Cursor para ver as ferramentas do LiteZap."
+		}
+		return "Abra o Cursor para ver as ferramentas do LiteZap."
 	default:
-		return "Reinicie o Claude Desktop para ver as ferramentas do LiteZap."
+		if !running {
+			return "Abra o Claude Desktop para ver as ferramentas do LiteZap."
+		}
+		if goos == "darwin" {
+			return "O Claude está aberto: feche com Cmd+Q e abra de novo para ver as ferramentas do LiteZap."
+		}
+		return "O Claude está aberto: feche-o por completo (menu Arquivo > Sair, ou pelo ícone da bandeja) e abra de novo para ver as ferramentas do LiteZap."
 	}
 }
 
@@ -87,6 +98,29 @@ type Connector struct {
 	// LookPath finds the claude CLI; Run runs it. nil LookPath disables the CLI.
 	LookPath func(string) (string, error)
 	Run      func(ctx context.Context, name string, args ...string) ([]byte, error)
+
+	// Running reports whether an AI client is open (nil: never known). See ClientRunning.
+	Running func(id string) bool
+	// Notify tells the user something happened in the background (the guard re-applied
+	// the entry); OnChange is called when a status may have changed; Log records it.
+	Notify   func(title, msg string)
+	OnChange func()
+	Log      func(msg string, args ...any)
+	// Guard tuning (0: defaults, see guard.go).
+	GuardPoll, GuardAfterQuit, GuardMax time.Duration
+	GuardAttempts                       int
+
+	// Extension is the LiteZap.mcpb shipped with the app ("" or missing: none); Open
+	// opens a file with its app (nil: Open); CacheDir is where the copy handed to Claude
+	// Desktop is written ("": the user cache folder).
+	Extension string
+	Open      func(string) error
+	CacheDir  string
+
+	mu        sync.Mutex
+	pending   map[string]bool               // connected while open, not restarted since
+	guards    map[string]context.CancelFunc // running guards
+	guardDone chan struct{}                 // closed when the last started guard returns
 }
 
 // NewConnector returns a Connector for this machine and user.
@@ -98,8 +132,11 @@ func NewConnector(exe string, env map[string]string) (*Connector, error) {
 	if real, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = real
 	}
-	return &Connector{Exe: exe, Env: env, GOOS: runtime.GOOS, Home: home, Getenv: os.Getenv,
-		LookPath: exec.LookPath, Run: runCLI}, nil
+	goos := runtime.GOOS
+	return &Connector{Exe: exe, Env: env, GOOS: goos, Home: home, Getenv: os.Getenv,
+		LookPath: exec.LookPath, Run: runCLI,
+		Running:   func(id string) bool { return ClientRunning(goos, id) },
+		Extension: BundledExtension(goos, exe)}, nil
 }
 
 // runCLI runs the claude CLI. Apps opened from Finder get a minimal PATH, and the npm
@@ -130,6 +167,17 @@ type AIStatus struct {
 	Present bool `json:"present"`
 	// Error is set when the config could not be read (e.g. malformed JSON).
 	Error string `json:"error,omitempty"`
+	// Running: the client is open right now (best effort; always false for Claude Code).
+	Running bool `json:"running"`
+	// RestartNeeded: connected while the client was open; it has not been restarted
+	// since, so it does not show the LiteZap tools yet.
+	RestartNeeded bool `json:"restart_needed,omitempty"`
+	// Hint is what to do to see the tools after connecting.
+	Hint string `json:"hint"`
+	// Extension: the Claude Desktop extension can be installed from this app;
+	// ExtensionInstalled: Claude Desktop has it installed (best effort).
+	Extension          bool `json:"extension,omitempty"`
+	ExtensionInstalled bool `json:"extension_installed,omitempty"`
 }
 
 // AIResult describes what Connect or Disconnect did.
@@ -141,6 +189,9 @@ type AIResult struct {
 	Changed bool `json:"changed"`
 	// CLI is true when the claude CLI did the change.
 	CLI bool `json:"cli"`
+	// Running: the client was open, so it must be restarted (Hint says how).
+	Running bool   `json:"running"`
+	Hint    string `json:"hint"`
 }
 
 // ConfigPath is the config file of client id.
@@ -231,12 +282,19 @@ func (c *Connector) Status(id string) AIStatus {
 	}
 	st.Path = p
 	st.Installed = c.installed(id, p)
+	st.Running = c.clientRunning(id)
+	st.Hint = RestartHint(c.GOOS, id, st.Running)
+	if id == ClaudeDesktop {
+		st.Extension = c.ExtensionAvailable()
+		st.ExtensionInstalled = c.extensionInstalled()
+	}
 	f, err := readClientConfig(p)
 	if err != nil {
 		st.Error = err.Error()
 		return st
 	}
 	st.Present, st.Connected = c.entryState(f.servers)
+	st.RestartNeeded = st.Connected && c.RestartNeeded(id)
 	return st
 }
 
@@ -293,10 +351,36 @@ func (c *Connector) entry(id string) map[string]any {
 // Claude Code goes through `claude mcp add` when the CLI is found and there is no entry
 // yet (the CLI knows how to write its own file); a stale entry is fixed by editing the
 // file, so a failing add can never leave the user without the old entry.
+//
+// When Claude Desktop is open it would erase the entry on quit: Connect then starts a
+// guard (guard.go) that writes it again once Claude has quit.
 func (c *Connector) Connect(ctx context.Context, id string) (AIResult, error) {
 	if err := c.ExeProblem(); err != nil {
 		return AIResult{}, err
 	}
+	running := c.clientRunning(id)
+	res, err := c.connect(ctx, id)
+	res.Running, res.Hint = running, RestartHint(c.GOOS, id, running)
+	if err != nil || !running {
+		return res, err
+	}
+	if id == ClaudeDesktop {
+		if res.Changed {
+			c.setPending(id, true)
+		}
+		c.startGuard(id)
+	}
+	return res, nil
+}
+
+// apply writes the entry of id with no guard (the guard itself re-applies with it).
+func (c *Connector) apply(id string) (AIResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return c.connect(ctx, id)
+}
+
+func (c *Connector) connect(ctx context.Context, id string) (AIResult, error) {
 	p, err := c.ConfigPath(id)
 	if err != nil {
 		return AIResult{}, err
@@ -330,6 +414,8 @@ func (c *Connector) Connect(ctx context.Context, id string) (AIResult, error) {
 
 // Disconnect removes the LiteZap entry of client id (nothing else).
 func (c *Connector) Disconnect(ctx context.Context, id string) (AIResult, error) {
+	c.stopGuard(id)
+	c.setPending(id, false)
 	p, err := c.ConfigPath(id)
 	if err != nil {
 		return AIResult{}, err

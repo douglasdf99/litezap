@@ -1,7 +1,7 @@
 // Instance pages: header + tabs (chats, pairing, settings, webhooks, live events), sharing
 // one SSE stream per open instance.
 import * as api from './api.js';
-import { h, mount, clear, toast, errMsg, stateBadge, field, fmtTime, phoneOf, confirmDanger, icon } from './ui.js';
+import { h, mount, clear, toast, errMsg, errView, stateBadge, field, fmtTime, phoneOf, confirmDanger, icon } from './ui.js';
 import { webhooksPanel } from './webhooks.js';
 import { agentPanel } from './agent.js';
 import { groupsPanel } from './groups.js';
@@ -60,7 +60,7 @@ export function instanceView(id, { root, shell, setLive, openWizard }) {
       const b = h('button', { class: 'btn small', type: 'button' }, icon(ACTION_ICON[a], 15), ACTIONS[a]);
       b.addEventListener('click', async () => {
         b.disabled = true;
-        try { const v = await instanceAction(id, a); if (v) { ctx.inst = v; renderHeader(); } } catch (e) { toast(errMsg(e), 'error'); } finally { b.disabled = false; }
+        try { const v = await instanceAction(id, a); if (v) { ctx.inst = v; renderHeader(); } } catch (e) { toast(e, 'error'); } finally { b.disabled = false; }
       });
       return b;
     });
@@ -91,7 +91,7 @@ export function instanceView(id, { root, shell, setLive, openWizard }) {
       ctx.inst = await api.get(base);
       renderHeader();
     } catch (e) {
-      if (e.status === 404) { toast('Instância não encontrada', 'error'); location.hash = '#/'; } else toast(errMsg(e), 'error');
+      if (e.status === 404) { toast('Instância não encontrada', 'error'); location.hash = '#/'; } else toast(e, 'error');
     }
   };
 
@@ -309,7 +309,7 @@ function chatsTab(ctx, rest) {
           try { mount(notice, queueNotice(await ctx.settings(), ctx.inst)); } catch { /* settings unavailable */ }
         } else clear(notice);
       } catch (e) {
-        toast(errMsg(e), 'error');
+        toast(e, 'error');
       } finally { sendBtn.disabled = false; text.focus(); }
     };
     text.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) send(e); });
@@ -342,7 +342,7 @@ function chatsTab(ctx, rest) {
         if (initial && !msgs.length) box.appendChild(h('p', { class: 'muted small center' }, 'Sem mensagens no histórico desta conversa.'));
       } catch (e) {
         if (e.status === 404) box.appendChild(h('p', { class: 'muted small center' }, 'Nova conversa: ainda não há histórico.'));
-        else toast(errMsg(e), 'error');
+        else toast(e, 'error');
       }
     };
     olderBtn.addEventListener('click', () => loadPage(false));
@@ -402,7 +402,7 @@ function downloadButton(ctx, media) {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
-    } catch (e) { toast(errMsg(e), 'error'); } finally { b.disabled = false; }
+    } catch (e) { toast(e, 'error'); } finally { b.disabled = false; }
   });
   return b;
 }
@@ -484,7 +484,7 @@ function settingsTab(ctx) {
           ctx.settingsCache = next;
           toast('Configurações salvas');
           render(next);
-        } catch (e) { toast(errMsg(e), 'error'); save.disabled = false; }
+        } catch (e) { toast(e, 'error'); save.disabled = false; }
       },
     },
     h('fieldset', null, h('legend', null, 'Ritmo de envio'),
@@ -514,7 +514,7 @@ function settingsTab(ctx) {
     mount(el, form);
   };
 
-  ctx.settings(true).then(render).catch((e) => mount(el, h('p', { class: 'error' }, errMsg(e))));
+  ctx.settings(true).then(render).catch((e) => mount(el, h('p', { class: 'error' }, errView(e))));
   return { el };
 }
 

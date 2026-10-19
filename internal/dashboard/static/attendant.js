@@ -1,7 +1,7 @@
 // Built-in attendant ("Atendente LiteZap", spec 4.7) inside the "Atendente IA" tab:
 // provider (admin), agent profiles ("treinamento") and the conversation simulator.
 import * as api from './api.js';
-import { h, mount, toast, errMsg, field, confirmDanger } from './ui.js';
+import { h, mount, toast, errMsg, errView, field, confirmDanger } from './ui.js';
 
 const MODE_LABEL = { vendedor: 'Vendedor', pedido: 'Facilitador de pedido', sdr: 'SDR / agendamento', suporte: 'Suporte', custom: 'Personalizado' };
 const ACTION_LABEL = {
@@ -54,7 +54,7 @@ export function attendantPanel(ctx) {
         if (key.value.trim()) p.api_key = key.value.trim();
         if (aKey.value.trim()) p.audio_api_key = aKey.value.trim();
         save.disabled = true;
-        try { renderProvider(await api.put(base, p)); toast('Provedor salvo'); } catch (e) { toast(errMsg(e), 'error'); save.disabled = false; }
+        try { renderProvider(await api.put(base, p)); toast('Provedor salvo'); } catch (e) { toast(e, 'error'); save.disabled = false; }
       },
     },
     h('div', { class: 'row' }, h('h2', null, 'Atendente LiteZap (embutido)'), status),
@@ -78,7 +78,7 @@ export function attendantPanel(ctx) {
   };
 
   const loadProvider = async () => {
-    try { const s = await api.get(base); if (alive) renderProvider(s); } catch (e) { mount(providerBox, h('p', { class: 'error' }, errMsg(e))); }
+    try { const s = await api.get(base); if (alive) renderProvider(s); } catch (e) { mount(providerBox, h('p', { class: 'error' }, errView(e))); }
   };
 
   // ---------- agents ----------
@@ -87,7 +87,7 @@ export function attendantPanel(ctx) {
       const [list, pre] = await Promise.all([api.get(`${base}/agents`), Object.keys(presets).length ? { presets } : api.get(`${base}/presets`)]);
       agents = list.agents || [];
       presets = pre.presets || {};
-    } catch (e) { mount(agentsBox, h('p', { class: 'error' }, errMsg(e))); return; }
+    } catch (e) { mount(agentsBox, h('p', { class: 'error' }, errView(e))); return; }
     if (!alive) return;
     const rows = agents.map((a) => h('tr', null,
       h('td', null, a.name, a.active ? h('span', { class: 'badge d-delivered' }, ' responde') : null),
@@ -97,13 +97,13 @@ export function attendantPanel(ctx) {
         h('button', { class: 'btn small', type: 'button', onclick: () => openEditor(a) }, 'Editar'),
         a.active ? null : h('button', {
           class: 'btn small', type: 'button',
-          onclick: async () => { try { await api.post(`${base}/agents/${a.id}/activate`); toast('Agente ativo'); loadAgents(); } catch (e) { toast(errMsg(e), 'error'); } },
+          onclick: async () => { try { await api.post(`${base}/agents/${a.id}/activate`); toast('Agente ativo'); loadAgents(); } catch (e) { toast(e, 'error'); } },
         }, 'Ativar'),
         h('button', {
           class: 'btn small danger', type: 'button',
           onclick: async () => {
             if (!(await confirmDanger(`Excluir o agente "${a.name}"?`))) return;
-            try { await api.del(`${base}/agents/${a.id}`); toast('Agente excluído'); loadAgents(); } catch (e) { toast(errMsg(e), 'error'); }
+            try { await api.del(`${base}/agents/${a.id}`); toast('Agente excluído'); loadAgents(); } catch (e) { toast(e, 'error'); }
           },
         }, 'Excluir')))));
     const modePick = h('select', null, Object.keys(MODE_LABEL).map((m) => h('option', { value: m }, MODE_LABEL[m])));
@@ -182,7 +182,7 @@ export function attendantPanel(ctx) {
           toast('Agente salvo');
           editorBox.hidden = true;
           loadAgents();
-        } catch (e) { toast(errMsg(e), 'error'); save.disabled = false; }
+        } catch (e) { toast(e, 'error'); save.disabled = false; }
       },
     },
     h('h2', null, a.id ? `Editar ${a.name}` : 'Novo agente'),
@@ -234,7 +234,7 @@ export function attendantPanel(ctx) {
           r.handoff ? h('p', { class: 'warn' }, `Passaria para humano: ${r.handoff_note || ''}`) : null,
           (r.events || []).length ? h('pre', { class: 'json' }, JSON.stringify(r.events, null, 2)) : null,
           h('p', { class: 'small muted' }, `${r.model} · ${r.usage.input_tokens} tokens de entrada, ${r.usage.output_tokens} de saída · US$ ${r.usage.cost_usd.toFixed(5)} · nada foi enviado no WhatsApp`));
-      } catch (e) { mount(out, h('p', { class: 'error' }, errMsg(e))); } finally { run.disabled = false; }
+      } catch (e) { mount(out, h('p', { class: 'error' }, errView(e))); } finally { run.disabled = false; }
     };
     mount(simBox,
       h('h2', null, 'Simular conversa'),

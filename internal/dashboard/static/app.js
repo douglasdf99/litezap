@@ -176,7 +176,7 @@ function instancesView() {
       const b = h('button', { class: 'icon-btn', type: 'button', title: label, 'aria-label': `${label}: ${inst.name}` }, icon(ic, 17));
       b.addEventListener('click', async () => {
         b.disabled = true;
-        try { const v = await instanceAction(inst.id, a); if (v) update(v); } catch (e) { toast(errMsg(e), 'error'); } finally { b.disabled = false; }
+        try { const v = await instanceAction(inst.id, a); if (v) update(v); } catch (e) { toast(e, 'error'); } finally { b.disabled = false; }
       });
       foot.push(b);
     }
@@ -188,7 +188,7 @@ function instancesView() {
         await api.del(`/v1/instances/${encodeURIComponent(inst.id)}`);
         toast('Instância excluída');
         load();
-      } catch (e) { toast(errMsg(e), 'error'); del.disabled = false; }
+      } catch (e) { toast(e, 'error'); del.disabled = false; }
     });
     foot.push(del);
     return h('article', { class: 'card inst-card' },

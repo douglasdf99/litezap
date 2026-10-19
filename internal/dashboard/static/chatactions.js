@@ -1,7 +1,7 @@
 // Chat actions in the Conversas tab (marco 9): archive, pin, mute, unread, delete, and the
 // contact's picture / about text / block on demand (lookups spend the instance quota).
 import * as api from './api.js';
-import { h, mount, toast, errMsg, modal, phoneOf, confirmDanger } from './ui.js';
+import { h, mount, toast, errMsg, errView, modal, phoneOf, confirmDanger } from './ui.js';
 
 // chatMarks renders the state markers of a chat in the list.
 export function chatMarks(c) {
@@ -71,7 +71,7 @@ export function chatActions(ctx, jid, { onChange, onDeleted }) {
           if (p.business.address) rows.push(h('p', { class: 'small' }, 'Endereço: ', p.business.address));
           if ((p.business.categories || []).length) rows.push(h('p', { class: 'small' }, 'Categorias: ', p.business.categories.join(', ')));
         }
-      } catch (e) { rows.push(h('p', { class: 'small error' }, errMsg(e))); }
+      } catch (e) { rows.push(h('p', { class: 'small error' }, errView(e))); }
       rows.push(h('p', { class: 'small muted' }, 'Cada consulta gasta a cota de consultas da instância (30 por minuto).'));
     }
     mount(body, rows);
@@ -82,7 +82,7 @@ export function chatActions(ctx, jid, { onChange, onDeleted }) {
     try {
       await api.post(`${ctx.base}/contacts/${encodeURIComponent(jid)}/${on ? 'block' : 'unblock'}`);
       toast(on ? 'Contato bloqueado' : 'Contato desbloqueado');
-    } catch (e) { toast(errMsg(e), 'error'); }
+    } catch (e) { toast(e, 'error'); }
   };
 
   const remove = async () => {
@@ -91,7 +91,7 @@ export function chatActions(ctx, jid, { onChange, onDeleted }) {
       await api.del(path);
       toast('Conversa apagada');
       if (onDeleted) onDeleted();
-    } catch (e) { toast(errMsg(e), 'error'); }
+    } catch (e) { toast(e, 'error'); }
   };
 
   function render() {

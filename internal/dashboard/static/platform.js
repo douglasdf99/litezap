@@ -36,7 +36,7 @@ export function editInstance(inst, onSaved) {
           const v = await api.patch(`/v1/instances/${encodeURIComponent(inst.id)}`, body);
           toast('Instância atualizada');
           onSaved(v);
-        } catch (e) { toast(errMsg(e), 'error'); return false; }
+        } catch (e) { toast(e, 'error'); return false; }
         return true;
       },
     },

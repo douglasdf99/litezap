@@ -1,6 +1,6 @@
 // "Atendente IA" tab: agent hook config (spec 4.3), per-chat override, recent calls.
 import * as api from './api.js';
-import { h, mount, clear, toast, errMsg, modal, secretBox, field, fmtTime, phoneOf, confirmDanger } from './ui.js';
+import { h, mount, clear, toast, errMsg, errView, modal, secretBox, field, fmtTime, phoneOf, confirmDanger } from './ui.js';
 import { attendantPanel } from './attendant.js';
 
 const STATUS_CLASS = { ok: 'd-delivered', failed: 'd-failed' };
@@ -46,7 +46,7 @@ export function agentPanel(ctx) {
       class: 'btn danger', type: 'button',
       onclick: async () => {
         if (!(await confirmDanger('Remover o hook de agente desta instância? O atendente para de responder.'))) return;
-        try { await api.del(base); toast('Hook removido'); loadConfig(); } catch (e) { toast(errMsg(e), 'error'); }
+        try { await api.del(base); toast('Hook removido'); loadConfig(); } catch (e) { toast(e, 'error'); }
       },
     }, 'Remover') : null;
     const rotate = c.configured ? h('button', {
@@ -58,7 +58,7 @@ export function agentPanel(ctx) {
           const v = await api.put(base, { secret: '' });
           showSecret(v.secret);
           renderConfig(v);
-        } catch (e) { toast(errMsg(e), 'error'); }
+        } catch (e) { toast(e, 'error'); }
       },
     }, 'Gerar novo segredo') : null;
 
@@ -80,7 +80,7 @@ export function agentPanel(ctx) {
           toast('Atendente salvo');
           if (v.secret) showSecret(v.secret);
           renderConfig(v);
-        } catch (e) { toast(errMsg(e), 'error'); save.disabled = false; }
+        } catch (e) { toast(e, 'error'); save.disabled = false; }
       },
     },
     h('p', { class: 'small muted' },
@@ -112,7 +112,7 @@ export function agentPanel(ctx) {
     secretBox(s, 'Segredo de assinatura (X-LiteZap-Signature): ele só aparece agora. Configure-o no seu agente.'));
 
   const loadConfig = async () => {
-    try { const c = await api.get(base); if (alive) renderConfig(c); } catch (e) { mount(cfgBox, h('p', { class: 'error' }, errMsg(e))); }
+    try { const c = await api.get(base); if (alive) renderConfig(c); } catch (e) { mount(cfgBox, h('p', { class: 'error' }, errView(e))); }
   };
 
   // ---------- per-chat override ----------
@@ -121,7 +121,7 @@ export function agentPanel(ctx) {
       await api.put(`${ctx.base}/chats/${encodeURIComponent(jid)}/agent`, { enabled });
       toast(enabled === null ? 'Conversa volta ao padrão (e sai da pausa)' : enabled ? 'Atendente ligado nesta conversa' : 'Atendente desligado nesta conversa');
       loadChats();
-    } catch (e) { toast(errMsg(e), 'error'); }
+    } catch (e) { toast(e, 'error'); }
   };
 
   const loadChats = async () => {
@@ -132,7 +132,7 @@ export function agentPanel(ctx) {
         api.get(`${base}/chats`).then((r) => r.chats || []),
         api.get(`${ctx.base}/chats?limit=50`).then((r) => r.chats || []).catch(() => []),
       ]);
-    } catch (e) { mount(chatsBox, h('p', { class: 'error' }, errMsg(e))); return; }
+    } catch (e) { mount(chatsBox, h('p', { class: 'error' }, errView(e))); return; }
     if (!alive) return;
     const pick = h('select', { 'aria-label': 'Conversa' },
       h('option', { value: '' }, 'escolha uma conversa recente…'),
@@ -181,7 +181,7 @@ export function agentPanel(ctx) {
           h('td', { class: 'small muted' }, c.detail || '')));
       }
       if (!callsBody.firstChild) callsBody.appendChild(h('tr', null, h('td', { colspan: 6, class: 'muted small' }, 'Nenhuma chamada ainda.')));
-    } catch (e) { toast(errMsg(e), 'error'); }
+    } catch (e) { toast(e, 'error'); }
   };
 
   // Live refresh: hook outcomes and incoming messages change the call log.

@@ -23,7 +23,12 @@ func (f *fakeAI) Statuses() []desktop.AIStatus {
 
 func (f *fakeAI) Connect(_ context.Context, id string) (desktop.AIResult, error) {
 	f.calls = append(f.calls, "connect "+id)
-	return desktop.AIResult{Changed: true}, f.err
+	return desktop.AIResult{Changed: true, Hint: desktop.RestartHint("darwin", id, true)}, f.err
+}
+
+func (f *fakeAI) InstallExtension() (desktop.ExtensionResult, error) {
+	f.calls = append(f.calls, "extension")
+	return desktop.ExtensionResult{Path: "/tmp/LiteZap.mcpb"}, f.err
 }
 
 func (f *fakeAI) Disconnect(_ context.Context, id string) (desktop.AIResult, error) {
@@ -75,14 +80,18 @@ func TestAIClientsEndpoints(t *testing.T) {
 		t.Fatalf("list: %d %s", rec.Code, rec.Body)
 	}
 	rec = do(aiRequest("POST", "/app/api/ai-clients/claude-desktop/connect", "adm", nil))
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Reinicie o Claude Desktop") {
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "feche com Cmd+Q") {
 		t.Fatalf("connect: %d %s", rec.Code, rec.Body)
 	}
 	rec = do(aiRequest("POST", "/app/api/ai-clients/cursor/disconnect", "adm", nil))
 	if rec.Code != 200 {
 		t.Fatalf("disconnect: %d %s", rec.Code, rec.Body)
 	}
-	if fmt.Sprint(ai.calls) != "[connect claude-desktop disconnect cursor]" {
+	rec = do(aiRequest("POST", "/app/api/ai-clients/claude-desktop/extension", "adm", nil))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "LiteZap.mcpb") {
+		t.Fatalf("extension: %d %s", rec.Code, rec.Body)
+	}
+	if fmt.Sprint(ai.calls) != "[connect claude-desktop disconnect cursor extension]" {
 		t.Errorf("calls = %v", ai.calls)
 	}
 
@@ -97,6 +106,8 @@ func TestAIClientsEndpoints(t *testing.T) {
 		"form body":     aiRequest("POST", "/app/api/ai-clients/cursor/connect", "adm", func(r *http.Request) { r.Header.Set("Content-Type", "text/plain") }),
 		"unknown":       aiRequest("POST", "/app/api/ai-clients/chatgpt/connect", "adm", nil),
 		"bad action":    aiRequest("POST", "/app/api/ai-clients/cursor/explode", "adm", nil),
+		"ext of cursor": aiRequest("POST", "/app/api/ai-clients/cursor/extension", "adm", nil),
+		"ext no token":  aiRequest("POST", "/app/api/ai-clients/claude-desktop/extension", "", nil),
 	} {
 		if rec := do(r); rec.Code < 400 {
 			t.Errorf("%s: status %d", name, rec.Code)
