@@ -1,59 +1,84 @@
-// LiteZap dashboard: boot, login, routing and the instances list.
+// LiteZap dashboard: boot, login, routing, the app shell and the instances list.
 import * as api from './api.js';
-import { h, mount, toast, errMsg, modal, secretBox, stateBadge, field, confirmDanger, phoneOf } from './ui.js';
+import {
+  h, mount, toast, errMsg, stateBadge, field, confirmDanger, phoneOf, icon, skeleton, emptyState,
+} from './ui.js';
 import { tagChips } from './platform.js';
 import { instanceView, instanceAction, availableActions } from './instance.js';
 import { webhooksPanel } from './webhooks.js';
 import { aiClientsView } from './aiclients.js';
+import { openWizard, initials } from './wizard.js';
 
+const DOCS_URL = 'https://litezap.com/docs/';
 const root = document.getElementById('root');
 let teardown = null; // cleanup of the current view (SSE streams, timers)
-let liveDot = null;
+let liveEl = null;
 let info = null; // GET api/info, fetched once
 
 function setLive(state) {
-  if (!liveDot) return;
-  liveDot.className = `live ${state === 'open' ? 'on' : 'off'}`;
-  liveDot.title = state === 'open' ? 'Tempo real conectado' : 'Tempo real reconectando…';
+  if (!liveEl) return;
+  const on = state === 'open';
+  liveEl.className = `live ${state === 'paused' ? 'idle' : on ? 'on' : 'off'}`;
+  liveEl.title = on ? 'Atualizações em tempo real ligadas' : 'Reconectando as atualizações em tempo real…';
+  liveEl.lastChild.textContent = on ? 'Tempo real' : 'Reconectando…';
 }
 
 api.onUnauthorized(() => {
   api.clearToken();
+  if (api.nativeRelogin()) return; // the app reloads us with a fresh one-click code
   toast('Sessão expirada ou token inválido. Entre de novo.', 'error');
   route();
 });
 
-function logo() {
-  return h('img', { src: 'logo.svg', alt: '', class: 'logo', width: 28, height: 28 });
+function logo(cls = '') {
+  return [
+    h('img', { src: 'brand/logo-full.png', alt: 'LiteZap', class: `logo-full logo-light ${cls}`, width: 111, height: 30 }),
+    h('img', { src: 'brand/logo-full-white.png', alt: 'LiteZap', class: `logo-full logo-dark ${cls}`, width: 111, height: 30 }),
+    h('img', { src: 'brand/logo-mark.png', alt: 'LiteZap', class: 'logo-mark', width: 34, height: 34 }),
+  ];
 }
 
 function shell(content, active) {
-  liveDot = h('span', { class: 'live idle', title: 'Tempo real' });
+  liveEl = h('div', { class: 'live idle', title: 'Tempo real' }, h('span', { class: 'dot', 'aria-hidden': 'true' }), h('span', null, ''));
+  const link = (href, key, ic, label) => h('a', {
+    href, class: active === key ? 'active' : '', 'aria-current': active === key ? 'page' : null, title: label,
+  }, icon(ic, 18), h('span', null, label));
   return h('div', { class: 'shell' },
-    h('header', { class: 'topbar' },
-      h('a', { class: 'brand', href: '#/' }, logo(), h('span', null, 'Lite', h('b', null, 'Zap'))),
-      h('nav', null,
-        h('a', { href: '#/', class: active === 'instances' ? 'active' : '' }, 'Instâncias'),
-        h('a', { href: '#/webhooks', class: active === 'webhooks' ? 'active' : '' }, 'Webhooks globais'),
-        info && info.ai_clients ? h('a', { href: '#/ia', class: active === 'ai' ? 'active' : '' }, 'Conectar a IA') : null),
-      h('div', { class: 'topbar-right' }, liveDot,
+    h('aside', { class: 'sidebar' },
+      h('a', { class: 'brand', href: '#/', 'aria-label': 'LiteZap: início' }, logo()),
+      h('nav', { class: 'nav', 'aria-label': 'Principal' },
+        h('div', { class: 'nav-label' }, 'Painel'),
+        link('#/', 'instances', 'phone', 'Instâncias'),
+        link('#/webhooks', 'webhooks', 'webhook', 'Webhooks globais'),
+        info && info.ai_clients ? link('#/ia', 'ai', 'sparkles', 'Conectar a IA') : null,
+        h('div', { class: 'nav-label' }, 'Ajuda'),
+        h('a', { href: DOCS_URL, target: '_blank', rel: 'noopener noreferrer', title: 'Documentação da API' },
+          icon('book', 18), h('span', null, 'Documentação'))),
+      h('div', { class: 'sidebar-foot' }, liveEl,
         h('button', {
-          class: 'btn ghost', onclick: () => { api.clearToken(); route(); },
-        }, 'Sair'))),
-    h('main', { class: 'content' }, content));
+          class: 'btn ghost', type: 'button', title: 'Sair',
+          onclick: () => { api.clearToken(); route(); },
+        }, icon('logout', 18), h('span', null, 'Sair')))),
+    h('main', { class: 'main', id: 'main' }, h('div', { class: 'content' }, content)));
 }
 
 // ---------- login ----------
 
 async function loginView() {
+  // Inside the macOS app: ask for a fresh one-click code instead of showing the form.
+  if (api.nativeRelogin()) {
+    mount(root, h('div', { class: 'login-wrap' }, h('div', { class: 'card login-card center' },
+      h('div', { class: 'login-brand' }, logo()), h('p', { class: 'muted' }, 'Entrando…'))));
+    return;
+  }
   const info = await api.dashboardInfo();
   const input = h('input', {
     type: 'password', class: 'mono', autocomplete: 'off', spellcheck: 'false',
-    placeholder: 'lza_…', required: true, 'aria-label': 'Token admin',
+    placeholder: 'lza_…', required: true,
   });
   const remember = h('input', { type: 'checkbox' });
-  const btn = h('button', { class: 'btn primary', type: 'submit' }, 'Entrar');
-  const err = h('p', { class: 'error', hidden: true });
+  const btn = h('button', { class: 'btn primary large block', type: 'submit' }, 'Entrar');
+  const err = h('p', { class: 'error small', hidden: true, role: 'alert' });
   const form = h('form', {
     class: 'card login-card',
     onsubmit: async (ev) => {
@@ -74,147 +99,156 @@ async function loginView() {
       } finally { btn.disabled = false; }
     },
   },
-  h('div', { class: 'login-brand' }, logo(), h('h1', null, 'Lite', h('b', null, 'Zap'))),
-  h('p', { class: 'muted' }, 'Entre com o token admin do servidor.'),
+  h('div', { class: 'login-brand' }, logo()),
+  h('div', null, h('h1', null, 'Entrar no painel'), h('p', { class: 'muted' }, 'Use o token admin do seu servidor LiteZap.')),
+  info.one_click_login
+    ? h('p', { class: 'secret-note' }, icon('sparkles', 16), h('span', null, 'Usa o app do LiteZap? Clique em "Abrir painel" no ícone dele: o login é automático.'))
+    : null,
   field('Token admin', input),
-  h('label', { class: 'check' }, remember, ' Lembrar neste navegador'),
-  h('small', { class: 'hint' }, 'Guarda o token neste navegador para este endereço (host e porta). Não marque em computador compartilhado.'),
+  h('label', { class: 'check small' }, remember, ' Lembrar neste navegador'),
   err,
   btn,
   h('details', { class: 'help' },
-    h('summary', null, 'Onde está o token?'),
-    info.one_click_login
-      ? h('p', null, 'Rodando pelo app de bandeja? Clique em "Abrir painel" no ícone do LiteZap: o login é automático.')
-      : null,
+    h('summary', null, 'Onde encontro o token?'),
     h('ul', null,
       h('li', null, h('code', null, 'litezap serve'), ': arquivo ', h('code', null, 'data/admin_token'),
-        ' na pasta onde o servidor roda (ou em ', h('code', null, 'LITEZAP_DATA_DIR'), '), a menos que você defina ',
-        h('code', null, 'LITEZAP_ADMIN_TOKEN'), '.'),
-      h('li', null, 'App de bandeja no macOS: ', h('code', null, '~/Library/Application Support/LiteZap/data/admin_token')),
+        ' na pasta do servidor (ou em ', h('code', null, 'LITEZAP_DATA_DIR'), '), a menos que ', h('code', null, 'LITEZAP_ADMIN_TOKEN'), ' esteja definido.'),
+      h('li', null, 'App no macOS: ', h('code', null, '~/Library/Application Support/LiteZap/data/admin_token')),
       h('li', null, 'Windows: ', h('code', null, '%APPDATA%\\LiteZap\\data\\admin_token')),
       h('li', null, 'Linux: ', h('code', null, '~/.local/share/litezap/data/admin_token'))),
-    h('p', { class: 'muted' }, 'O token fica só neste navegador (na aba, ou guardado se marcar "lembrar"). Use "Sair" para apagá-lo.')));
+    h('p', { class: 'muted small' }, '"Lembrar" guarda o token neste navegador para este endereço. Não marque em computador compartilhado. "Sair" apaga o token.')));
   mount(root, h('div', { class: 'login-wrap' }, form));
   input.focus();
 }
 
 // ---------- instances ----------
 
-const ACTIONS = { start: 'Iniciar', stop: 'Parar', restart: 'Reiniciar', logout: 'Deslogar' };
+const ACTION_META = {
+  stop: ['Parar', 'power'], restart: ['Reiniciar', 'refresh'], logout: ['Desconectar o número', 'logout'], start: ['Iniciar', 'power'],
+};
 
 function instancesView() {
-  const tbody = h('tbody');
-  const rows = new Map();
-  const empty = h('p', { class: 'muted empty', hidden: true }, 'Nenhuma instância ainda. Crie a primeira acima.');
+  const grid = h('div', { class: 'inst-grid', 'aria-busy': 'true' }, skeleton(3));
+  const stats = h('div', { class: 'stats' });
+  const cards = new Map();
+  let list = null;
 
-  const render = (list) => {
-    rows.clear();
-    mount(tbody, list.map((inst) => {
-      const tr = row(inst);
-      rows.set(inst.id, tr);
-      return tr;
-    }));
-    empty.hidden = list.length > 0;
-  };
+  const wizard = (inst) => openWizard({ inst, aiClients: !!(info && info.ai_clients), onChange: () => load() });
 
-  const row = (inst) => {
-    const tr = h('tr', null,
-      h('td', null, h('a', { href: `#/i/${encodeURIComponent(inst.id)}` }, inst.name || inst.id),
-        tagChips(inst),
-        h('div', { class: 'mono muted small' }, inst.id)),
-      h('td', { class: 'state' }, stateBadge(inst.state, inst.state_reason)),
-      h('td', null, inst.phone ? phoneOf(inst.phone) : h('span', { class: 'muted' }, '—')),
-      h('td', null, h('div', { class: 'actions' }, actionsFor(inst))));
-    return tr;
-  };
+  const newBtn = () => h('button', { class: 'btn primary', type: 'button', onclick: () => wizard(null) }, icon('plus', 18), 'Nova instância');
 
-  const actionsFor = (inst) => {
-    const out = [];
-    if (['created', 'stopped', 'logged_out', 'failed', 'qr_pending', 'starting'].includes(inst.state)) {
-      out.push(h('a', { class: 'btn small primary', href: `#/i/${encodeURIComponent(inst.id)}/pair` }, 'Parear'));
+  const render = () => {
+    grid.removeAttribute('aria-busy');
+    cards.clear();
+    if (!list.length) {
+      mount(stats);
+      mount(grid, h('div', { class: 'card empty-card', style: null },
+        emptyState({
+          iconName: 'phone', title: 'Nenhuma instância ainda',
+          text: 'Crie uma instância e conecte um número de WhatsApp em menos de um minuto. Depois é só usar a API, os webhooks ou a IA.',
+          action: h('button', { class: 'btn primary large', type: 'button', onclick: () => wizard(null) }, icon('plus', 18), 'Criar a primeira instância'),
+        })));
+      grid.firstChild.style.gridColumn = '1 / -1';
+      return;
     }
+    const connected = list.filter((i) => i.state === 'connected').length;
+    mount(stats,
+      h('span', { class: 'stat' }, h('b', null, String(list.length)), list.length === 1 ? ' instância' : ' instâncias'),
+      h('span', { class: 'stat' }, h('span', { class: 'stat-dot', 'aria-hidden': 'true' }), h('b', null, String(connected)), connected === 1 ? ' conectada' : ' conectadas'));
+    mount(grid, list.map((inst) => { const c = card(inst); cards.set(inst.id, c); return c; }));
+  };
+
+  const card = (inst) => {
+    const href = `#/i/${encodeURIComponent(inst.id)}`;
+    const needsConnect = !['connected', 'banned', 'reconnecting'].includes(inst.state);
+    const foot = [];
+    if (needsConnect) {
+      foot.push(h('button', { class: 'btn primary small', type: 'button', onclick: () => wizard(inst) }, icon('qr', 15), 'Conectar'));
+    } else {
+      foot.push(h('a', { class: 'btn small', href: `${href}/chats` }, icon('chat', 15), 'Conversas'));
+    }
+    foot.push(h('span', { class: 'grow' }));
+    foot.push(h('a', { class: 'icon-btn', href: `${href}/settings`, title: 'Configurações', 'aria-label': `Configurações: ${inst.name}` }, icon('settings', 17)));
     for (const a of availableActions(inst.state)) {
-      if (a === 'start') continue; // "Parear" starts it
-      const b = h('button', {
-        class: 'btn small',
-        onclick: async () => {
-          b.disabled = true;
-          try { const v = await instanceAction(inst.id, a); if (v) update(v); } catch (e) { toast(errMsg(e), 'error'); } finally { b.disabled = false; }
-        },
-      }, ACTIONS[a]);
-      out.push(b);
+      if (a === 'start') continue; // "Conectar" starts it
+      if (a === 'logout' && inst.state !== 'connected') continue; // nothing paired yet
+      const [label, ic] = ACTION_META[a];
+      const b = h('button', { class: 'icon-btn', type: 'button', title: label, 'aria-label': `${label}: ${inst.name}` }, icon(ic, 17));
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        try { const v = await instanceAction(inst.id, a); if (v) update(v); } catch (e) { toast(errMsg(e), 'error'); } finally { b.disabled = false; }
+      });
+      foot.push(b);
     }
-    const del = h('button', {
-      class: 'btn small danger',
-      onclick: async () => {
-        if (!confirmDanger(`Excluir a instância "${inst.name}"? A sessão do WhatsApp, o histórico e a fila dela serão apagados.`)) return;
-        del.disabled = true;
-        try {
-          await api.del(`/v1/instances/${encodeURIComponent(inst.id)}`);
-          toast('Instância excluída');
-          load();
-        } catch (e) { toast(errMsg(e), 'error'); del.disabled = false; }
-      },
-    }, 'Excluir');
-    out.push(del);
-    return out;
+    const del = h('button', { class: 'icon-btn danger', type: 'button', title: 'Excluir', 'aria-label': `Excluir ${inst.name}` }, icon('trash', 17));
+    del.addEventListener('click', async () => {
+      if (!(await confirmDanger(`Excluir a instância "${inst.name}"? A sessão do WhatsApp, o histórico e a fila dela serão apagados.`, { ok: 'Excluir' }))) return;
+      del.disabled = true;
+      try {
+        await api.del(`/v1/instances/${encodeURIComponent(inst.id)}`);
+        toast('Instância excluída');
+        load();
+      } catch (e) { toast(errMsg(e), 'error'); del.disabled = false; }
+    });
+    foot.push(del);
+    return h('article', { class: 'card inst-card' },
+      h('div', { class: 'inst-card-top' },
+        h('div', { class: 'avatar', 'aria-hidden': 'true' }, initials(inst.name)),
+        h('div', { class: 'inst-card-name' },
+          h('a', { href }, inst.name || inst.id),
+          h('div', { class: 'mono' }, inst.id))),
+      h('div', { class: 'inst-card-meta' },
+        stateBadge(inst.state, inst.state_reason),
+        inst.phone ? h('span', { class: 'phone' }, icon('phone', 14), phoneOf(inst.phone)) : null),
+      (inst.tags || []).length ? h('div', null, tagChips(inst)) : null,
+      needsConnect && inst.state !== 'banned'
+        ? h('div', { class: 'resume-hint' }, icon('alert', 14), 'Falta conectar o WhatsApp. Continue de onde parou.')
+        : null,
+      h('div', { class: 'inst-card-foot' }, foot));
   };
 
   const update = (inst) => {
-    const old = rows.get(inst.id);
-    if (!old) { load(); return; }
-    const tr = row(inst);
-    old.replaceWith(tr);
-    rows.set(inst.id, tr);
+    if (!list) return;
+    const i = list.findIndex((x) => x.id === inst.id);
+    if (i < 0) { load(); return; }
+    list[i] = inst;
+    render();
   };
 
   const load = async () => {
-    try { render((await api.get('/v1/instances')).instances || []); } catch (e) { toast(errMsg(e), 'error'); }
+    try {
+      list = (await api.get('/v1/instances')).instances || [];
+      render();
+    } catch (e) {
+      grid.removeAttribute('aria-busy');
+      mount(grid, h('div', { class: 'card', style: null }, emptyState({
+        iconName: 'alert', title: 'Não deu para carregar as instâncias', text: errMsg(e),
+        action: h('button', { class: 'btn', type: 'button', onclick: load }, icon('refresh', 16), 'Tentar de novo'),
+      })));
+    }
   };
-
-  const name = h('input', { placeholder: 'ex.: vendas', maxlength: 64, required: true, 'aria-label': 'Nome' });
-  const createBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Criar instância');
-  const form = h('form', {
-    class: 'row create',
-    onsubmit: async (ev) => {
-      ev.preventDefault();
-      createBtn.disabled = true;
-      try {
-        const res = await api.post('/v1/instances', { name: name.value.trim() });
-        name.value = '';
-        await load();
-        modal('Instância criada', h('div', null,
-          secretBox(res.token, 'Token da instância: ele só aparece agora. Guarde-o para integrar seu sistema (o painel usa o token admin e não precisa dele).')),
-        [{ label: 'Parear agora', primary: true, onclick: () => { location.hash = `#/i/${encodeURIComponent(res.instance.id)}/pair`; } },
-          { label: 'Fechar' }]);
-      } catch (e) { toast(errMsg(e), 'error'); } finally { createBtn.disabled = false; }
-    },
-  }, name, createBtn);
 
   // Throttled reload for events about instances this page does not know yet.
   let pending = null;
   const stop = api.subscribe('/v1/events?types=instance.status', (type, ev) => {
-    const tr = rows.get(ev.instance_id);
-    if (!tr) { clearTimeout(pending); pending = setTimeout(load, 500); return; }
+    if (!cards.has(ev.instance_id)) { clearTimeout(pending); pending = setTimeout(load, 500); return; }
     api.get(`/v1/instances/${encodeURIComponent(ev.instance_id)}`).then(update).catch(() => {});
-  }, setLive);
+  }, (s) => { setLive(s); if (s === 'open' && list) load(); });
 
   load();
   mount(root, shell(h('section', null,
-    h('div', { class: 'page-head' }, h('h1', null, 'Instâncias'), form),
-    h('div', { class: 'card table-card' },
-      h('table', { class: 'table' },
-        h('thead', null, h('tr', null, h('th', null, 'Nome'), h('th', null, 'Estado'), h('th', null, 'Número'), h('th', null, ''))),
-        tbody),
-      empty)), 'instances'));
+    h('div', { class: 'page-head' },
+      h('div', null, h('h1', null, 'Instâncias'), h('p', null, 'Cada instância é um número de WhatsApp conectado ao LiteZap.')),
+      h('div', { class: 'page-head-actions' }, newBtn())),
+    stats, grid), 'instances'));
   return () => { stop(); clearTimeout(pending); };
 }
 
 function globalWebhooksView() {
   const panel = webhooksPanel(null);
   mount(root, shell(h('section', null,
-    h('div', { class: 'page-head' }, h('h1', null, 'Webhooks globais')),
-    h('p', { class: 'muted' }, 'Webhooks globais recebem eventos de todas as instâncias. Os de uma instância só ficam na aba Webhooks dela; aqui aparecem todos.'),
+    h('div', { class: 'page-head' }, h('div', null, h('h1', null, 'Webhooks globais'),
+      h('p', null, 'Recebem eventos de todas as instâncias. Os de uma instância ficam na aba Webhooks dela; aqui aparecem todos.'))),
     panel.el), 'webhooks'));
   return panel.cleanup;
 }
@@ -245,7 +279,7 @@ async function route() {
     if (teardown) { teardown(); teardown = null; }
     if (!instanceCtx || instanceCtx.id !== parts[1]) {
       if (instanceCtx) instanceCtx.close();
-      instanceCtx = instanceView(parts[1], { root, shell, setLive });
+      instanceCtx = instanceView(parts[1], { root, shell, setLive, openWizard: (inst) => openWizard({ inst, aiClients: !!info.ai_clients }) });
     }
     instanceCtx.show(parts[2] || 'chats', parts.slice(3));
     return;
@@ -254,6 +288,8 @@ async function route() {
   if (teardown) { teardown(); teardown = null; }
   if (parts[0] === 'ia' && info.ai_clients) teardown = aiClientsView({ root, shell });
   else teardown = parts[0] === 'webhooks' ? globalWebhooksView() : instancesView();
+  const main = document.getElementById('main');
+  if (main) main.scrollTop = 0;
 }
 
 // One-click login from the tray app: #code=... (the fragment never reaches the server).
@@ -265,7 +301,7 @@ async function consumeLaunchCode() {
   try {
     api.setToken(await api.redeemLaunchCode(m[1]), false);
   } catch (e) {
-    toast(`Login automático falhou: ${errMsg(e)}. Use "Abrir painel" na bandeja de novo ou cole o token.`, 'error');
+    toast(`Login automático falhou: ${errMsg(e)}. Use "Abrir painel" no app de novo ou cole o token.`, 'error');
   }
 }
 

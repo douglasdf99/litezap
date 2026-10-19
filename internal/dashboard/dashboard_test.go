@@ -61,18 +61,20 @@ func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
 func TestStaticAssetsAndHeaders(t *testing.T) {
 	h := Handler(Options{AdminToken: "adm"})
 	for path, want := range map[string]string{
-		"/app/":               "<title>LiteZap</title>",
-		"/app/app.js":         "consumeLaunchCode",
-		"/app/api.js":         "subscribe",
-		"/app/style.css":      "--accent",
-		"/app/logo.svg":       "<svg",
-		"/app/webhooks.js":    "webhooksPanel",
-		"/app/agent.js":       "agentPanel",
-		"/app/profile.js":     "profilePanel",
-		"/app/chatactions.js": "chatActions",
-		"/app/groups.js":      "groupsPanel",
-		"/app/social.js":      "labelsPanel",
-		"/app/aiclients.js":   "aiClientsView",
+		"/app/":                    "<title>LiteZap</title>",
+		"/app/app.js":              "consumeLaunchCode",
+		"/app/api.js":              "subscribe",
+		"/app/style.css":           "--accent",
+		"/app/logo.svg":            "<svg",
+		"/app/webhooks.js":         "webhooksPanel",
+		"/app/agent.js":            "agentPanel",
+		"/app/profile.js":          "profilePanel",
+		"/app/chatactions.js":      "chatActions",
+		"/app/groups.js":           "groupsPanel",
+		"/app/social.js":           "labelsPanel",
+		"/app/aiclients.js":        "aiClientsView",
+		"/app/wizard.js":           "openWizard",
+		"/app/brand/logo-full.png": "PNG",
 	} {
 		rec := get(t, h, path)
 		if rec.Code != 200 {
@@ -88,7 +90,7 @@ func TestStaticAssetsAndHeaders(t *testing.T) {
 		}
 	}
 	for p, want := range map[string]string{"/app/app.js": "text/javascript; charset=utf-8", "/app/style.css": "text/css; charset=utf-8",
-		"/app/logo.svg": "image/svg+xml", "/app/": "text/html; charset=utf-8"} {
+		"/app/logo.svg": "image/svg+xml", "/app/brand/logo-mark.png": "image/png", "/app/": "text/html; charset=utf-8"} {
 		if ct := get(t, h, p).Header().Get("Content-Type"); ct != want {
 			t.Fatalf("%s content type %q", p, ct)
 		}

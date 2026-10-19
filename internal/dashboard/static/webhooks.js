@@ -1,7 +1,7 @@
 // Webhooks panel: list/create/toggle/delete, deliveries with retry. instanceId null = all
 // webhooks (create makes a global one).
 import * as api from './api.js';
-import { h, mount, clear, toast, errMsg, modal, secretBox, field, fmtTime, confirmDanger } from './ui.js';
+import { h, mount, clear, toast, errMsg, modal, secretBox, field, fmtTime, confirmDanger, emptyState } from './ui.js';
 
 export function webhooksPanel(instanceId) {
   const listEl = h('div', { class: 'wh-list' });
@@ -13,7 +13,7 @@ export function webhooksPanel(instanceId) {
       const res = await api.get(`/v1/webhooks${q}`);
       if (!alive) return;
       const list = res.webhooks || [];
-      mount(listEl, list.length ? list.map(card) : h('p', { class: 'muted' }, 'Nenhum webhook.'));
+      mount(listEl, list.length ? list.map(card) : h('div', { class: 'card' }, emptyState({ iconName: 'webhook', title: 'Nenhum webhook ainda', text: 'Cadastre uma URL acima para receber mensagens e eventos no seu sistema.' })));
     } catch (e) { mount(listEl, h('p', { class: 'error' }, errMsg(e))); }
   };
 
@@ -27,7 +27,7 @@ export function webhooksPanel(instanceId) {
     const delBtn = h('button', {
       class: 'btn small danger', type: 'button',
       onclick: async () => {
-        if (!confirmDanger(`Excluir o webhook ${w.url}? Entregas pendentes dele são descartadas.`)) return;
+        if (!(await confirmDanger(`Excluir o webhook ${w.url}? Entregas pendentes dele são descartadas.`))) return;
         try { await api.del(`/v1/webhooks/${encodeURIComponent(w.id)}`); toast('Webhook excluído'); load(); } catch (e) { toast(errMsg(e), 'error'); }
       },
     }, 'Excluir');

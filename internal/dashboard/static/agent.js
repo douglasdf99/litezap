@@ -45,14 +45,14 @@ export function agentPanel(ctx) {
     const del = c.configured ? h('button', {
       class: 'btn danger', type: 'button',
       onclick: async () => {
-        if (!confirmDanger('Remover o hook de agente desta instância? O atendente para de responder.')) return;
+        if (!(await confirmDanger('Remover o hook de agente desta instância? O atendente para de responder.'))) return;
         try { await api.del(base); toast('Hook removido'); loadConfig(); } catch (e) { toast(errMsg(e), 'error'); }
       },
     }, 'Remover') : null;
     const rotate = c.configured ? h('button', {
       class: 'btn', type: 'button',
       onclick: async () => {
-        if (!confirmDanger('Gerar um novo segredo? O agente precisa ser atualizado com ele, senão as assinaturas falham.')) return;
+        if (!(await confirmDanger('Gerar um novo segredo? O agente precisa ser atualizado com ele, senão as assinaturas falham.'))) return;
         try {
           // An empty secret makes the server generate one and show it once.
           const v = await api.put(base, { secret: '' });

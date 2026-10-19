@@ -65,7 +65,7 @@ export function profilePanel(ctx) {
     const removePic = p.picture ? h('button', {
       class: 'btn small danger', type: 'button',
       onclick: async () => {
-        if (!confirmDanger('Remover a foto do perfil?')) return;
+        if (!(await confirmDanger('Remover a foto do perfil?'))) return;
         try { await api.del(`${ctx.base}/profile/picture`); toast('Foto removida'); loadProfile(); } catch (e) { toast(errMsg(e), 'error'); }
       },
     }, 'Remover foto') : null;
@@ -146,7 +146,7 @@ export function profilePanel(ctx) {
           ev.preventDefault();
           const v = input.value.trim();
           const to = v.includes('@') ? v : v.replace(/\D/g, '');
-          if (!to || !confirmDanger(`Bloquear ${phoneOf(to)}? O contato não consegue mais te mandar mensagens nem ligar.`)) return;
+          if (!to || !(await confirmDanger(`Bloquear ${phoneOf(to)}? O contato não consegue mais te mandar mensagens nem ligar.`))) return;
           try { renderBlocked((await api.post(`${ctx.base}/contacts/${encodeURIComponent(to)}/block`)).blocked || []); toast('Bloqueado'); } catch (e) { toast(errMsg(e), 'error'); }
         },
       }, input, h('button', { class: 'btn small danger', type: 'submit' }, 'Bloquear')));
