@@ -1,6 +1,6 @@
 ---
 title: App local
-description: LiteZap no seu computador, com painel web e ícone na bandeja, usando o seu IP e sem nuvem.
+description: LiteZap no seu computador, com janela própria no macOS (ou ícone na bandeja e painel no navegador), usando o seu IP e sem nuvem.
 ---
 
 <span class="lz-badge lz-badge--ok">Disponível · v1</span>
@@ -16,7 +16,7 @@ Há duas formas:
 | | `litezap-app` (bandeja) | `litezap serve` (terminal) |
 |---|---|---|
 | Para quem | Quem não quer terminal | Desenvolvedores, servidores |
-| Como abre | Ícone na bandeja/barra de menus, painel já logado | Comando no terminal; painel pedindo o token admin |
+| Como abre | macOS: janela própria e ícone no Dock, painel já logado. Windows/Linux: ícone na bandeja, painel no navegador já logado | Comando no terminal; painel pedindo o token admin |
 | Pasta de dados | Pasta do usuário (abaixo) | `./data` ou `data_dir` |
 | Painel em `/app/` | Sim | Sim (desligável) |
 
@@ -45,16 +45,28 @@ por HTTPS: o token admin trafega em cada requisição.
 
 ## App de bandeja (`litezap-app`)
 
-Um executável que sobe o motor no próprio processo, põe o ícone do LiteZap na bandeja e abre o painel já logado.
+Um executável que sobe o motor no próprio processo e mostra o painel já logado.
 
-- **Menu**: estado (`N de M conectada(s)`), Abrir painel, Abrir pasta de dados, Ver log, Conectar a IA, Sair
+- **macOS: janela própria.** Abrir o LiteZap abre uma janela com o painel (sem navegador) e o ícone no Dock. Enquanto
+  o motor sobe, a janela mostra "Iniciando o LiteZap…"; se ele não subir (porta ocupada, por exemplo), mostra o erro
+  e o botão **Ver log**.
+- **Fechar a janela não encerra o LiteZap**: o motor continua rodando (WhatsApp conectado, MCP funcionando). Clique no
+  ícone do Dock, no ícone da barra de menus ou abra o app de novo para ver a janela (roda uma instância só por pasta
+  de dados). **Sair do LiteZap** (⌘Q, Dock ou barra de menus) encerra as instâncias com calma e fecha o app.
+- Na janela, links para outros sites abrem no navegador padrão; confirmações, seleção de arquivos e downloads
+  (pergunta onde salvar) funcionam normalmente. **Visualizar > Recarregar painel** (⌘R) recarrega com um login novo
+  (use se o painel pedir o token); **Visualizar > Abrir no navegador** abre o mesmo painel no navegador.
+- **Windows e Linux**: por enquanto só o ícone na bandeja; **Abrir painel** abre o painel no navegador, já logado.
+
+- **Menu da barra de menus/bandeja**: estado (`N de M conectada(s)`), Abrir painel (no macOS, mostra a janela),
+  Abrir no navegador (macOS), Abrir pasta de dados, Ver log, Conectar a IA, Sair
   (encerra as instâncias com calma antes de sair).
 - **Login em um clique**: cada "Abrir painel" gera um código de uso único que vale 1 minuto e abre
   `http://127.0.0.1:8787/app/#code=...`. O código vai no fragmento da URL (não chega a logs), o painel o apaga da barra
   de endereço e o troca pelo token admin. Essa troca só existe no app de bandeja, só em loopback e com proteção contra
   DNS rebinding.
-- `litezap-app --no-browser` sobe sem abrir o navegador.
-- API e painel em `127.0.0.1:8787`. Se a porta estiver ocupada (outro LiteZap aberto?), o menu mostra o erro.
+- `litezap-app --no-browser` sobe sem mostrar o painel (no macOS, com a janela fechada).
+- API e painel em `127.0.0.1:8787`. Se a porta estiver ocupada (outro LiteZap aberto?), a janela e o menu mostram o erro.
 
 ### Pasta de dados
 
@@ -79,11 +91,12 @@ Para compilar a partir do código (Go na versão do `go.mod`):
 
 | Sistema | Comando | Observações |
 |---|---|---|
-| macOS | `go build -o litezap-app ./cmd/litezap-app` ou `cmd/litezap-app/package-macos.sh` (gera `dist/LiteZap.app`, só na barra de menus; `UNIVERSAL=1` junta arm64 e amd64, `DMG=1` gera o `.dmg`) | Precisa de CGO e das Xcode Command Line Tools (`xcode-select --install`). Sem assinatura: na primeira vez, botão direito > Abrir. |
-| Windows | `GOOS=windows go build -ldflags "-H windowsgui" -o litezap-app.exe ./cmd/litezap-app` | Sem CGO; `-H windowsgui` evita a janela de console. **Não testado no Windows ainda.** |
-| Linux | `CGO_ENABLED=0 go build -o litezap-app ./cmd/litezap-app` | Sem CGO. A bandeja usa DBus (StatusNotifierItem); no GNOME, instale a extensão AppIndicator. |
+| macOS | `go build -o litezap-app ./cmd/litezap-app` ou `cmd/litezap-app/package-macos.sh` (gera `dist/LiteZap.app` com janela, ícone no Dock e na barra de menus; `UNIVERSAL=1` junta arm64 e amd64, `DMG=1` gera o `.dmg`) | Precisa de CGO e das Xcode Command Line Tools (`xcode-select --install`). Sem assinatura: na primeira vez, botão direito > Abrir. |
+| Windows | `GOOS=windows go build -ldflags "-H windowsgui" -o litezap-app.exe ./cmd/litezap-app` | Sem CGO; bandeja + navegador (sem janela própria ainda); `-H windowsgui` evita a janela de console. **Não testado no Windows ainda.** |
+| Linux | `CGO_ENABLED=0 go build -o litezap-app ./cmd/litezap-app` | Sem CGO; bandeja + navegador. A bandeja usa DBus (StatusNotifierItem); no GNOME, instale a extensão AppIndicator. |
 
-O `litezap` principal continua sem CGO; só o app de bandeja usa a biblioteca de bandeja.
+O `litezap` principal continua sem CGO; só o app usa a biblioteca de bandeja e, no macOS, a janela
+(`internal/appwindow`: Cocoa e WebKit do sistema via CGO, sem Electron).
 
 ## Conectar a IA (Claude Desktop, Claude Code, Cursor)
 
