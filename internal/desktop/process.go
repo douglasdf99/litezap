@@ -10,7 +10,9 @@ import (
 //
 //	macOS:   a process whose executable is <...>/Claude.app/Contents/MacOS/Claude
 //	         (bundle id com.anthropic.claudefordesktop) or <...>/Cursor.app/Contents/MacOS/Cursor
-//	Windows: an image named Claude.exe or Cursor.exe (tasklist)
+//	Windows: Claude.exe whose path is the Claude Desktop install (…\AnthropicClaude\… or
+//	         …\Claude\app-…: the Claude Code CLI is also claude.exe and does not count),
+//	         or Cursor.exe
 func ClientRunning(goos, id string) bool {
 	switch goos {
 	case "darwin":
@@ -21,12 +23,22 @@ func ClientRunning(goos, id string) bool {
 		out, err := exec.Command("ps", "-axo", "comm=").Output()
 		return err == nil && hasProcessSuffix(string(out), suffix)
 	case "windows":
-		image := map[string]string{ClaudeDesktop: "Claude.exe", Cursor: "Cursor.exe"}[id]
-		if image == "" {
-			return false
+		switch id {
+		case ClaudeDesktop:
+			// Name filters are case-insensitive in WQL: claude.exe (Claude Code) matches
+			// too, and is told apart by its path. No answer (no PowerShell, an error):
+			// unknown, reported as not running.
+			cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+				`Get-CimInstance Win32_Process -Filter "Name='Claude.exe'" | ForEach-Object { $_.ExecutablePath }`)
+			hideWindow(cmd)
+			out, err := cmd.Output()
+			return err == nil && claudeDesktopPath(string(out))
+		case Cursor:
+			cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq Cursor.exe", "/NH", "/FO", "CSV")
+			hideWindow(cmd)
+			out, err := cmd.Output()
+			return err == nil && strings.Contains(strings.ToLower(string(out)), `"cursor.exe"`)
 		}
-		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq "+image, "/NH", "/FO", "CSV").Output()
-		return err == nil && strings.Contains(strings.ToLower(string(out)), `"`+strings.ToLower(image)+`"`)
 	}
 	return false
 }
@@ -35,6 +47,19 @@ func ClientRunning(goos, id string) bool {
 func hasProcessSuffix(ps, suffix string) bool {
 	for _, line := range strings.Split(ps, "\n") {
 		if strings.HasSuffix(strings.TrimSpace(line), suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// claudeDesktopPath reports whether one of the executable paths (one per line) is the
+// Claude Desktop app: %LOCALAPPDATA%\AnthropicClaude\app-<version>\claude.exe (Squirrel
+// install) or a ...\Claude\app-<version>\ folder.
+func claudeDesktopPath(paths string) bool {
+	for _, line := range strings.Split(paths, "\n") {
+		p := strings.ToLower(strings.TrimSpace(line))
+		if p != "" && (strings.Contains(p, `\anthropicclaude\`) || strings.Contains(p, `\claude\app-`)) {
 			return true
 		}
 	}

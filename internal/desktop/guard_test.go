@@ -54,6 +54,12 @@ func waitGuard(t *testing.T, c *Connector) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("guard did not stop")
 	}
+	c.mu.Lock()
+	n := len(c.guards)
+	c.mu.Unlock()
+	if n != 0 {
+		t.Errorf("%d finished guard(s) left in c.guards", n)
+	}
 }
 
 func eventually(t *testing.T, what string, cond func() bool) {
@@ -149,6 +155,8 @@ func TestGuardAttemptsAreLimited(t *testing.T) {
 		eraseEntry(t, c)
 	}
 	waitGuard(t, c)
+	eventually(t, "two notifications", func() bool { return f.notifications() == 2 })
+	time.Sleep(20 * time.Millisecond)
 	if n := f.notifications(); n != 2 {
 		t.Errorf("re-applied %d times, want 2", n)
 	}
@@ -207,6 +215,20 @@ func TestRestartHints(t *testing.T) {
 	} {
 		if got := RestartHint(c.goos, c.id, c.running); !strings.Contains(got, c.want) {
 			t.Errorf("%s %s %v: %q", c.goos, c.id, c.running, got)
+		}
+	}
+}
+
+func TestClaudeDesktopPath(t *testing.T) {
+	for in, want := range map[string]bool{
+		`C:\Users\ana\AppData\Local\AnthropicClaude\app-0.14.10\claude.exe` + "\r\n":         true,
+		`C:\Program Files\Claude\app-1.2.3\Claude.exe`:                                       true,
+		`C:\Users\ana\.local\bin\claude.exe` + "\r\n":                                        false, // Claude Code CLI
+		`C:\Users\ana\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\claude.exe`: false,
+		"": false,
+	} {
+		if got := claudeDesktopPath(in); got != want {
+			t.Errorf("%q: %v, want %v", in, got, want)
 		}
 	}
 }

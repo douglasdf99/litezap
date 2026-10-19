@@ -3,7 +3,8 @@
 // (internal/mcpb.Locator) and runs `<app> mcp` on the same stdin/stdout, so the tools
 // always match the installed app and no token is copied anywhere.
 //
-// It uses only the standard library (no CGO) so it stays small and cross-compiles.
+// It has no CGO (the standard library, plus golang.org/x/sys on Windows for the job
+// object that ties the app to it) so it stays small and cross-compiles.
 package main
 
 import (

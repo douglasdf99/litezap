@@ -114,7 +114,11 @@ instalado e roda `<app> mcp`, então as ferramentas são sempre as da versão do
 1. `LITEZAP_APP_EXE` (a cópia gerada pelo app já aponta para ele);
 2. o arquivo `app-exe` da pasta de dados, que o app atualiza a cada abertura;
 3. os lugares de costume: `/Applications/LiteZap.app` e `~/Applications` (macOS, e depois o Spotlight pelo bundle id
-   `dev.litezap.app`); `%LOCALAPPDATA%\Programs\LiteZap`, Documentos, Área de Trabalho e Downloads (Windows).
+   `dev.litezap.app`, só em `/Applications` ou `~/Applications` e conferindo o `Info.plist`); `%LOCALAPPDATA%\Programs\LiteZap`, `%LOCALAPPDATA%\LiteZap` e `%ProgramFiles%\LiteZap` (Windows; uma cópia em Documentos é achada pelo `app-exe`).
+
+Em qualquer caso, a extensão só executa um arquivo chamado `litezap-app` (`LiteZap.exe` no Windows) que nem ele nem a
+pasta dele possam ser alterados por outros usuários (macOS e Linux). No Windows, o app roda num *job object* do shim:
+quando o Claude encerra a extensão, o `LiteZap.exe mcp` encerra junto.
 
 Sem o app, a extensão sai com "o app LiteZap não foi encontrado" (aparece no log do Claude). O ZIP do Windows traz o
 `LiteZap.mcpb` ao lado do `LiteZap.exe`; no macOS ele fica em `LiteZap.app/Contents/Resources`.

@@ -118,9 +118,9 @@ type Connector struct {
 	CacheDir  string
 
 	mu        sync.Mutex
-	pending   map[string]bool               // connected while open, not restarted since
-	guards    map[string]context.CancelFunc // running guards
-	guardDone chan struct{}                 // closed when the last started guard returns
+	pending   map[string]bool         // connected while open, not restarted since
+	guards    map[string]*guardHandle // running guards (removed when they end)
+	guardDone chan struct{}           // closed when the last started guard returns
 }
 
 // NewConnector returns a Connector for this machine and user.

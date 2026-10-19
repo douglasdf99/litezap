@@ -65,10 +65,12 @@ func (c *Connector) InstallExtension() (ExtensionResult, error) {
 	}
 	dir := c.CacheDir
 	if dir == "" {
-		if dir, err = os.UserCacheDir(); err != nil {
-			dir = os.TempDir()
+		// Never the shared temp folder: another user could plant the file there first.
+		base, err := os.UserCacheDir()
+		if err != nil {
+			return ExtensionResult{}, fmt.Errorf("pasta de cache do usuário: %w", err)
 		}
-		dir = filepath.Join(dir, "LiteZap")
+		dir = filepath.Join(base, "LiteZap")
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return ExtensionResult{}, err

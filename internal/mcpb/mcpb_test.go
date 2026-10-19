@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -98,7 +99,7 @@ func TestLocate(t *testing.T) {
 	exists := map[string]bool{}
 	l := &Locator{GOOS: "darwin", Getenv: func(k string) string { return env[k] },
 		Home:     func() (string, error) { return home, nil },
-		IsExec:   func(p string) bool { return exists[p] },
+		Usable:   func(p string) bool { return exists[p] },
 		ReadFile: os.ReadFile}
 	if _, err := l.Find(); !errors.Is(err, ErrAppNotFound) {
 		t.Fatalf("nothing installed: %v", err)
@@ -114,9 +115,6 @@ func TestLocate(t *testing.T) {
 	dir, _ := AppDirFor("darwin", l.Getenv, l.Home)
 	moved := filepath.Join(home, "Apps", "LiteZap.app", "Contents", "MacOS", "litezap-app")
 	exists[moved] = true
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	if err := RecordAppExe(dir, moved); err != nil {
 		t.Fatal(err)
 	}
@@ -124,36 +122,166 @@ func TestLocate(t *testing.T) {
 		t.Errorf("recorded: %q", p)
 	}
 
-	// LITEZAP_APP_EXE wins, but only when it exists.
+	// LITEZAP_APP_EXE wins, but only when it exists and names the app executable.
 	env[EnvAppExe] = "/gone/litezap-app"
 	if p, _ := l.Find(); p != moved {
 		t.Errorf("stale env: %q", p)
+	}
+	env[EnvAppExe] = "/bin/sh"
+	exists["/bin/sh"] = true
+	if p, _ := l.Find(); p != moved {
+		t.Errorf("env naming another program: %q", p)
+	}
+	env[EnvAppExe] = "relative/litezap-app"
+	exists["relative/litezap-app"] = true
+	if p, _ := l.Find(); p != moved {
+		t.Errorf("relative env: %q", p)
 	}
 	env[EnvAppExe] = "/opt/lz/litezap-app"
 	exists["/opt/lz/litezap-app"] = true
 	if p, _ := l.Find(); p != "/opt/lz/litezap-app" {
 		t.Errorf("env: %q", p)
 	}
+}
 
-	// Spotlight is the last resort.
-	l2 := &Locator{GOOS: "darwin", Getenv: func(string) string { return "" }, Home: l.Home,
-		IsExec:    func(p string) bool { return p == "/Users/x/Stuff/LiteZap.app/Contents/MacOS/litezap-app" },
-		Spotlight: func() []string { return []string{"/Users/x/Stuff/LiteZap.app"} },
-		ReadFile:  func(string) ([]byte, error) { return nil, os.ErrNotExist }}
-	if p, err := l2.Find(); err != nil || p != "/Users/x/Stuff/LiteZap.app/Contents/MacOS/litezap-app" {
-		t.Errorf("spotlight: %q %v", p, err)
+func TestRecordAppExe(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "LiteZap")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, exe := range []string{"/a/litezap-app", "/b/litezap-app", "/b/litezap-app"} {
+		if err := RecordAppExe(dir, exe); err != nil {
+			t.Fatal(err)
+		}
+		if b, _ := os.ReadFile(filepath.Join(dir, AppExeFile)); string(b) != exe+"\n" {
+			t.Errorf("app-exe = %q, want %q", b, exe)
+		}
+	}
+	if fi, _ := os.Stat(dir); fi.Mode().Perm() != 0o700 {
+		t.Errorf("app dir mode %v, want 0700", fi.Mode().Perm())
+	}
+	if fi, _ := os.Stat(filepath.Join(dir, AppExeFile)); fi.Mode().Perm() != 0o600 {
+		t.Errorf("app-exe mode %v, want 0600", fi.Mode().Perm())
+	}
+	if m, _ := filepath.Glob(filepath.Join(dir, ".*tmp")); len(m) != 0 {
+		t.Errorf("temp files left: %v", m)
+	}
+}
+
+func TestUsable(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "MacOS")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "litezap-app")
+	if err := os.WriteFile(p, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	set := func(path string, mode os.FileMode) {
+		t.Helper()
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !usable("darwin", p) {
+		t.Fatal("0755 file in a 0755 folder refused")
+	}
+	set(p, 0o644)
+	if usable("darwin", p) {
+		t.Error("not executable accepted")
+	}
+	set(p, 0o775)
+	if usable("darwin", p) {
+		t.Error("group-writable file accepted")
+	}
+	set(p, 0o757)
+	if usable("darwin", p) {
+		t.Error("world-writable file accepted")
+	}
+	set(p, 0o755)
+	set(dir, 0o777)
+	if usable("darwin", p) {
+		t.Error("file in a world-writable folder accepted")
+	}
+	set(dir, 0o755)
+	if usable("darwin", dir) || usable("darwin", filepath.Join(dir, "nope")) {
+		t.Error("folder or missing file accepted")
+	}
+}
+
+func TestSpotlight(t *testing.T) {
+	home := "/Users/ana"
+	plist := func(id string) []byte {
+		return []byte("<plist><dict>\n  <key>CFBundleIdentifier</key><string>" + id + "</string>\n</dict></plist>")
+	}
+	files := map[string][]byte{
+		"/Users/ana/Applications/LiteZap.app/Contents/Info.plist": plist(BundleID),
+		"/Applications/Fake.app/Contents/Info.plist":              plist("com.evil.app"),
+		"/Users/ana/Downloads/LiteZap.app/Contents/Info.plist":    plist(BundleID),
+	}
+	// The standard places are missing: only what Spotlight returns can be found.
+	standard := map[string]bool{
+		"/Applications/LiteZap.app/Contents/MacOS/litezap-app":           true,
+		"/Users/ana/Applications/LiteZap.app/Contents/MacOS/litezap-app": true,
+	}
+	l := &Locator{GOOS: "darwin", Getenv: func(string) string { return "" },
+		Home:   func() (string, error) { return home, nil },
+		Usable: func(p string) bool { return !standard[p] && strings.HasSuffix(p, "/Contents/MacOS/litezap-app") },
+		ReadFile: func(p string) ([]byte, error) {
+			if b, ok := files[p]; ok {
+				return b, nil
+			}
+			return nil, os.ErrNotExist
+		}}
+	for _, c := range []struct {
+		hits []string
+		want string
+	}{
+		{[]string{"/Users/ana/Downloads/LiteZap.app"}, ""}, // outside the Applications folders
+		{[]string{"/Applications/Fake.app"}, ""},           // another bundle id
+		{[]string{"/Applications/Missing.app"}, ""},        // no Info.plist
+		{[]string{"/Users/ana/Downloads/LiteZap.app", "/Applications/Fake.app"}, ""},
+	} {
+		l.Spotlight = func() []string { return c.hits }
+		if p, _ := l.Find(); p != c.want {
+			t.Errorf("hits %v: %q, want %q", c.hits, p, c.want)
+		}
+	}
+
+	// A good hit: ~/Applications with the right bundle id.
+	files["/Users/ana/Applications/LiteZap 2.app/Contents/Info.plist"] = plist(BundleID)
+	l.Spotlight = func() []string { return []string{"/Users/ana/Applications/LiteZap 2.app"} }
+	if p, err := l.Find(); err != nil || p != "/Users/ana/Applications/LiteZap 2.app/Contents/MacOS/litezap-app" {
+		t.Errorf("good hit: %q %v", p, err)
 	}
 }
 
 func TestWindowsCandidates(t *testing.T) {
-	env := map[string]string{"LOCALAPPDATA": `C:\Users\ana\AppData\Local`, "APPDATA": `C:\Users\ana\AppData\Roaming`}
+	env := map[string]string{"LOCALAPPDATA": `C:\Users\ana\AppData\Local`, "APPDATA": `C:\Users\ana\AppData\Roaming`,
+		EnvAppExe: `C:\Users\ana\Documents\LiteZap\LiteZap.exe`}
 	l := &Locator{GOOS: "windows", Getenv: func(k string) string { return env[k] },
 		Home:     func() (string, error) { return `C:\Users\ana`, nil },
+		Usable:   func(string) bool { return true },
 		ReadFile: func(string) ([]byte, error) { return nil, os.ErrNotExist }}
 	c := l.Candidates()
-	if !slices.Contains(c, filepath.Join(`C:\Users\ana\AppData\Local`, "Programs", "LiteZap", "LiteZap.exe")) ||
-		!slices.Contains(c, filepath.Join(`C:\Users\ana`, "Documents", "LiteZap", "LiteZap.exe")) {
+	if !slices.Contains(c, filepath.Join(`C:\Users\ana\AppData\Local`, "Programs", "LiteZap", "LiteZap.exe")) {
 		t.Errorf("candidates %v", c)
+	}
+	for _, p := range c[1:] {
+		if strings.Contains(p, "Documents") || strings.Contains(p, "Downloads") || strings.Contains(p, "Desktop") {
+			t.Errorf("user folder among the default candidates: %v", c)
+		}
+	}
+	if p, _ := l.Find(); p != env[EnvAppExe] {
+		t.Errorf("env: %q", p)
+	}
+	env[EnvAppExe] = `C:\Users\ana\Downloads\evil.exe`
+	if p, _ := l.Find(); p == env[EnvAppExe] {
+		t.Error("an exe with another name was accepted")
+	}
+	env[EnvAppExe] = `C:\Users\ana\Documents\LiteZap\litezap.EXE`
+	if p, _ := l.Find(); p != env[EnvAppExe] {
+		t.Errorf("case-insensitive name: %q", p)
 	}
 }
 

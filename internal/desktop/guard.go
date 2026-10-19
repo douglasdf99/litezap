@@ -58,29 +58,40 @@ func (c *Connector) setPending(id string, on bool) {
 // startGuard (re)starts the guard of id; a running one is replaced.
 func (c *Connector) startGuard(id string) {
 	ctx, cancel := context.WithCancel(context.Background())
+	g := &guardHandle{cancel: cancel}
 	c.mu.Lock()
 	if c.guards == nil {
-		c.guards = map[string]context.CancelFunc{}
+		c.guards = map[string]*guardHandle{}
 	}
 	if old := c.guards[id]; old != nil {
-		old()
+		old.cancel()
 	}
-	c.guards[id] = cancel
+	c.guards[id] = g
 	done := make(chan struct{})
 	c.guardDone = done
 	c.mu.Unlock()
 	go func() {
 		defer close(done)
-		defer cancel()
+		defer func() {
+			cancel()
+			c.mu.Lock()
+			if c.guards[id] == g { // not replaced by a newer guard
+				delete(c.guards, id)
+			}
+			c.mu.Unlock()
+		}()
 		c.guard(ctx, id)
 	}()
 }
 
+// guardHandle is one running guard (compared by pointer when it ends).
+type guardHandle struct{ cancel context.CancelFunc }
+
 // stopGuard stops the guard of id (Disconnect).
 func (c *Connector) stopGuard(id string) {
 	c.mu.Lock()
-	if cancel := c.guards[id]; cancel != nil {
-		cancel()
+	if g := c.guards[id]; g != nil {
+		g.cancel()
 		delete(c.guards, id)
 	}
 	c.mu.Unlock()
@@ -125,6 +136,9 @@ func (c *Connector) guard(ctx context.Context, id string) {
 			c.setPending(id, false) // the next start reads the file
 		}
 		if st := c.Status(id); st.Error == "" && !st.Connected && reapplied < attempts {
+			if ctx.Err() != nil {
+				return // Disconnect (or a newer guard) while we were reading the file
+			}
 			reapplied++
 			res, err := c.apply(id)
 			if c.Log != nil {
@@ -132,7 +146,7 @@ func (c *Connector) guard(ctx context.Context, id string) {
 			}
 			if err == nil && res.Changed {
 				if c.Notify != nil {
-					c.Notify("LiteZap", ReappliedMessage)
+					go c.Notify("LiteZap", ReappliedMessage) // a dialog must never hold the guard
 				}
 				if c.OnChange != nil {
 					c.OnChange()
