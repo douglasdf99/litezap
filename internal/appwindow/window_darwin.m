@@ -20,13 +20,15 @@
 @property(strong) NSMutableArray<NSWindow *> *popups;
 @property BOOL hidden;      // start hidden
 @property BOOL pageShown;   // the web view replaced the status view
+@property BOOL failed;      // an error is shown: a late page load must not hide it
 @property BOOL quitPending; // applicationShouldTerminate answered NSTerminateLater
 @property BOOL quitOK;      // Go said the engine stopped: terminate for real
 @end
 
 static LZController *lz;
 
-static NSString *str(const char *s) { return s ? [NSString stringWithUTF8String:s] : @""; }
+// str returns @"" for NULL or invalid UTF-8 (stringWithUTF8String: answers nil then).
+static NSString *str(const char *s) { return (s ? [NSString stringWithUTF8String:s] : nil) ?: @""; }
 
 // originOf is scheme://host:port with the default port spelled out, so
 // http://127.0.0.1:8787 and http://127.0.0.1:8787/app/ compare equal.
@@ -221,6 +223,7 @@ static void addSubmenu(NSMenu *bar, NSMenu *sub) {
 
 - (void)setStatus:(NSString *)text error:(BOOL)isError {
 	self.pageShown = NO;
+	self.failed = isError;
 	self.webView.hidden = YES;
 	self.statusView.hidden = NO;
 	self.statusLabel.stringValue = text;
@@ -235,7 +238,7 @@ static void addSubmenu(NSMenu *bar, NSMenu *sub) {
 }
 
 - (void)showPage {
-	if (self.pageShown) return;
+	if (self.pageShown || self.failed) return;
 	self.pageShown = YES;
 	self.statusView.hidden = YES;
 	[self.spinner stopAnimation:nil];
@@ -264,17 +267,32 @@ static void addSubmenu(NSMenu *bar, NSMenu *sub) {
 	return o && self.origin && [o isEqualToString:self.origin];
 }
 
+// isOurs: a dashboard URL, or a blob: URL created by the dashboard (blob:http://127.0.0.1:8787/<uuid>).
+- (BOOL)isOurs:(NSURL *)u {
+	if ([u.scheme.lowercaseString isEqualToString:@"blob"]) {
+		NSString *inner = [u.absoluteString substringFromIndex:5];
+		return [self isDashboard:[NSURL URLWithString:inner]];
+	}
+	return [self isDashboard:u];
+}
+
 - (void)webView:(WKWebView *)webView
 	decidePolicyForNavigationAction:(WKNavigationAction *)action
 	                decisionHandler:(void (^)(WKNavigationActionPolicy))decide {
 	NSURL *u = action.request.URL;
 	NSString *scheme = u.scheme.lowercaseString;
+	BOOL ours = [self isOurs:u];
 	if (action.shouldPerformDownload) {
-		decide(WKNavigationActionPolicyDownload);
+		// Downloads only from the dashboard (and its blob: URLs); anything else is the browser's.
+		if (ours) {
+			decide(WKNavigationActionPolicyDownload);
+		} else {
+			openExternally(u);
+			decide(WKNavigationActionPolicyCancel);
+		}
 		return;
 	}
-	if ([self isDashboard:u] || [scheme isEqualToString:@"about"] || [scheme isEqualToString:@"blob"] ||
-	    [scheme isEqualToString:@"data"]) {
+	if (ours || [scheme isEqualToString:@"about"]) {
 		decide(WKNavigationActionPolicyAllow);
 		return;
 	}
@@ -287,7 +305,13 @@ static void addSubmenu(NSMenu *bar, NSMenu *sub) {
 - (void)webView:(WKWebView *)webView
 	decidePolicyForNavigationResponse:(WKNavigationResponse *)response
 	                  decisionHandler:(void (^)(WKNavigationResponsePolicy))decide {
-	decide(response.canShowMIMEType ? WKNavigationResponsePolicyAllow : WKNavigationResponsePolicyDownload);
+	if (response.canShowMIMEType) {
+		decide(WKNavigationResponsePolicyAllow);
+		return;
+	}
+	NSURL *u = response.response.URL;
+	BOOL ours = [self isOurs:u];
+	decide(ours ? WKNavigationResponsePolicyDownload : WKNavigationResponsePolicyCancel);
 }
 
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
@@ -314,7 +338,7 @@ static void addSubmenu(NSMenu *bar, NSMenu *sub) {
 	                windowFeatures:(WKWindowFeatures *)features {
 	NSURL *u = action.request.URL;
 	NSString *scheme = u.scheme.lowercaseString;
-	if (!([self isDashboard:u] || [scheme isEqualToString:@"blob"] || [scheme isEqualToString:@"about"])) {
+	if (!([self isOurs:u] || [scheme isEqualToString:@"about"])) {
 		openExternally(u);
 		return nil;
 	}
@@ -390,10 +414,14 @@ static void addSubmenu(NSMenu *bar, NSMenu *sub) {
 	p.canChooseFiles = YES;
 	p.canChooseDirectories = params.allowsDirectories;
 	p.allowsMultipleSelection = params.allowsMultipleSelection;
-	[p beginSheetModalForWindow:webView.window
-	          completionHandler:^(NSModalResponse r) {
-		    done(r == NSModalResponseOK ? p.URLs : nil);
-	          }];
+	void (^finish)(NSModalResponse) = ^(NSModalResponse r) {
+		done(r == NSModalResponseOK ? p.URLs : nil);
+	};
+	if (webView.window.isVisible) {
+		[p beginSheetModalForWindow:webView.window completionHandler:finish];
+	} else {
+		finish([p runModal]);
+	}
 }
 
 // ---------- downloads ("Baixar" in the dashboard) ----------
@@ -441,9 +469,11 @@ static void addSubmenu(NSMenu *bar, NSMenu *sub) {
 // ---------- messages from the dashboard ----------
 
 - (void)userContentController:(WKUserContentController *)ucc didReceiveScriptMessage:(WKScriptMessage *)msg {
-	if (msg.webView != self.webView || ![msg.body isKindOfClass:[NSString class]]) return;
+	// Only the main dashboard page, and only the one message the app knows.
+	if (msg.webView != self.webView || !msg.frameInfo.isMainFrame) return;
+	if (![msg.body isKindOfClass:[NSString class]] || ![(NSString *)msg.body isEqualToString:@"relogin"]) return;
 	if (![self isDashboard:msg.frameInfo.request.URL]) return;
-	lzwMessage((char *)[(NSString *)msg.body UTF8String]);
+	lzwMessage("relogin");
 }
 
 @end
@@ -489,7 +519,7 @@ void lzw_load(const char *url, const char *origin) {
 		lz.origin = originOf([NSURL URLWithString:o]);
 		if (!nu || !lz.origin) return;
 		// Keep the status view (spinner) until the page finishes loading.
-		if (!lz.pageShown) [lz setStatus:@"Abrindo o painel…" error:NO];
+		if (!lz.pageShown) [lz setStatus:@"Abrindo o painel…" error:NO]; // also clears an error
 		[lz.webView loadRequest:[NSURLRequest requestWithURL:nu]];
 	});
 }

@@ -12,6 +12,7 @@ import "C"
 
 import (
 	"runtime"
+	"strings"
 	"unsafe"
 )
 
@@ -25,12 +26,16 @@ func init() {
 
 var opts Options
 
+// cstr converts s for the Objective-C side: invalid UTF-8 would make NSString return
+// nil, so it is replaced first (C.free the result).
+func cstr(s string) *C.char { return C.CString(strings.ToValidUTF8(s, "�")) }
+
 // Run starts the Cocoa application and blocks until it terminates (the process exits
 // from inside AppKit; Run never returns normally). Call it from the main goroutine.
 func Run(o Options) {
 	opts = o
-	title := C.CString(o.Title)
-	loading := C.CString(o.Loading)
+	title := cstr(o.Title)
+	loading := cstr(o.Loading)
 	defer C.free(unsafe.Pointer(title))
 	defer C.free(unsafe.Pointer(loading))
 	var icon unsafe.Pointer
@@ -48,7 +53,7 @@ func Run(o Options) {
 // Load shows url in the window; links outside origin (scheme://host:port) open in the
 // default browser.
 func Load(url, origin string) {
-	u, o := C.CString(url), C.CString(origin)
+	u, o := cstr(url), cstr(origin)
 	defer C.free(unsafe.Pointer(u))
 	defer C.free(unsafe.Pointer(o))
 	C.lzw_load(u, o)
@@ -59,7 +64,7 @@ func Show() { C.lzw_show() }
 
 // Eval runs JavaScript in the dashboard page.
 func Eval(js string) {
-	s := C.CString(js)
+	s := cstr(js)
 	defer C.free(unsafe.Pointer(s))
 	C.lzw_eval(s)
 }
@@ -67,7 +72,7 @@ func Eval(js string) {
 // SetStatus replaces the page with a message (isError adds a "Ver log" button), e.g.
 // while the engine starts or when it could not.
 func SetStatus(text string, isError bool) {
-	s := C.CString(text)
+	s := cstr(text)
 	defer C.free(unsafe.Pointer(s))
 	e := C.int(0)
 	if isError {

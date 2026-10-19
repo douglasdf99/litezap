@@ -321,7 +321,6 @@ func (a *app) onReady() {
 			checking = true
 			go func() { titles <- a.statusTitle() }()
 		}
-		var forceQuit <-chan time.Time
 		exit := func() {
 			if a.window {
 				// AppKit exits the process: deferred calls in main never run.
@@ -342,16 +341,24 @@ func (a *app) onReady() {
 				return
 			}
 			quitting = true
+			a.log.Info("quit requested")
+			// Stop the engine and arm the safety net before touching the tray: its setters
+			// wait for the main thread, which is busy in AppKit's quit loop.
+			cancel()
+			if a.window {
+				// AppKit waits for Finish: never hang there if the engine (or this loop) does.
+				time.AfterFunc(40*time.Second, func() {
+					a.log.Warn("engine did not stop in time")
+					if a.release != nil {
+						a.release()
+					}
+					appwindow.Finish()
+				})
+			}
 			status.SetTitle("LiteZap: encerrando…")
 			open.Disable()
 			setBrowser(false)
 			quit.Disable()
-			a.log.Info("quit requested")
-			cancel()
-			if a.window {
-				// The window waits for Finish: do not hang there if the engine does.
-				forceQuit = time.After(40 * time.Second)
-			}
 		}
 		// requestQuit: with a window, quitting goes through AppKit (applicationShouldTerminate
 		// -> quitc) so that Cmd+Q, the Dock, logout and the tray all end the same way.
@@ -426,10 +433,6 @@ func (a *app) onReady() {
 				requestQuit()
 			case <-a.quitc:
 				beginQuit()
-			case <-forceQuit:
-				a.log.Warn("engine did not stop in time")
-				exit()
-				return
 			case <-tick.C:
 				if running && !quitting {
 					checkStatus()
