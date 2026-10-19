@@ -9,7 +9,7 @@ gerenciada; a API, os eventos e as garantias são os mesmos. A escolha é sobre 
 
 | | No seu PC | No seu servidor | Nuvem LiteZap |
 |---|---|---|---|
-| Disponível | <span class="lz-badge lz-badge--ok">Hoje</span> (app de bandeja e painel, [download](/docs/baixar/)) · assinatura de código <span class="lz-badge lz-badge--soon">Em breve</span> | <span class="lz-badge lz-badge--ok">Hoje</span> | <span class="lz-badge lz-badge--soon">Em breve</span> |
+| Disponível | <span class="lz-badge lz-badge--ok">Hoje</span> (app de bandeja e painel, [download](/docs/baixar/)) · assinatura de código <span class="lz-badge lz-badge--soon">Em breve</span> | <span class="lz-badge lz-badge--ok">Hoje</span> | <span class="lz-badge lz-badge--soon">Em construção</span> |
 | Quem opera | Você, na sua máquina | Você, no seu VPS | O LiteZap |
 | IP de saída | O da sua internet (residencial) | O do servidor, ou um proxy por número | Isolado por cliente, gerenciado |
 | Acesso à API | Só `localhost` | Pela internet, com TLS | Pela internet, com TLS |
@@ -28,7 +28,8 @@ nuvem. Docker ou systemd, atrás de um proxy reverso com TLS. Para vários núme
 [proxy por instância](/docs/conceitos/proxy/) para não concentrar todos no mesmo IP de datacenter. Veja
 [Self-hosted](/docs/self-hosted/).
 
-**Na nuvem LiteZap** (em breve) se você não quer cuidar de servidor, backup, upgrades e IPs. Cada cliente recebe
+**Na nuvem LiteZap** (em construção: o modo nuvem do motor está pronto; cadastro, provisionamento e cobrança ainda
+não) se você não quer cuidar de servidor, backup, upgrades e IPs. Cada cliente recebe
 um projeto pré-instalado e isolado, rodando o mesmo binário open source: dá para começar na nuvem e migrar para o
 seu servidor (ou o contrário) copiando a pasta de dados.
 

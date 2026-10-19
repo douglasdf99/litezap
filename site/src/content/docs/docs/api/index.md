@@ -108,8 +108,11 @@ A fila de envio nunca responde `429`: ela segura as mensagens e envia no ritmo c
 
 ## Recursos
 
-- [Instâncias](/docs/api/instancias/) · [Pareamento](/docs/api/pareamento/) · [Configurações](/docs/api/configuracoes/)
-- [Mensagens](/docs/api/mensagens/) · [Chats](/docs/api/chats/) · [Contatos](/docs/api/contatos/)
-- [Números](/docs/api/numeros/) · [Mídia](/docs/api/midia/) · [Webhooks](/docs/api/webhooks/) · [Eventos em tempo real](/docs/api/sse/) · [Operação](/docs/api/operacao/)
+- [Instâncias](/docs/api/instancias/) · [Pareamento](/docs/api/pareamento/) · [Configurações](/docs/api/configuracoes/) · [Plataforma](/docs/api/plataforma/)
+- [Mensagens](/docs/api/mensagens/) · [Chats](/docs/api/chats/) · [Contatos](/docs/api/contatos/) · [Números](/docs/api/numeros/) · [Mídia](/docs/api/midia/)
+- [Grupos](/docs/api/grupos/) · [Comunidades](/docs/api/comunidades/) · [Perfil e privacidade](/docs/api/perfil-e-privacidade/)
+- [Status](/docs/api/status/) · [Canais](/docs/api/canais/) · [Etiquetas e Business](/docs/api/business/)
+- [Atendente IA](/docs/api/atendente-ia/) · [MCP](/docs/api/mcp/)
+- [Webhooks](/docs/api/webhooks/) · [Eventos em tempo real](/docs/api/sse/) · [Operação](/docs/api/operacao/)
 
-Cada operação tem a própria página, com parâmetros, exemplos em cURL, Node.js, Python, Go e PHP, resposta, erros, eventos gerados e o equivalente na Z-API. Os payloads dos eventos estão no [catálogo de eventos](/docs/eventos/). Recursos planejados (grupos, perfil, status, canais...) estão em **Em breve** no menu, sem endpoints até existirem.
+Cada operação tem a própria página, com parâmetros, exemplos em cURL, Node.js, Python, Go e PHP, resposta, erros, eventos gerados e o equivalente na Z-API. Os payloads dos eventos estão no [catálogo de eventos](/docs/eventos/). O que ainda não existe está no [roadmap](/docs/roadmap/).

@@ -117,7 +117,7 @@ export default defineConfig({
 						'docs/guias/crm',
 						'docs/guias/automacao',
 						'docs/guias/solucao-de-problemas',
-						{ slug: 'docs/guias/multi-instancia', badge: { text: 'Parcial', variant: 'tip' } },
+						'docs/guias/multi-instancia',
 						{ slug: 'docs/guias/atendimento-ia', badge: { text: 'Novo', variant: 'success' } },
 						'docs/guias/grupos',
 						{ slug: 'docs/guias/mensagens-interativas', badge: exp },
@@ -144,16 +144,6 @@ export default defineConfig({
 						{ label: 'Visão geral', link: '/docs/api/' },
 						{ label: 'Erros', link: '/docs/api/erros/' },
 						...apiGroups,
-						{
-							label: 'Em breve',
-							collapsed: true,
-							items: [
-								soonPage('docs/api/em-breve/fila', 'M6'),
-								soonPage('docs/api/em-breve/chamadas', 'M7'),
-								soonPage('docs/api/em-breve/chats-e-contatos', 'M9'),
-								soonPage('docs/api/em-breve/perfil-e-privacidade', 'M9'),
-							],
-						},
 						{ label: 'openapi.yaml', link: '/openapi.yaml', attrs: { target: '_blank' } },
 					],
 				},
@@ -165,7 +155,6 @@ export default defineConfig({
 						'docs/eventos/assinatura',
 						'docs/eventos/entrega',
 						...nav.events.map((e) => ({ label: e.type, link: `/docs/eventos/${e.slug}/` })),
-						soonPage('docs/eventos/em-breve'),
 					],
 				},
 				{

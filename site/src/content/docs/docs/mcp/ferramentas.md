@@ -1,9 +1,12 @@
 ---
 title: Ferramentas MCP
-description: Referência das 13 ferramentas do servidor MCP do LiteZap, com parâmetros e retornos.
+description: Referência das 40 ferramentas do servidor MCP do LiteZap, com parâmetros e retornos.
 ---
 
 <span class="lz-badge lz-badge--ok">Disponível · M4</span>
+
+O M4 trouxe as 13 ferramentas detalhadas abaixo; os marcos 6 a 10 e o atendente IA somaram outras 27, resumidas em
+[Mais ferramentas](#mais-ferramentas).
 
 As ferramentas são as mesmas no HTTP (`/mcp`) e no stdio (`litezap mcp`). Todas aceitam `instance_id`, opcional
 com token de instância (é sempre a dela) e com token admin quando só existe uma instância. Cada ferramenta usa o
@@ -44,6 +47,8 @@ Envia texto. Espera o resultado por padrão.
 | `client_message_id` | string | Chave de idempotência (até 128). Repetir com a mesma chave e conteúdo devolve a mesma mensagem. |
 | `wait` | boolean | Esperar o resultado (padrão `true`). A mensagem entra na fila de qualquer jeito. |
 | `timeout_seconds` | integer | Quanto esperar (padrão 30, máx. 55: muitos clientes MCP desistem de uma chamada em 60s). |
+| `reply_to` | string | Responde citando uma mensagem do chat (id `msg_…` ou `wa_message_id`). |
+| `mentions` | array | Números a mencionar (escreva `@<número>` no texto); em grupos, `["all"]` menciona todos. |
 
 Retorna `{message, sent, note}`. Com `sent: false`, a mensagem continua na fila e sai sozinha: não reenvie.
 API: [Enviar mensagem](/docs/api/mensagens/enviar-mensagem/).
@@ -55,7 +60,7 @@ Envia imagem, vídeo, áudio (ou mensagem de voz) ou documento a partir de uma U
 | Parâmetro | Tipo | Descrição |
 |---|---|---|
 | `to` | string, obrigatório | Destino, como em `send_message`. |
-| `type` | string, obrigatório | `image`, `video`, `audio` ou `document`. |
+| `type` | string, obrigatório | `image`, `video`, `audio`, `document`, `sticker`, `gif` ou `ptv`. |
 | `url` | string, obrigatório | URL pública http(s); endereços privados e locais são recusados. |
 | `caption` | string | Legenda (imagem, vídeo, documento). |
 | `file_name` | string | Nome do documento (padrão: último trecho da URL). |
@@ -133,6 +138,29 @@ Espera por eventos novos da instância, sem replay.
 
 Retorna `{events, timed_out, note}`. Os eventos têm o mesmo [envelope](/docs/eventos/) dos webhooks. Só vê eventos
 publicados durante a espera; para o que chegou antes, use `get_messages`.
+
+## Mais ferramentas
+
+Os parâmetros de cada uma aparecem no próprio cliente MCP (o servidor publica o esquema). As que mudam algo no
+WhatsApp vêm marcadas como destrutivas ou com aviso de risco, para o cliente pedir confirmação.
+
+| Ferramenta | O que faz | REST equivalente |
+|---|---|---|
+| `send_reaction` | Reage com um emoji a uma mensagem (vazio remove) | `type: reaction` |
+| `send_location` · `send_contact` | Localização; 1 a 10 cartões de contato | `type: location` / `contact` |
+| `edit_message` · `delete_message` | Edita um texto enviado (até 15 min) · apaga para todos (até 48h) | `type: edit` / `revoke` |
+| `list_groups` · `get_group` | Grupos (ou comunidades) do número; metadados com participantes e admins | [Grupos](/docs/api/grupos/) |
+| `create_group` · `update_group` | Cria um grupo (até 10 participantes) · muda nome, descrição e configurações | [Grupos](/docs/api/grupos/) |
+| `manage_group_participants` | Adiciona, remove, promove ou rebaixa (só contatos conhecidos, com cotas e ritmo) | [Gerenciar participantes](/docs/api/grupos/gerenciar-participantes/) |
+| `get_group_invite_link` | Link de convite (nunca redefine) | [Link de convite](/docs/api/grupos/link-de-convite/) |
+| `get_profile_picture` · `get_contact_about` | Foto e recado/empresa de um contato (gastam a cota de consultas) | [Contatos](/docs/api/contatos/) |
+| `list_blocked` · `block_contact` · `unblock_contact` | Bloqueados; bloquear e desbloquear | [Contatos](/docs/api/contatos/) |
+| `update_chat` | Arquivar, fixar ou silenciar um chat | [Chats](/docs/api/chats/) |
+| `list_status_updates` | Status recebidos dos contatos e os nossos (publicar não é ferramenta) | [Status](/docs/api/status/) |
+| `list_channels` · `get_channel` · `get_channel_messages` | Canais seguidos, um canal, publicações recentes | [Canais](/docs/api/canais/) |
+| `follow_channel` | Segue ou deixa de seguir um canal | [Canais](/docs/api/canais/) |
+| `list_labels` · `label_chat` · `get_business_profile` | Etiquetas e suas conversas; etiquetar um chat; perfil comercial | [Etiquetas e Business](/docs/api/business/) |
+| `get_attendant` · `get_attendant_agent` | Leitura do atendente IA embutido (provedor e modelo, sem chaves) e de um agente | [Atendente IA](/docs/api/atendente-ia/) |
 
 ## O que não existe por MCP (de propósito)
 

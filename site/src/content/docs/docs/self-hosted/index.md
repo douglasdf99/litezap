@@ -75,7 +75,7 @@ data/
 Os workers conversam com o supervisor por sockets Unix em `$TMPDIR/lz-<hash>/`. Não rode duas cópias do LiteZap
 sobre a mesma pasta de dados, nem a mesma sessão em duas máquinas ao mesmo tempo.
 
-:::caution[Mídia sem limpeza automática]
-Mídia recebida baixada fica em `data/media/` sem limpeza automática por enquanto (a limpeza chega no marco 2b).
-Acompanhe o uso de disco.
+:::caution[Limpeza de mídia desligada por padrão]
+Mídia recebida baixada fica em `data/media/` para sempre, a menos que `media_retention_days` esteja definido (e
+`message_retention_days` para o log). Veja [Configuração](/docs/self-hosted/configuracao/) e acompanhe o uso de disco.
 :::

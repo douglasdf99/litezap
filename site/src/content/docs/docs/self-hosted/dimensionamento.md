@@ -34,7 +34,8 @@ Comece com poucas instâncias, observe uma semana com o seu volume real e extrap
 - Reserve memória para o pior caso: `instâncias × worker_memory_max_mb` não deve passar muito da RAM da máquina. Se
   passar, reduza o limite ou divida em mais máquinas.
 - Use SSD: SQLite em WAL faz muitas escritas pequenas.
-- Monitore o disco de `data/media/` até a limpeza automática chegar (M2b).
+- Monitore o disco de `data/media/`, ou ligue a limpeza automática com `media_retention_days` (e
+  `message_retention_days` para o log).
 - Vários números numa máquina: use um [proxy por instância](/docs/conceitos/proxy/) para não concentrar todos no
   mesmo IP.
-- Uma máquina por cliente (ou um projeto da nuvem LiteZap, em breve) isola falhas e reputação de IP.
+- Uma máquina por cliente (ou um projeto da nuvem LiteZap, quando estiver disponível) isola falhas e reputação de IP.

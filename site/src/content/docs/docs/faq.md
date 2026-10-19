@@ -22,7 +22,7 @@ celular principal ficar muito tempo sem conexão, então mantenha-o ligado e con
 ## Quanto custa?
 
 O motor é grátis e open source (Apache-2.0), para rodar no seu PC ou servidor. A nuvem LiteZap (gerenciada) terá
-cobrança mensal por instância e ainda não está disponível.
+cobrança mensal por instância; o modo nuvem do motor já existe, mas o cadastro e a cobrança ainda estão em construção.
 
 ## Posso usar vários números?
 
@@ -30,8 +30,8 @@ Sim. Cada número é uma instância com token e processo próprios. Para muitos 
 
 ## Funciona com grupos?
 
-Recebe mensagens de grupos e envia para grupos de que o número participa. A gestão de grupos (criar, participantes,
-admins) chega no [M8](/docs/guias/grupos/).
+Sim. Envia e recebe em grupos, e desde o M8 cria e administra grupos e comunidades (participantes, admins, pedidos
+de entrada, convites, configurações), com cotas anti-ban. Veja o [guia de grupos](/docs/guias/grupos/).
 
 ## Tem botões e listas?
 
@@ -39,7 +39,9 @@ Não, e se vierem será como recurso experimental. Veja [mensagens interativas](
 
 ## Faz chamadas de voz?
 
-Não. A biblioteca de protocolo não suporta mídia de chamada. A rejeição automática de chamadas chega no M7.
+Não. A biblioteca de protocolo não suporta mídia de chamada. O LiteZap avisa quando alguém liga
+([`call.received`](/docs/eventos/call-received/)) e pode rejeitar sozinho, com uma mensagem de resposta (setting
+`calls` em [Alterar configurações](/docs/api/configuracoes/alterar-configuracoes/)).
 
 ## Posso mandar mensagens em massa?
 

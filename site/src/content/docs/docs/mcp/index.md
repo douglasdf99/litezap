@@ -7,7 +7,7 @@ description: Use o WhatsApp a partir do Claude, ChatGPT, Cursor e outros cliente
 
 O [Model Context Protocol](https://modelcontextprotocol.io) (MCP) permite que assistentes de IA usem ferramentas
 externas. Com o MCP do LiteZap, um assistente lê suas conversas e envia mensagens pelo seu número, com as mesmas
-regras de ritmo, rampa e janela da API. São [13 ferramentas](/docs/mcp/ferramentas/).
+regras de ritmo, rampa e janela da API. São [40 ferramentas](/docs/mcp/ferramentas/).
 
 ## Pelo app, em um clique
 
@@ -128,5 +128,6 @@ exceção, para o proxy na mesma máquina.
 ## Limites
 
 - `wait_for_events` só vê eventos publicados enquanto espera; para o que chegou antes, use `get_messages`.
-- Busca de mensagens (`search_messages`) depende da busca full-text do M2b.
-- Respostas automáticas sem um assistente no meio ficam com o [hook de agente](/docs/mcp/hook-de-agente/) (M5).
+- Não há busca de mensagens (`search_messages`): a busca full-text ainda não existe no motor.
+- Respostas automáticas sem um assistente no meio ficam com o [atendente IA](/docs/guias/atendimento-ia/) ou o
+  [hook de agente](/docs/mcp/hook-de-agente/).

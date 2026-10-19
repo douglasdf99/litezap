@@ -49,5 +49,3 @@ com o mesmo envelope. Eventos chegam por dois canais:
 - Antes de chegar ao outbox, o evento passa por um buffer em memória (até 10.000). Um crash do supervisor exatamente
   entre gravar a mensagem no log e gravar a entrega, ou um buffer cheio (registrado no log), perde aquele evento para
   os webhooks. Um shutdown normal grava o buffer antes de sair. A mensagem continua no log e em `GET /chats`.
-- Ainda não emitidos: `message.revoked`, `message.edited`, `chat.presence`, `group.updated`. Veja
-  [eventos em breve](/docs/eventos/em-breve/).

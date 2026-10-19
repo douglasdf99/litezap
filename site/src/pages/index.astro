@@ -21,13 +21,13 @@ const features = [
 	{ icon: 'shield', title: 'Anti-ban por padrão', text: 'Ritmo com variação aleatória, rampa para números novos, janela de envio para contatos frios e verificação do número antes do primeiro envio.' },
 	{ icon: 'globe', title: 'Proxy por instância', text: 'HTTP, HTTPS ou SOCKS5 por número, fixo durante a sessão. Se o proxy cai, a instância espera: nunca vaza pela conexão direta.' },
 	{ icon: 'webhook', title: 'Webhooks e SSE', text: 'Eventos com envelope único, assinados com HMAC, retry por 24h e dead-letter, além de streams SSE ao vivo.' },
-	{ icon: 'sparkles', title: 'MCP para IA', text: 'Claude, ChatGPT e outros clientes leem conversas e enviam mensagens pelo servidor MCP, sempre pela mesma fila anti-ban. Atendente automático (hook de agente) em breve.' },
+	{ icon: 'sparkles', title: 'MCP para IA', text: 'Claude, ChatGPT e outros clientes leem conversas e enviam mensagens por 40 ferramentas MCP, sempre pela mesma fila anti-ban. Atendente IA embutido ou hook para o seu agente.' },
 ] as const;
 
 const modes = [
-	{ icon: 'laptop', title: 'No seu PC', text: 'App de bandeja com painel web: pareie, converse e configure sem terminal. Seu IP residencial, API só em localhost.', tag: 'Disponível', note: 'instaladores em breve', href: '/docs/app-local/' },
+	{ icon: 'laptop', title: 'No seu PC', text: 'App de bandeja com painel web: pareie, converse e configure sem terminal. Seu IP residencial, API só em localhost.', tag: 'Disponível', note: 'assinatura de código em breve', href: '/docs/app-local/' },
 	{ icon: 'server', title: 'No seu servidor', text: 'VPS ou servidor próprio com Docker ou systemd, atrás de um proxy reverso com TLS.', tag: 'Disponível', href: '/docs/self-hosted/' },
-	{ icon: 'cloud', title: 'Na nuvem LiteZap', text: 'Um projeto pré-instalado só seu, com upgrades, backups, monitoramento e IPs gerenciados.', tag: 'Em breve', soon: true, href: '#precos' },
+	{ icon: 'cloud', title: 'Na nuvem LiteZap', text: 'Um projeto pré-instalado só seu, com upgrades, backups, monitoramento e IPs gerenciados.', tag: 'Em construção', soon: true, href: '#precos' },
 ] as const;
 
 // Amplitude de recursos, agrupada como a matriz de paridade. true = disponível; string = marco.
@@ -40,10 +40,10 @@ const breadth: { group: string; href: string; items: [string, true | string][] }
 			['Áudio e mensagem de voz', true],
 			['Reações', true],
 			['Fila, ritmo e idempotência', true],
-			['Figurinha, GIF, localização, contato', 'M6'],
-			['Responder citando e menções', 'M6'],
-			['Editar, apagar, fixar, encaminhar', 'M6'],
-			['Enquetes com votos', 'M6'],
+			['Figurinha, GIF, localização, contato', true],
+			['Responder citando e menções', true],
+			['Editar, apagar, fixar, encaminhar', true],
+			['Enquetes com votos', true],
 			['Botões e listas', 'Exp'],
 		],
 	},
@@ -55,8 +55,8 @@ const breadth: { group: string; href: string; items: [string, true | string][] }
 			['Streams SSE', true],
 			['Status de entrega e leitura', true],
 			['Retry de 24h e dead-letter', true],
-			['Presença, apagadas e editadas', 'M7'],
-			['Chamadas e rejeição automática', 'M7'],
+			['Presença, apagadas e editadas', true],
+			['Chamadas e rejeição automática', true],
 		],
 	},
 	{
@@ -64,9 +64,9 @@ const breadth: { group: string; href: string; items: [string, true | string][] }
 		href: '/docs/guias/grupos/',
 		items: [
 			['Enviar e receber em grupos', true],
-			['Criar e administrar grupos', 'M8'],
-			['Participantes, admins e convites', 'M8'],
-			['Comunidades', 'M8'],
+			['Criar e administrar grupos', true],
+			['Participantes, admins e convites', true],
+			['Comunidades', true],
 		],
 	},
 	{
@@ -76,16 +76,16 @@ const breadth: { group: string; href: string; items: [string, true | string][] }
 			['Chats e histórico com cursor', true],
 			['Marcar como lido', true],
 			['Contatos e verificação de números', true],
-			['Arquivar, fixar, silenciar', 'M9'],
-			['Foto de perfil e bloqueio', 'M9'],
+			['Arquivar, fixar, silenciar', true],
+			['Foto de perfil e bloqueio', true],
 		],
 	},
 	{
 		group: 'Perfil',
-		href: '/docs/api/em-breve/perfil-e-privacidade/',
+		href: '/docs/api/perfil-e-privacidade/',
 		items: [
-			['Nome, recado e foto', 'M9'],
-			['Privacidade', 'M9'],
+			['Nome, recado e foto', true],
+			['Privacidade', true],
 		],
 	},
 	{
@@ -105,7 +105,7 @@ const breadth: { group: string; href: string; items: [string, true | string][] }
 			['Proxy por instância', true],
 			['Docker, systemd, app local', true],
 			['MCP para Claude e outros', true],
-			['Atendente IA (hook de agente)', 'M5'],
+			['Atendente IA embutido e hook de agente', true],
 			['Pareamento hospedado para parceiros', true],
 		],
 	},
@@ -255,7 +255,7 @@ print(r.json()["status"])  # "sent"`,
 				<div class="hero-bg" aria-hidden="true"></div>
 				<div class="wrap hero-inner">
 					<a class="pill" href="/docs/roadmap/">
-						<span class="pill-dot"></span> Open source · Apache-2.0 · Webhooks e SSE disponíveis
+						<span class="pill-dot"></span> Apache-2.0 · Atendente IA, grupos e MCP disponíveis
 						<Icon name="arrow" size={14} />
 					</a>
 					<h1>
@@ -332,10 +332,10 @@ print(r.json()["status"])  # "sent"`,
 
 			<section class="wrap section" id="amplitude">
 				<p class="eyebrow">Amplitude</p>
-				<h2>O que já existe e o que vem a seguir</h2>
+				<h2>O que já existe</h2>
 				<p class="section-lead">
-					Cada recurso planejado tem marco definido e página na documentação. Nada é anunciado como disponível antes de
-					existir.
+					Tudo o que está marcado como disponível já está no motor, com página na documentação. O que ainda está em construção
+					está no roadmap.
 				</p>
 				<div class="breadth">
 					{
@@ -427,7 +427,7 @@ print(r.json()["status"])  # "sent"`,
 						<a class="btn btn-ghost" href="/docs/self-hosted/">Instalar</a>
 					</div>
 					<div class="plan plan-featured">
-						<span class="tag soon plan-tag">Em breve</span>
+						<span class="tag soon plan-tag">Em construção</span>
 						<h3>Nuvem LiteZap</h3>
 						<p class="price">Em breve</p>
 						<p class="muted">Projeto pré-instalado por cliente, com cobrança mensal por instância.</p>

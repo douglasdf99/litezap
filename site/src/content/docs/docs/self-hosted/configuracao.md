@@ -5,6 +5,7 @@ description: Arquivo litezap.yaml, variáveis de ambiente e padrões de envio po
 
 A configuração vem de um arquivo YAML (padrão `litezap.yaml` no diretório atual, ou `--config <caminho>`) e de
 variáveis `LITEZAP_*`, que **têm precedência** sobre o arquivo. Arquivo ausente significa só padrões + variáveis.
+`LITEZAP_CONFIG_JSON` aceita o documento inteiro em JSON (as mesmas chaves do YAML), aplicado depois do arquivo.
 
 ## Chaves
 
@@ -18,10 +19,15 @@ variáveis `LITEZAP_*`, que **têm precedência** sobre o arquivo. Arquivo ausen
 | `default_proxy_url` | `LITEZAP_DEFAULT_PROXY_URL` | vazio | Proxy padrão para instâncias sem `proxy_url` (http, https ou socks5). Vazio: conexão direta. |
 | `media_allow_private_urls` | `LITEZAP_MEDIA_ALLOW_PRIVATE_URLS` | `false` | Libera `media.url` para IPs privados e loopback. Só para uso local. |
 | `webhook_allow_private_urls` | `LITEZAP_WEBHOOK_ALLOW_PRIVATE_URLS` | `false` | Libera webhooks para `127.0.0.1`, rede local etc. Só para uso local. |
-| `webhook_retention_days` | só no arquivo | `7` | Dias que entregas de webhook concluídas ficam guardadas. |
-| `webhook_failed_retention_days` | só no arquivo | `30` | Dias que a dead-letter fica guardada. |
+| `webhook_retention_days` | `LITEZAP_WEBHOOK_RETENTION_DAYS` | `7` | Dias que entregas de webhook concluídas ficam guardadas. |
+| `webhook_failed_retention_days` | `LITEZAP_WEBHOOK_FAILED_RETENTION_DAYS` | `30` | Dias que a dead-letter fica guardada. |
 | `disable_dashboard` | `LITEZAP_DISABLE_DASHBOARD` | `false` | `true` desliga o painel web em `/app/`; a API continua igual. |
-| `instance_defaults` | só no arquivo | veja abaixo | Padrões de envio de toda instância. |
+| `instance_defaults` | `LITEZAP_INSTANCE_DEFAULTS_JSON` | veja abaixo | Padrões de envio de toda instância. |
+| `message_retention_days` | `LITEZAP_MESSAGE_RETENTION_DAYS` | `0` | Apaga de hora em hora mensagens mais velhas que N dias, a mídia delas e os envios concluídos. `0`: guarda para sempre. |
+| `media_retention_days` | `LITEZAP_MEDIA_RETENTION_DAYS` | `0` | Apaga a cópia local de um anexo N dias depois de baixada. `0`: nunca. |
+| `zombie_timeout` | `LITEZAP_ZOMBIE_TIMEOUT` | `0` | Watchdog de conexão (ex.: `5m`, mínimo `30s`). Veja [Observabilidade](/docs/self-hosted/observabilidade/#watchdog-de-conexão). `0`: desligado. |
+| `shutdown_timeout` | `LITEZAP_SHUTDOWN_TIMEOUT` | `0` | Prazo total do desligamento gracioso (ex.: `25s` para caber num `docker stop -t 30`). `0`: fases padrão, até ~40s. |
+| `ops_listen_addr` | `LITEZAP_OPS_LISTEN_ADDR` | vazio | Endereço privado com `/healthz`, `/readyz` e `/metrics` sem token. Nunca exponha à internet. |
 | `trusted_proxies` | `LITEZAP_TRUSTED_PROXIES` | vazio | IPs/CIDRs dos proxies reversos cujo `X-Forwarded-For` vale para as allowlists de IP (lista separada por vírgula na variável). Vazio: o cabeçalho é ignorado. |
 | `admin_allowed_ips` | `LITEZAP_ADMIN_ALLOWED_IPS` | vazio | IPs/CIDRs de onde o token admin é aceito. Vazio: qualquer. |
 | `operator_allowed_ips` | `LITEZAP_OPERATOR_ALLOWED_IPS` | vazio | Idem para o token do operador. |

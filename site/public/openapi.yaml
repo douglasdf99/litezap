@@ -4,10 +4,12 @@ info:
   version: "0.4.0"
   summary: API de WhatsApp não oficial, open source, que roda local, no seu servidor ou na nuvem.
   description: |
-    Referência da API REST do motor LiteZap (marco 4: instâncias, pareamento, envio com fila
-    persistente, recebimento, chats, contatos, verificação de números, mídia, proxy por instância,
-    webhooks assinados, eventos em tempo real por SSE e servidor MCP em `/mcp`). Os eventos entregues por webhook estão
-    descritos na seção `webhooks` deste arquivo.
+    Referência da API REST do motor LiteZap (até o marco 11): instâncias e pareamento, envio com fila
+    persistente e visível, recebimento, chats, contatos, verificação de números, mídia, proxy por
+    instância, grupos e comunidades, perfil e privacidade, status, canais, etiquetas, atendente IA,
+    plataforma (chaves de API, links de pareamento, lote), webhooks assinados, eventos em tempo real por
+    SSE e servidor MCP em `/mcp`. Os eventos entregues por webhook estão descritos na seção `webhooks`
+    deste arquivo.
 
     Autenticação: `Authorization: Bearer <token>`. O token admin acessa tudo; o token de instância
     (prefixo `lzi_`) só acessa as rotas da própria instância; uma chave de API (prefixo `lzk_`, marco 11)
@@ -57,7 +59,7 @@ tags:
       [proxy](/docs/conceitos/proxy/). `proxy_url` e `unsafe_pacing` exigem o token admin.
     x-concept: /docs/conceitos/fila-e-ritmo/
   - name: Mensagens
-    description: Envio pela fila persistente e consulta de status.
+    description: Envio pela fila persistente, consulta de status e controle da fila.
     x-slug: mensagens
     x-intro: |
       Todo envio entra numa fila persistente por instância e sai no ritmo configurado, respeitando a
@@ -773,6 +775,129 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/instances/{id}/queue:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Mensagens]
+      operationId: listQueue
+      x-litezap-sample: { query: { status: queued } }
+      x-litezap-milestone: M6
+      x-zapi: Fila
+      summary: Listar a fila
+      x-litezap-scope: instancia
+      description: |
+        Itens da fila de envio da instância, do mais antigo ao mais novo. Sem `status`, lista o que ainda
+        não saiu (`queued` e `in_flight`); `?status=` filtra por `queued`, `in_flight`, `sent`, `failed`
+        ou `all`. Pagina por `next_cursor`.
+      parameters:
+        - name: status
+          in: query
+          description: "`queued`, `in_flight`, `sent`, `failed` ou `all`. Omitido: `queued` e `in_flight`."
+          schema: { type: string, enum: [queued, in_flight, sent, failed, all] }
+        - name: limit
+          in: query
+          description: Itens por página. Padrão 50, máximo 200.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Uma página da fila.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Message" } }
+                  next_cursor: { type: string, description: Ausente na última página. }
+              example:
+                items:
+                  - id: msg_a41c9e07d2b35f68
+                    chat: 5511999999999@s.whatsapp.net
+                    from_me: true
+                    source: api
+                    type: text
+                    text: "Seu pedido saiu para entrega!"
+                    status: queued
+                    timestamp: "2026-10-17T13:50:00Z"
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+    delete:
+      tags: [Mensagens]
+      operationId: clearQueue
+      x-litezap-milestone: M6
+      x-zapi: Apagar fila
+      summary: Esvaziar a fila
+      x-litezap-scope: instancia
+      x-litezap-events: [message.status]
+      description: |
+        Cancela de uma vez todos os itens `queued` da instância; os `in_flight` (sendo enviados agora)
+        terminam normalmente. Cada item cancelado termina como `failed` com
+        `error: "canceled: queue cleared by the API"` e sai `message.status` `failed`. Útil antes de
+        reconectar uma instância que ficou parada com mensagens velhas na fila. Continua permitido com o
+        envio suspenso pelo operador.
+      responses:
+        "200":
+          description: Quantos itens foram cancelados.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  canceled: { type: integer }
+              example: { canceled: 12 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /v1/instances/{id}/queue/{msg_id}:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - name: msg_id
+        in: path
+        required: true
+        description: "Id do item da fila (`msg_...`)."
+        schema: { type: string }
+    delete:
+      tags: [Mensagens]
+      operationId: cancelQueued
+      x-litezap-milestone: M6
+      x-zapi: Apagar mensagem da fila
+      summary: Cancelar item da fila
+      x-litezap-scope: instancia
+      x-litezap-events: [message.status]
+      description: |
+        Remove um item ainda `queued` sem enviar: ele termina como `failed` com
+        `error: "canceled: removed from the queue by the API"`, o arquivo de mídia preparado é apagado e
+        sai `message.status` `failed`. Um item `in_flight` (sendo enviado agora) ou já terminado responde
+        `409 conflict`.
+      responses:
+        "200":
+          description: O item cancelado.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+              example:
+                id: msg_a41c9e07d2b35f68
+                chat: 5511999999999@s.whatsapp.net
+                from_me: true
+                source: api
+                type: text
+                text: "Seu pedido saiu para entrega!"
+                status: failed
+                error: "canceled: removed from the queue by the API"
+                timestamp: "2026-10-17T13:50:00Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`conflict`: o item já está sendo enviado (`in_flight`) ou terminou."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: conflict, message: "the message is in_flight and can no longer be removed from the queue", retryable: false } }
 
   /v1/instances/{id}/chats:
     parameters: [{ $ref: "#/components/parameters/InstanceID" }]
@@ -4842,6 +4967,85 @@ webhooks:
           application/json:
             schema: { $ref: "#/components/schemas/Envelope" }
             example: { id: evt_2a7e4c1f9b6d3058, type: message.reaction, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-17T13:53:08.555Z", data: { id: msg_7d3b0e6a2c9f4185, wa_message_id: 3A5D8F1B4E7C0A3D6F9B, chat: 5511999999999@s.whatsapp.net, sender: 5511999999999@s.whatsapp.net, from_me: false, push_name: Maria, source: contact, type: reaction, text: "👍", reaction_to: 3EB0A1B2C3D4E5F6A7B8C9, timestamp: "2026-10-17T13:53:08Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  message.edited:
+    post:
+      summary: Mensagem editada
+      x-slug: message-edited
+      x-litezap-milestone: M6
+      x-zapi: Ao receber (mensagem editada)
+      description: |
+        Uma mensagem foi editada: pela API (`type: edit`), pelo celular ou pelo contato. Edições recebidas
+        só valem do próprio autor; as demais são ignoradas. O log é atualizado (`edited_at` e texto novo).
+        `id` vem vazio quando a mensagem original não está no log.
+      x-related: [message.revoked, message.received]
+      x-fields:
+        - [id, string, "Id LiteZap da mensagem editada (opcional)."]
+        - [wa_message_id, string, "Id no WhatsApp da mensagem editada."]
+        - [chat, string, "JID do chat."]
+        - [sender, string, "Quem editou (opcional)."]
+        - [from_me, boolean, "Editada por este número."]
+        - [source, string, "contact, api ou device."]
+        - [text, string, "Texto novo."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_7a2c9e4f1b6d3085, type: message.edited, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T10:12:00.120Z", data: { id: msg_e29d4b8a0f6c1357, wa_message_id: 3A5D8F1B4E7C0A3D6F9B, chat: 5511999999999@s.whatsapp.net, sender: 5511999999999@s.whatsapp.net, from_me: false, source: contact, text: "Oi! Na verdade são 2 unidades.", timestamp: "2026-10-18T10:12:00Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  message.revoked:
+    post:
+      summary: Mensagem apagada
+      x-slug: message-revoked
+      x-litezap-milestone: M6
+      x-zapi: Ao receber (mensagem apagada)
+      description: |
+        Uma mensagem foi apagada para todos: pelo autor (pela API com `type: revoke`, pelo celular ou pelo
+        contato) ou por um admin do grupo. O log marca `revoked_at`. `id` vem vazio quando a mensagem não
+        está no log.
+      x-related: [message.edited, message.status]
+      x-fields:
+        - [id, string, "Id LiteZap da mensagem apagada (opcional)."]
+        - [wa_message_id, string, "Id no WhatsApp da mensagem apagada."]
+        - [chat, string, "JID do chat."]
+        - [sender, string, "Quem apagou (opcional)."]
+        - [from_me, boolean, "Apagada por este número."]
+        - [source, string, "contact, api ou device."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_1d8b4f0a7c3e9256, type: message.revoked, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T10:14:30.402Z", data: { id: msg_e29d4b8a0f6c1357, wa_message_id: 3A5D8F1B4E7C0A3D6F9B, chat: 5511999999999@s.whatsapp.net, sender: 5511999999999@s.whatsapp.net, from_me: false, source: contact, timestamp: "2026-10-18T10:14:30Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  message.poll_vote:
+    post:
+      summary: Voto em enquete
+      x-slug: message-poll-vote
+      x-litezap-milestone: M6
+      x-zapi: Ao receber (voto de enquete)
+      description: |
+        Alguém votou numa enquete. `selected_options` é o voto atual da pessoa (lista vazia = voto
+        retirado), com as opções já decifradas pelo texto da enquete no log. Votos não ficam no log, só
+        neste evento. Votos em enquetes criadas antes do pareamento não são decifrados (contam em
+        `unknown_options`).
+      x-related: [message.received]
+      x-fields:
+        - [poll_id, string, "Id LiteZap da enquete (opcional)."]
+        - [poll_wa_message_id, string, "Id no WhatsApp da enquete."]
+        - [chat, string, "JID do chat."]
+        - [voter, string, "Quem votou."]
+        - [push_name, string, "Nome de perfil de quem votou (opcional)."]
+        - [from_me, boolean, "Voto deste número."]
+        - [selected_options, array, "Opções escolhidas; vazia quando o voto foi retirado."]
+        - [unknown_options, integer, "Opções que não puderam ser decifradas (opcional)."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_9e3b7d1a5c0f4628, type: message.poll_vote, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T11:02:15.880Z", data: { poll_id: msg_5c8e1a3f7b2d4069, poll_wa_message_id: 3EB0D2E4F6A8B0C1D3E5F7, chat: 5511999999999@s.whatsapp.net, voter: 5511999999999@s.whatsapp.net, push_name: Maria, from_me: false, selected_options: ["Terça às 14h"], timestamp: "2026-10-18T11:02:15Z" } }
       responses:
         "2XX": { description: Qualquer 2xx confirma a entrega. }
   history.synced:

@@ -70,28 +70,28 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 | ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
 |---|---|---|---|---|---|---|---|
 | MSG-1 | Texto | Enviar texto | Sim — `SendMessage` (send.go) | Pronto — `POST /messages` `type:text` (fila, `?wait=true`, idempotência, `expires_after`) | — | | M2 |
-| MSG-2 | Atraso e "digitando" por mensagem | `delayMessage`, `delayTyping` | Sim — `SendChatPresence` (presence.go) | Parcial — ritmo e `typing_simulation` por instância, não por mensagem | S | Aceitar `delay_ms`/`typing_ms` por mensagem, sem furar os pisos de ritmo | M6 |
-| MSG-3 | Link com prévia | Enviar link | Manual — `ExtendedTextMessage` com `Title`, `Description`, `MatchedText`, `JPEGThumbnail`; whatsmeow não gera prévia | Falta | M | Buscar Open Graph reaproveitando o fetcher com proteção SSRF de `media`; prévia opcional (`link_preview: auto\|off\|custom`) | M6 |
+| MSG-2 | Atraso e "digitando" por mensagem | `delayMessage`, `delayTyping` | Sim — `SendChatPresence` (presence.go) | Pronto — `delay_ms` e `typing_ms` por mensagem (0–15000), sem furar os pisos de ritmo (M6) | S | Aceitar `delay_ms`/`typing_ms` por mensagem, sem furar os pisos de ritmo | M6 |
+| MSG-3 | Link com prévia | Enviar link | Manual — `ExtendedTextMessage` com `Title`, `Description`, `MatchedText`, `JPEGThumbnail`; whatsmeow não gera prévia | Pronto — `link_preview` `off\|auto\|{url,title,description,image_url}`, busca com filtro SSRF e limite de 5s (M6) | M | Buscar Open Graph reaproveitando o fetcher com proteção SSRF de `media`; prévia opcional (`link_preview: auto\|off\|custom`) | M6 |
 | MSG-4 | Imagem | Enviar imagem | Sim — `Upload`/`UploadReader` (upload.go) + `ImageMessage` | Pronto — `type:image` por URL ou base64 | — | | M2 |
 | MSG-5 | Áudio e voz (PTT) | Enviar áudio | Sim | Pronto — `type:audio`, `ptt:true` | — | Voz exige OGG/Opus; conversão automática não existe (incerto se a Z-API converte) | M2 |
 | MSG-6 | Vídeo | Enviar vídeo | Sim | Pronto — `type:video` | — | | M2 |
-| MSG-7 | Vídeo redondo (PTV) | Enviar PTV | Manual — campo `Message.PtvMessage` (`VideoMessage`) em waE2E | Falta | S | | M6 |
+| MSG-7 | Vídeo redondo (PTV) | Enviar PTV | Manual — campo `Message.PtvMessage` (`VideoMessage`) em waE2E | Pronto — `type:ptv` (M6) | S | | M6 |
 | MSG-8 | Documento | Enviar documento | Sim | Pronto — `type:document` | — | | M2 |
-| MSG-9 | Figurinha | Enviar sticker | Manual — `StickerMessage` + `Upload(MediaImage)` | Falta (recebe e registra) | S | WebP 512×512; já listado no M2b | M6 (M2b) |
-| MSG-10 | GIF | Enviar GIF | Manual — `VideoMessage.GifPlayback=true` (MP4) | Falta | S | | M6 |
-| MSG-11 | Localização | Enviar localização | Manual — `LocationMessage` | Falta (recebe) | S | Já listado no M2b | M6 (M2b) |
-| MSG-12 | Contato (vCard) | Enviar contato | Manual — `ContactMessage{Vcard}` | Falta (recebe) | S | Já listado no M2b | M6 (M2b) |
-| MSG-13 | Vários contatos | Enviar vários contatos | Manual — `ContactsArrayMessage` | Falta | S | | M6 |
+| MSG-9 | Figurinha | Enviar sticker | Manual — `StickerMessage` + `Upload(MediaImage)` | Pronto — `type:sticker` (WebP até 1MB, animada detectada) (M6) | S | WebP 512×512; já listado no M2b | M6 (M2b) |
+| MSG-10 | GIF | Enviar GIF | Manual — `VideoMessage.GifPlayback=true` (MP4) | Pronto — `type:gif` (MP4 em loop) (M6) | S | | M6 |
+| MSG-11 | Localização | Enviar localização | Manual — `LocationMessage` | Pronto — `type:location` (M6) | S | Já listado no M2b | M6 (M2b) |
+| MSG-12 | Contato (vCard) | Enviar contato | Manual — `ContactMessage{Vcard}` | Pronto — `type:contact` com `contacts` (`name`+`phone` ou `vcard`) (M6) | S | Já listado no M2b | M6 (M2b) |
+| MSG-13 | Vários contatos | Enviar vários contatos | Manual — `ContactsArrayMessage` | Pronto — `type:contact` com 2 a 10 cartões (M6) | S | | M6 |
 | MSG-14 | Reação e remoção de reação | Enviar / remover reação | Sim — `BuildReaction` (send.go) | Pronto — `type:reaction` (`emoji:""` remove) + evento `message.reaction` | — | | M2 |
-| MSG-15 | Responder citando | Responder mensagem | Manual — `ContextInfo{StanzaID, Participant, QuotedMessage}` | Falta | M | Precisa da mensagem original (texto/tipo) do log; spec M2b item 6 | M6 |
-| MSG-16 | Menções (membro, todos, grupo) | Mencionar membro / todos / grupo | Manual — `ContextInfo.MentionedJID`, `ContextInfo.GroupMentions` | Falta | S | "Mencionar todos" exige `GetGroupInfo`; risco de spam em grupos grandes | M6 |
-| MSG-17 | Editar mensagem enviada | `editMessageId` no envio | Sim — `BuildEdit` (send.go) | Falta | S | WhatsApp limita a edição a ~15 min (incerto: janela atual) | M6 |
-| MSG-18 | Apagar para todos (inclusive admin apagando de outro) | Apagar mensagens | Sim — `RevokeMessage`, `BuildRevoke` (send.go) | Falta | S | Janela de revogação do WhatsApp (~2 dias, incerto) | M6 |
-| MSG-19 | Encaminhar | Encaminhar mensagem | Manual — reenviar o `waE2E.Message` original com `ContextInfo.IsForwarded` | Falta | M | O log não guarda o proto bruto; guardar o proto (ou reconstruir a partir de `media_json`) | M6 |
+| MSG-15 | Responder citando | Responder mensagem | Manual — `ContextInfo{StanzaID, Participant, QuotedMessage}` | Pronto — `reply_to` (id LiteZap ou `wa_message_id`; fora do log = `validation_failed`) (M6) | M | Precisa da mensagem original (texto/tipo) do log; spec M2b item 6 | M6 |
+| MSG-16 | Menções (membro, todos, grupo) | Mencionar membro / todos / grupo | Manual — `ContextInfo.MentionedJID`, `ContextInfo.GroupMentions` | Pronto — `mentions` (números/JIDs ou `["all"]` em grupos de até 256) (M6) | S | "Mencionar todos" exige `GetGroupInfo`; risco de spam em grupos grandes | M6 |
+| MSG-17 | Editar mensagem enviada | `editMessageId` no envio | Sim — `BuildEdit` (send.go) | Pronto — `type:edit`, até 15 min (`edit_window_expired`), evento `message.edited` (M6) | S | WhatsApp limita a edição a ~15 min (incerto: janela atual) | M6 |
+| MSG-18 | Apagar para todos (inclusive admin apagando de outro) | Apagar mensagens | Sim — `RevokeMessage`, `BuildRevoke` (send.go) | Pronto — `type:revoke`, até 48h; de outro só como admin do grupo; evento `message.revoked` (M6) | S | Janela de revogação do WhatsApp (~2 dias, incerto) | M6 |
+| MSG-19 | Encaminhar | Encaminhar mensagem | Manual — reenviar o `waE2E.Message` original com `ContextInfo.IsForwarded` | Pronto — `type:forward` (texto, localização, contato e mídia recebida; não mídia enviada pela API nem visualização única) (M6) | M | O log não guarda o proto bruto; guardar o proto (ou reconstruir a partir de `media_json`) | M6 |
 | MSG-20 | Marcar como lidas | Ler mensagens | Sim — `MarkRead` (receipt.go) | Pronto — `POST /chats/{jid}/read` | — | | M2 |
-| MSG-21 | Fixar / desafixar mensagem | Fixar mensagens | Manual — `PinInChatMessage` via `SendMessage` | Falta | S | Duração e regras de grupo (incerto) | M6 |
-| MSG-22 | Enquete | Enviar enquete | Sim — `BuildPollCreation` (msgsecret.go) | Falta | S | | M6 |
-| MSG-23 | Votar em enquete e receber votos | Enviar voto | Sim — `BuildPollVote`, `DecryptPollVote` (msgsecret.go) | Falta | M | Votos chegam cifrados; precisa do segredo da enquete (o whatsmeow guarda no store) e de evento `message.poll_vote` | M6 |
+| MSG-21 | Fixar / desafixar mensagem | Fixar mensagens | Manual — `PinInChatMessage` via `SendMessage` | Pronto — `type:pin` (`24h`, `7d`, `30d`; `unpin`) (M6) | S | Duração e regras de grupo (incerto) | M6 |
+| MSG-22 | Enquete | Enviar enquete | Sim — `BuildPollCreation` (msgsecret.go) | Pronto — `type:poll` (2 a 12 opções, `max_selections`) (M6) | S | | M6 |
+| MSG-23 | Votar em enquete e receber votos | Enviar voto | Sim — `BuildPollVote`, `DecryptPollVote` (msgsecret.go) | Parcial — votos recebidos e decifrados em `message.poll_vote` (M6); votar pela API não | M | Votos chegam cifrados; precisa do segredo da enquete (o whatsmeow guarda no store) e de evento `message.poll_vote` | M6 |
 | MSG-24 | Eventos (criar, editar, responder) | Enviar / editar / responder evento | Manual — `EventMessage`, `EncEventResponseMessage` (waE2E) | Falta (adiado no M10) | M | Recurso recente (incerto em contas comuns) | M10 |
 | MSG-25 | Botões de ação, lista de botões, com imagem, com vídeo | 4 páginas | Manual — `ButtonsMessage`/`TemplateMessage`; o whatsmeow já anexa o nó `biz` (send.go, `getButtonTypeFromMessage`) | Falta | M | **Instável**: a própria Z-API mantém uma página sobre a instabilidade, exige aceite de termos e, na versão de 27/08/2024, o resumo diz que só lista de opções em chat individual é confiável (a tabela da mesma página diz que tudo funciona — contraditório). Pode quebrar a cada versão do WhatsApp | Exp |
 | MSG-26 | Lista de opções | Enviar lista de opções | Manual — `ListMessage` (nó `biz` com `v=2` e tipo, send.go `getButtonAttributes`) | Falta | M | Mesma instabilidade; é o tipo interativo menos instável | Exp |
@@ -219,9 +219,9 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 | ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
 |---|---|---|---|---|---|---|---|
 | QUE-1 | Fila persistente, ordem por destinatário, envio após reconexão | Introdução da fila | N/A | Pronto — `outbound_queue`, TTL (`expires_after`), retry, rampa, janela, verificação de número | — | LiteZap vai além: rampa para números novos, janela de horário, pisos de ritmo | M2 |
-| QUE-2 | Listar fila | Fila | N/A | Falta — só `GET /messages/{id}` | S | `GET /instances/{id}/queue?status=queued` com cursor | M6 |
-| QUE-3 | Apagar a fila inteira | Apagar fila | N/A | Falta | S | Importante antes de reconectar uma instância parada há dias | M6 |
-| QUE-4 | Apagar um item da fila | Apagar mensagem da fila | N/A | Falta | S | `DELETE /instances/{id}/messages/{msg_id}` se ainda `queued` | M6 |
+| QUE-2 | Listar fila | Fila | N/A | Pronto — `GET /instances/{id}/queue` com `status`, `limit` e cursor (M6) | S | `GET /instances/{id}/queue?status=queued` com cursor | M6 |
+| QUE-3 | Apagar a fila inteira | Apagar fila | N/A | Pronto — `DELETE /instances/{id}/queue` (`{"canceled": n}`) (M6) | S | Importante antes de reconectar uma instância parada há dias | M6 |
+| QUE-4 | Apagar um item da fila | Apagar mensagem da fila | N/A | Pronto — `DELETE /instances/{id}/queue/{msg_id}` (só `queued`; `in_flight` = `409 conflict`) (M6) | S | `DELETE /instances/{id}/messages/{msg_id}` se ainda `queued` | M6 |
 | QUE-5 | Configurar a fila (intervalos) | Atualizar config da fila | N/A | Pronto — `PUT /settings` (`min_interval_ms`, `jitter_ms`, `max_per_minute`, rampa, janela) | — | | M2 |
 
 ### 2.15 WhatsApp Business (Z-API: WhatsApp Business)
@@ -276,12 +276,12 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 
 | ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
 |---|---|---|---|---|---|---|---|
-| AI-1 | Servidor MCP | MCP Server (introdução, como conectar) | N/A | Falta — em planejamento (`feat/m4-mcp` sem código ainda) | M | LiteZap terá HTTP e stdio | M4 |
-| AI-2 | Agente que responde mensagens (hook) | (não há) | N/A | Falta | M | Vantagem LiteZap planejada | M5 |
+| AI-1 | Servidor MCP | MCP Server (introdução, como conectar) | N/A | Pronto — `/mcp` (streamable HTTP) e `litezap mcp` (stdio), 40 ferramentas (M4, ampliado do M6 ao M10) | M | LiteZap terá HTTP e stdio | M4 |
+| AI-2 | Agente que responde mensagens (hook) | (não há) | N/A | Pronto — hook de agente com pausa por humano (M5) e atendente embutido com perfis, provedores Anthropic/OpenAI-compatível e multimodal (M5b) | M | Vantagem LiteZap planejada | M5 |
 
 ## 3. Contagens
 
-Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-API; as ~250 páginas de referência viram 159 linhas).
+Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-API; as ~250 páginas de referência viram 159 linhas). Atualizada em 2026-10-19 com o código do `main` (marcos 1 a 11 e atendente IA).
 
 | | Linhas |
 |---|---|
@@ -292,9 +292,9 @@ Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-AP
 | — whatsmeow `Parcial` | 10 |
 | — whatsmeow `Não` | 21 |
 | Recursos só da camada LiteZap (`N/A`) | 27 |
-| **LiteZap `Pronto`** | **95** |
+| **LiteZap `Pronto`** | **115** |
 | LiteZap `Parcial` | 3 |
-| LiteZap `Falta` | 43 |
+| LiteZap `Falta` | 23 |
 | LiteZap `Fora` | 18 |
 
 Viáveis com whatsmeow (`Sim` + `Manual` + `Parcial`): **111 de 132** recursos de protocolo. Os 21 inviáveis hoje: INS-11 (extensão, produto próprio da Z-API), MOB-1…4 (registro como aparelho principal), CON-8 (denúncia), CAL-1/2 (chamadas de voz e SIP), COM-8 (desativar comunidade), CHN-2/5/7/9/10/11 (administração avançada de canais), BRD-1 (listas de transmissão), BUS-1/2/3/6/7 (catálogo, coleções, notas, perfil comercial editável).
@@ -420,6 +420,8 @@ Aceite:
 - **Fora** (decisão de produto ou impossível com whatsmeow): registro mobile, chamadas de voz/SIP, listas de transmissão, denúncia de contato, extensão de navegador, cobrança (vai para a nuvem).
 
 ## 5. Top 10 lacunas por valor
+
+Lista original (2026-10-17). Todos os itens abaixo foram entregues entre o M4 e o M9; as lacunas que restam são as linhas `Falta`/`Parcial` da matriz.
 
 1. Responder citando + menções (MSG-15, MSG-16) — M6
 2. Figurinha, GIF, localização, contato(s), PTV (MSG-7, 9–13) — M6
