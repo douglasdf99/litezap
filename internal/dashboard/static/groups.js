@@ -64,7 +64,7 @@ export function groupsPanel(ctx, rest) {
     const showLink = (link) => mount(invite, h('input', { class: 'mono', readonly: true, value: link }),
       action('Copiar', async () => { await navigator.clipboard.writeText(link); toast('Copiado'); }),
       action('Redefinir', async () => {
-        if (!confirmDanger('Redefinir o link? O link atual para de funcionar para todo mundo.')) return;
+        if (!(await confirmDanger('Redefinir o link? O link atual para de funcionar para todo mundo.'))) return;
         showLink((await api.post(g(jid, 'invite', 'reset'))).link);
       }));
     mount(invite, action('Mostrar link de convite', async () => showLink((await api.get(g(jid, 'invite'))).link)));
@@ -75,7 +75,7 @@ export function groupsPanel(ctx, rest) {
       h('td', { class: 'actions' }, h('div', { class: 'row' },
         p.admin ? action('Rebaixar', () => participantsOp(jid, 'demote', [p.jid])) : action('Promover', () => participantsOp(jid, 'promote', [p.jid])),
         p.super_admin ? null : action('Remover', async () => {
-          if (!confirmDanger(`Remover ${phoneOf(p.jid)} do grupo? Todos os participantes veem.`)) return;
+          if (!(await confirmDanger(`Remover ${phoneOf(p.jid)} do grupo? Todos os participantes veem.`))) return;
           await participantsOp(jid, 'remove', [p.jid]);
         }, 'btn small danger')))));
 
@@ -108,7 +108,7 @@ export function groupsPanel(ctx, rest) {
         }, addBox, h('button', { class: 'btn small', type: 'submit' }, 'Adicionar')),
         h('p', { class: 'small muted' }, 'Adicione só quem já conversa com este número: adicionar desconhecidos é motivo de banimento. O LiteZap pula números sem conversa que não confirmam no WhatsApp e limita as adições por hora e por dia.'),
         h('div', { class: 'row end' }, action('Sair do grupo', async () => {
-          if (!confirmDanger('Sair deste grupo? Para voltar, será preciso um convite.')) return;
+          if (!(await confirmDanger('Sair deste grupo? Para voltar, será preciso um convite.'))) return;
           await api.post(g(jid, 'leave'));
           toast('Você saiu do grupo');
           location.hash = ctx.href('groups');

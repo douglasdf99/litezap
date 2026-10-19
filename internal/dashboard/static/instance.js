@@ -1,21 +1,23 @@
 // Instance pages: header + tabs (chats, pairing, settings, webhooks, live events), sharing
 // one SSE stream per open instance.
 import * as api from './api.js';
-import { h, mount, clear, toast, errMsg, stateBadge, field, fmtTime, phoneOf, confirmDanger } from './ui.js';
+import { h, mount, clear, toast, errMsg, stateBadge, field, fmtTime, phoneOf, confirmDanger, icon } from './ui.js';
 import { webhooksPanel } from './webhooks.js';
 import { agentPanel } from './agent.js';
 import { groupsPanel } from './groups.js';
 import { statusPanel, channelsPanel, labelsPanel } from './social.js';
 import { profilePanel } from './profile.js';
 import { chatActions, chatMarks } from './chatactions.js';
-import { editInstance, tagChips, pairingLinkCard } from './platform.js';
+import { editInstance, tagChips } from './platform.js';
+import { connectPanel, initials } from './wizard.js';
 
-const ACTIONS = { start: 'Iniciar', stop: 'Parar', restart: 'Reiniciar', logout: 'Deslogar' };
+const ACTIONS = { start: 'Iniciar', stop: 'Parar', restart: 'Reiniciar', logout: 'Desconectar' };
+const ACTION_ICON = { start: 'power', stop: 'power', restart: 'refresh', logout: 'logout' };
 
 export async function instanceAction(id, action) {
-  if (action === 'logout' && !confirmDanger('Deslogar desconecta o número deste aparelho. Para voltar, será preciso parear de novo. Continuar?')) return null;
+  if (action === 'logout' && !(await confirmDanger('Deslogar desconecta o número deste aparelho. Para voltar, será preciso parear de novo. Continuar?'))) return null;
   const v = await api.post(`/v1/instances/${encodeURIComponent(id)}/${action}`);
-  toast(`${ACTIONS[action]}: ok`);
+  toast({ start: 'Instância iniciada', stop: 'Instância parada', restart: 'Reiniciando a instância', logout: 'Número desconectado' }[action]);
   return v;
 }
 
@@ -29,11 +31,11 @@ export function availableActions(state) {
 
 const TABS = [
   ['chats', 'Conversas'], ['groups', 'Grupos'], ['status', 'Status'], ['channels', 'Canais'], ['labels', 'Etiquetas'],
-  ['pair', 'Parear'], ['settings', 'Configurações'],
+  ['pair', 'Conectar'], ['settings', 'Configurações'],
   ['agent', 'Atendente IA'], ['profile', 'Perfil'], ['webhooks', 'Webhooks'], ['events', 'Eventos ao vivo'],
 ];
 
-export function instanceView(id, { root, shell, setLive }) {
+export function instanceView(id, { root, shell, setLive, openWizard }) {
   const base = `/v1/instances/${encodeURIComponent(id)}`;
   const ctx = {
     id, base, inst: null, events: [], listeners: new Set(), settingsCache: null,
@@ -45,36 +47,43 @@ export function instanceView(id, { root, shell, setLive }) {
     href(tab, ...rest) { return `#/i/${[id, tab, ...rest].map(encodeURIComponent).join('/')}`; },
   };
 
-  const header = h('div', { class: 'inst-head card' }, h('p', { class: 'muted' }, 'Carregando…'));
-  const tabs = h('nav', { class: 'tabs' });
+  const header = h('div', { class: 'inst-head' }, h('div', { class: 'skel skel-line', style: null }));
+  const banner = h('div', { hidden: true });
+  const tabs = h('nav', { class: 'tabs', 'aria-label': 'Seções da instância' });
   const body = h('div', { class: 'tab-body' });
   let current = null; // {name, el, cleanup, update}
 
   const renderHeader = () => {
     const inst = ctx.inst;
     if (!inst) return;
-    const acts = availableActions(inst.state).map((a) => {
-      const b = h('button', {
-        class: 'btn small',
-        onclick: async () => {
-          b.disabled = true;
-          try { const v = await instanceAction(id, a); if (v) { ctx.inst = v; renderHeader(); } } catch (e) { toast(errMsg(e), 'error'); } finally { b.disabled = false; }
-        },
-      }, ACTIONS[a]);
+    const acts = availableActions(inst.state).filter((a) => a !== 'logout' || inst.state === 'connected').map((a) => {
+      const b = h('button', { class: 'btn small', type: 'button' }, icon(ACTION_ICON[a], 15), ACTIONS[a]);
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        try { const v = await instanceAction(id, a); if (v) { ctx.inst = v; renderHeader(); } } catch (e) { toast(errMsg(e), 'error'); } finally { b.disabled = false; }
+      });
       return b;
     });
     acts.push(h('button', {
-      class: 'btn small ghost',
+      class: 'btn small ghost', type: 'button',
       onclick: () => editInstance(inst, (v) => { ctx.inst = v; renderHeader(); }),
-    }, 'Editar'));
+    }, icon('edit', 15), 'Editar'));
     mount(header,
+      h('div', { class: 'avatar', 'aria-hidden': 'true' }, initials(inst.name)),
       h('div', { class: 'inst-title' },
-        h('a', { href: '#/', class: 'back', 'aria-label': 'Voltar' }, '←'),
-        h('h1', null, inst.name || inst.id),
-        stateBadge(inst.state, inst.state_reason),
-        inst.phone ? h('span', { class: 'phone' }, phoneOf(inst.phone)) : null,
-        tagChips(inst)),
-      h('div', { class: 'inst-sub' }, h('span', { class: 'mono muted small' }, inst.id), h('div', { class: 'actions' }, acts)));
+        h('div', { class: 'inst-title-line' }, h('h1', null, inst.name || inst.id), stateBadge(inst.state, inst.state_reason), tagChips(inst)),
+        h('div', { class: 'inst-sub' },
+          inst.phone ? h('span', { class: 'phone' }, phoneOf(inst.phone)) : null,
+          h('span', { class: 'mono small' }, inst.id))),
+      h('div', { class: 'actions' }, acts));
+    const needs = !['connected', 'banned', 'reconnecting'].includes(inst.state);
+    banner.hidden = !needs || (current && current.name === 'pair');
+    if (needs) {
+      mount(banner, h('div', { class: 'connect-banner' },
+        icon('qr', 22),
+        h('p', null, h('b', null, 'Falta conectar o WhatsApp. '), 'Escaneie o QR com o celular para começar a usar esta instância.'),
+        h('button', { class: 'btn primary small', type: 'button', onclick: () => (openWizard ? openWizard(ctx.inst) : (location.hash = ctx.href('pair'))) }, 'Conectar agora')));
+    }
   };
 
   const refresh = async () => {
@@ -95,9 +104,11 @@ export function instanceView(id, { root, shell, setLive }) {
       refresh();
     }
     for (const l of ctx.listeners) l(type, ev);
-  }, setLive);
+  }, (st) => { setLive(st); if (st === 'open' && ctx.inst) refresh(); });
 
-  mount(root, shell(h('section', null, header, tabs, body), 'instances'));
+  mount(root, shell(h('section', null,
+    h('a', { href: '#/', class: 'back' }, icon('back', 16), 'Instâncias'),
+    header, banner, tabs, body), 'instances'));
   refresh();
 
   return {
@@ -111,6 +122,7 @@ export function instanceView(id, { root, shell, setLive }) {
         status: statusPanel, channels: channelsPanel, labels: labelsPanel }[tab];
       current = { name: tab, ...make(ctx, rest) };
       mount(body, current.el);
+      renderHeader();
     },
     close() {
       stop();
@@ -120,115 +132,30 @@ export function instanceView(id, { root, shell, setLive }) {
   };
 }
 
-// ---------- pairing ----------
+// ---------- connect (pairing) ----------
 
 function pairTab(ctx) {
-  const main = h('div', { class: 'card pair' });
-  const linkCard = pairingLinkCard(ctx);
-  const wrap = h('div', { class: 'pair-wrap' }, main, linkCard);
-  const el = main;
-  const qrImg = h('img', { class: 'qr', alt: 'QR de pareamento', width: 280, height: 280 });
-  const qrNote = h('p', { class: 'muted small' });
-  let objectURL = null;
-  let pairCode = null;
-  let lastState = null;
-
-  const loadQR = async () => {
-    try {
-      const blob = await api.get(`${ctx.base}/qr?format=png`, { blob: true });
-      if (objectURL) URL.revokeObjectURL(objectURL);
-      objectURL = URL.createObjectURL(blob);
-      qrImg.src = objectURL;
-      qrNote.textContent = `QR atualizado às ${new Date().toLocaleTimeString('pt-BR')}. Ele muda sozinho a cada ~20s.`;
-    } catch (e) {
-      qrNote.textContent = e.code === 'instance_not_pairing' ? 'Aguardando um QR do WhatsApp…' : errMsg(e);
-    }
-  };
-
-  const phone = h('input', { inputmode: 'numeric', placeholder: '5511999999999', 'aria-label': 'Número com DDI' });
-  const codeOut = h('div', { class: 'pair-code', hidden: true });
-  const showCode = (code) => {
-    pairCode = code;
-    const pretty = code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
-    mount(codeOut, h('div', { class: 'code mono' }, pretty),
-      h('p', { class: 'small' }, 'No celular: WhatsApp > Aparelhos conectados > Conectar um aparelho > "Conectar com número de telefone" e digite o código.'));
-    codeOut.hidden = false;
-  };
-  const pairBtn = h('button', { class: 'btn', type: 'submit' }, 'Gerar código');
-  const pairForm = h('form', {
-    class: 'row',
-    onsubmit: async (ev) => {
-      ev.preventDefault();
-      pairBtn.disabled = true;
-      try { showCode((await api.post(`${ctx.base}/pair-phone`, { phone: phone.value.replace(/\D/g, '') })).code); } catch (e) { toast(errMsg(e), 'error'); } finally { pairBtn.disabled = false; }
+  const done = h('div', { class: 'card pair-done', hidden: true });
+  const panel = connectPanel(ctx.id, {
+    compact: true,
+    onState: (v) => {
+      if (!v) return;
+      const ok = v.state === 'connected';
+      card.hidden = ok;
+      done.hidden = !ok;
+      if (ok) {
+        mount(done,
+          h('div', { class: 'big-check pop' }, icon('check', 30)),
+          h('h2', null, 'WhatsApp conectado'),
+          h('p', { class: 'muted' }, v.phone ? `Número ${phoneOf(v.phone)} pareado com o LiteZap.` : 'Número pareado.'),
+          h('div', { class: 'row', style: null }, h('a', { class: 'btn primary', href: ctx.href('chats') }, icon('chat', 16), 'Ver conversas'),
+            h('a', { class: 'btn', href: ctx.href('webhooks') }, icon('webhook', 16), 'Configurar webhook')));
+        done.lastChild.style.justifyContent = 'center';
+      }
     },
-  }, phone, pairBtn);
-
-  const render = () => {
-    const st = ctx.inst ? ctx.inst.state : null;
-    if (st === lastState) return;
-    lastState = st;
-    linkCard.hidden = st === 'connected' || st === 'banned';
-    if (!st) { mount(el, h('p', { class: 'muted' }, 'Carregando…')); return; }
-    if (st === 'connected') {
-      mount(el, h('div', { class: 'pair-done' },
-        h('div', { class: 'big-check', 'aria-hidden': 'true' }, '✓'),
-        h('h2', null, 'Conectado'),
-        h('p', null, ctx.inst.phone ? `Número ${phoneOf(ctx.inst.phone)} pareado.` : 'Número pareado.'),
-        h('a', { class: 'btn primary', href: ctx.href('chats') }, 'Ver conversas')));
-      return;
-    }
-    if (st === 'banned') {
-      mount(el, h('p', { class: 'error' }, 'Este número foi banido pelo WhatsApp. Exclua a instância.'));
-      return;
-    }
-    if (['created', 'stopped', 'logged_out', 'failed'].includes(st)) {
-      const b = h('button', {
-        class: 'btn primary',
-        onclick: async () => {
-          b.disabled = true;
-          try { ctx.inst = await api.post(`${ctx.base}/start`); lastState = null; render(); } catch (e) { toast(errMsg(e), 'error'); b.disabled = false; }
-        },
-      }, 'Iniciar pareamento');
-      mount(el, h('h2', null, 'Parear um número'),
-        h('p', null, 'A instância está parada. Inicie para gerar o QR.'), b);
-      return;
-    }
-    if (st === 'qr_pending') {
-      mount(el,
-        h('div', { class: 'pair-grid' },
-          h('div', null,
-            h('h2', null, 'Escaneie o QR'),
-            h('ol', { class: 'steps' },
-              h('li', null, 'Abra o WhatsApp no celular do número que vai conectar.'),
-              h('li', null, 'Toque em Aparelhos conectados > Conectar um aparelho.'),
-              h('li', null, 'Aponte a câmera para o QR ao lado.')),
-            h('h3', null, 'Ou parear pelo número'),
-            h('p', { class: 'small muted' }, 'Digite o número com DDI e DDD (só dígitos) para receber um código de 8 caracteres.'),
-            pairForm, codeOut),
-          h('div', { class: 'qr-box' }, qrImg, qrNote)));
-      if (pairCode) showCode(pairCode);
-      loadQR();
-      return;
-    }
-    mount(el, h('div', { class: 'waiting' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }),
-      h('p', null, st === 'reconnecting'
-        ? `Reconectando ao WhatsApp${ctx.inst.state_reason ? ` (${ctx.inst.state_reason})` : ''}…`
-        : 'Iniciando o worker… o QR aparece aqui em instantes.')));
-  };
-
-  const off = ctx.on((type, ev) => {
-    if (type === 'instance.qr' && lastState === 'qr_pending') loadQR();
-    else if (type === 'instance.pair_code' && ev.data && ev.data.code) showCode(ev.data.code);
   });
-  // ctx.inst changes on instance.status (refetched by the view); poll it cheaply.
-  const tick = setInterval(render, 700);
-  const qrTimer = setInterval(() => { if (lastState === 'qr_pending') loadQR(); }, 20000);
-  render();
-  return {
-    el: wrap,
-    cleanup() { off(); clearInterval(tick); clearInterval(qrTimer); if (objectURL) URL.revokeObjectURL(objectURL); },
-  };
+  const card = h('div', { class: 'card' }, panel.el);
+  return { el: h('div', { class: 'pair-wrap' }, card, done), cleanup: panel.cleanup };
 }
 
 // ---------- chats ----------
@@ -550,7 +477,7 @@ function settingsTab(ctx) {
           p.proxy_url = proxy.value.trim();
         }
         if (!Object.keys(p).length) { toast('Nada mudou'); return; }
-        if (p.proxy_url !== undefined && !confirmDanger('Trocar o proxy reinicia o worker da instância. Continuar?')) return;
+        if (p.proxy_url !== undefined && !(await confirmDanger('Trocar o proxy reinicia o worker da instância. Continuar?'))) return;
         save.disabled = true;
         try {
           const next = await api.put(`${ctx.base}/settings`, p);

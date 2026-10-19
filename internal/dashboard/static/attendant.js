@@ -102,7 +102,7 @@ export function attendantPanel(ctx) {
         h('button', {
           class: 'btn small danger', type: 'button',
           onclick: async () => {
-            if (!confirmDanger(`Excluir o agente "${a.name}"?`)) return;
+            if (!(await confirmDanger(`Excluir o agente "${a.name}"?`))) return;
             try { await api.del(`${base}/agents/${a.id}`); toast('Agente excluído'); loadAgents(); } catch (e) { toast(errMsg(e), 'error'); }
           },
         }, 'Excluir')))));
@@ -157,9 +157,9 @@ export function attendantPanel(ctx) {
     const callHint = h('input', { value: a.call_hint || '', placeholder: 'Ex.: ofereça o cardápio' });
     const maxChars = h('input', { type: 'number', min: 50, max: 4000, value: a.max_reply_chars || 1000 });
     const hideName = h('input', { type: 'checkbox', checked: !!a.hide_contact_name });
-    mode.addEventListener('change', () => {
+    mode.addEventListener('change', async () => {
       const p = presets[mode.value];
-      if (!p || !confirmDanger('Trocar o roteiro, tom, critérios e ações pelos do modo escolhido?')) return;
+      if (!p || !(await confirmDanger('Trocar o roteiro, tom, critérios e ações pelos do modo escolhido?'))) return;
       objective.value = p.objective || ''; steps.value = (p.steps || []).join('\n'); tone.value = p.tone || '';
       criteria.value = (p.handoff_criteria || []).join('\n');
       actionBoxes.forEach((cb) => { cb.checked = cb.dataset.action === 'handoff' || (p.actions || []).includes(cb.dataset.action); });

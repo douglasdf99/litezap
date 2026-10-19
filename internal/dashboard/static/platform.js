@@ -1,6 +1,7 @@
-// Marco 11: instance name/tags/IP allowlist editor and the hosted pairing-link generator.
+// Marco 11: instance name/tags/IP allowlist editor (the pairing-link generator lives in
+// the connect panel, wizard.js).
 import * as api from './api.js';
-import { h, mount, toast, errMsg, modal, field, secretBox, fmtTime } from './ui.js';
+import { h, toast, errMsg, modal, field } from './ui.js';
 
 const splitList = (s) => s.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
 
@@ -40,39 +41,4 @@ export function editInstance(inst, onSaved) {
       },
     },
   ]);
-}
-
-// pairingLinkCard generates a hosted pairing link to send to the customer.
-export function pairingLinkCard(ctx) {
-  const out = h('div');
-  const ttl = h('select', null,
-    h('option', { value: '600' }, '10 minutos'),
-    h('option', { value: '300' }, '5 minutos'),
-    h('option', { value: '120' }, '2 minutos'));
-  const gen = h('button', {
-    class: 'btn primary', type: 'button',
-    onclick: async () => {
-      gen.disabled = true;
-      try {
-        const link = await api.post(`${ctx.base}/pairing-links`, { ttl_seconds: Number(ttl.value) });
-        mount(out, secretBox(link.url, `Vale até ${fmtTime(link.expires_at)} ou até o primeiro pareamento. Quem tiver o link pode parear esta instância; envie só para o cliente.`));
-      } catch (e) { toast(errMsg(e), 'error'); } finally { gen.disabled = false; }
-    },
-  }, 'Gerar link');
-  const revoke = h('button', {
-    class: 'btn danger', type: 'button',
-    onclick: async () => {
-      revoke.disabled = true;
-      try {
-        const r = await api.del(`${ctx.base}/pairing-links`);
-        mount(out);
-        toast(`Links revogados: ${r && r.revoked !== undefined ? r.revoked : 0}`);
-      } catch (e) { toast(errMsg(e), 'error'); } finally { revoke.disabled = false; }
-    },
-  }, 'Revogar links');
-  return h('div', { class: 'card pair-link' },
-    h('h3', null, 'Link de pareamento para o cliente'),
-    h('p', { class: 'small muted' }, 'Uma página hospedada com o QR e o código por telefone, sem expor o token. Pode ser embutida no seu sistema (pairing_frame_ancestors).'),
-    h('div', { class: 'row' }, ttl, gen, revoke),
-    out);
 }

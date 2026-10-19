@@ -78,7 +78,7 @@ export function chatActions(ctx, jid, { onChange, onDeleted }) {
   };
 
   const block = async (on) => {
-    if (on && !confirmDanger(`Bloquear ${phoneOf(jid)}? O contato não consegue mais te mandar mensagens nem ligar (vale também no celular).`)) return;
+    if (on && !(await confirmDanger(`Bloquear ${phoneOf(jid)}? O contato não consegue mais te mandar mensagens nem ligar (vale também no celular).`))) return;
     try {
       await api.post(`${ctx.base}/contacts/${encodeURIComponent(jid)}/${on ? 'block' : 'unblock'}`);
       toast(on ? 'Contato bloqueado' : 'Contato desbloqueado');
@@ -86,7 +86,7 @@ export function chatActions(ctx, jid, { onChange, onDeleted }) {
   };
 
   const remove = async () => {
-    if (!confirmDanger('Apagar esta conversa no WhatsApp (celular e aparelhos vinculados)? O histórico continua no LiteZap.')) return;
+    if (!(await confirmDanger('Apagar esta conversa no WhatsApp (celular e aparelhos vinculados)? O histórico continua no LiteZap.'))) return;
     try {
       await api.del(path);
       toast('Conversa apagada');

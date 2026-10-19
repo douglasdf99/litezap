@@ -14,7 +14,7 @@ function statusBadge(c) {
 }
 
 export function aiClientsView({ root, shell }) {
-  const list = h('div', { class: 'ai-list' });
+  const list = h('div', { class: 'ai-list' }, h('div', { class: 'skel skel-card' }), h('div', { class: 'skel skel-card' }));
 
   const act = async (c, action, btn) => {
     btn.disabled = true;
@@ -64,11 +64,10 @@ export function aiClientsView({ root, shell }) {
 
   load();
   mount(root, shell(h('section', null,
-    h('div', { class: 'page-head' }, h('h1', null, 'Conectar a IA')),
-    h('p', { class: 'muted' },
-      'Use o seu WhatsApp pelo Claude ou pelo Cursor (MCP). Um clique adiciona o LiteZap à configuração do programa, ',
-      'sem copiar tokens; os outros servidores configurados não são alterados e o arquivo original ganha uma cópia (.litezap.bak).'),
-    h('p', { class: 'muted small' }, 'O LiteZap precisa estar aberto para a IA usar o WhatsApp. Depois de conectar, reinicie o programa de IA.'),
+    h('div', { class: 'page-head' }, h('div', null, h('h1', null, 'Conectar a IA'),
+      h('p', { class: 'lead' }, 'Use o seu WhatsApp pelo Claude ou pelo Cursor (MCP). Um clique adiciona o LiteZap à configuração do programa, ',
+        'sem copiar tokens. Os outros servidores configurados não mudam e o arquivo original ganha uma cópia (.litezap.bak).'))),
+    h('p', { class: 'secret-note' }, 'O LiteZap precisa estar aberto para a IA usar o WhatsApp. Depois de conectar, reinicie o programa de IA.'),
     list), 'ai'));
   return () => {};
 }

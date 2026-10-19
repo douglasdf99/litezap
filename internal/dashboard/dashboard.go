@@ -41,10 +41,12 @@ type Options struct {
 // where .js is sometimes text/plain, and with nosniff the browser would refuse the
 // module scripts.
 var assetTypes = map[string]string{
-	".html": "text/html; charset=utf-8",
-	".js":   "text/javascript; charset=utf-8",
-	".css":  "text/css; charset=utf-8",
-	".svg":  "image/svg+xml",
+	".html":  "text/html; charset=utf-8",
+	".js":    "text/javascript; charset=utf-8",
+	".css":   "text/css; charset=utf-8",
+	".svg":   "image/svg+xml",
+	".png":   "image/png",
+	".woff2": "font/woff2",
 }
 
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; " +

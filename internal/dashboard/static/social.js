@@ -1,7 +1,7 @@
 // Marco 10 tabs: "Status" (stories), "Canais" (channels) and "Etiquetas" (WhatsApp
 // Business labels).
 import * as api from './api.js';
-import { h, mount, toast, errMsg, fmtTime, phoneOf, confirmDanger, field } from './ui.js';
+import { h, mount, toast, errMsg, fmtTime, phoneOf, confirmDanger, promptText, field } from './ui.js';
 
 // WhatsApp's label palette (color index 0-19), approximately as the apps show it.
 const LABEL_COLORS = ['#ff9485', '#64c4ff', '#ffd429', '#dfaef0', '#99b6c1', '#55ccb3', '#ff9dff', '#d3a91d', '#6d7cce', '#d7e752',
@@ -54,7 +54,7 @@ export function statusPanel(ctx) {
     class: 'card pad stack',
     onsubmit: async (ev) => {
       ev.preventDefault();
-      if (!confirmDanger('Publicar este status? Ele vai para todos os contatos permitidos pela privacidade do status no celular.')) return;
+      if (!(await confirmDanger('Publicar este status? Ele vai para todos os contatos permitidos pela privacidade do status no celular.'))) return;
       send.disabled = true;
       try {
         const body = { type: type.value };
@@ -98,7 +98,7 @@ export function statusPanel(ctx) {
       m.text ? h('p', { class: 'prewrap' }, m.text) : null,
       h('div', { class: 'row' }, media,
         m.from_me && !m.revoked_at && m.status !== 'pending' ? button('Apagar', async () => {
-          if (!confirmDanger('Apagar este status para todos?')) return;
+          if (!(await confirmDanger('Apagar este status para todos?'))) return;
           await api.del(`${ctx.base}/status/${encodeURIComponent(m.id)}?wait=true`);
           toast('Status apagado');
           load();
@@ -185,7 +185,7 @@ export function channelsPanel(ctx, rest) {
         const body = f ? { type: f.type.startsWith('video/') ? 'video' : 'image', media: { base64: await fileToBase64(f), mime: f.type }, caption: postText.value || undefined }
           : { type: 'text', text: postText.value };
         if (!f && !postText.value.trim()) return;
-        if (!confirmDanger('Publicar no canal? Todos os seguidores recebem.')) return;
+        if (!(await confirmDanger('Publicar no canal? Todos os seguidores recebem.'))) return;
         try {
           await api.post(c(jid, 'messages') + '?wait=true&timeout=60s', body);
           toast('Publicado');
@@ -212,7 +212,7 @@ export function channelsPanel(ctx, rest) {
         v.invite_link ? h('p', { class: 'small mono' }, v.invite_link) : null,
         h('div', { class: 'row' },
           admin ? null : following ? button('Deixar de seguir', async () => {
-            if (!confirmDanger('Deixar de seguir este canal?')) return;
+            if (!(await confirmDanger('Deixar de seguir este canal?'))) return;
             await api.post(c(jid, 'unfollow')); toast('Você deixou de seguir'); loadList(); showChannel(jid);
           }, 'btn small danger') : button('Seguir', async () => { await api.post(c(jid, 'follow')); toast('Seguindo'); loadList(); showChannel(jid); }),
           following ? button(v.muted ? 'Reativar notificações' : 'Silenciar', async () => {
@@ -305,13 +305,13 @@ export function labelsPanel(ctx) {
           },
         }, chat, h('button', { class: 'btn small', type: 'submit' }, 'Etiquetar')),
         button('Renomear', async () => {
-          const n = window.prompt('Novo nome', l.name);
+          const n = await promptText('Renomear etiqueta', 'Novo nome', l.name);
           if (!n) return;
           await api.patch(`${ctx.base}/labels/${encodeURIComponent(l.id)}`, { name: n });
           load();
         }),
         button('Apagar', async () => {
-          if (!confirmDanger(`Apagar a etiqueta "${l.name}"? Ela sai de todas as conversas, também no celular.`)) return;
+          if (!(await confirmDanger(`Apagar a etiqueta "${l.name}"? Ela sai de todas as conversas, também no celular.`))) return;
           await api.del(`${ctx.base}/labels/${encodeURIComponent(l.id)}`);
           load();
         }, 'btn small danger')));
