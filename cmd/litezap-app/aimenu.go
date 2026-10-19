@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"errors"
+	"os"
 	"time"
 
 	"fyne.io/systray"
@@ -45,6 +45,7 @@ func (a *app) aiMenu(parent *systray.MenuItem) {
 		client      desktop.AIClient
 		item, disc  *systray.MenuItem
 		last        desktop.AIStatus
+		sig         fileSig
 		initialized bool
 	}
 	acts := make(chan aiAction)
@@ -66,8 +67,16 @@ func (a *app) aiMenu(parent *systray.MenuItem) {
 			}
 		}()
 	}
-	refresh := func() {
+	// refresh re-reads a client's config only when its size or mtime changed (or force):
+	// ~/.claude.json can be large.
+	refresh := func(force bool) {
 		for _, r := range rows {
+			p, _ := a.ai.ConfigPath(r.client.ID)
+			sig := statSig(p)
+			if r.initialized && !force && sig == r.sig {
+				continue
+			}
+			r.sig = sig
 			st := a.ai.Status(r.client.ID)
 			if r.initialized && st == r.last {
 				continue
@@ -98,22 +107,36 @@ func (a *app) aiMenu(parent *systray.MenuItem) {
 			}
 		}
 	}
-	refresh()
+	refresh(true)
 	// The files can change behind our back (the user edits them, Claude Code rewrites
-	// ~/.claude.json): poll now and then.
+	// ~/.claude.json): check now and then.
 	tick := time.NewTicker(20 * time.Second)
 	defer tick.Stop()
 	for {
 		select {
 		case act := <-acts:
 			a.runAI(act)
-			refresh()
+			refresh(true)
 		case <-a.aiChanged:
-			refresh()
+			refresh(true)
 		case <-tick.C:
-			refresh()
+			refresh(false)
 		}
 	}
+}
+
+type fileSig struct {
+	exists  bool
+	size    int64
+	modTime time.Time
+}
+
+func statSig(path string) fileSig {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fileSig{}
+	}
+	return fileSig{true, fi.Size(), fi.ModTime()}
 }
 
 func (a *app) runAI(act aiAction) {
@@ -124,8 +147,6 @@ func (a *app) runAI(act aiAction) {
 	if act.connect {
 		res, err := a.ai.Connect(ctx, act.id)
 		switch {
-		case errors.Is(err, desktop.ErrExeNotInstalled):
-			msg = "Mova o LiteZap para a pasta Aplicativos, abra-o de lá e conecte de novo."
 		case err != nil:
 			msg = "Não foi possível conectar ao " + name + ":\n\n" + err.Error()
 		case !res.Changed:

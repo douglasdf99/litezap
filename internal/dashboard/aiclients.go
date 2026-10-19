@@ -68,7 +68,7 @@ func aiHandlers(mux *http.ServeMux, opt Options) {
 			apierr.Write(w, apierr.New(http.StatusConflict, "config_malformed", err.Error(), false))
 			return
 		case errors.Is(err, desktop.ErrExeNotInstalled):
-			apierr.Write(w, apierr.New(http.StatusConflict, "app_not_installed", "Mova o LiteZap para a pasta Aplicativos, abra-o de lá e conecte de novo.", false))
+			apierr.Write(w, apierr.New(http.StatusConflict, "app_not_installed", err.Error(), false))
 			return
 		case err != nil:
 			apierr.Write(w, apierr.New(http.StatusInternalServerError, "ai_client_error", err.Error(), true))

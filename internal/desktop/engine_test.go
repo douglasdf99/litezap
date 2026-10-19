@@ -29,6 +29,29 @@ func TestLocalEngine(t *testing.T) {
 	if e, _ := LocalEngine(dir); e.URL != "http://127.0.0.1:9999" {
 		t.Errorf("URL with litezap.yaml = %q", e.URL)
 	}
+	// A non-loopback listen address is refused: the token would cross the network.
+	os.WriteFile(ConfigPath(dir), []byte("listen_addr: 192.0.2.10:8787\n"), 0o600)
+	if e, err := LocalEngine(dir); err == nil {
+		t.Errorf("non-loopback accepted: %+v", e)
+	}
+}
+
+func TestLoopbackURL(t *testing.T) {
+	for addr, want := range map[string]string{
+		"127.0.0.1:8787": "http://127.0.0.1:8787",
+		":8787":          "http://127.0.0.1:8787",
+		"[::]:8787":      "http://127.0.0.1:8787",
+		"[::1]:8787":     "http://[::1]:8787",
+		"localhost:1":    "http://localhost:1",
+		"10.0.0.5:8787":  "",
+		"zap.example:80": "",
+		"nonsense":       "",
+	} {
+		got, err := LoopbackURL(addr)
+		if got != want || (want == "") != (err != nil) {
+			t.Errorf("%s: %q, %v; want %q", addr, got, err, want)
+		}
+	}
 }
 
 func TestEngineRunning(t *testing.T) {

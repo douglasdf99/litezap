@@ -98,19 +98,24 @@ com `["mcp"]`. Não há token para copiar: `litezap-app mcp` lê o endereço e o
 | Claude Code | `claude mcp add --scope user litezap -- <app> mcp` quando o `claude` é encontrado; senão, `mcpServers` de `~/.claude.json` |
 | Cursor | `~/.cursor/mcp.json` |
 
-- Os outros servidores e chaves do arquivo ficam intactos; a escrita é atômica (arquivo temporário + renomear) e um
+- Só a entrada `litezap` muda: outros servidores, ordem das chaves e formatação do resto do arquivo ficam byte a
+  byte iguais. A escrita é atômica (arquivo temporário + renomear), não acontece se o arquivo mudou no meio, e um
   link simbólico continua link.
-- Antes da primeira escrita, o original ganha uma cópia `<arquivo>.litezap.bak`.
+- Antes da primeira alteração, o original ganha uma cópia `<arquivo>.litezap.bak`, **uma vez só**: ela guarda o
+  arquivo de antes do LiteZap, e alterações seguintes não geram nova cópia.
+- No Claude Code, o `claude mcp add` só é usado quando ainda não há entrada; uma entrada antiga é corrigida no
+  arquivo (assim um `add` que falhe nunca apaga a entrada que existia).
 - JSON inválido: o LiteZap não toca no arquivo e mostra o erro.
 - O item fica marcado quando conectado; "(atualizar)" quando a entrada aponta para outro executável (app movido), e
   um clique corrige. **Desconectar** remove só a entrada `litezap`.
-- No macOS, conecte com o app na pasta Aplicativos: rodando de dentro do `.dmg` (ou da pasta temporária que o macOS
-  usa para apps baixados), o app recusa e pede para movê-lo.
+- Conecte com o app num lugar fixo (Aplicativos no macOS, uma pasta como Documentos no Windows): rodando de dentro
+  do `.dmg` ou do `.zip`, ou de uma pasta temporária, o app recusa e pede para movê-lo.
 - Depois de conectar, reinicie o cliente de IA (no Claude Code, abra uma sessão nova).
 
 **Com o app fechado**, `litezap-app mcp` continua respondendo ao cliente, mas as ferramentas devolvem
 `app_not_running` ("abra o app LiteZap"). Ele não sobe um motor próprio: um segundo motor na mesma pasta brigaria com a
-bandeja pela porta e pelas sessões do WhatsApp. Se o app nunca foi aberto (sem token), ele sai com erro.
+bandeja pela porta e pelas sessões do WhatsApp. Se o app nunca foi aberto (sem token), ele sai com erro. Ele também recusa um `listen_addr` que não seja local
+(loopback ou `0.0.0.0`), para o token admin não trafegar sem criptografia pela rede.
 
 Para usar o `litezap serve` (servidor) em vez do app, configure o [MCP](/docs/mcp/) com `LITEZAP_URL` e um token.
 

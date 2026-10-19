@@ -30,8 +30,10 @@ const ServerName = "litezap"
 var ErrMalformedConfig = errors.New("arquivo de configuração inválido (não é um JSON válido); corrija ou apague-o e tente de novo")
 
 // ErrExeNotInstalled means the app runs from a place that will not exist later (the
-// mounted .dmg, or the random folder macOS uses for apps opened from Downloads).
-var ErrExeNotInstalled = errors.New("mova o LiteZap para a pasta Aplicativos, abra-o de lá e conecte de novo")
+// mounted .dmg, the random folder macOS uses for apps opened from Downloads, a zip opened
+// without extracting, a temp folder).
+var ErrExeNotInstalled = errors.New("o LiteZap está rodando de um lugar temporário (de dentro do .dmg ou do .zip, ou de uma pasta temporária): " +
+	"mova-o para uma pasta fixa (Aplicativos no macOS, Documentos no Windows), abra-o de lá e conecte de novo")
 
 // AIClient is one entry of the "Conectar a IA" menu.
 type AIClient struct {
@@ -173,10 +175,41 @@ func (c *Connector) ConfigPath(id string) (string, error) {
 
 // ExeProblem returns ErrExeNotInstalled when Exe is in a place that goes away.
 func (c *Connector) ExeProblem() error {
-	if c.GOOS == "darwin" && (strings.Contains(c.Exe, "/AppTranslocation/") || strings.HasPrefix(c.Exe, "/Volumes/")) {
+	if temporaryExe(c.GOOS, c.Exe, c.Getenv) {
 		return ErrExeNotInstalled
 	}
 	return nil
+}
+
+func temporaryExe(goos, exe string, getenv func(string) string) bool {
+	sep := "/"
+	if goos == "windows" {
+		sep = `\`
+	}
+	lower := strings.ToLower(exe)
+	// A component like "LiteZap-windows.zip" means it runs from inside an archive.
+	for _, part := range strings.Split(lower, sep) {
+		if strings.HasSuffix(part, ".zip") || strings.HasSuffix(part, ".tar.gz") || strings.HasSuffix(part, ".dmg") {
+			return true
+		}
+	}
+	under := func(dir string) bool {
+		dir = strings.ToLower(strings.TrimRight(dir, `/\`))
+		return dir != "" && strings.HasPrefix(lower, dir+sep)
+	}
+	switch goos {
+	case "darwin":
+		return strings.Contains(exe, "/AppTranslocation/") || strings.HasPrefix(exe, "/Volumes/") ||
+			strings.HasPrefix(exe, "/private/var/folders/") || strings.HasPrefix(exe, "/var/folders/") ||
+			strings.HasPrefix(exe, "/tmp/") || strings.HasPrefix(exe, "/private/tmp/")
+	case "windows":
+		// Explorer runs an .exe opened inside a zip from %TEMP%\Temp1_<name>.zip\.
+		return under(getenv("TEMP")) || under(getenv("TMP")) ||
+			(getenv("LOCALAPPDATA") != "" && under(getenv("LOCALAPPDATA")+`\Temp`)) ||
+			strings.Contains(lower, `\appdata\local\temp\`)
+	default:
+		return strings.HasPrefix(exe, "/tmp/") || under(getenv("TMPDIR"))
+	}
 }
 
 // Statuses returns the state of every client.
@@ -254,8 +287,12 @@ func (c *Connector) entry(id string) map[string]any {
 }
 
 // Connect adds (or fixes) the LiteZap entry of client id. Other servers and keys are
-// kept; the original file is backed up before the first write; a malformed file is
-// refused with ErrMalformedConfig.
+// kept byte for byte; the original file is backed up once, before the first change; a
+// malformed file is refused with ErrMalformedConfig.
+//
+// Claude Code goes through `claude mcp add` when the CLI is found and there is no entry
+// yet (the CLI knows how to write its own file); a stale entry is fixed by editing the
+// file, so a failing add can never leave the user without the old entry.
 func (c *Connector) Connect(ctx context.Context, id string) (AIResult, error) {
 	if err := c.ExeProblem(); err != nil {
 		return AIResult{}, err
@@ -264,7 +301,11 @@ func (c *Connector) Connect(ctx context.Context, id string) (AIResult, error) {
 	if err != nil {
 		return AIResult{}, err
 	}
-	f, err := readClientConfig(p)
+	target, err := resolveTarget(p)
+	if err != nil {
+		return AIResult{Path: p}, err
+	}
+	f, err := readClientConfig(target)
 	if err != nil {
 		return AIResult{Path: p}, err
 	}
@@ -272,19 +313,19 @@ func (c *Connector) Connect(ctx context.Context, id string) (AIResult, error) {
 	if connected {
 		return AIResult{Path: p}, nil
 	}
-	if id == ClaudeCode {
+	if id == ClaudeCode && !present {
 		if cli := c.claudeCLI(); cli != "" {
-			if res, err := c.connectCLI(ctx, cli, p, present); err == nil {
-				return res, nil
+			bak, err := backupConfig(target, f)
+			if err != nil {
+				return AIResult{Path: p}, err
+			}
+			if err := c.runClaude(ctx, cli, c.addArgs()...); err == nil {
+				return AIResult{Path: p, Backup: bak, Changed: true, CLI: true}, nil
 			}
 			// A broken CLI install: fall back to editing the file.
 		}
 	}
-	return c.edit(p, func(servers map[string]json.RawMessage) bool {
-		b, _ := json.Marshal(c.entry(id))
-		servers[ServerName] = b
-		return true
-	})
+	return c.edit(p, target, c.entry(id), false)
 }
 
 // Disconnect removes the LiteZap entry of client id (nothing else).
@@ -293,7 +334,11 @@ func (c *Connector) Disconnect(ctx context.Context, id string) (AIResult, error)
 	if err != nil {
 		return AIResult{}, err
 	}
-	f, err := readClientConfig(p)
+	target, err := resolveTarget(p)
+	if err != nil {
+		return AIResult{Path: p}, err
+	}
+	f, err := readClientConfig(target)
 	if err != nil {
 		return AIResult{Path: p}, err
 	}
@@ -302,27 +347,22 @@ func (c *Connector) Disconnect(ctx context.Context, id string) (AIResult, error)
 	}
 	if id == ClaudeCode {
 		if cli := c.claudeCLI(); cli != "" {
-			if _, err := c.Run(ctx, cli, "mcp", "remove", "--scope", "user", ServerName); err == nil {
-				return AIResult{Path: p, Changed: true, CLI: true}, nil
+			bak, err := backupConfig(target, f)
+			if err != nil {
+				return AIResult{Path: p}, err
+			}
+			if err := c.runClaude(ctx, cli, "mcp", "remove", "--scope", "user", ServerName); err == nil {
+				return AIResult{Path: p, Backup: bak, Changed: true, CLI: true}, nil
 			}
 		}
 	}
-	return c.edit(p, func(servers map[string]json.RawMessage) bool {
-		if _, ok := servers[ServerName]; !ok {
-			return false
-		}
-		delete(servers, ServerName)
-		return true
-	})
+	return c.edit(p, target, nil, true)
 }
 
-func (c *Connector) connectCLI(ctx context.Context, cli, path string, present bool) (AIResult, error) {
-	if present {
-		if out, err := c.Run(ctx, cli, "mcp", "remove", "--scope", "user", ServerName); err != nil {
-			return AIResult{}, fmt.Errorf("claude mcp remove: %v: %s", err, bytes.TrimSpace(out))
-		}
-	}
-	args := []string{"mcp", "add", "--scope", "user"}
+// addArgs is `claude mcp add --scope user litezap [-e K=V ...] -- <exe> mcp`. The name
+// goes before -e: -e takes several values and would swallow it.
+func (c *Connector) addArgs() []string {
+	args := []string{"mcp", "add", "--scope", "user", ServerName}
 	keys := make([]string, 0, len(c.Env))
 	for k := range c.Env {
 		keys = append(keys, k)
@@ -331,11 +371,16 @@ func (c *Connector) connectCLI(ctx context.Context, cli, path string, present bo
 	for _, k := range keys {
 		args = append(args, "-e", k+"="+c.Env[k])
 	}
-	args = append(args, ServerName, "--", c.Exe, "mcp")
-	if out, err := c.Run(ctx, cli, args...); err != nil {
-		return AIResult{}, fmt.Errorf("claude mcp add: %v: %s", err, bytes.TrimSpace(out))
+	return append(args, "--", c.Exe, "mcp")
+}
+
+// runClaude runs the claude CLI and turns a failure into an error with its output.
+func (c *Connector) runClaude(ctx context.Context, cli string, args ...string) error {
+	out, err := c.Run(ctx, cli, args...)
+	if err != nil {
+		return fmt.Errorf("claude %s: %v: %s", strings.Join(args[:2], " "), err, bytes.TrimSpace(out))
 	}
-	return AIResult{Path: path, Changed: true, CLI: true}, nil
+	return nil
 }
 
 // claudeCLI finds the claude CLI: PATH first, then the usual install places (an app
@@ -368,28 +413,30 @@ func (c *Connector) claudeCLI() string {
 	return ""
 }
 
-// clientConfig is a parsed client config file. Values are kept as raw JSON so unknown
-// keys and other servers are written back unchanged.
+// clientConfig is a client config file as read: its bytes (edited by splicing) and the
+// parsed mcpServers (to know whether LiteZap is there).
 type clientConfig struct {
 	raw     []byte // file content as read (nil: no file)
 	mode    os.FileMode
-	root    map[string]json.RawMessage
+	modTime time.Time
+	size    int64
 	servers map[string]json.RawMessage
 }
 
 func readClientConfig(path string) (clientConfig, error) {
-	f := clientConfig{mode: 0o600, root: map[string]json.RawMessage{}, servers: map[string]json.RawMessage{}}
-	b, err := os.ReadFile(path)
+	f := clientConfig{mode: 0o600, servers: map[string]json.RawMessage{}}
+	fi, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return f, nil
 	}
 	if err != nil {
 		return f, err
 	}
-	f.raw = b
-	if fi, err := os.Stat(path); err == nil {
-		f.mode = fi.Mode().Perm()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return f, err
 	}
+	f.raw, f.mode, f.modTime, f.size = b, fi.Mode().Perm(), fi.ModTime(), fi.Size()
 	if len(bytes.TrimSpace(b)) == 0 {
 		return f, nil // an empty file is an empty config
 	}
@@ -397,7 +444,6 @@ func readClientConfig(path string) (clientConfig, error) {
 	if err := json.Unmarshal(b, &root); err != nil || root == nil {
 		return f, malformed(path, err)
 	}
-	f.root = root
 	if s, ok := root["mcpServers"]; ok && !bytes.Equal(bytes.TrimSpace(s), []byte("null")) {
 		var servers map[string]json.RawMessage
 		if err := json.Unmarshal(s, &servers); err != nil {
@@ -408,6 +454,19 @@ func readClientConfig(path string) (clientConfig, error) {
 	return f, nil
 }
 
+// unchanged reports whether path still is what f read (size, mtime and content).
+func (f clientConfig) unchanged(path string) bool {
+	fi, err := os.Stat(path)
+	if f.raw == nil {
+		return errors.Is(err, os.ErrNotExist)
+	}
+	if err != nil || fi.Size() != f.size || !fi.ModTime().Equal(f.modTime) {
+		return false
+	}
+	now, err := os.ReadFile(path)
+	return err == nil && bytes.Equal(now, f.raw)
+}
+
 func malformed(path string, err error) error {
 	if err == nil {
 		err = errors.New("o conteúdo não é um objeto JSON")
@@ -415,50 +474,44 @@ func malformed(path string, err error) error {
 	return fmt.Errorf("%s: %w (%v)", path, ErrMalformedConfig, err)
 }
 
-// edit applies change to mcpServers of path and writes the file atomically. It retries
-// when the file changed while it worked (Claude Code rewrites ~/.claude.json often).
-func (c *Connector) edit(path string, change func(map[string]json.RawMessage) bool) (AIResult, error) {
-	res := AIResult{Path: path}
-	target := path
+// resolveTarget follows a symlinked config (dotfiles) so the link stays a link.
+func resolveTarget(path string) (string, error) {
 	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		real, err := filepath.EvalSymlinks(path)
-		if err != nil {
-			return res, err
-		}
-		target = real // keep a symlinked config (dotfiles) a symlink
+		return filepath.EvalSymlinks(path)
 	}
+	return path, nil
+}
+
+func backupConfig(target string, f clientConfig) (string, error) {
+	if f.raw == nil {
+		return "", nil
+	}
+	return backupOnce(target, f.raw, f.mode)
+}
+
+// edit sets (or, with remove, deletes) mcpServers.litezap in the file and writes it
+// atomically. It retries when the file changed while it worked (Claude Code rewrites
+// ~/.claude.json often).
+func (c *Connector) edit(path, target string, entry any, remove bool) (AIResult, error) {
+	res := AIResult{Path: path}
 	for attempt := 0; ; attempt++ {
 		f, err := readClientConfig(target)
 		if err != nil {
 			return res, err
 		}
-		if !change(f.servers) {
+		out, changed, err := spliceServer(f.raw, ServerName, entry, remove)
+		if err != nil {
+			return res, malformed(target, err)
+		}
+		if !changed {
 			return res, nil
 		}
-		sb, err := marshalJSON(f.servers)
-		if err != nil {
-			return res, err
-		}
-		f.root["mcpServers"] = sb
-		out, err := marshalJSON(f.root)
-		if err != nil {
-			return res, err
-		}
-		out = append(out, '\n')
-		if f.raw != nil && res.Backup == "" {
-			bak, err := backupOnce(target, f.raw, f.mode)
-			if err != nil {
+		if res.Backup == "" {
+			if res.Backup, err = backupConfig(target, f); err != nil {
 				return res, err
 			}
-			res.Backup = bak
 		}
-		err = writeAtomic(target, out, f.mode, func() bool {
-			now, err := os.ReadFile(target)
-			if f.raw == nil {
-				return errors.Is(err, os.ErrNotExist)
-			}
-			return err == nil && bytes.Equal(now, f.raw)
-		})
+		err = writeAtomic(target, out, f.mode, func() bool { return f.unchanged(target) })
 		if errors.Is(err, errChanged) && attempt < 3 {
 			time.Sleep(50 * time.Millisecond)
 			continue
@@ -471,22 +524,11 @@ func (c *Connector) edit(path string, change func(map[string]json.RawMessage) bo
 	}
 }
 
-func marshalJSON(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	return bytes.TrimRight(buf.Bytes(), "\n"), nil
-}
-
 // BackupSuffix is appended to a client config to name the copy of the original.
 const BackupSuffix = ".litezap.bak"
 
 // backupOnce copies the original content next to path, only if no backup exists yet: the
-// first original is the one worth keeping.
+// first original is the one worth keeping (later changes are not backed up again).
 func backupOnce(path string, content []byte, mode os.FileMode) (string, error) {
 	bak := path + BackupSuffix
 	if _, err := os.Lstat(bak); err == nil {

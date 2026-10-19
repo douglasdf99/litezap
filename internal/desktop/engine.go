@@ -60,20 +60,31 @@ func LocalEngine(dir string) (Engine, error) {
 			return Engine{}, ErrNotSetUp
 		}
 	}
-	return Engine{URL: LoopbackURL(cfg.ListenAddr), Token: tok}, nil
+	u, err := LoopbackURL(cfg.ListenAddr)
+	if err != nil {
+		return Engine{}, err
+	}
+	return Engine{URL: u, Token: tok}, nil
 }
 
-// LoopbackURL turns a listen address into a URL a local client can dial (an unspecified
-// host such as 0.0.0.0 or "" becomes 127.0.0.1).
-func LoopbackURL(addr string) string {
+// LoopbackURL turns a listen address into a loopback URL a local client can dial (an
+// unspecified host such as 0.0.0.0 or "" becomes 127.0.0.1). Any other host is refused:
+// the admin token would travel in cleartext to another machine.
+func LoopbackURL(addr string) (string, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return "http://" + addr
+		return "", fmt.Errorf("listen_addr %q inválido: %w", addr, err)
 	}
-	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+	ip := net.ParseIP(host)
+	switch {
+	case host == "" || ip != nil && ip.IsUnspecified():
 		host = "127.0.0.1"
+	case strings.EqualFold(host, "localhost") || ip != nil && ip.IsLoopback():
+	default:
+		return "", fmt.Errorf("listen_addr %q não é local (loopback): o MCP do app só fala com o motor neste computador, "+
+			"para não mandar o token admin sem criptografia pela rede; use listen_addr 127.0.0.1:<porta>", addr)
 	}
-	return "http://" + net.JoinHostPort(host, port)
+	return "http://" + net.JoinHostPort(host, port), nil
 }
 
 // Running reports whether the engine answers /healthz within timeout.

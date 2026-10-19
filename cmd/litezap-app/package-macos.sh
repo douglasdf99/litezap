@@ -21,6 +21,8 @@ MIN_MACOS=12.0
 # CFBundleShortVersionString must be numbers: v0.1.0-rc.1 -> 0.1.0
 PLIST_VERSION=$(printf '%s' "$VERSION" | sed -E 's/^v//; s/[^0-9.].*$//')
 [ -n "$PLIST_VERSION" ] || PLIST_VERSION=0.0.0
+# VERSION goes into XML (the plist): escape it.
+XML_VERSION=$(printf '%s' "$VERSION" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g")
 
 if [ "${UNIVERSAL:-0}" = 1 ]; then
 	ARCHS="arm64 amd64"
@@ -63,7 +65,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$PLIST_VERSION</string>
   <key>CFBundleVersion</key><string>$PLIST_VERSION</string>
-  <key>CFBundleGetInfoString</key><string>LiteZap $VERSION</string>
+  <key>CFBundleGetInfoString</key><string>LiteZap $XML_VERSION</string>
   <key>LSMinimumSystemVersion</key><string>$MIN_MACOS</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>

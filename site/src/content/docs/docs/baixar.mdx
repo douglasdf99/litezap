@@ -98,10 +98,12 @@ abri-lo. Com o computador desligado ou dormindo, o número fica offline.
 Ele adiciona o LiteZap à configuração do programa de IA, apontando para o próprio app (`litezap-app mcp`). Nenhum token
 é copiado: o app usa o token da sua pasta de dados, que só o seu usuário lê.
 
-- Os outros servidores MCP que você já tinha ficam como estão.
-- Antes da primeira alteração, o arquivo original ganha uma cópia `.litezap.bak` ao lado.
+- Só a entrada do LiteZap muda: os outros servidores MCP e o resto do arquivo ficam exatamente como estão.
+- Antes da primeira alteração, o arquivo original ganha uma cópia `.litezap.bak` ao lado (uma vez só: ela guarda o
+  arquivo de antes do LiteZap).
 - Se o arquivo de configuração estiver com JSON inválido, o LiteZap não mexe nele e mostra o erro.
 - Quando já está conectado, o item aparece marcado; **Desconectar** remove só a entrada do LiteZap.
-- No macOS, conecte com o app já na pasta Aplicativos: de dentro do `.dmg` o caminho deixa de existir depois.
+- Conecte com o app já no lugar definitivo (Aplicativos no macOS; uma pasta extraída, como Documentos, no
+  Windows): de dentro do `.dmg` ou do `.zip` o caminho deixa de existir depois.
 
 Detalhes, arquivos e opções em [App local](/docs/app-local/) e [MCP e IA](/docs/mcp/).
