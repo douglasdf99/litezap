@@ -5,6 +5,19 @@ description: O que mudou em cada marco do LiteZap.
 
 As versões seguem os marcos do motor. Mudanças que quebram compatibilidade são marcadas com **Quebra**.
 
+## App local: download e Conectar a IA
+
+**Novo**
+
+- Downloads prontos em cada versão: `LiteZap-macos.dmg` (universal, com ícone), `LiteZap-windows.zip` e
+  `LiteZap-linux-{amd64,arm64}.tar.gz`. Veja [Baixar o app](/docs/baixar/).
+- **Conectar a IA** no menu da bandeja e no painel: um clique configura Claude Desktop, Claude Code ou Cursor
+  (`mcpServers.litezap`), com cópia `.litezap.bak` do original, escrita atômica e **Desconectar**.
+- `litezap-app mcp`: servidor MCP stdio que usa o motor do app aberto, sem copiar token; com o app fechado, as
+  ferramentas respondem `app_not_running`.
+
+**Ainda não**: assinatura de código e notarização, instaladores `.msi`/`.deb`, atualização automática.
+
 ## Marco 11: plataforma e parceiros
 
 **Novo**

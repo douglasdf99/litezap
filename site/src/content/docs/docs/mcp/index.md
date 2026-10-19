@@ -9,6 +9,25 @@ O [Model Context Protocol](https://modelcontextprotocol.io) (MCP) permite que as
 externas. Com o MCP do LiteZap, um assistente lê suas conversas e envia mensagens pelo seu número, com as mesmas
 regras de ritmo, rampa e janela da API. São [13 ferramentas](/docs/mcp/ferramentas/).
 
+## Pelo app, em um clique
+
+Com o [app do LiteZap](/docs/baixar/) aberto, use **Conectar a IA > Claude Desktop** (ou Claude Code, ou Cursor) no
+ícone da barra de menus/bandeja e reinicie o cliente. O app grava a entrada abaixo, sem token: `litezap-app mcp` lê o
+endereço e o token da pasta de dados do app. Detalhes em [App local](/docs/app-local/#conectar-a-ia-claude-desktop-claude-code-cursor).
+
+```json
+{
+  "mcpServers": {
+    "litezap": {
+      "command": "/Applications/LiteZap.app/Contents/MacOS/litezap-app",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+O resto desta página é para o `litezap serve` (servidor ou terminal).
+
 ## Duas formas de conectar
 
 | Forma | Como | Para |

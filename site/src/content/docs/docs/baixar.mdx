@@ -1,0 +1,107 @@
+---
+title: Baixar o app
+description: Baixe o LiteZap para macOS, Windows ou Linux, conecte o seu WhatsApp e use pelo Claude em um clique, sem terminal.
+---
+
+import { Steps, Aside, Tabs, TabItem, LinkButton } from '@astrojs/starlight/components';
+
+O app do LiteZap roda no seu computador: um ícone na barra de menus (ou na bandeja), um painel no navegador e o seu
+WhatsApp disponível para o Claude. Não precisa de terminal nem de conta em nuvem.
+
+<LinkButton href="https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-macos.dmg" icon="download">
+	Baixar para macOS
+</LinkButton>
+<LinkButton href="https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-windows.zip" variant="secondary" icon="download">
+	Baixar para Windows
+</LinkButton>
+<LinkButton href="https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-linux-amd64.tar.gz" variant="minimal" icon="download">
+	Linux (amd64)
+</LinkButton>
+
+| Sistema | Arquivo |
+|---|---|
+| macOS 12 ou mais novo (Apple Silicon e Intel) | [`LiteZap-macos.dmg`](https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-macos.dmg) |
+| Windows 10/11, 64 bits | [`LiteZap-windows.zip`](https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-windows.zip) |
+| Linux amd64 | [`LiteZap-linux-amd64.tar.gz`](https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-linux-amd64.tar.gz) |
+| Linux arm64 | [`LiteZap-linux-arm64.tar.gz`](https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-linux-arm64.tar.gz) |
+
+Cada arquivo tem um `.sha256` ao lado na [página da versão](https://github.com/douglasdf99/litezap/releases/latest).
+
+## Instalar e abrir pela primeira vez
+
+O app ainda não é assinado pela Apple nem pela Microsoft, então o sistema avisa na primeira vez. Isso é esperado.
+
+<Tabs>
+<TabItem label="macOS">
+
+<Steps>
+
+1. Abra o `LiteZap-macos.dmg` e arraste o **LiteZap** para a pasta **Aplicativos**.
+2. Na pasta Aplicativos, clique no LiteZap com o **botão direito** (ou Control + clique) e escolha **Abrir**. No aviso,
+   clique em **Abrir** de novo.
+3. Se o macOS só oferecer "Mover para o Lixo": abra **Ajustes do Sistema > Privacidade e Segurança**, role até o
+   aviso sobre o LiteZap e clique em **Abrir Mesmo Assim**.
+
+</Steps>
+
+Das próximas vezes, abra normalmente. O ícone do LiteZap aparece na barra de menus, no alto da tela (não no Dock).
+
+</TabItem>
+<TabItem label="Windows">
+
+<Steps>
+
+1. Clique com o botão direito no `LiteZap-windows.zip` > **Extrair tudo** e guarde a pasta onde quiser (por exemplo
+   em Documentos). Não rode de dentro do zip.
+2. Abra o `LiteZap.exe`. Se aparecer "O Windows protegeu o computador" (SmartScreen), clique em
+   **Mais informações** e depois em **Executar assim mesmo**.
+
+</Steps>
+
+O ícone do LiteZap aparece na bandeja, perto do relógio (talvez escondido na setinha `^`).
+
+</TabItem>
+<TabItem label="Linux">
+
+```bash
+tar xzf LiteZap-linux-amd64.tar.gz
+./LiteZap/litezap-app
+```
+
+A bandeja usa StatusNotifierItem (DBus). No GNOME, instale a extensão **AppIndicator**.
+
+</TabItem>
+</Tabs>
+
+## Do download à primeira mensagem pelo Claude
+
+<Steps>
+
+1. **Abra o app.** O painel abre no navegador, já logado.
+2. **Conecte o seu WhatsApp.** No painel, crie uma instância (ex.: "pessoal"), clique em **Parear** e escaneie o QR
+   com o celular: WhatsApp > **Aparelhos conectados** > **Conectar um aparelho**.
+3. **Conecte a IA.** No ícone do LiteZap, escolha **Conectar a IA > Claude Desktop** (ou a aba **Conectar a IA** no
+   painel). Também há Claude Code e Cursor.
+4. **Reinicie o Claude Desktop** (feche pelo menu, não só a janela) para ele carregar as ferramentas do LiteZap.
+5. **Peça ao Claude:** "manda um oi pro fulano". Ele procura o contato, confirma e envia pelo seu número, respeitando
+   o ritmo seguro do LiteZap.
+
+</Steps>
+
+<Aside type="tip" title="O LiteZap precisa estar aberto">
+O Claude conversa com o app que está rodando. Se o LiteZap estiver fechado, a ferramenta responde pedindo para
+abri-lo. Com o computador desligado ou dormindo, o número fica offline.
+</Aside>
+
+## O que o "Conectar a IA" faz
+
+Ele adiciona o LiteZap à configuração do programa de IA, apontando para o próprio app (`litezap-app mcp`). Nenhum token
+é copiado: o app usa o token da sua pasta de dados, que só o seu usuário lê.
+
+- Os outros servidores MCP que você já tinha ficam como estão.
+- Antes da primeira alteração, o arquivo original ganha uma cópia `.litezap.bak` ao lado.
+- Se o arquivo de configuração estiver com JSON inválido, o LiteZap não mexe nele e mostra o erro.
+- Quando já está conectado, o item aparece marcado; **Desconectar** remove só a entrada do LiteZap.
+- No macOS, conecte com o app já na pasta Aplicativos: de dentro do `.dmg` o caminho deixa de existir depois.
+
+Detalhes, arquivos e opções em [App local](/docs/app-local/) e [MCP e IA](/docs/mcp/).

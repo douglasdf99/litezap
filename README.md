@@ -14,7 +14,7 @@ Licença: Apache-2.0. Roda no seu PC, no seu servidor ou na nuvem gerenciada do 
 
 ## Instalar
 
-Binários para Linux e macOS (amd64/arm64) e Windows (amd64). Só o `litezap`; o [app de bandeja](#app-de-bandeja-litezap-app) por enquanto se compila a partir do código.
+Binários para Linux e macOS (amd64/arm64) e Windows (amd64). Não usa terminal? [Baixe o app](#baixar-o-app).
 
 **Script** (Linux e macOS; detecta SO e arquitetura, confere o sha256 com `checksums.txt` e instala em `~/.local/bin` se estiver no `PATH`, senão em `/usr/local/bin`, pedindo `sudo` só se precisar):
 
@@ -612,6 +612,7 @@ O LiteZap expõe as mesmas operações como ferramentas do [Model Context Protoc
 
 - **HTTP** (streamable HTTP) em `http://<listen_addr>/mcp`, no próprio `litezap serve`, com o mesmo `Authorization: Bearer <token>` da API.
 - **stdio**: `litezap mcp`, uma ponte para clientes que iniciam um processo local (Claude Desktop, Claude Code). Ela não sobe supervisor: conversa via REST com um `litezap serve` já rodando, configurada por `LITEZAP_URL` (padrão `http://127.0.0.1:8787`) e `LITEZAP_TOKEN` (obrigatório).
+- **App de bandeja**: `litezap-app mcp` faz o mesmo sem variáveis (lê endereço e token da pasta do app) e o menu **Conectar a IA** configura o cliente em um clique; veja [App de bandeja](#app-de-bandeja-litezap-app).
 
 ### Ferramentas
 
@@ -857,7 +858,19 @@ Num servidor exposto, use HTTPS (proxy reverso) antes de abrir o painel pela int
 
 Para quem não quer terminal: um executável que sobe o motor no próprio processo, põe o ícone do LiteZap na bandeja/barra de menus e abre o painel já logado.
 
-- Menu: estado (`N de M conectada(s)`), **Abrir painel**, **Abrir pasta de dados**, **Ver log**, **Sair** (encerra as instâncias com calma antes de sair).
+#### Baixar o app
+
+| Sistema | Download | Primeira abertura |
+|---|---|---|
+| macOS 12+ (Apple Silicon e Intel) | [LiteZap-macos.dmg](https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-macos.dmg) | Arraste para Aplicativos. Sem assinatura da Apple: botão direito no app > **Abrir** > **Abrir** (ou Ajustes do Sistema > Privacidade e Segurança > **Abrir Mesmo Assim**) |
+| Windows 10/11 (64 bits) | [LiteZap-windows.zip](https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-windows.zip) | Extraia e abra `LiteZap.exe`. No aviso do SmartScreen: **Mais informações** > **Executar assim mesmo** |
+| Linux (amd64/arm64) | [LiteZap-linux-amd64.tar.gz](https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-linux-amd64.tar.gz), [arm64](https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-linux-arm64.tar.gz) | `tar xzf` e rode `LiteZap/litezap-app`; no GNOME, a extensão AppIndicator |
+
+Cada arquivo tem um `.sha256` ao lado na release. Depois: escaneie o QR no painel e use **Conectar a IA** (abaixo).
+
+- Menu: estado (`N de M conectada(s)`), **Abrir painel**, **Abrir pasta de dados**, **Ver log**, **Conectar a IA** (Claude Desktop, Claude Code, Cursor), **Sair** (encerra as instâncias com calma antes de sair).
+- **Conectar a IA** (menu e aba do painel): um clique grava a entrada `mcpServers.litezap` na configuração do cliente apontando para o próprio executável do app com `["mcp"]`; não há token para copiar. Arquivos: Claude Desktop em `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS), `%APPDATA%\Claude\claude_desktop_config.json` (Windows) ou `~/.config/Claude/claude_desktop_config.json` (Linux); Claude Code via `claude mcp add --scope user` quando o `claude` é encontrado, senão `~/.claude.json`; Cursor em `~/.cursor/mcp.json`. Os outros servidores e chaves ficam intactos, a escrita é atômica, o original ganha uma cópia `<arquivo>.litezap.bak` antes da primeira escrita e um JSON inválido não é tocado (o app mostra o erro). Mostra "conectado", corrige uma entrada antiga (app movido) e oferece **Desconectar** (remove só a entrada `litezap`). No macOS, conecte com o app já na pasta Aplicativos (de dentro do `.dmg` o caminho deixa de existir). Depois, reinicie o cliente de IA.
+- **`litezap-app mcp`**: servidor MCP stdio que conversa com o motor do app aberto, com o token admin lido da pasta de dados (arquivo só do usuário). Ele não sobe um motor próprio (brigaria pela porta e pelas sessões com a bandeja): com o app fechado, as ferramentas respondem `app_not_running` ("abra o app LiteZap"); se o app nunca foi aberto, sai com erro.
 - Pasta de dados: `~/Library/Application Support/LiteZap` (macOS), `%APPDATA%\LiteZap` (Windows), `$XDG_DATA_HOME/litezap` ou `~/.local/share/litezap` (Linux). Dentro dela: `data/` (sessões, banco, `admin_token`), `litezap.log` e, se quiser, um `litezap.yaml` (mesmas chaves do servidor; `LITEZAP_*` continuam valendo). `LITEZAP_APP_DIR` troca a pasta (útil para testes).
 - API e painel em `127.0.0.1:8787` (só a sua máquina). Se a porta estiver ocupada (outro LiteZap aberto?), o menu mostra o erro.
 - **Login em um clique**: cada "Abrir painel" cria um código de uso único (vale 1 minuto; usar um descarta os outros pendentes) e abre `http://127.0.0.1:8787/app/#code=...`. O código vai no fragmento (não chega a logs nem a `Referer`), o painel o apaga da barra de endereço e o troca pelo token admin em `POST /app/api/session`. Esse endpoint só existe no app de bandeja com o servidor em loopback e só aceita conexões de loopback com `Host` de loopback (contra DNS rebinding), `Origin` igual ao host e `Content-Type: application/json`. `litezap serve` puro não aceita códigos (login colando o token). Limite conhecido: num computador compartilhado, outro usuário local que veja a linha de comando do navegador no instante da abertura poderia tentar usar o código antes; ele vale uma vez só e por 1 minuto (e o painel legítimo mostraria a falha).
@@ -867,11 +880,11 @@ Compilar (o `litezap` principal continua sem CGO; só o app de bandeja usa [fyne
 
 | SO | Comando | Observações |
 |---|---|---|
-| macOS | `go build -o litezap-app ./cmd/litezap-app` ou `cmd/litezap-app/package-macos.sh` (gera `dist/LiteZap.app`, só na barra de menus) | precisa de CGO e das Xcode Command Line Tools (`xcode-select --install`); sem outras dependências |
+| macOS | `go build -o litezap-app ./cmd/litezap-app` ou `cmd/litezap-app/package-macos.sh` (gera `dist/LiteZap.app` com ícone, só na barra de menus; `UNIVERSAL=1` junta arm64 e amd64, `DMG=1` gera `dist/LiteZap-macos.dmg`) | precisa de CGO e das Xcode Command Line Tools (`xcode-select --install`); sem outras dependências |
 | Windows | `GOOS=windows go build -ldflags "-H windowsgui" -o litezap-app.exe ./cmd/litezap-app` | sem CGO; `-H windowsgui` evita a janela de console. Não testado no Windows ainda |
 | Linux | `CGO_ENABLED=0 go build -o litezap-app ./cmd/litezap-app` | sem CGO; a bandeja usa DBus (StatusNotifierItem): GNOME precisa da extensão AppIndicator |
 
-Ainda não (em breve): instaladores (`.dmg`, `.msi`, `.deb`), assinatura de código e notarização (no macOS, abra com botão direito > Abrir na primeira vez), ícone do `.app`, auto-update, iniciar com o sistema, túnel opcional, envio de mídia pelo painel e login no painel com token de instância.
+Ainda não (em breve): instaladores `.msi` e `.deb`, assinatura de código e notarização (no macOS, abra com botão direito > Abrir na primeira vez), auto-update, iniciar com o sistema, túnel opcional, envio de mídia pelo painel e login no painel com token de instância.
 
 ## Hospedagem gerenciada (operador)
 

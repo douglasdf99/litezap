@@ -5,6 +5,9 @@ description: LiteZap no seu computador, com painel web e ícone na bandeja, usan
 
 <span class="lz-badge lz-badge--ok">Disponível · v1</span>
 
+**Quer só usar?** [Baixe o app](/docs/baixar/) para macOS, Windows ou Linux: abre com dois cliques e conecta ao
+Claude em um.
+
 O app local roda o mesmo motor no seu computador. A API e o painel ficam só em `127.0.0.1`, as sessões ficam numa
 pasta sua e o WhatsApp vê a conexão da sua própria internet, como um WhatsApp Web comum.
 
@@ -44,8 +47,8 @@ por HTTPS: o token admin trafega em cada requisição.
 
 Um executável que sobe o motor no próprio processo, põe o ícone do LiteZap na bandeja e abre o painel já logado.
 
-- **Menu**: estado (`N de M conectada(s)`), Abrir painel, Abrir pasta de dados, Ver log, Sair (encerra as instâncias
-  com calma antes de sair).
+- **Menu**: estado (`N de M conectada(s)`), Abrir painel, Abrir pasta de dados, Ver log, Conectar a IA, Sair
+  (encerra as instâncias com calma antes de sair).
 - **Login em um clique**: cada "Abrir painel" gera um código de uso único que vale 1 minuto e abre
   `http://127.0.0.1:8787/app/#code=...`. O código vai no fragmento da URL (não chega a logs), o painel o apaga da barra
   de endereço e o troca pelo token admin. Essa troca só existe no app de bandeja, só em loopback e com proteção contra
@@ -64,22 +67,52 @@ Um executável que sobe o motor no próprio processo, põe o ícone do LiteZap n
 Dentro dela: `data/` (sessões, banco, `admin_token`), `litezap.log` e, se quiser, um `litezap.yaml` com as mesmas
 chaves do servidor (variáveis `LITEZAP_*` continuam valendo). `LITEZAP_APP_DIR` troca a pasta.
 
+### Baixar
+
+Cada versão publica o app pronto: [`LiteZap-macos.dmg`](https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-macos.dmg)
+(universal, macOS 12+), [`LiteZap-windows.zip`](https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-windows.zip)
+e `LiteZap-linux-{amd64,arm64}.tar.gz`. Instalação e primeira abertura (app sem assinatura) em [Baixar o app](/docs/baixar/).
+
 ### Compilar e rodar
 
-Ainda não há instaladores: compile a partir do código (Go na versão do `go.mod`).
+Para compilar a partir do código (Go na versão do `go.mod`):
 
 | Sistema | Comando | Observações |
 |---|---|---|
-| macOS | `go build -o litezap-app ./cmd/litezap-app` ou `cmd/litezap-app/package-macos.sh` (gera `dist/LiteZap.app`, só na barra de menus) | Precisa de CGO e das Xcode Command Line Tools (`xcode-select --install`). Sem assinatura: na primeira vez, botão direito > Abrir. |
+| macOS | `go build -o litezap-app ./cmd/litezap-app` ou `cmd/litezap-app/package-macos.sh` (gera `dist/LiteZap.app`, só na barra de menus; `UNIVERSAL=1` junta arm64 e amd64, `DMG=1` gera o `.dmg`) | Precisa de CGO e das Xcode Command Line Tools (`xcode-select --install`). Sem assinatura: na primeira vez, botão direito > Abrir. |
 | Windows | `GOOS=windows go build -ldflags "-H windowsgui" -o litezap-app.exe ./cmd/litezap-app` | Sem CGO; `-H windowsgui` evita a janela de console. **Não testado no Windows ainda.** |
 | Linux | `CGO_ENABLED=0 go build -o litezap-app ./cmd/litezap-app` | Sem CGO. A bandeja usa DBus (StatusNotifierItem); no GNOME, instale a extensão AppIndicator. |
 
 O `litezap` principal continua sem CGO; só o app de bandeja usa a biblioteca de bandeja.
 
-## Usar com IA no mesmo computador
+## Conectar a IA (Claude Desktop, Claude Code, Cursor)
 
-Com o app aberto, conecte o Claude Desktop ou o Claude Code pelo [MCP](/docs/mcp/) apontando para
-`http://127.0.0.1:8787` e o token de uma instância (criada no painel).
+No menu do ícone, **Conectar a IA** tem um item por cliente; o painel tem a mesma coisa na aba **Conectar a IA**. Um
+clique grava, na configuração do cliente, a entrada `mcpServers.litezap` apontando para o próprio executável do app
+com `["mcp"]`. Não há token para copiar: `litezap-app mcp` lê o endereço e o token admin da pasta de dados (arquivo
+`0600`, só do seu usuário).
+
+| Cliente | Onde grava |
+|---|---|
+| Claude Desktop | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`; Windows `%APPDATA%\Claude\claude_desktop_config.json`; Linux `~/.config/Claude/claude_desktop_config.json` |
+| Claude Code | `claude mcp add --scope user litezap -- <app> mcp` quando o `claude` é encontrado; senão, `mcpServers` de `~/.claude.json` |
+| Cursor | `~/.cursor/mcp.json` |
+
+- Os outros servidores e chaves do arquivo ficam intactos; a escrita é atômica (arquivo temporário + renomear) e um
+  link simbólico continua link.
+- Antes da primeira escrita, o original ganha uma cópia `<arquivo>.litezap.bak`.
+- JSON inválido: o LiteZap não toca no arquivo e mostra o erro.
+- O item fica marcado quando conectado; "(atualizar)" quando a entrada aponta para outro executável (app movido), e
+  um clique corrige. **Desconectar** remove só a entrada `litezap`.
+- No macOS, conecte com o app na pasta Aplicativos: rodando de dentro do `.dmg` (ou da pasta temporária que o macOS
+  usa para apps baixados), o app recusa e pede para movê-lo.
+- Depois de conectar, reinicie o cliente de IA (no Claude Code, abra uma sessão nova).
+
+**Com o app fechado**, `litezap-app mcp` continua respondendo ao cliente, mas as ferramentas devolvem
+`app_not_running` ("abra o app LiteZap"). Ele não sobe um motor próprio: um segundo motor na mesma pasta brigaria com a
+bandeja pela porta e pelas sessões do WhatsApp. Se o app nunca foi aberto (sem token), ele sai com erro.
+
+Para usar o `litezap serve` (servidor) em vez do app, configure o [MCP](/docs/mcp/) com `LITEZAP_URL` e um token.
 
 ## Cuidados
 
@@ -92,7 +125,7 @@ Com o app aberto, conecte o Claude Desktop ou o Claude Code pelo [MCP](/docs/mcp
 
 <span class="lz-badge lz-badge--soon">Em breve</span>
 
-- Instaladores (`.dmg`, `.msi`, `.deb`) e ícone do `.app`.
+- Instaladores `.msi` e `.deb`.
 - Assinatura de código e notarização (macOS) para abrir sem aviso.
 - Atualização automática e iniciar com o sistema.
 - Túnel seguro opcional para receber chamadas de sistemas na nuvem.

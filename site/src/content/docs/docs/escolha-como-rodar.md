@@ -9,7 +9,7 @@ gerenciada; a API, os eventos e as garantias são os mesmos. A escolha é sobre 
 
 | | No seu PC | No seu servidor | Nuvem LiteZap |
 |---|---|---|---|
-| Disponível | <span class="lz-badge lz-badge--ok">Hoje</span> (app de bandeja e painel) · instaladores <span class="lz-badge lz-badge--soon">Em breve</span> | <span class="lz-badge lz-badge--ok">Hoje</span> | <span class="lz-badge lz-badge--soon">Em breve</span> |
+| Disponível | <span class="lz-badge lz-badge--ok">Hoje</span> (app de bandeja e painel, [download](/docs/baixar/)) · assinatura de código <span class="lz-badge lz-badge--soon">Em breve</span> | <span class="lz-badge lz-badge--ok">Hoje</span> | <span class="lz-badge lz-badge--soon">Em breve</span> |
 | Quem opera | Você, na sua máquina | Você, no seu VPS | O LiteZap |
 | IP de saída | O da sua internet (residencial) | O do servidor, ou um proxy por número | Isolado por cliente, gerenciado |
 | Acesso à API | Só `localhost` | Pela internet, com TLS | Pela internet, com TLS |

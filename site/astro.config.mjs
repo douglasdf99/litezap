@@ -80,6 +80,7 @@ export default defineConfig({
 						{ label: 'Introdução', link: '/docs/' },
 						'docs/quickstart',
 						'docs/escolha-como-rodar',
+						{ slug: 'docs/baixar', badge: { text: 'Novo', variant: 'success' } },
 						'docs/app-local',
 						'docs/primeiro-envio',
 						'docs/migrar-da-z-api',

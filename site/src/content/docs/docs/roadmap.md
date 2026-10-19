@@ -23,7 +23,7 @@ prometidas; a ordem é.
 | M9 | Chats, contatos, perfil, privacidade e conta | <span class="lz-badge lz-badge--soon">Planejado</span> |
 | M10 | Status, canais e Business | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | M11 | Plataforma e parceiros | <span class="lz-badge lz-badge--ok">Entregue</span> |
-| App local v2 | Instaladores, assinatura de código, atualização automática, iniciar com o sistema, túnel opcional | <span class="lz-badge lz-badge--soon">Planejado</span> |
+| App local v2 | Instaladores `.msi`/`.deb`, assinatura de código, atualização automática, iniciar com o sistema, túnel opcional | <span class="lz-badge lz-badge--soon">Planejado</span> |
 | Nuvem | Projeto pré-instalado por cliente, IPs gerenciados, backups e upgrades | <span class="lz-badge lz-badge--soon">Planejado</span> |
 
 Status da nuvem (uptime, incidentes): a página pública de status será publicada junto com a nuvem LiteZap.
