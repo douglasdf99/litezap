@@ -75,7 +75,11 @@ func aiHandlers(mux *http.ServeMux, opt Options) {
 				writeAIError(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"result": res, "message": desktop.ClientName(id) + " desconectado do LiteZap."})
+			msg := desktop.ClientName(id) + " desconectado do LiteZap."
+			if res.Hint != "" {
+				msg += " " + res.Hint
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"result": res, "message": msg})
 			return
 		}
 		res, err := opt.AIClients.Connect(ctx, id)

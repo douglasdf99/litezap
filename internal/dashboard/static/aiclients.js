@@ -28,9 +28,13 @@ export function aiClientsView({ root, shell }) {
         h('p', null, h('b', null, 'O Claude Desktop vai mostrar a instalação da extensão LiteZap: clique em Instalar.')),
         h('p', { class: 'muted' }, 'Se nada aparecer, abra o Claude Desktop, vá em Configurações > Extensões e arraste para lá o arquivo:'),
         h('p', { class: 'small' }, h('code', null, r.path || '')),
-        c.present
-          ? h('p', { class: 'small muted' }, 'Você também configurou o LiteZap no arquivo de configuração do Claude. Depois de instalar a extensão, ',
-            'clique em Desconectar aqui para não ver as ferramentas em dobro.')
+        r.manual_removed
+          ? h('p', { class: 'small' }, 'A configuração manual do LiteZap (arquivo de configuração do Claude) foi removida, para você não ver as ferramentas em dobro.',
+            r.hint ? h('b', null, ' ' + r.hint) : null)
+          : null,
+        r.manual_error
+          ? h('p', { class: 'small error' }, 'Não foi possível remover a configuração manual do LiteZap (', r.manual_error,
+            '): clique em Desconectar aqui para não ver as ferramentas em dobro.')
           : null,
         h('p', { class: 'muted' }, 'Depois, peça por exemplo: "liste minhas conversas do WhatsApp" ou "manda um oi pro Fulano".')));
     } catch (e) {

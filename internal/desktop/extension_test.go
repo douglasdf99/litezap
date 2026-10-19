@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/douglasdf99/litezap/internal/mcpb"
@@ -70,6 +71,55 @@ func TestInstallExtension(t *testing.T) {
 	c.Exe = "/Volumes/LiteZap/LiteZap.app/Contents/MacOS/litezap-app"
 	if _, err := c.InstallExtension(); !errors.Is(err, ErrExeNotInstalled) {
 		t.Errorf("app inside the dmg: %v", err)
+	}
+}
+
+func TestInstallExtensionRemovesManualEntry(t *testing.T) {
+	f := &fakeClaude{}
+	c := guardConnector(t, f)
+	c.CacheDir = t.TempDir()
+	c.Open = func(string) error { return nil }
+	var buf bytes.Buffer
+	if err := mcpb.Pack(&buf, mcpb.NewManifest("v1.2.3", []string{"darwin"}, nil),
+		[]mcpb.File{{Name: mcpb.ShimPath, Data: []byte("shim"), Exec: true}}); err != nil {
+		t.Fatal(err)
+	}
+	c.Extension = filepath.Join(t.TempDir(), mcpb.FileName)
+	if err := os.WriteFile(c.Extension, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// No manual entry: nothing removed, no guard.
+	res, err := c.InstallExtension()
+	if err != nil || res.ManualRemoved || res.ManualError != "" {
+		t.Fatalf("no entry: %+v, %v", res, err)
+	}
+
+	// Manual entry and Claude open: removed now, and again after Claude writes it back.
+	restoreEntry(t, c)
+	f.open.Store(true)
+	res, err = c.InstallExtension()
+	if err != nil || !res.ManualRemoved || !res.Running || !strings.Contains(res.Hint, "concluir") {
+		t.Fatalf("install: %+v, %v", res, err)
+	}
+	if c.Status(ClaudeDesktop).Present {
+		t.Fatal("manual entry not removed")
+	}
+	restoreEntry(t, c)
+	f.open.Store(false)
+	eventually(t, "re-remove", func() bool { return !c.Status(ClaudeDesktop).Present })
+	f.open.Store(true)
+	waitGuard(t, c)
+	if c.Status(ClaudeDesktop).Present || f.notifications() != 1 {
+		t.Errorf("present %v, %d notifications", c.Status(ClaudeDesktop).Present, f.notifications())
+	}
+
+	// A malformed config is not touched (Status reports the error): the install still succeeds.
+	p, _ := c.ConfigPath(ClaudeDesktop)
+	writeFile(t, p, `{"mcpServers":{"litezap":{}}`)
+	f.open.Store(false)
+	if res, err = c.InstallExtension(); err != nil || res.ManualRemoved {
+		t.Errorf("malformed: %+v, %v", res, err)
 	}
 }
 

@@ -169,17 +169,140 @@ func TestGuardStoppedByDisconnect(t *testing.T) {
 	f := &fakeClaude{}
 	f.open.Store(true)
 	c := guardConnector(t, f)
+	c.GuardPoll = 200 * time.Millisecond // the guard must not see the quit before Disconnect
+	if _, err := c.Connect(context.Background(), ClaudeDesktop); err != nil {
+		t.Fatal(err)
+	}
+	f.open.Store(false)
+	res, err := c.Disconnect(context.Background(), ClaudeDesktop)
+	if err != nil || !res.Changed || res.Running || res.Hint != "" {
+		t.Fatalf("disconnect: %+v, %v", res, err)
+	}
+	waitGuard(t, c)
+	time.Sleep(450 * time.Millisecond)
+	if c.Status(ClaudeDesktop).Present || c.RestartNeeded(ClaudeDesktop) {
+		t.Error("entry came back after Disconnect")
+	}
+}
+
+// restoreEntry is Claude Desktop writing back an in-memory config that still has LiteZap.
+func restoreEntry(t *testing.T, c *Connector) {
+	t.Helper()
+	p, _ := c.ConfigPath(ClaudeDesktop)
+	writeFile(t, p, `{"mcpServers":{"other":{"command":"x"},"litezap":{"command":"`+c.Exe+`","args":["mcp"]}},"theme":"dark"}`)
+}
+
+func TestDisconnectGuardRemovesAfterClaudeQuits(t *testing.T) {
+	f := &fakeClaude{}
+	c := guardConnector(t, f)
+	restoreEntry(t, c)
+	f.open.Store(true)
+	res, err := c.Disconnect(context.Background(), ClaudeDesktop)
+	want := "O Claude está aberto: feche com Cmd+Q e abra de novo para concluir"
+	if err != nil || !res.Changed || !res.Running || !strings.Contains(res.Hint, want) {
+		t.Fatalf("disconnect: %+v, %v", res, err)
+	}
+	if c.Status(ClaudeDesktop).Present {
+		t.Fatal("entry not removed right away")
+	}
+
+	// While Claude is open the guard never touches the file, even when the entry returns.
+	restoreEntry(t, c)
+	time.Sleep(40 * time.Millisecond)
+	if !c.Status(ClaudeDesktop).Present {
+		t.Fatal("entry removed while Claude was still open")
+	}
+
+	// Claude quits (having written the entry back): it is removed again, once.
+	f.open.Store(false)
+	eventually(t, "re-remove", func() bool { return !c.Status(ClaudeDesktop).Present })
+	p, _ := c.ConfigPath(ClaudeDesktop)
+	m := readJSON(t, p)
+	if m["theme"] != "dark" || m["mcpServers"].(map[string]any)["other"] == nil {
+		t.Errorf("other content lost: %v", m)
+	}
+	eventually(t, "notification", func() bool { return f.notifications() == 1 })
+	f.mu.Lock()
+	note := f.notes[0]
+	f.mu.Unlock()
+	if note != ReremovedMessage {
+		t.Errorf("notification %q", note)
+	}
+
+	f.open.Store(true)
+	waitGuard(t, c)
+	if c.Status(ClaudeDesktop).Present || f.notifications() != 1 {
+		t.Errorf("after reopen: present %v, %d notifications", c.Status(ClaudeDesktop).Present, f.notifications())
+	}
+}
+
+func TestDisconnectGuardAttemptsAreLimited(t *testing.T) {
+	f := &fakeClaude{}
+	c := guardConnector(t, f)
+	c.GuardAttempts = 2
+	c.GuardAfterQuit = time.Second
+	restoreEntry(t, c)
+	f.open.Store(true)
+	if _, err := c.Disconnect(context.Background(), ClaudeDesktop); err != nil {
+		t.Fatal(err)
+	}
+	f.open.Store(false)
+	for i := 0; i < 3; i++ {
+		restoreEntry(t, c)
+		if i < 2 {
+			eventually(t, "re-remove", func() bool { return !c.Status(ClaudeDesktop).Present })
+		}
+	}
+	waitGuard(t, c)
+	if n := f.notifications(); n != 2 {
+		t.Errorf("removed %d times, want 2", n)
+	}
+	if !c.Status(ClaudeDesktop).Present {
+		t.Error("removed past the attempt limit")
+	}
+}
+
+func TestNewActionReplacesGuard(t *testing.T) {
+	f := &fakeClaude{}
+	f.open.Store(true)
+	c := guardConnector(t, f)
+
+	// Connect then disconnect while open: the disconnect guard replaces the connect one,
+	// so the entry Claude writes back on quit is removed (not kept or re-applied).
 	if _, err := c.Connect(context.Background(), ClaudeDesktop); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.Disconnect(context.Background(), ClaudeDesktop); err != nil {
 		t.Fatal(err)
 	}
-	waitGuard(t, c)
+	c.mu.Lock()
+	n := len(c.guards)
+	c.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("%d guards running, want 1", n)
+	}
+	restoreEntry(t, c)
 	f.open.Store(false)
+	eventually(t, "re-remove", func() bool { return !c.Status(ClaudeDesktop).Present })
+	waitGuard(t, c)
+	if c.Status(ClaudeDesktop).Present {
+		t.Error("entry back after the disconnect guard")
+	}
+
+	// Disconnect while open, then connect with Claude closed: the disconnect guard is
+	// stopped and never removes the new entry.
+	f.open.Store(true)
+	if _, err := c.Disconnect(context.Background(), ClaudeDesktop); err != nil {
+		t.Fatal(err)
+	}
+	f.open.Store(false)
+	if _, err := c.Connect(context.Background(), ClaudeDesktop); err != nil {
+		t.Fatal(err)
+	}
+	waitGuard(t, c)
 	time.Sleep(40 * time.Millisecond)
-	if c.Status(ClaudeDesktop).Present || c.RestartNeeded(ClaudeDesktop) {
-		t.Error("entry came back after Disconnect")
+	if !c.Status(ClaudeDesktop).Connected {
+		t.Error("a stale disconnect guard removed the new entry")
 	}
 }
 
@@ -216,6 +339,12 @@ func TestRestartHints(t *testing.T) {
 		if got := RestartHint(c.goos, c.id, c.running); !strings.Contains(got, c.want) {
 			t.Errorf("%s %s %v: %q", c.goos, c.id, c.running, got)
 		}
+	}
+	if got := DisconnectHint("windows", ClaudeDesktop, true); !strings.Contains(got, "Arquivo > Sair") || !strings.Contains(got, "concluir") {
+		t.Errorf("windows disconnect hint: %q", got)
+	}
+	if got := DisconnectHint("darwin", ClaudeDesktop, false); got != "" {
+		t.Errorf("disconnect hint with Claude closed: %q", got)
 	}
 }
 

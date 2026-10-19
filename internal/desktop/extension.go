@@ -1,11 +1,13 @@
 package desktop
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/douglasdf99/litezap/internal/mcpb"
 )
@@ -39,11 +41,19 @@ type ExtensionResult struct {
 	Path string `json:"path"`
 	// Running: Claude Desktop was open (it shows the install dialog right away).
 	Running bool `json:"running"`
+	// ManualRemoved: the manual "litezap" entry of claude_desktop_config.json was removed
+	// (with the extension it would show every tool twice); Hint says how to finish when
+	// Claude is open. ManualError is why that removal failed ("" if it did not).
+	ManualRemoved bool   `json:"manual_removed,omitempty"`
+	Hint          string `json:"hint,omitempty"`
+	ManualError   string `json:"manual_error,omitempty"`
 }
 
 // InstallExtension writes a copy of the bundled extension that points at this executable
 // (LITEZAP_APP_EXE, plus Env) into the user cache folder and opens it: Claude Desktop
-// shows its install dialog.
+// shows its install dialog. A manual LiteZap entry in claude_desktop_config.json is then
+// removed like Disconnect does (with the guard when Claude is open), so the tools do not
+// show up twice ("litezap" and "LiteZap (WhatsApp)").
 func (c *Connector) InstallExtension() (ExtensionResult, error) {
 	if err := c.ExeProblem(); err != nil {
 		return ExtensionResult{}, err
@@ -87,6 +97,20 @@ func (c *Connector) InstallExtension() (ExtensionResult, error) {
 	if err := open(p); err != nil {
 		return res, fmt.Errorf("abrir %s: %w (abra o arquivo com o Claude Desktop)", p, err)
 	}
+	if !c.Status(ClaudeDesktop).Present {
+		return res, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	d, err := c.Disconnect(ctx, ClaudeDesktop)
+	if c.Log != nil {
+		c.Log("removed the manual Claude Desktop entry after installing the extension", "changed", d.Changed, "running", d.Running, "err", err)
+	}
+	if err != nil {
+		res.ManualError = err.Error()
+		return res, nil
+	}
+	res.ManualRemoved, res.Hint = d.Changed, d.Hint
 	return res, nil
 }
 

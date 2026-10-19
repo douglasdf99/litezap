@@ -6,10 +6,13 @@ import (
 )
 
 // Claude Desktop keeps its config in memory and writes it back when it quits: an entry
-// added while it is open can be erased on Cmd+Q. After such a connect the Connector
-// watches the file (guard): while Claude stays open nothing is touched; once it has quit,
-// a missing LiteZap entry is written again (only our key, with the same splice as
-// Connect), a few times at most, and the user is told.
+// added while it is open can be erased on Cmd+Q, and an entry removed while it is open
+// can come back. After such a connect (or disconnect, or an extension install that removed
+// the manual entry) the Connector watches the file (guard) and enforces the wanted state:
+// while Claude stays open nothing is touched; once it has quit, a missing LiteZap entry is
+// written again (connect) or a returned one is removed again (disconnect) — only our key,
+// with the same splice as Connect/Disconnect —, a few times at most, and the user is told.
+// A new connect or disconnect replaces the running guard of that client.
 
 // Defaults of the guard (Connector fields override them; tests use short ones).
 const (
@@ -21,6 +24,9 @@ const (
 
 // ReappliedMessage is what the user is told after the guard wrote the entry again.
 const ReappliedMessage = "O Claude apagou a configuração do LiteZap ao fechar; ela foi refeita. Abra o Claude de novo para ver as ferramentas do LiteZap."
+
+// ReremovedMessage is what the user is told after the guard removed the entry again.
+const ReremovedMessage = "O Claude recolocou a configuração do LiteZap ao fechar; ela foi removida de novo."
 
 func orDuration(v, def time.Duration) time.Duration {
 	if v > 0 {
@@ -55,8 +61,9 @@ func (c *Connector) setPending(id string, on bool) {
 	}
 }
 
-// startGuard (re)starts the guard of id; a running one is replaced.
-func (c *Connector) startGuard(id string) {
+// startGuard (re)starts the guard of id; a running one is replaced. present: the entry
+// must exist (connect); otherwise it must not (disconnect).
+func (c *Connector) startGuard(id string, present bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	g := &guardHandle{cancel: cancel}
 	c.mu.Lock()
@@ -80,14 +87,14 @@ func (c *Connector) startGuard(id string) {
 			}
 			c.mu.Unlock()
 		}()
-		c.guard(ctx, id)
+		c.guard(ctx, id, present)
 	}()
 }
 
 // guardHandle is one running guard (compared by pointer when it ends).
 type guardHandle struct{ cancel context.CancelFunc }
 
-// stopGuard stops the guard of id (Disconnect).
+// stopGuard stops the guard of id (a new connect or disconnect).
 func (c *Connector) stopGuard(id string) {
 	c.mu.Lock()
 	if g := c.guards[id]; g != nil {
@@ -97,8 +104,8 @@ func (c *Connector) stopGuard(id string) {
 	c.mu.Unlock()
 }
 
-// guard watches id after a connect made while it was open; see the comment at the top.
-func (c *Connector) guard(ctx context.Context, id string) {
+// guard watches id after a change made while it was open; see the comment at the top.
+func (c *Connector) guard(ctx context.Context, id string, present bool) {
 	poll := orDuration(c.GuardPoll, defaultGuardPoll)
 	afterQuit := orDuration(c.GuardAfterQuit, defaultGuardAfterQuit)
 	attempts := c.GuardAttempts
@@ -109,7 +116,7 @@ func (c *Connector) guard(ctx context.Context, id string) {
 	tick := time.NewTicker(poll)
 	defer tick.Stop()
 	var quitAt time.Time
-	closedPolls, reapplied := 0, 0
+	closedPolls, fixed := 0, 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -135,18 +142,28 @@ func (c *Connector) guard(ctx context.Context, id string) {
 			quitAt = now
 			c.setPending(id, false) // the next start reads the file
 		}
-		if st := c.Status(id); st.Error == "" && !st.Connected && reapplied < attempts {
+		st := c.Status(id)
+		wrong := st.Error == "" && (present && !st.Connected || !present && st.Present)
+		if wrong && fixed < attempts {
 			if ctx.Err() != nil {
-				return // Disconnect (or a newer guard) while we were reading the file
+				return // a newer connect/disconnect while we were reading the file
 			}
-			reapplied++
-			res, err := c.apply(id)
+			fixed++
+			var res AIResult
+			var err error
+			msg := ReappliedMessage
+			if present {
+				res, err = c.apply(id)
+			} else {
+				res, err = c.unapply(id)
+				msg = ReremovedMessage
+			}
 			if c.Log != nil {
-				c.Log("re-applied AI client entry after the client quit", "client", id, "changed", res.Changed, "err", err)
+				c.Log("re-enforced AI client entry after the client quit", "client", id, "present", present, "changed", res.Changed, "err", err)
 			}
 			if err == nil && res.Changed {
 				if c.Notify != nil {
-					go c.Notify("LiteZap", ReappliedMessage) // a dialog must never hold the guard
+					go c.Notify("LiteZap", msg) // a dialog must never hold the guard
 				}
 				if c.OnChange != nil {
 					c.OnChange()

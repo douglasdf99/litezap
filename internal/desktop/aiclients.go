@@ -83,6 +83,25 @@ func RestartHint(goos, id string, running bool) string {
 	}
 }
 
+// DisconnectHint tells the user what to do after removing the entry of id while the
+// client is running ("" when it is closed: nothing to do).
+func DisconnectHint(goos, id string, running bool) string {
+	if !running {
+		return ""
+	}
+	switch id {
+	case ClaudeCode:
+		return "Feche a sessão do Claude Code e abra uma nova para concluir."
+	case Cursor:
+		return "O Cursor está aberto: recarregue a janela (Ctrl/Cmd+Shift+P > \"Developer: Reload Window\") ou reinicie o Cursor para concluir."
+	default:
+		if goos == "darwin" {
+			return "O Claude está aberto: feche com Cmd+Q e abra de novo para concluir."
+		}
+		return "O Claude está aberto: feche-o por completo (menu Arquivo > Sair, ou pelo ícone da bandeja) e abra de novo para concluir."
+	}
+}
+
 // Connector writes and removes the LiteZap MCP entry in the config of AI clients. The
 // entry runs the app's own executable with args ["mcp"] (see `litezap-app mcp`), so no
 // token is ever copied into a client config.
@@ -358,6 +377,7 @@ func (c *Connector) Connect(ctx context.Context, id string) (AIResult, error) {
 	if err := c.ExeProblem(); err != nil {
 		return AIResult{}, err
 	}
+	c.stopGuard(id) // a disconnect guard must not remove what we write now
 	running := c.clientRunning(id)
 	res, err := c.connect(ctx, id)
 	res.Running, res.Hint = running, RestartHint(c.GOOS, id, running)
@@ -368,7 +388,7 @@ func (c *Connector) Connect(ctx context.Context, id string) (AIResult, error) {
 		if res.Changed {
 			c.setPending(id, true)
 		}
-		c.startGuard(id)
+		c.startGuard(id, true)
 	}
 	return res, nil
 }
@@ -412,10 +432,29 @@ func (c *Connector) connect(ctx context.Context, id string) (AIResult, error) {
 	return c.edit(p, target, c.entry(id), false)
 }
 
-// Disconnect removes the LiteZap entry of client id (nothing else).
+// Disconnect removes the LiteZap entry of client id (nothing else). When Claude Desktop
+// is open it would write the entry back on quit: Disconnect then starts a guard
+// (guard.go) that removes it again once Claude has quit.
 func (c *Connector) Disconnect(ctx context.Context, id string) (AIResult, error) {
 	c.stopGuard(id)
 	c.setPending(id, false)
+	running := c.clientRunning(id)
+	res, err := c.disconnect(ctx, id)
+	res.Running, res.Hint = running, DisconnectHint(c.GOOS, id, running)
+	if err == nil && running && id == ClaudeDesktop {
+		c.startGuard(id, false)
+	}
+	return res, err
+}
+
+// unapply removes the entry of id with no guard (the guard itself removes with it).
+func (c *Connector) unapply(id string) (AIResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return c.disconnect(ctx, id)
+}
+
+func (c *Connector) disconnect(ctx context.Context, id string) (AIResult, error) {
 	p, err := c.ConfigPath(id)
 	if err != nil {
 		return AIResult{}, err

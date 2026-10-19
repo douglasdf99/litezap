@@ -39,11 +39,17 @@ type aiAction struct {
 }
 
 // extensionMessage is what to tell the user after handing the .mcpb to Claude Desktop.
-func extensionMessage(res desktop.ExtensionResult, configEntry bool) string {
+func extensionMessage(res desktop.ExtensionResult) string {
 	msg := "O Claude Desktop vai mostrar a instalação da extensão LiteZap: clique em Instalar.\n\n" +
 		"Se nada aparecer, abra o Claude Desktop, vá em Configurações > Extensões e arraste para lá o arquivo:\n" + res.Path
-	if configEntry {
-		msg += "\n\nVocê também tem o LiteZap no arquivo de configuração do Claude: depois de instalar a extensão, " +
+	switch {
+	case res.ManualRemoved:
+		msg += "\n\nA configuração manual do LiteZap (arquivo de config do Claude) foi removida, para você não ver as ferramentas em dobro."
+		if res.Hint != "" {
+			msg += " " + res.Hint
+		}
+	case res.ManualError != "":
+		msg += "\n\nNão foi possível remover a configuração manual do LiteZap (" + res.ManualError + "): " +
 			"use \"Desconectar do Claude Desktop\" para não ver as ferramentas em dobro."
 	}
 	return msg
@@ -179,9 +185,9 @@ func (a *app) runAI(act aiAction) {
 		if err != nil {
 			msg = "Não foi possível abrir a extensão no Claude Desktop:\n\n" + err.Error()
 		} else {
-			msg = extensionMessage(res, a.ai.Status(act.id).Present)
+			msg = extensionMessage(res)
 		}
-		a.log.Info("install Claude Desktop extension", "path", res.Path, "running", res.Running, "err", err)
+		a.log.Info("install Claude Desktop extension", "path", res.Path, "running", res.Running, "manual_removed", res.ManualRemoved, "manual_error", res.ManualError, "err", err)
 	case "connect":
 		res, err := a.ai.Connect(ctx, act.id)
 		switch {
@@ -202,6 +208,9 @@ func (a *app) runAI(act aiAction) {
 			msg = "Não foi possível desconectar do " + name + ":\n\n" + err.Error()
 		} else {
 			msg = "O LiteZap foi desconectado do " + name + "."
+			if res.Hint != "" {
+				msg += "\n\n" + res.Hint
+			}
 		}
 		a.log.Info("disconnect AI client", "client", act.id, "path", res.Path, "cli", res.CLI, "err", err)
 	}
