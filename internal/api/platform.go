@@ -90,6 +90,18 @@ var (
 	keySendGetRe  = regexp.MustCompile(`^/v1/(me|instances/[^/]+/messages/[^/]+)$`)
 )
 
+// decodeRawPath drops RawPath when its escapes don't hide a "/", so chi routes on the
+// decoded path and "{jid}" params arrive as "x@g.us" even when clients send "x%40g.us".
+// An escaped slash (%2F) keeps RawPath, so it can never split or merge path segments.
+func decodeRawPath(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if raw := r.URL.RawPath; raw != "" && !strings.Contains(strings.ToLower(raw), "%2f") {
+			r.URL.RawPath = ""
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // routePath is the path chi routes on (the raw path when the URL has escapes), so the
 // scope check sees the same segments as the router.
 func routePath(r *http.Request) string {

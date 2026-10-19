@@ -129,6 +129,7 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 	}
 	s := &server{svc: svc, msg: msg, opt: opt, log: log, bodySlots: make(chan struct{}, 3)}
 	r := chi.NewRouter()
+	r.Use(decodeRawPath)
 
 	r.Group(func(r chi.Router) {
 		if opt.ProtectOps {

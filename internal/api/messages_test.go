@@ -67,6 +67,10 @@ func TestSendAndReadMessages(t *testing.T) {
 	if code != 200 || len(msgs) != 1 || msgs[0].(map[string]any)["text"] != "olá" || body["next_cursor"] == nil {
 		t.Fatalf("chat messages = %d %v", code, body)
 	}
+	// The dashboard escapes the JID ("%40"): it must route the same as a literal "@".
+	if code, body := e.do("GET", base+"/chats/5511988887777%40s.whatsapp.net/messages?limit=1", tok, ""); code != 200 {
+		t.Fatalf("escaped jid = %d %v", code, body)
+	}
 	if code, _ := e.do("POST", base+"/chats/5511988887777/read", tok, ""); code != 204 {
 		t.Fatalf("mark read = %d", code)
 	}
