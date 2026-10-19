@@ -32,3 +32,70 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # App de bandeja (cmd/litezap-app) para quem não usa terminal. Os jobs abaixo rodam
+  # depois do goreleaser (que cria a release) e sobem os arquivos com o gh CLI.
+
+  desktop-macos:
+    needs: goreleaser
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-go@v6.0.0
+        with:
+          go-version-file: go.mod
+      - name: LiteZap.app universal (arm64 + amd64) e LiteZap-macos.dmg
+        env:
+          VERSION: ${{ github.ref_name }}
+          UNIVERSAL: "1"
+          DMG: "1"
+        run: cmd/litezap-app/package-macos.sh dist
+      - name: Subir para a release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd dist
+          shasum -a 256 LiteZap-macos.dmg > LiteZap-macos.dmg.sha256
+          gh release upload "$GITHUB_REF_NAME" LiteZap-macos.dmg LiteZap-macos.dmg.sha256 \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
+  # No Windows e no Linux a bandeja não usa CGO (Win32 e DBus em Go puro): compila de
+  # qualquer runner.
+  desktop-windows-linux:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-go@v6.0.0
+        with:
+          go-version-file: go.mod
+      - name: Compilar
+        env:
+          VERSION: ${{ github.ref_name }}
+          CGO_ENABLED: "0"
+        run: |
+          set -eu
+          LDFLAGS="-s -w -X main.version=$VERSION"
+          mkdir -p dist/windows dist/linux-amd64/LiteZap dist/linux-arm64/LiteZap
+          # -H windowsgui: sem janela de console.
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS -H windowsgui" -o dist/windows/LiteZap.exe ./cmd/litezap-app
+          cp LICENSE dist/windows/LICENSE.txt
+          (cd dist/windows && zip -q ../LiteZap-windows.zip LiteZap.exe LICENSE.txt)
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH=$arch go build -trimpath -ldflags "$LDFLAGS" -o dist/linux-$arch/LiteZap/litezap-app ./cmd/litezap-app
+            cp LICENSE dist/linux-$arch/LiteZap/
+            tar -C dist/linux-$arch -czf dist/LiteZap-linux-$arch.tar.gz LiteZap
+          done
+      - name: Subir para a release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd dist
+          for f in LiteZap-windows.zip LiteZap-linux-amd64.tar.gz LiteZap-linux-arm64.tar.gz; do
+            sha256sum "$f" > "$f.sha256"
+          done
+          gh release upload "$GITHUB_REF_NAME" \
+            LiteZap-windows.zip LiteZap-windows.zip.sha256 \
+            LiteZap-linux-amd64.tar.gz LiteZap-linux-amd64.tar.gz.sha256 \
+            LiteZap-linux-arm64.tar.gz LiteZap-linux-arm64.tar.gz.sha256 \
+            --clobber --repo "$GITHUB_REPOSITORY"

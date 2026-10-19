@@ -1,10 +1,11 @@
 # GoReleaser: binários, checksums e imagem Docker multi-arch do LiteZap.
 # Testar localmente: goreleaser release --snapshot --clean
 #
-# Só o binário `litezap` (./cmd/litezap) é publicado: ele não usa CGO (modernc.org/sqlite),
+# Só o binário `litezap` (./cmd/litezap) sai daqui: ele não usa CGO (modernc.org/sqlite),
 # então compila para todos os alvos com CGO_ENABLED=0. O app de bandeja (./cmd/litezap-app)
-# fica de fora porque o fyne.io/systray precisa de CGO no macOS; compile-o a partir do código
-# (veja "App de bandeja" no README).
+# precisa de CGO no macOS (fyne.io/systray): os jobs desktop-* de
+# .github/workflows/release.yml o compilam (LiteZap-macos.dmg num runner macOS,
+# LiteZap-windows.zip e LiteZap-linux-*.tar.gz) e sobem na mesma release.
 version: 2
 
 project_name: litezap
@@ -82,6 +83,8 @@ release:
     name: litezap
   prerelease: auto
   footer: |
+    App para quem não usa terminal (sobe em alguns minutos, depois dos binários): `LiteZap-macos.dmg`, `LiteZap-windows.zip`, `LiteZap-linux-amd64.tar.gz`. Veja https://github.com/douglasdf99/litezap#baixar-o-app
+
     Imagem Docker: `docker pull ghcr.io/douglasdf99/litezap:{{ .Version }}`
 
     LiteZap é um projeto não oficial, sem vínculo com o WhatsApp ou a Meta. Use por sua conta e risco.
