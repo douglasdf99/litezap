@@ -44,6 +44,9 @@ type Options struct {
 	// LaunchCodes enables one-click dashboard login with codes minted by the caller (the
 	// tray app). Ignored unless the server listens on loopback.
 	LaunchCodes *dashboard.LaunchCodes
+	// AIClients enables the dashboard's "Conectar a IA" page (the tray app). Ignored
+	// unless the server listens on loopback.
+	AIClients dashboard.AIConnector
 	// OnListening is called once the HTTP server accepts connections.
 	OnListening func(Info)
 }
@@ -261,12 +264,15 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		Access: api.AccessOptions{TrustedProxies: trusted, AdminAllow: adminIPs, OperatorAllow: operatorIPs},
 	}, log)
 	var codes *dashboard.LaunchCodes
+	var aiClients dashboard.AIConnector
 	if loopback {
 		codes = opt.LaunchCodes
+		aiClients = opt.AIClients
 	}
 	srv := &http.Server{
 		Handler: withDashboard(handler, !cfg.DisableDashboard,
-			dashboard.Options{AdminToken: cfg.AdminToken, LaunchCodes: codes, RemoteCodes: cl.remoteCodes}),
+			dashboard.Options{AdminToken: cfg.AdminToken, LaunchCodes: codes, RemoteCodes: cl.remoteCodes,
+				AIClients: aiClients}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,

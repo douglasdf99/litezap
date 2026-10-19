@@ -100,7 +100,13 @@ func RunStdio(ctx context.Context, baseURL, token, version string, log *slog.Log
 	if u, err := url.Parse(baseURL); err == nil && u.Scheme == "http" && !isLoopbackHost(u.Host) {
 		log.Warn("LITEZAP_URL uses plain http to a non-loopback host: the token travels unencrypted; prefer https")
 	}
-	err = NewServer(b, Options{Version: version, Logger: log}).Run(ctx, &sdk.StdioTransport{})
+	return ServeStdio(ctx, b, version, log)
+}
+
+// ServeStdio serves MCP over stdin/stdout with b as the backend (RunStdio, and the tray
+// app's `litezap-app mcp`, which builds b from its own app folder).
+func ServeStdio(ctx context.Context, b *REST, version string, log *slog.Logger) error {
+	err := NewServer(b, Options{Version: version, Logger: log}).Run(ctx, &sdk.StdioTransport{})
 	if ctx.Err() != nil || errors.Is(err, io.EOF) {
 		return nil // interrupted, or the client closed stdin: a normal end
 	}

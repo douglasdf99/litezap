@@ -27,6 +27,7 @@ var hints = map[string]string{
 	"worker_error":           "Temporary failure talking to WhatsApp; try again in a moment.",
 	"shutting_down":          "The LiteZap server is restarting; try again in a moment.",
 	"server_unreachable":     "Start `litezap serve` (or fix LITEZAP_URL) and try again.",
+	"app_not_running":        "Ask the user to open the LiteZap app on this computer, then try again.",
 }
 
 // sendHints replace hints for errors of send_message/send_media: there a timeout or a
@@ -37,6 +38,7 @@ var sendHints = map[string]string{
 	"worker_timeout":     ambiguousSend,
 	"worker_error":       ambiguousSend,
 	"server_unreachable": ambiguousSend,
+	"app_not_running":    ambiguousSend,
 	"shutting_down":      ambiguousSend,
 	"internal":           ambiguousSend,
 }

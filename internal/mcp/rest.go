@@ -29,7 +29,15 @@ type REST struct {
 
 	mu    sync.Mutex
 	scope *service.Scope // learned from GET /v1/me
+
+	// unreachableMsg, when set, turns "cannot reach the server" into app_not_running with
+	// this message (the tray app's bridge tells the user to open LiteZap).
+	unreachableMsg string
 }
+
+// SetUnreachableMessage makes calls answer app_not_running with msg, instead of
+// server_unreachable, while the server does not answer. Call it before serving.
+func (r *REST) SetUnreachableMessage(msg string) { r.unreachableMsg = msg }
 
 var _ Backend = (*REST)(nil)
 
@@ -61,8 +69,11 @@ func NewREST(baseURL, token string, hc *http.Client) (*REST, error) {
 	return &REST{base: strings.TrimRight(u.String(), "/"), token: token, hc: hc}, nil
 }
 
-func unreachable(base string) *apierr.Error {
-	return apierr.New(http.StatusServiceUnavailable, "server_unreachable", "cannot reach the LiteZap server at "+base, true)
+func (r *REST) unreachable() *apierr.Error {
+	if r.unreachableMsg != "" {
+		return apierr.New(http.StatusServiceUnavailable, "app_not_running", r.unreachableMsg, true)
+	}
+	return apierr.New(http.StatusServiceUnavailable, "server_unreachable", "cannot reach the LiteZap server at "+r.base, true)
 }
 
 // request sends one API call and returns the response when it is 2xx; any other status
@@ -93,7 +104,7 @@ func (r *REST) request(ctx context.Context, method, path string, q url.Values, b
 		if ctx.Err() != nil {
 			return nil, apierr.New(http.StatusGatewayTimeout, "worker_timeout", "the LiteZap server did not answer in time", true)
 		}
-		return nil, unreachable(r.base)
+		return nil, r.unreachable()
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return resp, nil

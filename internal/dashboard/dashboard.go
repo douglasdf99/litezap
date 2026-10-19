@@ -33,6 +33,8 @@ type Options struct {
 	// (managed hosting, cloud E7): redeemable from any client address, same-origin JSON
 	// only. nil disables them.
 	RemoteCodes *LaunchCodes
+	// AIClients enables the "Conectar a IA" page (tray app on loopback only); nil hides it.
+	AIClients AIConnector
 }
 
 // Fixed MIME types for the assets: on Windows mime.TypeByExtension reads the registry,
@@ -58,8 +60,12 @@ func Handler(opt Options) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+Prefix+"api/info", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusOK, map[string]bool{"one_click_login": opt.LaunchCodes != nil || opt.RemoteCodes != nil})
+		writeJSON(w, http.StatusOK, map[string]bool{"one_click_login": opt.LaunchCodes != nil || opt.RemoteCodes != nil,
+			"ai_clients": opt.AIClients != nil})
 	})
+	if opt.AIClients != nil {
+		aiHandlers(mux, opt)
+	}
 	mux.HandleFunc("POST "+Prefix+"api/session", func(w http.ResponseWriter, r *http.Request) {
 		redeem(w, r, opt)
 	})

@@ -4,7 +4,9 @@
 //
 // It lives apart from cmd/litezap because the tray library needs CGO on macOS; the main
 // `litezap` binary stays CGO-free. The binary also answers `worker`, since the engine
-// re-executes its own executable for each instance.
+// re-executes its own executable for each instance, and `mcp`: a stdio MCP server that
+// talks to the engine of the running tray app with the admin token of the app folder, so
+// "Conectar a IA" can point Claude/Cursor at this executable without copying any token.
 package main
 
 import (
@@ -25,9 +27,9 @@ import (
 	_ "time/tzdata" // IANA zones for settings.timezone even where the OS has none
 
 	"fyne.io/systray"
-	"github.com/douglasdf99/litezap/internal/config"
 	"github.com/douglasdf99/litezap/internal/dashboard"
 	"github.com/douglasdf99/litezap/internal/desktop"
+	"github.com/douglasdf99/litezap/internal/mcp"
 	"github.com/douglasdf99/litezap/internal/serve"
 	"github.com/douglasdf99/litezap/internal/worker"
 )
@@ -40,6 +42,9 @@ const maxLogBytes = 10 << 20
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "worker" {
 		os.Exit(runWorker(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		os.Exit(runMCP(os.Args[2:]))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "version" {
 		fmt.Println(version)
@@ -68,7 +73,13 @@ func main() {
 	log.Info("litezap-app starting", "version", version, "app_dir", dir)
 
 	a := &app{dir: dir, logPath: logPath, log: log, openOnStart: !*noBrowser,
-		codes: dashboard.NewLaunchCodes(), stopped: make(chan struct{}), infoc: make(chan serve.Info, 1)}
+		codes: dashboard.NewLaunchCodes(), stopped: make(chan struct{}), infoc: make(chan serve.Info, 1),
+		aiChanged: make(chan struct{}, 1)}
+	if conn, err := newConnector(dir); err != nil {
+		log.Warn("Conectar a IA disabled", "err", err)
+	} else {
+		a.ai = conn
+	}
 	// systray.Run must own the main thread (Cocoa on macOS).
 	systray.Run(a.onReady, a.onExit)
 }
@@ -79,6 +90,62 @@ func openLog(p string) (*os.File, error) {
 		_ = os.Rename(p, p+".1")
 	}
 	return os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+}
+
+// newConnector points AI client entries at this executable; when the app folder was
+// moved with LITEZAP_APP_DIR, the entry carries it so `mcp` finds the same folder.
+func newConnector(dir string) (*desktop.Connector, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	var env map[string]string
+	if os.Getenv("LITEZAP_APP_DIR") != "" {
+		env = map[string]string{"LITEZAP_APP_DIR": dir}
+	}
+	return desktop.NewConnector(exe, env)
+}
+
+// runMCP serves the LiteZap MCP tools over stdio for an AI client (Claude Desktop, Claude
+// Code, Cursor). It talks to the engine of the running tray app; it never starts one: a
+// second engine on the same folder would fight the tray for the port and the sessions.
+// While the app is closed the tools answer "abra o LiteZap".
+func runMCP(args []string) int {
+	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: litezap-app mcp\n\nServes the LiteZap MCP tools over stdio, talking to the running LiteZap app\n"+
+			"(admin token read from the app folder; LITEZAP_APP_DIR selects another folder).")
+	}
+	fs.Parse(args)
+	// stdout is the protocol channel: logs go to stderr only.
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	dir, err := desktop.AppDir()
+	if err != nil {
+		log.Error("app folder", "err", err)
+		return 1
+	}
+	eng, err := desktop.LocalEngine(dir)
+	if err != nil {
+		log.Error("litezap-app mcp: "+err.Error(), "app_dir", dir)
+		return 1
+	}
+	if !eng.Running(ctx, 2*time.Second) {
+		log.Warn(desktop.NotRunningMessage, "url", eng.URL)
+	}
+	b, err := mcp.NewREST(eng.URL, eng.Token, nil)
+	if err != nil {
+		log.Error("litezap-app mcp", "err", err)
+		return 1
+	}
+	b.SetUnreachableMessage(desktop.NotRunningMessage)
+	mcp.Version = version
+	if err := mcp.ServeStdio(ctx, b, version, log); err != nil {
+		log.Error("fatal", "err", err)
+		return 1
+	}
+	return 0
 }
 
 func runWorker(args []string) int {
@@ -112,6 +179,8 @@ type app struct {
 	infoc        chan serve.Info
 	cancel       context.CancelFunc
 	info         serve.Info
+	ai           *desktop.Connector // nil: "Conectar a IA" unavailable
+	aiChanged    chan struct{}      // a connection changed (dashboard): refresh the menu
 }
 
 func (a *app) onReady() {
@@ -128,19 +197,27 @@ func (a *app) onReady() {
 	open.Disable()
 	folder := systray.AddMenuItem("Abrir pasta de dados", a.dir)
 	logs := systray.AddMenuItem("Ver log", a.logPath)
+	if a.ai != nil {
+		systray.AddSeparator()
+		go a.aiMenu(systray.AddMenuItem("Conectar a IA", "Usa o WhatsApp pelo Claude ou pelo Cursor (MCP)"))
+	}
 	systray.AddSeparator()
 	quit := systray.AddMenuItem("Sair", "Encerra o LiteZap e todas as instâncias")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
-	base := config.Default()
-	base.DataDir = filepath.Join(a.dir, "data")
+	base := desktop.BaseConfig(a.dir)
+	var aiClients dashboard.AIConnector
+	if a.ai != nil {
+		aiClients = notifyingConnector{a.ai, a.aiChanged}
+	}
 	go func() {
 		defer close(a.stopped)
 		a.err = serve.RunWith(ctx, serve.Options{
-			ConfigPath:  filepath.Join(a.dir, "litezap.yaml"),
+			ConfigPath:  desktop.ConfigPath(a.dir),
 			Base:        &base,
 			LaunchCodes: a.codes,
+			AIClients:   aiClients,
 			OnListening: func(i serve.Info) { a.infoc <- i },
 		}, a.log)
 	}()

@@ -4,10 +4,12 @@ import { h, mount, toast, errMsg, modal, secretBox, stateBadge, field, confirmDa
 import { tagChips } from './platform.js';
 import { instanceView, instanceAction, availableActions } from './instance.js';
 import { webhooksPanel } from './webhooks.js';
+import { aiClientsView } from './aiclients.js';
 
 const root = document.getElementById('root');
 let teardown = null; // cleanup of the current view (SSE streams, timers)
 let liveDot = null;
+let info = null; // GET api/info, fetched once
 
 function setLive(state) {
   if (!liveDot) return;
@@ -32,7 +34,8 @@ function shell(content, active) {
       h('a', { class: 'brand', href: '#/' }, logo(), h('span', null, 'Lite', h('b', null, 'Zap'))),
       h('nav', null,
         h('a', { href: '#/', class: active === 'instances' ? 'active' : '' }, 'Instâncias'),
-        h('a', { href: '#/webhooks', class: active === 'webhooks' ? 'active' : '' }, 'Webhooks globais')),
+        h('a', { href: '#/webhooks', class: active === 'webhooks' ? 'active' : '' }, 'Webhooks globais'),
+        info && info.ai_clients ? h('a', { href: '#/ia', class: active === 'ai' ? 'active' : '' }, 'Conectar a IA') : null),
       h('div', { class: 'topbar-right' }, liveDot,
         h('button', {
           class: 'btn ghost', onclick: () => { api.clearToken(); route(); },
@@ -230,6 +233,7 @@ function parseRoute() {
 
 async function route() {
   await consumeLaunchCode();
+  if (!info) info = await api.dashboardInfo();
   const parts = parseRoute();
   if (!api.getToken()) {
     if (teardown) { teardown(); teardown = null; }
@@ -248,7 +252,8 @@ async function route() {
   }
   if (instanceCtx) { instanceCtx.close(); instanceCtx = null; }
   if (teardown) { teardown(); teardown = null; }
-  teardown = parts[0] === 'webhooks' ? globalWebhooksView() : instancesView();
+  if (parts[0] === 'ia' && info.ai_clients) teardown = aiClientsView({ root, shell });
+  else teardown = parts[0] === 'webhooks' ? globalWebhooksView() : instancesView();
 }
 
 // One-click login from the tray app: #code=... (the fragment never reaches the server).

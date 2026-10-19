@@ -1,11 +1,13 @@
 package mcp
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/douglasdf99/litezap/internal/apierr"
 	"github.com/douglasdf99/litezap/internal/service"
 )
 
@@ -40,5 +42,23 @@ func TestHTTPHostCheck(t *testing.T) {
 		if resp.StatusCode != c.want {
 			t.Errorf("public %q host %q = %d, want %d", c.publicHost, c.host, resp.StatusCode, c.want)
 		}
+	}
+}
+
+func TestRESTUnreachableMessage(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	srv.Close() // nothing listens there now
+	r, err := NewREST(srv.URL, "lza_x", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ListInstances(t.Context()); err == nil || !strings.Contains(err.Error(), "cannot reach") {
+		t.Fatalf("default: %v", err)
+	}
+	r.SetUnreachableMessage("Abra o LiteZap")
+	_, err = r.ListInstances(t.Context())
+	var ae *apierr.Error
+	if !errors.As(err, &ae) || ae.Code != "app_not_running" || !strings.Contains(ae.Message, "Abra o LiteZap") {
+		t.Fatalf("custom: %v", err)
 	}
 }
