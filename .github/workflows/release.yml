@@ -35,7 +35,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # App de bandeja (cmd/litezap-app) para quem não usa terminal. Os jobs abaixo rodam
+  # App desktop (cmd/litezap-app) para quem não usa terminal: no macOS, janela própria
+  # (Cocoa/WebKit via CGO) e ícone no Dock; no Windows e no Linux, bandeja + navegador. Os jobs abaixo rodam
   # depois do goreleaser (que cria a release) e sobem os arquivos com o gh CLI.
 
   desktop-macos:
@@ -63,7 +64,8 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" LiteZap-macos.dmg LiteZap-macos.dmg.sha256 \
             --clobber --repo "$GITHUB_REPOSITORY"
 
-  # No Windows e no Linux a bandeja não usa CGO (Win32 e DBus em Go puro): compila de
+  # No Windows e no Linux o app ainda é só a bandeja (internal/appwindow vira no-op fora do
+  # macOS) e a bandeja não usa CGO (Win32 e DBus em Go puro): compila de
   # qualquer runner.
   desktop-windows-linux:
     needs: goreleaser

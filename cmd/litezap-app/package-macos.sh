@@ -1,13 +1,14 @@
 #!/bin/sh
-# Builds an unsigned LiteZap.app (menu bar only, no Dock icon) from this checkout and,
-# with DMG=1, a LiteZap-macos.dmg with the app and a shortcut to /Applications.
+# Builds an unsigned LiteZap.app (a window with the dashboard, Dock icon and menu bar
+# icon) from this checkout and, with DMG=1, a LiteZap-macos.dmg with the app and a shortcut to /Applications.
 #
 # Usage: cmd/litezap-app/package-macos.sh [out_dir]
 #   VERSION=v0.1.0   stamps the version (default: dev)
 #   UNIVERSAL=1      builds arm64 + amd64 and joins them with lipo (what releases ship)
 #   DMG=1            also creates $OUT/LiteZap-macos.dmg with hdiutil
 #
-# Needs Go and the Xcode Command Line Tools (the tray uses Cocoa through CGO).
+# Needs Go and the Xcode Command Line Tools (the window and the menu bar icon use Cocoa
+# and WebKit through CGO).
 # Not signed or notarized: on first open, right-click > Open (or allow it in
 # System Settings > Privacy & Security).
 set -eu
@@ -67,7 +68,12 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>CFBundleVersion</key><string>$PLIST_VERSION</string>
   <key>CFBundleGetInfoString</key><string>LiteZap $XML_VERSION</string>
   <key>LSMinimumSystemVersion</key><string>$MIN_MACOS</string>
-  <key>LSUIElement</key><true/>
+  <key>LSApplicationCategoryType</key><string>public.app-category.business</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <!-- The window loads the dashboard from the engine on http://127.0.0.1. -->
+    <key>NSAllowsLocalNetworking</key><true/>
+  </dict>
   <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>

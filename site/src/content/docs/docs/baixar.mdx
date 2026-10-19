@@ -5,8 +5,8 @@ description: Baixe o LiteZap para macOS, Windows ou Linux, conecte o seu WhatsAp
 
 import { Steps, Aside, Tabs, TabItem, LinkButton } from '@astrojs/starlight/components';
 
-O app do LiteZap roda no seu computador: um ícone na barra de menus (ou na bandeja), um painel no navegador e o seu
-WhatsApp disponível para o Claude. Não precisa de terminal nem de conta em nuvem.
+O app do LiteZap roda no seu computador: no Mac, uma janela própria com o painel (e o ícone no Dock); no Windows e no
+Linux, um ícone na bandeja e o painel no navegador. E o seu WhatsApp disponível para o Claude. Não precisa de terminal nem de conta em nuvem.
 
 <LinkButton href="https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-macos.dmg" icon="download">
 	Baixar para macOS
@@ -44,7 +44,10 @@ O app ainda não é assinado pela Apple nem pela Microsoft, então o sistema avi
 
 </Steps>
 
-Das próximas vezes, abra normalmente. O ícone do LiteZap aparece na barra de menus, no alto da tela (não no Dock).
+Das próximas vezes, abra normalmente. O LiteZap abre numa janela, já logado, com o ícone no Dock (e um ícone na barra
+de menus com o estado). Fechar a janela não desliga o LiteZap: o WhatsApp continua conectado e a IA continua
+funcionando. Para ver a janela de novo, clique no ícone do Dock. Para desligar de vez, use **LiteZap > Sair do
+LiteZap** (⌘Q).
 
 </TabItem>
 <TabItem label="Windows">
@@ -77,11 +80,11 @@ A bandeja usa StatusNotifierItem (DBus). No GNOME, instale a extensão **AppIndi
 
 <Steps>
 
-1. **Abra o app.** O painel abre no navegador, já logado.
+1. **Abra o app.** No Mac, o painel abre na janela do LiteZap, já logado; no Windows e no Linux, no navegador.
 2. **Conecte o seu WhatsApp.** No painel, crie uma instância (ex.: "pessoal"), clique em **Parear** e escaneie o QR
    com o celular: WhatsApp > **Aparelhos conectados** > **Conectar um aparelho**.
-3. **Conecte a IA.** No ícone do LiteZap, escolha **Conectar a IA > Claude Desktop** (ou a aba **Conectar a IA** no
-   painel). Também há Claude Code e Cursor.
+3. **Conecte a IA.** Na aba **Conectar a IA** do painel, clique em **Conectar** no Claude Desktop (ou use o ícone do
+   LiteZap: **Conectar a IA > Claude Desktop**; no Mac, também pelo menu do ícone no Dock). Também há Claude Code e Cursor.
 4. **Reinicie o Claude Desktop** (feche pelo menu, não só a janela) para ele carregar as ferramentas do LiteZap.
 5. **Peça ao Claude:** "manda um oi pro fulano". Ele procura o contato, confirma e envia pelo seu número, respeitando
    o ritmo seguro do LiteZap.

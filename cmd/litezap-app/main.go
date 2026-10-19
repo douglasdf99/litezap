@@ -1,9 +1,12 @@
-// Command litezap-app is the LiteZap tray launcher for non-technical users: double-click
-// it and it runs the engine in-process (data in the per-user app folder), shows a tray
-// icon with the status, and opens the dashboard in the browser with one-click login.
+// Command litezap-app is the LiteZap desktop app for non-technical users: double-click
+// it and it runs the engine in-process (data in the per-user app folder) and shows the
+// dashboard, already logged in. On macOS that is a native window (Dock icon, app menu,
+// internal/appwindow) plus a menu bar icon with the status; closing the window keeps the
+// engine running and Cmd+Q stops it. On Windows and Linux it is the tray icon and the
+// dashboard opens in the browser with one-click login.
 //
-// It lives apart from cmd/litezap because the tray library needs CGO on macOS; the main
-// `litezap` binary stays CGO-free. The binary also answers `worker`, since the engine
+// It lives apart from cmd/litezap because the window and the tray need CGO on macOS; the
+// main `litezap` binary stays CGO-free. The binary also answers `worker`, since the engine
 // re-executes its own executable for each instance, and `mcp`: a stdio MCP server that
 // talks to the engine of the running tray app with the admin token of the app folder, so
 // "Conectar a IA" can point Claude/Cursor at this executable without copying any token.
@@ -12,6 +15,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -27,6 +31,7 @@ import (
 	_ "time/tzdata" // IANA zones for settings.timezone even where the OS has none
 
 	"fyne.io/systray"
+	"github.com/douglasdf99/litezap/internal/appwindow"
 	"github.com/douglasdf99/litezap/internal/dashboard"
 	"github.com/douglasdf99/litezap/internal/desktop"
 	"github.com/douglasdf99/litezap/internal/mcp"
@@ -51,7 +56,7 @@ func main() {
 		return
 	}
 	fs := flag.NewFlagSet("litezap-app", flag.ExitOnError)
-	noBrowser := fs.Bool("no-browser", false, "do not open the dashboard on start")
+	noBrowser := fs.Bool("no-browser", false, "do not show the dashboard on start (macOS: window closed, Dock icon only)")
 	fs.Parse(os.Args[1:])
 
 	dir, err := desktop.AppDir()
@@ -72,16 +77,68 @@ func main() {
 	log := slog.New(slog.NewTextHandler(io.MultiWriter(os.Stderr, logFile), nil))
 	log.Info("litezap-app starting", "version", version, "app_dir", dir)
 
-	a := &app{dir: dir, logPath: logPath, log: log, openOnStart: !*noBrowser,
+	// One app per folder: launching it again shows the running one.
+	inst, err := desktop.ClaimInstance(dir)
+	if errors.Is(err, desktop.ErrAlreadyRunning) {
+		log.Info("already running: asked it to show the dashboard")
+		return
+	}
+	if err != nil {
+		log.Warn("single instance check failed", "err", err)
+	} else {
+		defer inst.Close()
+	}
+
+	a := &app{dir: dir, logPath: logPath, log: log, openOnStart: !*noBrowser, window: appwindow.Supported,
 		codes: dashboard.NewLaunchCodes(), stopped: make(chan struct{}), infoc: make(chan serve.Info, 1),
-		aiChanged: make(chan struct{}, 1)}
+		aiChanged: make(chan struct{}, 1), quitc: make(chan struct{}, 1), menuc: make(chan int, 8),
+		reloginc: make(chan struct{}, 1)}
+	if inst != nil {
+		a.showc = inst.Show()
+		a.release = func() { inst.Close() }
+	}
 	if conn, err := newConnector(dir); err != nil {
 		log.Warn("Conectar a IA disabled", "err", err)
 	} else {
 		a.ai = conn
 	}
-	// systray.Run must own the main thread (Cocoa on macOS).
-	systray.Run(a.onReady, a.onExit)
+	if !a.window {
+		// systray.Run must own the main thread (Cocoa on macOS).
+		systray.Run(a.onReady, a.onExit)
+		return
+	}
+	// The window owns the main thread; the menu bar icon joins its event loop.
+	appwindow.Run(appwindow.Options{
+		Title: "LiteZap", Width: 1200, Height: 800,
+		Loading:     "Iniciando o LiteZap…",
+		StartHidden: !a.openOnStart,
+		IconPNG:     desktop.IconPNG(256),
+		OnReady: func() {
+			start, _ := systray.RunWithExternalLoop(a.onReady, nil)
+			start()
+		},
+		OnQuit: func() { signalOnce(a.quitc) },
+		OnMenu: func(id int) {
+			select {
+			case a.menuc <- id:
+			default:
+			}
+		},
+		OnMessage: func(msg string) {
+			if msg == "relogin" {
+				signalOnce(a.reloginc)
+			}
+		},
+	})
+	// appwindow.Run exits the process when the app terminates (after Finish).
+}
+
+// signalOnce sends on a 1-buffered channel without blocking.
+func signalOnce(c chan struct{}) {
+	select {
+	case c <- struct{}{}:
+	default:
+	}
 }
 
 // openLog appends to the log, starting over (keeping one old copy) past maxLogBytes.
@@ -181,6 +238,14 @@ type app struct {
 	info         serve.Info
 	ai           *desktop.Connector // nil: "Conectar a IA" unavailable
 	aiChanged    chan struct{}      // a connection changed (dashboard): refresh the menu
+
+	// window: the dashboard shows in the native window (macOS), not in the browser.
+	window   bool
+	showc    <-chan struct{} // another launch asked to show the dashboard
+	quitc    chan struct{}   // the window asked to quit (Cmd+Q, Dock, logout)
+	menuc    chan int        // appwindow.Menu* items
+	reloginc chan struct{}   // the dashboard login page asked for a one-click login
+	release  func()          // drops the single-instance claim (nil: none)
 }
 
 func (a *app) onReady() {
@@ -194,7 +259,26 @@ func (a *app) onReady() {
 	status.Disable()
 	systray.AddSeparator()
 	open := systray.AddMenuItem("Abrir painel", "Abre o painel no navegador")
-	open.Disable()
+	// "Abrir no navegador" only next to the window ("Abrir painel" already is the browser).
+	var browser *systray.MenuItem
+	var browserCh <-chan struct{}
+	setBrowser := func(on bool) {
+		switch {
+		case browser == nil:
+		case on:
+			browser.Enable()
+		default:
+			browser.Disable()
+		}
+	}
+	if a.window {
+		open.SetTooltip("Mostra a janela do LiteZap")
+		browser = systray.AddMenuItem("Abrir no navegador", "Abre o painel no navegador")
+		browser.Disable()
+		browserCh = browser.ClickedCh
+	} else {
+		open.Disable()
+	}
 	folder := systray.AddMenuItem("Abrir pasta de dados", a.dir)
 	logs := systray.AddMenuItem("Ver log", a.logPath)
 	if a.ai != nil {
@@ -237,9 +321,21 @@ func (a *app) onReady() {
 			checking = true
 			go func() { titles <- a.statusTitle() }()
 		}
+		var forceQuit <-chan time.Time
+		exit := func() {
+			if a.window {
+				// AppKit exits the process: deferred calls in main never run.
+				if a.release != nil {
+					a.release()
+				}
+				appwindow.Finish()
+			} else {
+				systray.Quit()
+			}
+		}
 		beginQuit := func() {
 			if failed {
-				systray.Quit() // the engine is not running: nothing to stop
+				exit() // the engine is not running: nothing to stop
 				return
 			}
 			if quitting {
@@ -248,9 +344,26 @@ func (a *app) onReady() {
 			quitting = true
 			status.SetTitle("LiteZap: encerrando…")
 			open.Disable()
+			setBrowser(false)
 			quit.Disable()
 			a.log.Info("quit requested")
 			cancel()
+			if a.window {
+				// The window waits for Finish: do not hang there if the engine does.
+				forceQuit = time.After(40 * time.Second)
+			}
+		}
+		// requestQuit: with a window, quitting goes through AppKit (applicationShouldTerminate
+		// -> quitc) so that Cmd+Q, the Dock, logout and the tray all end the same way.
+		requestQuit := func() {
+			if a.window && !failed {
+				appwindow.Terminate()
+				return
+			}
+			beginQuit()
+		}
+		if a.window {
+			open.Enable() // shows the window (and its status) even before the engine is up
 		}
 		for {
 			select {
@@ -261,8 +374,11 @@ func (a *app) onReady() {
 				a.info = info
 				running = true
 				open.Enable()
+				setBrowser(true)
 				checkStatus()
-				if a.openOnStart {
+				if a.window {
+					a.loadDashboard()
+				} else if a.openOnStart {
 					a.openDashboard()
 				}
 			case title := <-titles:
@@ -272,15 +388,48 @@ func (a *app) onReady() {
 					systray.SetTooltip(title + " · " + a.info.URL + dashboard.Prefix)
 				}
 			case <-open.ClickedCh:
+				a.showDashboard()
+			case <-a.showc:
+				if !quitting {
+					a.showDashboard()
+				}
+			case <-browserCh:
 				a.openDashboard()
+			case id := <-a.menuc:
+				switch id {
+				case appwindow.MenuReload:
+					if running && !quitting {
+						a.loadDashboard()
+					}
+				case appwindow.MenuBrowser:
+					if running {
+						a.openDashboard()
+					}
+				case appwindow.MenuDataFolder:
+					a.openPath(a.dir)
+				case appwindow.MenuLog:
+					a.openPath(a.logPath)
+				case appwindow.MenuAI:
+					appwindow.Eval(`location.hash = "#/ia"`)
+				}
+			case <-a.reloginc:
+				if running && !quitting {
+					a.loadDashboard()
+				}
 			case <-folder.ClickedCh:
 				a.openPath(a.dir)
 			case <-logs.ClickedCh:
 				a.openPath(a.logPath)
 			case <-quit.ClickedCh:
-				beginQuit()
+				requestQuit()
 			case <-sigs:
+				requestQuit()
+			case <-a.quitc:
 				beginQuit()
+			case <-forceQuit:
+				a.log.Warn("engine did not stop in time")
+				exit()
+				return
 			case <-tick.C:
 				if running && !quitting {
 					checkStatus()
@@ -290,16 +439,21 @@ func (a *app) onReady() {
 				err := a.err
 				if quitting || err == nil {
 					a.log.Info("litezap-app stopped")
-					systray.Quit()
+					exit()
 					return
 				}
 				// The engine could not start (e.g. port in use): keep the tray up with the
 				// reason; "Ver log" and "Abrir pasta" keep working and Sair just exits.
 				a.log.Error("engine stopped", "err", err)
 				running, failed = false, true
-				open.Disable()
+				if !a.window {
+					open.Disable()
+				}
+				setBrowser(false)
 				status.SetTitle("Erro: " + shorten(err.Error(), 70))
 				systray.SetTooltip("LiteZap: " + err.Error())
+				appwindow.SetStatus("O LiteZap não conseguiu iniciar:\n\n"+err.Error()+
+					"\n\nSe outro programa usa a mesma porta, feche-o (ou mude listen_addr em litezap.yaml, na pasta de dados) e abra o LiteZap de novo.", true)
 			}
 		}
 	}()
@@ -319,6 +473,33 @@ func (a *app) onExit() {
 	}
 }
 
+// showDashboard brings up the dashboard: the window, or a browser tab.
+func (a *app) showDashboard() {
+	if a.window {
+		appwindow.Show()
+		return
+	}
+	a.openDashboard()
+}
+
+// loadDashboard (re)loads the window with a fresh one-click login.
+func (a *app) loadDashboard() {
+	if !a.info.Dashboard {
+		appwindow.SetStatus("O painel está desativado (disable_dashboard em litezap.yaml). "+
+			"O LiteZap continua rodando em "+a.info.URL+".", true)
+		return
+	}
+	u := a.info.URL + dashboard.Prefix
+	// A query that changes on every load: a full page load even when only the code in the
+	// fragment differs from the current URL.
+	u += fmt.Sprintf("?v=%d", time.Now().UnixNano())
+	if a.info.OneClickLogin {
+		u += "#code=" + a.codes.Mint()
+	}
+	appwindow.Load(u, a.info.URL)
+}
+
+// openDashboard opens the dashboard in the default browser with a one-click login.
 func (a *app) openDashboard() {
 	if a.info.URL == "" {
 		return
