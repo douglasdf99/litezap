@@ -44,8 +44,9 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 
 // Config is an instance's agent hook configuration (stored as JSON, secret included).
 type Config struct {
-	// Target is where messages go: "url" (default; the signed POST to URL) or "builtin"
-	// (the built-in attendant running inside the engine, spec 4.7).
+	// Target is where messages go: "url" (default; the signed POST to URL), "builtin"
+	// (the built-in attendant running inside the engine, spec 4.7) or "agents" (the
+	// LiteZap agents with tools, package agents).
 	Target  string `json:"target,omitempty"`
 	URL     string `json:"url"`
 	Secret  string `json:"secret"`
@@ -74,10 +75,17 @@ type Config struct {
 const (
 	TargetURL     = "url"
 	TargetBuiltin = "builtin"
+	TargetAgents  = "agents"
 )
 
 // Builtin reports whether the hook uses the built-in attendant.
 func (c Config) Builtin() bool { return c.Target == TargetBuiltin }
+
+// Agents reports whether the hook hands messages to the LiteZap agents.
+func (c Config) Agents() bool { return c.Target == TargetAgents }
+
+// inProcess reports a target that runs inside the engine (no URL needed).
+func (c Config) inProcess() bool { return c.Builtin() || c.Agents() }
 
 // Defaults (spec 4.3, plus the loop guard).
 const (
@@ -170,9 +178,9 @@ func (c *Config) Validate(norm func(string) (string, error)) error {
 		}
 	}
 	switch {
-	case c.Target != "" && c.Target != TargetURL && c.Target != TargetBuiltin:
-		return errors.New(`target must be "url" or "builtin"`)
-	case c.Enabled && c.URL == "" && c.Target != TargetBuiltin:
+	case c.Target != "" && c.Target != TargetURL && c.Target != TargetBuiltin && c.Target != TargetAgents:
+		return errors.New(`target must be "url", "builtin" or "agents"`)
+	case c.Enabled && c.URL == "" && !c.inProcess():
 		return errors.New("url is required to enable the hook")
 	case len(c.Secret) < minSecretLen || len(c.Secret) > maxSecretLen:
 		return fmt.Errorf("secret must have %d to %d characters", minSecretLen, maxSecretLen)

@@ -53,6 +53,9 @@ type Options struct {
 	// Builtin answers for hooks with target "builtin" (the built-in attendant, spec 4.7);
 	// nil: such hooks fail with reason not_configured.
 	Builtin BuiltinAgent
+	// Agents runs the LiteZap agents for hooks with target "agents"; nil: such hooks fail
+	// with reason not_configured.
+	Agents AgentsRunner
 }
 
 // BuiltinAgent is the built-in attendant: it answers a request like an external hook
@@ -344,7 +347,7 @@ func (h *Hook) apiSend(instanceID string, m events.Message) {
 		return
 	}
 	o, err := h.st.GetOutbound(h.ctx, instanceID, m.ID)
-	if err != nil || strings.HasPrefix(o.ClientMessageID, "agent:") || strings.HasPrefix(o.ClientMessageID, "agent-react:") {
+	if err != nil || IsAgentClientID(o.ClientMessageID) {
 		return
 	}
 	h.humanReply(instanceID, m, "api_send")
@@ -413,7 +416,7 @@ func (h *Hook) config(ctx context.Context, instanceID string) (Config, bool) {
 		h.log.Error("agent hook: bad stored config", "instance_id", instanceID, "err", err)
 		return Config{}, false
 	}
-	return cfg, cfg.URL != "" || cfg.Builtin()
+	return cfg, cfg.URL != "" || cfg.inProcess()
 }
 
 // chatAgent loads the chat's override and pause (zero state for an unknown chat).
@@ -461,7 +464,8 @@ func (h *Hook) handleJob(instanceID string, j job) (settled bool) {
 	now := h.opt.Clock.Now()
 	isGroup := m.IsGroup || ca.IsGroup || strings.HasSuffix(m.Chat, "@g.us")
 	switch {
-	case isGroup && !cfg.GroupsEnabled, cfg.ignores(m.Chat, m.Sender), !active(cfg, ca, now), m.Type == "unknown":
+	// With the agents target, groups are opted in per agent (its trigger), not here.
+	case isGroup && !cfg.GroupsEnabled && !cfg.Agents(), cfg.ignores(m.Chat, m.Sender), !active(cfg, ca, now), m.Type == "unknown":
 		return true // paused, disabled or ignored meanwhile: nothing automatic goes out
 	}
 	base := store.AgentCall{InstanceID: instanceID, ChatJID: m.Chat, MessageID: m.ID}
@@ -504,6 +508,9 @@ func (h *Hook) handleJob(instanceID string, j job) (settled bool) {
 	if res.reason != "" {
 		h.fail(base, j, res.reason, res.err, res.status)
 		return false
+	}
+	if res.agents != nil {
+		return h.agentsDone(base, *res.agents)
 	}
 	return h.act(ctx, cfg, base, j, res.resp)
 }
@@ -622,6 +629,7 @@ type callResult struct {
 	duration time.Duration
 	reason   string // failure code ("" = success)
 	err      string
+	agents   *AgentsOutcome // set by the agents target: the run already acted
 }
 
 func (h *Hook) context(ctx context.Context, instanceID, chat string, n int) ([]ContextMessage, error) {
@@ -673,13 +681,21 @@ func Origin(fromMe bool, source, clientID string) string {
 		return "human"
 	case source == "history":
 		return "history"
-	case strings.HasPrefix(clientID, "agent:") || strings.HasPrefix(clientID, "agent-react:"):
+	case IsAgentClientID(clientID):
 		return "agent"
 	case strings.HasPrefix(clientID, "call-reject-"):
 		return "automatic"
 	default:
 		return "api"
 	}
+}
+
+// IsAgentClientID reports a client_message_id of an automatic agent send: the hook's
+// replies (agent:, agent-react:, which the LiteZap agents also use) and approved agent
+// drafts (agentdraft:, sent after a human approved them).
+func IsAgentClientID(clientID string) bool {
+	return strings.HasPrefix(clientID, "agent:") || strings.HasPrefix(clientID, "agent-react:") ||
+		strings.HasPrefix(clientID, "agentdraft:")
 }
 
 // call POSTs the signed request (or asks the built-in attendant) and reads the response;
@@ -694,6 +710,9 @@ func (h *Hook) call(ctx context.Context, cfg Config, instanceID string, ca store
 		Message: j.raw, Context: cms}
 	if cfg.Builtin() {
 		return h.callBuiltin(ctx, cfg, hreq, j)
+	}
+	if cfg.Agents() {
+		return h.callAgents(ctx, cfg, hreq, j)
 	}
 	body, err := json.Marshal(hreq)
 	if err != nil {
