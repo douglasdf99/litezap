@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -69,9 +70,10 @@ type Runner struct {
 	Clock  func() time.Time
 	Log    *slog.Logger
 
-	mu    sync.Mutex
-	chats map[string]chan struct{} // instance|chat -> held while a run is in flight
-	tools sync.Map                 // instance -> []ToolDef (stateless, built once)
+	mu       sync.Mutex
+	chats    map[string]chan struct{} // instance|chat -> held while a run is in flight
+	tools    sync.Map                 // instance -> []ToolDef (stateless, built once)
+	decideMu sync.Mutex               // serializes draft approvals (the run's caps)
 }
 
 // toolsFor returns the instance's tool table, built once (its schemas resolve on first use).
@@ -184,7 +186,7 @@ func (r *Runner) run(ctx context.Context, in RunInput) (RunResult, error) {
 		return RunResult{}, err
 	}
 	defs := r.toolsFor(in.InstanceID)
-	specs, byName, err := toolSpecs(defs, a.allowedTools())
+	specs, byName, err := toolSpecs(defs, a.allowedTools(), a.has(GroupReadOther))
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -266,8 +268,9 @@ func (r *Runner) run(ctx context.Context, in RunInput) (RunResult, error) {
 	run.Output = clipText(strings.TrimSpace(run.Output), 4000)
 	run.Sent, run.Drafts = ex.sent, ex.drafts
 	run.EndedAt = r.now()
-	stepsJSON, _ := json.Marshal(ex.steps)
-	run.StepsJSON = clipSteps(stepsJSON, ex.steps)
+	stored := redactSteps(ex.steps)
+	stepsJSON, _ := json.Marshal(stored)
+	run.StepsJSON = clipSteps(stepsJSON, stored)
 	res := RunResult{Run: run, Steps: ex.steps, exec: ex, Agent: a, DryRun: in.DryRun}
 	if in.DryRun {
 		return res, nil
@@ -280,6 +283,35 @@ func (r *Runner) run(ctx context.Context, in RunInput) (RunResult, error) {
 		"steps": len(ex.steps), "model_calls": run.ModelCalls, "sent": run.Sent, "drafts": run.Drafts,
 		"cost_usd": usd(run.CostMicros), "error": run.Error})
 	return res, nil
+}
+
+// phoneRe matches phone numbers (and the user part of phone JIDs).
+var phoneRe = regexp.MustCompile(`\d{8,}`)
+
+// maskPhones keeps the last 4 digits of every phone number.
+func maskPhones(s string) string {
+	return phoneRe.ReplaceAllStringFunc(s, func(d string) string { return "••••" + d[len(d)-4:] })
+}
+
+// redactSteps is what the run log keeps: tool results (third-party messages, contacts)
+// only for refused or failed calls, the reason, with phone numbers masked.
+func redactSteps(steps []Step) []Step {
+	out := make([]Step, len(steps))
+	for i, s := range steps {
+		if s.Outcome == OutcomeRefused || s.Outcome == OutcomeError {
+			s.Result = maskPhones(s.Result)
+		} else {
+			s.Result = ""
+		}
+		out[i] = s
+	}
+	return out
+}
+
+// draftEvent is the data of agent.draft.created and agent.draft.decided: ids and status
+// only, never the message or the arguments (they stay in the API, behind the token).
+func draftEvent(d store.AgentDraft, status string) map[string]any {
+	return map[string]any{"draft_id": d.ID, "agent_id": d.AgentID, "tool": d.Tool, "chat": d.ChatJID, "status": status}
 }
 
 // clipSteps keeps the stored steps under 64KB (the oldest are kept, then a marker).
@@ -315,8 +347,7 @@ func (r *Runner) createDraft(ctx context.Context, e *executor, tool string, args
 		r.log().Error("agents: save draft", "instance_id", e.instanceID, "err", err)
 		return d, err
 	}
-	r.publish(e.instanceID, TypeDraftCreated, map[string]any{"draft_id": d.ID, "agent_id": e.agent.ID, "agent_name": e.agent.Name,
-		"run_id": e.runID, "tool": tool, "chat": chat, "args": publicArgs(args)})
+	r.publish(e.instanceID, TypeDraftCreated, draftEvent(d, DraftPending))
 	return d, nil
 }
 

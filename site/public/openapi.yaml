@@ -136,10 +136,11 @@ tags:
     x-intro: |
       Um agente roda um loop de *tool use*: o modelo chama as ferramentas do LiteZap (as mesmas do MCP,
       executadas dentro do motor, com as mesmas validações) até concluir a tarefa. Cada agente tem
-      **instruções**, **grupos de permissão** (`ler`, `responder_no_chat`, `enviar_outros_chats`,
-      `etiquetas`, `grupos`, `midia`), um **modo** (`aprovacao`, o padrão: cada escrita vira um rascunho
-      que alguém aprova; `autonomo`; `sugerir`: só notas) e **limites** (8 passos por execução, 3
-      destinatários distintos). O motor aplica as regras, não só o prompt: um envio para outro chat sem
+      **instruções**, **grupos de permissão** (`ler` só lê a conversa do gatilho; `ler_outros_chats`,
+      `responder_no_chat`, `enviar_outros_chats`, `etiquetas`, `grupos`, `midia`), um **modo** (`aprovacao`,
+      o padrão: cada escrita vira um rascunho que alguém aprova; `autonomo`; `sugerir`: só notas) e
+      **limites** por execução (8 passos, 3 destinatários distintos, 5 envios, 10 escritas, 3 mudanças em
+      grupos). O motor aplica as regras, não só o prompt: um envio para outro chat sem
       `enviar_outros_chats` é recusado. Todo envio passa pela fila (ritmo, janela, rampa).
 
       O gatilho "mensagem nova" usa o hook de agente com `target: "agents"` (um por vez por chat, pausa
@@ -2250,6 +2251,8 @@ paths:
       x-litezap-events: [agent.draft.decided]
       description: |
         Executa exatamente a chamada guardada (mesma ferramenta e argumentos), pela fila normal de envio.
+        Antes, confere de novo: o agente precisa existir, estar ligado e ainda ter a permissão, e a chamada
+        precisa passar pelas checagens de destinatário, menções e limites da execução.
         `status` volta `approved` (com o id da mensagem em `result`) ou `failed` (o erro em `result`).
         Um rascunho já decidido ou expirado responde `409 conflict`.
       responses:
@@ -4943,6 +4946,9 @@ components:
       properties:
         max_steps: { type: integer, minimum: 1, maximum: 20, default: 8, description: Chamadas ao modelo por execução. }
         max_recipients: { type: integer, minimum: 1, maximum: 10, default: 3, description: Destinatários distintos por execução. }
+        max_sends: { type: integer, minimum: 1, maximum: 50, default: 5, description: Envios por execução (também na conversa do gatilho; rascunhos contam). }
+        max_writes: { type: integer, minimum: 1, maximum: 100, default: 10, description: Escritas por execução (envios, etiquetas, grupos, link de convite; rascunhos e sugestões contam). }
+        max_group_changes: { type: integer, minimum: 1, maximum: 20, default: 3, description: Mudanças em grupos por execução. }
         daily_runs: { type: integer, minimum: 0, default: 200, description: Execuções por dia UTC (0 = sem limite do agente; os limites do Atendente IA continuam valendo). }
     AgentInput:
       type: object
@@ -4952,7 +4958,7 @@ components:
         enabled: { type: boolean }
         mode: { type: string, enum: [aprovacao, autonomo, sugerir], description: "aprovacao: escritas viram rascunhos; autonomo: executa; sugerir: só notas." }
         instructions: { type: string, maxLength: 20000, description: "O que o agente faz (confiável: escrito por você)." }
-        tools: { type: array, items: { type: string, enum: [ler, responder_no_chat, enviar_outros_chats, etiquetas, grupos, midia] } }
+        tools: { type: array, items: { type: string, enum: [ler, ler_outros_chats, responder_no_chat, enviar_outros_chats, etiquetas, grupos, midia] } }
         trigger: { $ref: "#/components/schemas/AgentTrigger" }
         limits: { $ref: "#/components/schemas/AgentLimits" }
     Agent:
@@ -5976,17 +5982,16 @@ webhooks:
       description: Um agente em modo `aprovacao` quis executar uma escrita (enviar, etiquetar, mudar grupo); ela espera aprovação em `POST /agents/drafts/{draft_id}/approve` por até 24 horas.
       x-related: [agent.draft.decided, agent.run.completed]
       x-fields:
-        - [draft_id, string, "Id do rascunho."]
+        - [draft_id, string, "Id do rascunho (o conteúdo fica em GET /agents/drafts)."]
         - [agent_id, string, "Agente."]
-        - [run_id, string, "Execução."]
         - [tool, string, "Ferramenta (send_message, label_chat...)."]
         - [chat, string, "Destinatário ou chat."]
-        - [args, object, "Argumentos que a aprovação executa."]
+        - [status, string, "pending."]
       requestBody:
         content:
           application/json:
             schema: { $ref: "#/components/schemas/Envelope" }
-            example: { id: evt_3e5a7c9b1d2f4068, type: agent.draft.created, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-20T14:02:10.500Z", data: { draft_id: adr_5b1d3f9a7c2e4086, agent_id: agn_3c9e1a7f5d2b4086, agent_name: Atendente, run_id: arun_7a3c1e9f5d2b4068, tool: send_message, chat: "5511999999999@s.whatsapp.net", args: { to: "5511999999999@s.whatsapp.net", text: "Abrimos sábado das 9h às 13h!" } } }
+            example: { id: evt_3e5a7c9b1d2f4068, type: agent.draft.created, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-20T14:02:10.500Z", data: { draft_id: adr_5b1d3f9a7c2e4086, agent_id: agn_3c9e1a7f5d2b4086, tool: send_message, chat: "5511999999999@s.whatsapp.net", status: pending } }
       responses:
         "2XX": { description: Qualquer 2xx confirma a entrega. }
   agent.draft.decided:
@@ -5998,17 +6003,15 @@ webhooks:
       description: Alguém aprovou (a chamada foi executada pela fila) ou rejeitou um rascunho de agente.
       x-related: [agent.draft.created]
       x-fields:
-        - [draft_id, string, "Id do rascunho."]
+        - [draft_id, string, "Id do rascunho (o conteúdo fica em GET /agents/drafts)."]
         - [agent_id, string, "Agente."]
-        - [tool, string, "Ferramenta."]
+        - [tool, string, "Ferramenta (send_message, label_chat...)."]
         - [chat, string, "Destinatário ou chat."]
-        - [decision, string, "approved, rejected ou failed (aprovado, mas a execução falhou)."]
-        - [decided_by, string, "admin ou instance."]
-        - [result, string, "Id da mensagem enfileirada ou o erro."]
+        - [status, string, "approved, rejected ou failed (aprovado, mas a execução falhou)."]
       requestBody:
         content:
           application/json:
             schema: { $ref: "#/components/schemas/Envelope" }
-            example: { id: evt_5a7c9e1b3d2f4068, type: agent.draft.decided, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-20T14:05:00.000Z", data: { draft_id: adr_5b1d3f9a7c2e4086, agent_id: agn_3c9e1a7f5d2b4086, agent_name: Atendente, run_id: arun_7a3c1e9f5d2b4068, tool: send_message, chat: "5511999999999@s.whatsapp.net", decision: approved, decided_by: admin, result: "queued as message msg_9f8e7d6c5b4a3210" } }
+            example: { id: evt_5a7c9e1b3d2f4068, type: agent.draft.decided, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-20T14:05:00.000Z", data: { draft_id: adr_5b1d3f9a7c2e4086, agent_id: agn_3c9e1a7f5d2b4086, tool: send_message, chat: "5511999999999@s.whatsapp.net", status: approved } }
       responses:
         "2XX": { description: Qualquer 2xx confirma a entrega. }

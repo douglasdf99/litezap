@@ -13,14 +13,16 @@ const MODE = {
   sugerir: ['Só sugerir', 'ag-tone-info', 'Nada é executado: as ações viram notas.'],
 };
 const GROUPS = {
-  ler: ['Ler', 'Conversas, mensagens, contatos, grupos e etiquetas.'],
+  ler: ['Ler a conversa do gatilho', 'Mensagens, contato e grupo da conversa que disparou o agente, mais a lista de conversas (só nomes) e as etiquetas.'],
+  ler_outros_chats: ['Ler outras conversas', 'Ler as mensagens de qualquer conversa e a agenda de contatos.'],
   responder_no_chat: ['Responder no chat do gatilho', 'Mensagens e reações só na conversa que disparou o agente.'],
   enviar_outros_chats: ['Enviar para outros chats', 'Mandar mensagem para qualquer conversa (no máximo o limite de destinatários por execução).'],
-  etiquetas: ['Etiquetas', 'Aplicar e tirar etiquetas do WhatsApp Business.'],
-  grupos: ['Grupos (gerenciar)', 'Criar grupos, mudar nome e configurações, adicionar e remover pessoas.'],
+  etiquetas: ['Etiquetas', 'Aplicar e tirar etiquetas do WhatsApp Business, em qualquer conversa.'],
+  grupos: ['Grupos (gerenciar)', 'Criar grupos, mudar nome e configurações, adicionar e remover pessoas e pegar o link de convite.'],
   midia: ['Mídia', 'Enviar imagem, áudio, vídeo e documento por URL.'],
 };
 const RISK = {
+  ler_outros_chats: 'O agente poderá ler as mensagens de todas as suas conversas e a sua agenda de contatos, e esse conteúdo vai para o provedor de IA. Uma mensagem maliciosa pode tentar fazê-lo repassar o que leu: evite junto com "Enviar para outros chats".',
   enviar_outros_chats: 'O agente poderá mandar mensagens para outras pessoas além de quem escreveu. Uma mensagem maliciosa pode tentar convencê-lo a fazer isso: use só com instruções claras e, de preferência, no modo Aprovação.',
   grupos: 'Criar grupos e adicionar pessoas são ações com risco de banimento do número. Use só se o agente realmente precisa disso.',
 };
@@ -35,6 +37,7 @@ const STATUS = {
 const TOOL_LABEL = {
   send_message: 'Mensagem', send_reaction: 'Reação', send_media: 'Mídia', label_chat: 'Etiqueta',
   create_group: 'Criar grupo', update_group: 'Alterar grupo', manage_group_participants: 'Participantes do grupo',
+  get_group_invite_link: 'Link de convite do grupo',
 };
 
 const TEMPLATES = [
@@ -59,7 +62,7 @@ const TEMPLATES = [
     text: 'Quando você pedir, resume as conversas e diz o que precisa de resposta.',
     agent: {
       name: 'Resumo do dia', mode: 'sugerir', tools: ['ler'], trigger: { type: 'manual' },
-      instructions: 'Quando eu executar, leia as conversas mais recentes (list_chats e get_messages) e escreva para mim um resumo curto: quem falou, o que pediu e o que ainda precisa de resposta, do mais urgente para o menos urgente. Não envie mensagens.',
+      instructions: 'Quando eu executar, veja as conversas mais recentes (list_chats: nome, hora da última mensagem e não lidas) e escreva para mim um resumo curto de quem está esperando resposta, do mais antigo para o mais novo. Não envie mensagens. (Para resumir também o conteúdo das mensagens, ligue a permissão "Ler outras conversas".)',
     },
   },
   { key: 'branco', title: 'Em branco', icon: 'plus', text: 'Comece do zero.', agent: { name: '', mode: 'aprovacao', tools: ['ler', 'responder_no_chat'], trigger: { type: 'message' }, instructions: '' } },
@@ -281,7 +284,7 @@ function openEditor(ctx, base, agent, onSaved) {
     ? JSON.parse(JSON.stringify({ name: agent.name, instructions: agent.instructions, mode: agent.mode, tools: agent.tools, trigger: agent.trigger, limits: agent.limits }))
     : JSON.parse(JSON.stringify(TEMPLATES[0].agent));
   draft.trigger = Object.assign({ type: 'message', groups: false, keywords: [], chats: [], labels: [] }, draft.trigger || {});
-  draft.limits = Object.assign({ max_steps: 8, max_recipients: 3, daily_runs: 200 }, draft.limits || {});
+  draft.limits = Object.assign({ max_steps: 8, max_recipients: 3, max_sends: 5, max_writes: 10, max_group_changes: 3, daily_runs: 200 }, draft.limits || {});
   let step = editing ? 1 : 0;
   const title = h('h2', null, editing ? `Editar ${agent.name}` : 'Novo agente');
   const stepper = h('ol', { class: 'stepper', 'aria-label': 'Etapas' });
@@ -358,6 +361,8 @@ function openEditor(ctx, base, agent, onSaved) {
     const recips = h('input', { type: 'number', min: 1, max: 10, value: draft.limits.max_recipients });
     const steps = h('input', { type: 'number', min: 1, max: 20, value: draft.limits.max_steps });
     const daily = h('input', { type: 'number', min: 0, max: 100000, value: draft.limits.daily_runs });
+    const sends = h('input', { type: 'number', min: 1, max: 50, value: draft.limits.max_sends });
+    const writes = h('input', { type: 'number', min: 1, max: 100, value: draft.limits.max_writes });
     mount(body,
       h('p', { class: 'lead' }, 'O motor do LiteZap aplica estas permissões, não só o texto das instruções: um envio fora do permitido é recusado.'),
       h('div', { class: 'ag-perms' }, boxes),
@@ -365,10 +370,15 @@ function openEditor(ctx, base, agent, onSaved) {
         h('div', { class: 'grid3' },
           field('Passos por execução', steps, 'Cada passo é uma chamada paga ao modelo.'),
           field('Destinatários por execução', recips, 'Sem envio em massa.'),
+          field('Envios por execução', sends, 'Mensagens, reações e mídias, também na própria conversa.'),
+          field('Ações por execução', writes, 'Todas as escritas: envios, etiquetas, grupos (rascunhos contam).'),
           field('Execuções por dia', daily, '0 = sem limite do agente (os limites do Atendente IA continuam valendo).'))));
     return () => {
       draft.tools = boxes.map((b) => b.querySelector('input')).filter((cb) => cb.checked).map((cb) => cb.dataset.group);
-      draft.limits = { max_steps: Number(steps.value) || 8, max_recipients: Number(recips.value) || 3, daily_runs: Number(daily.value) || 0 };
+      draft.limits = Object.assign({}, draft.limits, {
+        max_steps: Number(steps.value) || 8, max_recipients: Number(recips.value) || 3, max_sends: Number(sends.value) || 5,
+        max_writes: Number(writes.value) || 10, daily_runs: Number(daily.value) || 0,
+      });
       return true;
     };
   }

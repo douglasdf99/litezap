@@ -85,11 +85,12 @@ o seu sistema (webhook, n8n).
 
 | Grupo | Ferramentas | Observação |
 |---|---|---|
-| `ler` | `list_chats`, `get_messages`, `get_message_status`, `list_contacts`, `get_contact`, `list_groups`, `get_group`, `list_labels`, `get_instance_status` | Padrão |
+| `ler` | `get_messages`, `get_message_status`, `get_contact` e `get_group` **só da conversa do gatilho**; `list_chats` (só nomes, horário e não lidas, sem texto), `list_groups`, `list_labels`, `get_instance_status` | Padrão |
+| `ler_outros_chats` | As mesmas leituras em **qualquer** conversa, mais `list_contacts` (agenda) | **Risco**: o conteúdo de outras conversas vai para o provedor de IA; pede confirmação |
 | `responder_no_chat` | `send_message`, `send_reaction` | Só no chat que disparou a execução. Padrão |
 | `enviar_outros_chats` | `send_message`, `send_reaction` em qualquer chat | **Risco**: pede confirmação no painel |
-| `etiquetas` | `label_chat` | Só contas Business |
-| `grupos` | `create_group`, `update_group`, `manage_group_participants`, `get_group_invite_link` | **Risco de banimento**: pede confirmação |
+| `etiquetas` | `label_chat` | Só contas Business. Pode etiquetar **qualquer** conversa |
+| `grupos` | `create_group`, `update_group`, `manage_group_participants`, `get_group_invite_link` | **Risco de banimento**: pede confirmação. O link de convite conta como escrita (rascunho na aprovação) |
 | `midia` | `send_media` | Segue a regra de chat de `responder_no_chat` |
 
 O **motor** aplica as permissões, não só o prompt. Um envio para outro chat sem `enviar_outros_chats` é recusado,
@@ -118,7 +119,15 @@ Valem as mesmas regras de qualquer envio do LiteZap, e mais algumas:
   `human_pause` (padrão 30 min). Antes de cada escrita no modo autônomo, o motor confere de novo; se você assumiu no
   meio da execução, ela é **descartada** (`discarded`) e nada mais sai.
 - **Proteção contra loop**: dois robôs conversando ou um agente descontrolado pausam o chat (`loop_guard`).
-- **Sem envio em massa**: no máximo `max_recipients` destinatários distintos por execução (padrão 3).
+- **Sem envio em massa**: por execução, no máximo `max_recipients` destinatários distintos (padrão 3),
+  `max_sends` envios (padrão 5, contando a própria conversa), `max_writes` escritas no total (padrão 10, contando
+  rascunhos e sugestões) e `max_group_changes` mudanças em grupos (padrão 3).
+- **Aprovação revalida**: aprovar um rascunho só funciona com o agente ligado e ainda com a permissão, e repete as
+  checagens de destinatário, menções e limites antes de executar. Um rascunho que ficou "aprovando" numa queda do
+  servidor é concluído na volta (o envio é idempotente).
+- **Registro enxuto**: a execução guarda os argumentos resumidos, mas o resultado das ferramentas (mensagens,
+  contatos) só quando a chamada foi recusada ou falhou, com os números mascarados. Os eventos de rascunho levam só
+  ids, ferramenta, chat e status, nunca o texto.
 - **Chaves**: continuam cifradas e só o admin configura o provedor. Uma resposta que repete as instruções do agente
   ou uma chave é bloqueada.
 - **Dados**: com ferramentas, o agente vê números e nomes dos seus chats (como você no celular). Ao provedor vai um
@@ -152,7 +161,8 @@ curl -s -X POST $LZ/v1/instances/$ID/agents/simulate -H "Authorization: Bearer $
 
 ## Registro
 
-Cada execução guarda o gatilho, os passos (ferramenta, argumentos resumidos, resultado), o resumo final do agente,
+Cada execução guarda o gatilho, os passos (ferramenta, argumentos resumidos e o resultado só das chamadas recusadas
+ou com erro), o resumo final do agente,
 o que foi enviado ou virou rascunho, o custo e a duração, por 30 dias: `GET /agents/{agent_id}/runs` e
 `GET /agents/runs/{run_id}`. Ao terminar, sai o evento `agent.run.completed`.
 

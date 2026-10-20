@@ -31,6 +31,7 @@ const (
 // Permission groups.
 const (
 	GroupRead       = "ler"
+	GroupReadOther  = "ler_outros_chats"
 	GroupReply      = "responder_no_chat"
 	GroupOtherChats = "enviar_outros_chats"
 	GroupLabels     = "etiquetas"
@@ -39,16 +40,21 @@ const (
 )
 
 // Groups lists the permission groups in display order.
-var Groups = []string{GroupRead, GroupReply, GroupOtherChats, GroupLabels, GroupGroups, GroupMedia}
+var Groups = []string{GroupRead, GroupReadOther, GroupReply, GroupOtherChats, GroupLabels, GroupGroups, GroupMedia}
 
 // RiskyGroups need an explicit confirmation in the dashboard.
-var RiskyGroups = []string{GroupOtherChats, GroupGroups}
+var RiskyGroups = []string{GroupReadOther, GroupOtherChats, GroupGroups}
 
-// groupTools maps each group to the MCP tools it grants. enviar_outros_chats also lifts
-// the trigger-chat restriction of every send tool the agent has.
+// groupTools maps each group to the MCP tools it grants. With ler only, the per-chat
+// reads (messages, contact, group, message status) are limited to the trigger chat and
+// list_chats returns metadata only (no message text); ler_outros_chats lifts that and adds
+// the address book. enviar_outros_chats lifts the trigger-chat restriction of every send
+// tool the agent has. label_chat (etiquetas) may label any chat.
 var groupTools = map[string][]string{
-	GroupRead: {"get_instance_status", "list_chats", "get_messages", "get_message_status", "list_contacts", "get_contact",
+	GroupRead: {"get_instance_status", "list_chats", "get_messages", "get_message_status", "get_contact",
 		"list_groups", "get_group", "list_labels"},
+	GroupReadOther: {"get_instance_status", "list_chats", "get_messages", "get_message_status", "get_contact",
+		"list_groups", "get_group", "list_labels", "list_contacts"},
 	GroupReply:      {"send_message", "send_reaction"},
 	GroupOtherChats: {"send_message", "send_reaction"},
 	GroupLabels:     {"label_chat"},
@@ -58,8 +64,15 @@ var groupTools = map[string][]string{
 
 // writeTools change something outside LiteZap: in aprovacao they become drafts, in
 // sugerir notes, in the simulator dry runs.
+// get_group_invite_link only reads, but the link lets anyone join: it is handled as a write.
 var writeTools = map[string]bool{"send_message": true, "send_reaction": true, "send_media": true, "label_chat": true,
-	"create_group": true, "update_group": true, "manage_group_participants": true}
+	"create_group": true, "update_group": true, "manage_group_participants": true, "get_group_invite_link": true}
+
+// groupChangeTools change a group (they count in limits.max_group_changes).
+var groupChangeTools = map[string]bool{"create_group": true, "update_group": true, "manage_group_participants": true}
+
+// chatReadTools read one chat; key is the argument naming it.
+var chatReadTools = map[string]string{"get_messages": "chat", "get_contact": "contact", "get_group": "group"}
 
 // sendTools send a message to their "to" (restricted to the trigger chat unless
 // enviar_outros_chats).
@@ -92,6 +105,13 @@ type Limits struct {
 	MaxSteps int `json:"max_steps"`
 	// MaxRecipients is the maximum distinct chats a run may send to (default 3).
 	MaxRecipients int `json:"max_recipients"`
+	// MaxSends is the maximum sends per run, in any chat, executed or drafted (default 5).
+	MaxSends int `json:"max_sends"`
+	// MaxWrites is the maximum write calls per run (sends, labels, group changes, invite
+	// links), executed, drafted or suggested (default 10).
+	MaxWrites int `json:"max_writes"`
+	// MaxGroupChanges is the maximum group changes per run (default 3).
+	MaxGroupChanges int `json:"max_group_changes"`
 	// DailyRuns is the maximum runs per UTC day (default 200; 0 = no agent-level limit, the
 	// provider caps still apply).
 	DailyRuns int `json:"daily_runs"`
@@ -101,6 +121,9 @@ type Limits struct {
 const (
 	DefaultMaxSteps      = 8
 	DefaultMaxRecipients = 3
+	DefaultMaxSends      = 5
+	DefaultMaxWrites     = 10
+	DefaultGroupChanges  = 3
 	DefaultDailyRuns     = 200
 	maxAgents            = 20
 	maxInstructions      = 20000
@@ -139,7 +162,12 @@ type Input struct {
 func defaultAgent() Agent {
 	return Agent{Mode: ModeApproval, Tools: []string{GroupRead, GroupReply},
 		Trigger: Trigger{Type: TriggerMessage, Chats: []string{}, Labels: []string{}, Keywords: []string{}},
-		Limits:  Limits{MaxSteps: DefaultMaxSteps, MaxRecipients: DefaultMaxRecipients, DailyRuns: DefaultDailyRuns}}
+		Limits:  defaultLimits()}
+}
+
+func defaultLimits() Limits {
+	return Limits{MaxSteps: DefaultMaxSteps, MaxRecipients: DefaultMaxRecipients, MaxSends: DefaultMaxSends,
+		MaxWrites: DefaultMaxWrites, MaxGroupChanges: DefaultGroupChanges, DailyRuns: DefaultDailyRuns}
 }
 
 // apply merges the input into a.
@@ -171,12 +199,21 @@ func (in Input) apply(a Agent) Agent {
 		if l.MaxSteps == 0 {
 			l.MaxSteps = DefaultMaxSteps
 		}
-		if l.MaxRecipients == 0 {
-			l.MaxRecipients = DefaultMaxRecipients
-		}
-		a.Limits = l
+		a.Limits = l.withDefaults()
 	}
 	return a
+}
+
+// withDefaults fills unset (zero) limits.
+func (l Limits) withDefaults() Limits {
+	d := defaultLimits()
+	for _, p := range []struct{ v, def *int }{{&l.MaxSteps, &d.MaxSteps}, {&l.MaxRecipients, &d.MaxRecipients},
+		{&l.MaxSends, &d.MaxSends}, {&l.MaxWrites, &d.MaxWrites}, {&l.MaxGroupChanges, &d.MaxGroupChanges}} {
+		if *p.v == 0 {
+			*p.v = *p.def
+		}
+	}
+	return l
 }
 
 // validate checks and normalizes an agent.
@@ -194,6 +231,12 @@ func (a *Agent) validate() error {
 		return errors.New("limits.max_steps must be between 1 and 20")
 	case a.Limits.MaxRecipients < 1 || a.Limits.MaxRecipients > 10:
 		return errors.New("limits.max_recipients must be between 1 and 10")
+	case a.Limits.MaxSends < 1 || a.Limits.MaxSends > 50:
+		return errors.New("limits.max_sends must be between 1 and 50")
+	case a.Limits.MaxWrites < 1 || a.Limits.MaxWrites > 100:
+		return errors.New("limits.max_writes must be between 1 and 100")
+	case a.Limits.MaxGroupChanges < 1 || a.Limits.MaxGroupChanges > 20:
+		return errors.New("limits.max_group_changes must be between 1 and 20")
 	case a.Limits.DailyRuns < 0 || a.Limits.DailyRuns > 100000:
 		return errors.New("limits.daily_runs must be between 0 (no limit) and 100000")
 	case len(a.Trigger.Chats) > maxFilterItems || len(a.Trigger.Labels) > maxFilterItems || len(a.Trigger.Keywords) > maxFilterItems:

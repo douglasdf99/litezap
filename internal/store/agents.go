@@ -272,6 +272,34 @@ func (s *Store) ListAgentDrafts(ctx context.Context, instanceID, status string, 
 	return out, rows.Err()
 }
 
+func (s *Store) queryAgentDrafts(ctx context.Context, q string, args ...any) ([]AgentDraft, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+agentDraftCols+` FROM agent_drafts WHERE `+q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AgentDraft{}
+	for rows.Next() {
+		d, err := scanAgentDraft(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// ListAgentDraftsForRun returns a run's drafts, oldest first.
+func (s *Store) ListAgentDraftsForRun(ctx context.Context, instanceID, runID string) ([]AgentDraft, error) {
+	return s.queryAgentDrafts(ctx, `instance_id = ? AND run_id = ? ORDER BY seq`, instanceID, runID)
+}
+
+// ListAgentDraftsByStatus returns drafts of every instance with a status, oldest first
+// (crash recovery of "approving").
+func (s *Store) ListAgentDraftsByStatus(ctx context.Context, status string, limit int) ([]AgentDraft, error) {
+	return s.queryAgentDrafts(ctx, `status = ? ORDER BY seq LIMIT ?`, status, limit)
+}
+
 // ClaimAgentDraft moves a pending draft to status (approving or rejected) for decidedBy;
 // false when it is no longer pending (decided by someone else meanwhile).
 func (s *Store) ClaimAgentDraft(ctx context.Context, instanceID, id, status, decidedBy string, at time.Time) (bool, error) {

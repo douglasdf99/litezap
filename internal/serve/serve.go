@@ -248,6 +248,8 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	agentsRunner.Tools = func(id string) []agents.ToolDef { return agentTools(mcpDeps, id, log) }
 	agentsRunner.Events = bus
 	agent.Start() // after the agents have their tools
+	// Drafts approved right before a crash: finish them (sends are idempotent).
+	go agentsRunner.RecoverDrafts(context.Background())
 	handler := api.New(svc, guarded, api.Options{
 		// MCP streamable HTTP at /mcp, behind the same tokens (spec 3.1, 6.1).
 		MCP:        mcp.NewHTTPHandler(mcpDeps),

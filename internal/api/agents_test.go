@@ -72,7 +72,7 @@ func TestAgentsAPI(t *testing.T) {
 		t.Fatalf("other instance's token = %d", code)
 	}
 	code, body = e.do("GET", base+"/agents", tok, "")
-	if list := body["agents"].([]any); code != 200 || len(list) != 1 || len(body["groups"].([]any)) != 6 {
+	if list := body["agents"].([]any); code != 200 || len(list) != 1 || len(body["groups"].([]any)) != 7 {
 		t.Fatalf("list = %d %v", code, body)
 	}
 	// Simulator: write tools are dry runs.
@@ -110,6 +110,14 @@ func TestAgentsAPI(t *testing.T) {
 	draftID := d["id"].(string)
 	if code, _ := e.do("POST", base+"/agents/drafts/"+draftID+"/approve", otherTok, ""); code != http.StatusForbidden {
 		t.Fatalf("other token approved: %d", code)
+	}
+	// A paused agent's drafts are not approvable (it must still be on and allowed).
+	if code, body := e.do("POST", base+"/agents/drafts/"+draftID+"/approve", tok, ""); code != http.StatusConflict ||
+		!strings.Contains(fmt.Sprint(body), "paused") {
+		t.Fatalf("approve with the agent paused = %d %v", code, body)
+	}
+	if code, _ := e.do("PUT", base+"/agents/"+agentID, tok, `{"enabled":true}`); code != 200 {
+		t.Fatalf("enable = %d", code)
 	}
 	code, body = e.do("POST", base+"/agents/drafts/"+draftID+"/approve", tok, "")
 	if code != 200 || body["status"] != "approved" || body["decided_by"] != "instance" {

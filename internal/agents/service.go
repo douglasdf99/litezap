@@ -582,6 +582,12 @@ func (r *Runner) Decide(ctx context.Context, instanceID, draftID string, approve
 	next := DraftRejected
 	if approve {
 		next = DraftApproving
+		// One approval at a time: the run's caps count the drafts already approved.
+		r.decideMu.Lock()
+		defer r.decideMu.Unlock()
+		if err := r.revalidate(ctx, instanceID, d); err != nil {
+			return DraftView{}, apierr.New(http.StatusConflict, "conflict", "cannot approve: "+err.Error(), false)
+		}
 	}
 	ok, err := r.Store.ClaimAgentDraft(ctx, instanceID, draftID, next, decidedBy, now)
 	if err != nil {
@@ -600,9 +606,77 @@ func (r *Runner) Decide(ctx context.Context, instanceID, draftID string, approve
 	d.Status, d.Result, d.DecidedBy, d.DecidedAt = status, result, decidedBy, now
 	names := r.agentNames(ctx, instanceID)
 	v := draftView(d, names)
-	r.publish(instanceID, TypeDraftDecided, map[string]any{"draft_id": d.ID, "agent_id": d.AgentID, "agent_name": names[d.AgentID],
-		"run_id": d.RunID, "tool": d.Tool, "chat": d.ChatJID, "decision": status, "decided_by": decidedBy, "result": result})
+	r.publish(instanceID, TypeDraftDecided, draftEvent(d, status))
 	return v, nil
+}
+
+// revalidate checks a draft again before it is executed: the agent must still exist, be
+// enabled and hold the permission, and the stored call must still pass the recipient,
+// mentions and caps checks (counting the run's drafts already approved).
+func (r *Runner) revalidate(ctx context.Context, instanceID string, d store.AgentDraft) error {
+	row, err := r.Store.GetAgent(ctx, instanceID, d.AgentID)
+	if errors.Is(err, store.ErrNotFound) {
+		return errors.New("the agent was deleted")
+	}
+	if err != nil {
+		return err
+	}
+	a, err := decodeAgent(row)
+	if err != nil {
+		return err
+	}
+	if !a.Enabled {
+		return errors.New("the agent is paused: turn it on to approve its drafts")
+	}
+	run, err := r.Store.GetAgentRun(ctx, instanceID, d.RunID)
+	if err != nil {
+		return err
+	}
+	trigger := run.ChatJID
+	if j, err := service.ChatJID(trigger); err == nil {
+		trigger = j
+	}
+	ex := &executor{agent: a, trigger: trigger, recipients: map[string]bool{}}
+	siblings, err := r.Store.ListAgentDraftsForRun(ctx, instanceID, d.RunID)
+	if err != nil {
+		return err
+	}
+	for _, s := range siblings {
+		if s.ID != d.ID && (s.Status == DraftApproved || s.Status == DraftApproving) {
+			ex.count(s.Tool, s.ChatJID)
+		}
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(d.ArgsJSON), &args); err != nil || args == nil {
+		return errors.New("the stored call is corrupt")
+	}
+	chat, err := ex.checkWrite(d.Tool, args)
+	if err != nil {
+		return err
+	}
+	if chat != d.ChatJID {
+		return errors.New("the recipient no longer matches the draft")
+	}
+	return nil
+}
+
+// RecoverDrafts finishes the drafts left in "approving" by a crash (at startup): their
+// call is executed again, which is safe since a send's client_message_id makes it
+// idempotent.
+func (r *Runner) RecoverDrafts(ctx context.Context) {
+	list, err := r.Store.ListAgentDraftsByStatus(ctx, DraftApproving, 500)
+	if err != nil {
+		r.log().Error("agents: list approving drafts", "err", err)
+		return
+	}
+	for _, d := range list {
+		status, result := r.execDraft(ctx, d.InstanceID, d)
+		if err := r.Store.SettleAgentDraft(ctx, d.InstanceID, d.ID, status, result); err != nil {
+			r.log().Error("agents: recover draft", "draft_id", d.ID, "err", err)
+			continue
+		}
+		r.publish(d.InstanceID, TypeDraftDecided, draftEvent(d, status))
+	}
 }
 
 // execDraft runs the stored call with the instance's tool table.
