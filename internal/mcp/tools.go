@@ -85,10 +85,18 @@ func (w warnOnly) WithGroup(n string) slog.Handler      { return warnOnly{w.Hand
 type tools struct {
 	b   Backend
 	log *slog.Logger
+	// defs is the tool table, in registration order: the MCP server and the in-process
+	// agents (Catalog) are built from the same entries.
+	defs []ToolDef
 }
 
-// add registers a typed tool whose backend errors become tool errors with hints.
+// add registers a typed tool whose backend errors become tool errors with hints. The
+// tool always enters the table (t.defs); with a server, it is also served over MCP.
 func add[In, Out any](t *tools, s *sdk.Server, tool *sdk.Tool, h func(context.Context, In) (*sdk.CallToolResult, Out, error)) {
+	t.defs = append(t.defs, newToolDef(t, tool, h))
+	if s == nil {
+		return
+	}
 	sdk.AddTool(s, tool, func(ctx context.Context, _ *sdk.CallToolRequest, in In) (*sdk.CallToolResult, Out, error) {
 		res, out, err := h(ctx, in)
 		if err != nil {

@@ -33,6 +33,13 @@ type HTTPDeps struct {
 	PublicHost string
 }
 
+// Local is the in-process backend of these services for one caller (the MCP endpoint,
+// and the agents' tool table via Catalog).
+func (d HTTPDeps) Local(sc service.Scope) *Local {
+	return &Local{Instances: d.Instances, Messaging: d.Messaging, Events: d.Events, Groups: d.Groups, Caller: sc, Account: d.Account,
+		Social: d.Social, Attendant: d.Attendant}
+}
+
 // NewHTTPHandler serves MCP streamable HTTP. It must sit behind the API authentication,
 // which puts the caller's service.Scope in the request context. It is stateless: every
 // POST gets a server bound to the scope of that request's token, so no session can be
@@ -53,9 +60,7 @@ func NewHTTPHandler(d HTTPDeps) http.Handler {
 		if s, ok := servers.Load(sc); ok {
 			return s.(*sdk.Server)
 		}
-		b := &Local{Instances: d.Instances, Messaging: d.Messaging, Events: d.Events, Groups: d.Groups, Caller: sc, Account: d.Account,
-			Social: d.Social, Attendant: d.Attendant}
-		s, _ := servers.LoadOrStore(sc, NewServer(b, Options{Version: d.Version, Logger: d.Logger, SchemaCache: cache}))
+		s, _ := servers.LoadOrStore(sc, NewServer(d.Local(sc), Options{Version: d.Version, Logger: d.Logger, SchemaCache: cache}))
 		return s.(*sdk.Server)
 	}, &sdk.StreamableHTTPOptions{Stateless: true, Logger: d.Logger, DisableLocalhostProtection: d.PublicHost != ""})
 	if d.PublicHost == "" {
