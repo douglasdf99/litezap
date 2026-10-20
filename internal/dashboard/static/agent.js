@@ -27,6 +27,7 @@ export function agentPanel(ctx) {
   const renderConfig = (c) => {
     const target = h('select', null,
       h('option', { value: 'builtin' }, 'Atendente LiteZap (embutido, configurado abaixo)'),
+      h('option', { value: 'agents' }, 'Agentes LiteZap (aba Agentes)'),
       h('option', { value: 'url' }, 'Meu agente externo (URL)'));
     target.value = c.target || 'url';
     const url = h('input', { type: 'url', class: 'mono', value: c.url, placeholder: 'https://meu-agente.exemplo.com/litezap' });

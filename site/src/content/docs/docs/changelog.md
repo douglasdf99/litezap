@@ -5,6 +5,22 @@ description: O que mudou em cada marco do LiteZap.
 
 As versões seguem os marcos do motor. Mudanças que quebram compatibilidade são marcadas com **Quebra**.
 
+## Agentes LiteZap (A1)
+
+**Novo**
+
+- [Agentes](/docs/guias/agentes/): o Claude operando o WhatsApp com as ferramentas do LiteZap, num loop de *tool use*
+  executado dentro do motor (as mesmas ferramentas e validações do MCP, sem rede).
+- Permissões em grupos (`ler`, `responder_no_chat`, `enviar_outros_chats`, `etiquetas`, `grupos`, `midia`), aplicadas
+  pelo motor: envio para outro chat sem permissão é recusado e há no máximo 3 destinatários distintos por execução.
+- Modos `aprovacao` (padrão: cada escrita vira um rascunho que você aprova), `autonomo` e `sugerir`; limite de 8 passos
+  por execução; custo e limites do Atendente IA em cada chamada ao modelo.
+- Gatilho "mensagem nova" pelo hook de agente com `target: "agents"` (filtros por chat, etiqueta, palavra-chave e
+  grupos opcionais), "Executar agora" e o simulador (escritas sempre faz de conta).
+- API `/v1/instances/{id}/agents` (agentes, execuções, rascunhos, simulador) e eventos `agent.run.completed`,
+  `agent.draft.created` e `agent.draft.decided`. Aba **Agentes** no painel.
+- O provedor OpenAI-compatível ganha *function calling* para os agentes.
+
 ## App local: download e Conectar a IA
 
 **Novo**

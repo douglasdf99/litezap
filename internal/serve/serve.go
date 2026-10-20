@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/douglasdf99/litezap/internal/agenthook"
+	"github.com/douglasdf99/litezap/internal/agents"
 	"github.com/douglasdf99/litezap/internal/api"
 	"github.com/douglasdf99/litezap/internal/attendant"
 	"github.com/douglasdf99/litezap/internal/autoread"
@@ -132,9 +133,12 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 			}
 			return set.Location()
 		}}
+	// LiteZap agents (spec 2026-10-20): the hook's "agents" target, a tool-use loop over
+	// the MCP tool table (set below, once the services exist) with the attendant's provider.
+	agentsRunner := &agents.Runner{Store: st, Sessions: agents.FromAttendant(att), Log: log}
 	// Agent hook (spec 4.3): another bus sink; its send path is set once Messaging exists.
 	agent := agenthook.New(st, agenthook.Options{AllowPrivate: cfg.WebhookAllowPrivateURLs, Log: log,
-		Held: cl.sending.Held, Builtin: att})
+		Held: cl.sending.Held, Builtin: att, Agents: agentsRunner})
 	bus := events.NewBus(nil, hooks, cl.usage, agent)
 	bus.SetLogger(log)
 	cl.attach(bus)
@@ -232,18 +236,24 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	agent.SetMessenger(guarded)
 	att.Media = msg // attachments: transcription and vision
 	agent.SetPublisher(bus)
-	agent.Start()
 	rt.SetSender(guarded)
 	msg.OnSettingsChanged = rt.SettingsChanged
 	groups := &service.Groups{Store: st, Workers: mgr, Resolver: resolver, Sending: cl.sending,
 		Fetcher: msg.Fetcher, Defaults: cfg.InstanceDefaults, DefaultProxy: cfg.DefaultProxyURL}
 	social := &service.Social{Store: st, Workers: mgr, Messaging: msg, Sending: cl.sending, Fetcher: msg.Fetcher, Events: bus}
 	attAdmin := &attendant.Admin{A: att}
+	mcpDeps := mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Groups: groups, Logger: log, Account: acct,
+		Social: social, Attendant: attAdmin, PublicHost: publicHost(cfg.PublicURL)}
+	// The agents call the same tools as MCP, in process, with the instance's own scope.
+	agentsRunner.Tools = func(id string) []agents.ToolDef { return agentTools(mcpDeps, id, log) }
+	agentsRunner.Events = bus
+	agent.Start() // after the agents have their tools
+	// Drafts approved right before a crash: finish them (sends are idempotent).
+	go agentsRunner.RecoverDrafts(context.Background())
 	handler := api.New(svc, guarded, api.Options{
 		// MCP streamable HTTP at /mcp, behind the same tokens (spec 3.1, 6.1).
-		MCP: mcp.NewHTTPHandler(mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Groups: groups, Logger: log, Account: acct,
-			Social: social, Attendant: attAdmin,
-			PublicHost: publicHost(cfg.PublicURL)}),
+		MCP:        mcp.NewHTTPHandler(mcpDeps),
+		Agents:     agentsRunner,
 		AdminToken: cfg.AdminToken,
 		ProtectOps: !loopback,
 		Ready:      cl.health.Ready, // fails once draining (E12)
@@ -324,6 +334,16 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 // webhook outbox: the history tracker flushes, then the webhook dispatcher writes its
 // buffer and gives deliveries in flight up to 5s (cut ones are resent after the restart).
 // scale (<= 1) shrinks every phase to fit shutdown_timeout.
+// agentTools is the MCP tool table of one instance (its own scope), as the agents use it.
+func agentTools(d mcp.HTTPDeps, instanceID string, log *slog.Logger) []agents.ToolDef {
+	defs := mcp.Catalog(d.Local(service.Scope{InstanceID: instanceID}), log)
+	out := make([]agents.ToolDef, 0, len(defs))
+	for _, t := range defs {
+		out = append(out, agents.ToolDef{Name: t.Name, Description: t.Description, Schema: t.InputSchema, Call: t.Call})
+	}
+	return out
+}
+
 func shutdownAll(q *queue.Queues, mgr *manager.Manager, history *events.HistoryTracker, hooks *webhook.Dispatcher, scale float64) {
 	qctx, qcancel := context.WithTimeout(context.Background(), scaled(10*time.Second, scale))
 	q.Shutdown(qctx)

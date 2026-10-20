@@ -119,6 +119,7 @@ export default defineConfig({
 						'docs/guias/solucao-de-problemas',
 						'docs/guias/multi-instancia',
 						{ slug: 'docs/guias/atendimento-ia', badge: { text: 'Novo', variant: 'success' } },
+						{ slug: 'docs/guias/agentes', badge: { text: 'Novo', variant: 'success' } },
 						'docs/guias/grupos',
 						{ slug: 'docs/guias/mensagens-interativas', badge: exp },
 					],
