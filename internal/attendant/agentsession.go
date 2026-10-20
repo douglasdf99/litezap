@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/douglasdf99/litezap/internal/agenthook"
 	"github.com/douglasdf99/litezap/internal/events"
 )
 
@@ -111,9 +110,3 @@ func Describe(typ, text string, md *events.Media) string { return describe(typ, 
 
 // Clip shortens s to n runes.
 func Clip(s string, n int) string { return clip(s, n) }
-
-// IsCallError reports an *agenthook.CallError with this reason.
-func IsCallError(err error, reason string) bool {
-	ce, ok := err.(*agenthook.CallError)
-	return ok && ce.Reason == reason
-}
