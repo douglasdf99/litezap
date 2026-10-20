@@ -82,6 +82,8 @@ type Options struct {
 	AgentHook AgentHookService
 	// Attendant, when set, serves the built-in attendant routes (spec 4.7).
 	Attendant AttendantService
+	// Agents, when set, serves the LiteZap agents routes (spec 2026-10-20).
+	Agents AgentsService
 	// Account, when set, serves chats, contacts, profile and privacy routes (marco 9).
 	Account AccountService
 	// Groups, when set, serves the group and community routes (marco 8).
@@ -196,6 +198,7 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 			r.Get("/media/{media_id}", s.getMedia)
 			s.agentRoutes(r)
 			s.attendantRoutes(r)
+			s.agentsRoutes(r)
 			s.groupRoutes(r)
 			r.Post("/presence/subscribe", s.subscribePresence)
 			s.accountRoutes(r)

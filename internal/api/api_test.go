@@ -15,11 +15,13 @@ import (
 	"time"
 
 	"github.com/douglasdf99/litezap/internal/agenthook"
+	"github.com/douglasdf99/litezap/internal/agents"
 	"github.com/douglasdf99/litezap/internal/attendant"
 	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/ingest"
 	"github.com/douglasdf99/litezap/internal/lookup"
 	"github.com/douglasdf99/litezap/internal/manager"
+	"github.com/douglasdf99/litezap/internal/mcp"
 	"github.com/douglasdf99/litezap/internal/media"
 	"github.com/douglasdf99/litezap/internal/pairing"
 	"github.com/douglasdf99/litezap/internal/queue"
@@ -103,7 +105,19 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 	opt.PairingPage = pairing.Handler(pairing.PageOptions{Links: links, Instances: svc})
 	opt.Operator.Usage = &usage.Recorder{Store: st}
 	vault, _ := attendant.NewVault([]byte("attendant-key-0123456789abcdef01"))
-	opt.Attendant = &attendant.Admin{A: &attendant.Attendant{Store: st, Vault: vault}} // spec 4.7
+	att := &attendant.Attendant{Store: st, Vault: vault}
+	attAdmin := &attendant.Admin{A: att}
+	opt.Attendant = attAdmin // spec 4.7
+	// LiteZap agents: the MCP tool table in process, the attendant's provider.
+	deps := mcp.HTTPDeps{Instances: svc, Messaging: msg, Events: bus, Groups: groups, Account: acct, Social: social, Attendant: attAdmin}
+	opt.Agents = &agents.Runner{Store: st, Sessions: agents.FromAttendant(att), Events: bus, Log: log,
+		Tools: func(id string) []agents.ToolDef {
+			var out []agents.ToolDef
+			for _, d := range mcp.Catalog(deps.Local(service.Scope{InstanceID: id}), log) {
+				out = append(out, agents.ToolDef{Name: d.Name, Description: d.Description, Schema: d.InputSchema, Call: d.Call})
+			}
+			return out
+		}}
 	if tweak != nil {
 		tweak(&opt)
 	}
