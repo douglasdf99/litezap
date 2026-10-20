@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"reflect"
 	"time"
 
 	"fyne.io/systray"
@@ -40,13 +41,16 @@ type aiAction struct {
 
 // extensionMessage is what to tell the user after handing the .mcpb to Claude Desktop.
 func extensionMessage(res desktop.ExtensionResult) string {
-	msg := "O Claude Desktop vai mostrar a instalação da extensão LiteZap: clique em Instalar.\n\n" +
-		"Se nada aparecer, abra o Claude Desktop, vá em Configurações > Extensões e arraste para lá o arquivo:\n" + res.Path
+	msg := "O Claude Desktop vai mostrar a instalação da extensão LiteZap: clique em Instalar."
+	if res.Hint != "" {
+		msg += " " + res.Hint
+	}
+	msg += "\n\nSe nada aparecer, abra o Claude Desktop, vá em Configurações > Extensões e arraste para lá o arquivo:\n" + res.Path
 	switch {
 	case res.ManualRemoved:
 		msg += "\n\nA configuração manual do LiteZap (arquivo de config do Claude) foi removida, para você não ver as ferramentas em dobro."
-		if res.Hint != "" {
-			msg += " " + res.Hint
+		if res.ManualHint != "" {
+			msg += " " + res.ManualHint
 		}
 	case res.ManualError != "":
 		msg += "\n\nNão foi possível remover a configuração manual do LiteZap (" + res.ManualError + "): " +
@@ -55,10 +59,11 @@ func extensionMessage(res desktop.ExtensionResult) string {
 	return msg
 }
 
-// aiMenu runs the "Conectar a IA" submenu: for Claude Desktop, "Instalar extensão
-// (recomendado)" when the app ships the .mcpb; one checkbox item per client (checked when
-// connected; a click connects, or repairs a stale entry) and a "Desconectar" item shown
-// while an entry exists.
+// aiMenu runs the "Conectar a IA" submenu: for Claude Desktop, "instalar extensão" (the
+// one action: Claude enables it with no restart) when the app ships the .mcpb, with the
+// config file option under "Claude Desktop: avançado"; one checkbox item per client
+// (checked when connected; a click connects, or repairs a stale entry) and a
+// "Desconectar" item shown while an entry exists.
 func (a *app) aiMenu(parent *systray.MenuItem) {
 	type row struct {
 		client      desktop.AIClient
@@ -69,20 +74,25 @@ func (a *app) aiMenu(parent *systray.MenuItem) {
 	}
 	acts := make(chan aiAction)
 	extension := a.ai.ExtensionAvailable()
+	var ext *systray.MenuItem
+	var lastExt *desktop.ExtensionState
 	var rows []*row
 	for _, cl := range desktop.AIClients() {
+		menu := parent
 		if cl.ID == desktop.ClaudeDesktop && extension {
-			ext := parent.AddSubMenuItem("Claude Desktop: instalar extensão (recomendado)",
-				"Abre a extensão LiteZap no Claude Desktop, que mostra a instalação")
+			ext = parent.AddSubMenuItem("Claude Desktop: instalar extensão",
+				"Abre a extensão LiteZap no Claude Desktop, que mostra a instalação (sem reiniciar o Claude)")
 			go func() {
 				for range ext.ClickedCh {
 					acts <- aiAction{cl.ID, "extension"}
 				}
 			}()
+			menu = parent.AddSubMenuItem("Claude Desktop: avançado",
+				"Configuração manual pelo arquivo de config (exige reiniciar o Claude)")
 		}
 		r := &row{client: cl,
-			item: parent.AddSubMenuItemCheckbox(cl.Name, "Conectar o LiteZap ao "+cl.Name, false),
-			disc: parent.AddSubMenuItem("Desconectar do "+cl.Name, "Remove o LiteZap da configuração do "+cl.Name)}
+			item: menu.AddSubMenuItemCheckbox(cl.Name, "Conectar o LiteZap ao "+cl.Name, false),
+			disc: menu.AddSubMenuItem("Desconectar do "+cl.Name, "Remove o LiteZap da configuração do "+cl.Name)}
 		r.disc.Hide()
 		rows = append(rows, r)
 		go func() {
@@ -99,6 +109,21 @@ func (a *app) aiMenu(parent *systray.MenuItem) {
 	// refresh re-reads a client's config only when its size or mtime changed (or force):
 	// ~/.claude.json can be large.
 	refresh := func(force bool) {
+		if ext != nil {
+			// A folder stat or two: cheap enough for every tick (the install happens in
+			// Claude, with no change to its config file).
+			if st := a.ai.ExtensionState(); lastExt == nil || st != *lastExt {
+				lastExt = &st
+				switch {
+				case st.Disabled:
+					ext.SetTitle("Claude Desktop: extensão desativada (ative em Configurações > Extensões)")
+				case st.Installed:
+					ext.SetTitle("Claude Desktop: conectado via extensão (reinstalar)")
+				default:
+					ext.SetTitle("Claude Desktop: instalar extensão")
+				}
+			}
+		}
 		for _, r := range rows {
 			p, _ := a.ai.ConfigPath(r.client.ID)
 			sig := statSig(p)
@@ -107,13 +132,13 @@ func (a *app) aiMenu(parent *systray.MenuItem) {
 			}
 			r.sig = sig
 			st := a.ai.Status(r.client.ID)
-			if r.initialized && st == r.last {
+			if r.initialized && reflect.DeepEqual(st, r.last) {
 				continue
 			}
 			r.last, r.initialized = st, true
 			name := r.client.Name
 			if r.client.ID == desktop.ClaudeDesktop && extension {
-				name = "Claude Desktop: configurar manualmente (arquivo de config)"
+				name = "Configurar manualmente (arquivo de config, exige reiniciar o Claude)"
 			}
 			title, tip := name, "Conectar o LiteZap ao "+r.client.Name
 			switch {

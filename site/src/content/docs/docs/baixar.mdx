@@ -84,12 +84,13 @@ A bandeja usa StatusNotifierItem (DBus). No GNOME, instale a extensão **AppIndi
 1. **Abra o app.** No Mac, o painel abre na janela do LiteZap, já logado; no Windows e no Linux, no navegador.
 2. **Conecte o seu WhatsApp.** No painel, crie uma instância (ex.: "pessoal"), clique em **Parear** e escaneie o QR
    com o celular: WhatsApp > **Aparelhos conectados** > **Conectar um aparelho**.
-3. **Conecte a IA.** Na aba **Conectar a IA** do painel, clique em **Instalar extensão (recomendado)** no Claude
-   Desktop (ou use o ícone do LiteZap: **Conectar a IA > Claude Desktop: instalar extensão**). O Claude Desktop abre a
-   tela de instalação da extensão LiteZap: clique em **Instalar**. Também há Claude Code e Cursor.
-4. **Se usou "Configurar manualmente"**, reinicie o Claude Desktop de verdade: **Cmd+Q** no Mac (ou **Arquivo > Sair**
-   no Windows) e abra de novo. Fechar só a janela não basta.
-5. **Peça ao Claude:** "manda um oi pro fulano". Ele procura o contato, confirma e envia pelo seu número, respeitando
+3. **Conecte a IA.** Na aba **Conectar a IA** do painel, clique em **Instalar extensão** no Claude Desktop (ou use o
+   ícone do LiteZap: **Conectar a IA > Claude Desktop: instalar extensão**). O Claude Desktop abre a tela de
+   instalação da extensão LiteZap: clique em **Instalar**. Não precisa reiniciar o Claude: as ferramentas aparecem
+   sozinhas (pode levar alguns segundos para aparecer). No Claude Code, use **Conectar (só ferramentas)** e abra uma
+   nova sessão (ou use `/mcp`), ou instale o [plugin LiteZap](/docs/mcp/claude-code-plugin/) com comandos e agentes
+   prontos. Também há o Cursor.
+4. **Peça ao Claude:** "manda um oi pro fulano". Ele procura o contato, confirma e envia pelo seu número, respeitando
    o ritmo seguro do LiteZap.
 
 </Steps>
@@ -101,14 +102,15 @@ abri-lo. Com o computador desligado ou dormindo, o número fica offline.
 
 ## Extensão do Claude Desktop
 
-A extensão (`LiteZap.mcpb`) é o jeito recomendado de ligar o LiteZap ao Claude Desktop: quem instala é o próprio
-Claude, então ela não depende do arquivo de configuração e não some quando o Claude fecha.
+A extensão (`LiteZap.mcpb`) é o jeito de ligar o LiteZap ao Claude Desktop: quem instala é o próprio Claude, que a
+liga na hora, sem reiniciar. Ela não depende do arquivo de configuração e não some quando o Claude fecha. Depois de
+instalada, o painel mostra **Conectado via extensão**.
 
 <Steps>
 
 1. Instale e abra o app LiteZap (acima). A extensão usa o app: ela não traz o WhatsApp sozinha.
-2. No painel, **Conectar a IA > Claude Desktop > Instalar extensão (recomendado)**. O Claude Desktop abre a tela de
-   instalação; clique em **Instalar**.
+2. No painel, **Conectar a IA > Claude Desktop > Instalar extensão**. O Claude Desktop abre a tela de instalação;
+   clique em **Instalar**. As ferramentas aparecem sem reiniciar o Claude (pode levar alguns segundos para aparecer).
 3. Sem o painel: baixe o [`LiteZap.mcpb`](https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap.mcpb)
    e dê dois cliques nele (ou arraste para **Configurações > Extensões** no Claude Desktop).
 4. Peça ao Claude: "liste minhas conversas do WhatsApp".
@@ -116,24 +118,28 @@ Claude, então ela não depende do arquivo de configuração e não some quando 
 </Steps>
 
 A extensão procura o app em **Aplicativos** (macOS) ou no lugar onde você abriu o `LiteZap.exe` pela última vez
-(Windows). Se mover o app, abra-o uma vez no lugar novo. Se você já tinha conectado pelo arquivo de configuração,
-clique em **Desconectar** depois de instalar a extensão, para não ver as ferramentas em dobro.
+(Windows). Se mover o app, abra-o uma vez no lugar novo. Se você já tinha conectado pelo arquivo de configuração, o
+LiteZap remove essa configuração ao instalar a extensão, para você não ver as ferramentas em dobro.
 
 ## O que o "Conectar a IA" faz
 
-Ele adiciona o LiteZap à configuração do programa de IA, apontando para o próprio app (`litezap-app mcp`). Nenhum token
+- **Claude Desktop:** **Instalar extensão** é a ação principal (acima). A configuração manual pelo arquivo de
+  config do Claude fica em **Avançado**: só use se a extensão não funcionar, porque ela exige fechar o Claude por
+  completo (**Cmd+Q** no Mac, **Arquivo > Sair** no Windows) e abrir de novo.
+- **Claude Code:** **Conectar (só ferramentas)** roda `claude mcp add --scope user`; abra uma nova sessão do Claude
+  Code (ou use `/mcp`). Ou **Instalar plugin LiteZap (comandos e agentes prontos)**, que mostra os dois comandos para
+  colar. Veja [Claude Code: plugin e agentes](/docs/mcp/claude-code-plugin/).
+- **Cursor:** grava `~/.cursor/mcp.json`; recarregue a janela do Cursor.
+
+Quando o LiteZap mexe num arquivo de configuração, ele aponta para o próprio app (`litezap-app mcp`) e nenhum token
 é copiado: o app usa o token da sua pasta de dados, que só o seu usuário lê.
 
 - Só a entrada do LiteZap muda: os outros servidores MCP e o resto do arquivo ficam exatamente como estão.
 - Antes da primeira alteração, o arquivo original ganha uma cópia `.litezap.bak` ao lado (uma vez só: ela guarda o
   arquivo de antes do LiteZap).
 - Se o arquivo de configuração estiver com JSON inválido, o LiteZap não mexe nele e mostra o erro.
-- Quando já está conectado, o item aparece marcado; **Desconectar** remove só a entrada do LiteZap.
+- **Desconectar** remove só a entrada do LiteZap.
 - Conecte com o app já no lugar definitivo (Aplicativos no macOS; uma pasta extraída, como Documentos, no
   Windows): de dentro do `.dmg` ou do `.zip` o caminho deixa de existir depois.
-- **Claude aberto:** o Claude Desktop guarda a configuração na memória e a regrava ao fechar, o que pode apagar a
-  entrada nova. O LiteZap avisa ("O Claude está aberto: feche com Cmd+Q e abra de novo"), mostra **conectado
-  (reinicie o Claude)** e, se o Claude apagar a entrada ao fechar, grava de novo e avisa. A extensão não tem esse
-  problema.
 
 Detalhes, arquivos e opções em [App local](/docs/app-local/) e [MCP e IA](/docs/mcp/).

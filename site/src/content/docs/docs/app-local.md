@@ -100,13 +100,33 @@ O `litezap` principal continua sem CGO; só o app usa a biblioteca de bandeja e,
 
 ## Conectar a IA (Claude Desktop, Claude Code, Cursor)
 
-### Extensão do Claude Desktop (recomendado)
+Nenhum caminho principal pede para reiniciar o programa de IA:
 
-No Claude Desktop, o caminho recomendado é a extensão `LiteZap.mcpb` (formato [MCP Bundle](https://github.com/modelcontextprotocol/mcpb)):
-**Conectar a IA > Claude Desktop > Instalar extensão (recomendado)**, no painel ou no menu do ícone. O app grava uma
-cópia da extensão na pasta de cache do usuário e a abre; o Claude Desktop mostra a tela de instalação. Ela também é
+| Cliente | Ação principal | Depois |
+|---|---|---|
+| Claude Desktop | **Instalar extensão** (`LiteZap.mcpb`) | Clique em **Instalar** na tela do Claude: as ferramentas aparecem sem reiniciar (pode levar alguns segundos) |
+| Claude Code | **Conectar (só ferramentas)** (`claude mcp add --scope user`) ou o [plugin LiteZap](/docs/mcp/claude-code-plugin/) | Abra uma nova sessão do Claude Code (ou use `/mcp`) |
+| Cursor | **Conectar** (`~/.cursor/mcp.json`) | Recarregue a janela do Cursor |
+
+### Extensão do Claude Desktop
+
+No Claude Desktop, a única ação principal é a extensão `LiteZap.mcpb` (formato [MCP Bundle](https://github.com/modelcontextprotocol/mcpb)):
+**Conectar a IA > Claude Desktop > Instalar extensão**, no painel ou no menu do ícone. O app grava uma cópia da
+extensão na pasta de cache do usuário e a abre; o Claude Desktop mostra a tela de instalação. Ela também é
 publicada em cada versão: [`LiteZap.mcpb`](https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap.mcpb)
 (macOS e Windows; dois cliques para instalar).
+
+**Sem reiniciar.** Ao clicar em **Instalar**, o próprio Claude Desktop liga a extensão e sobe o servidor dela na
+hora. Conferido no macOS pelo log do Claude (`~/Library/Logs/Claude/main.log`): "Successfully installed extension",
+"Enabling extension ... after installation" e "Connected to LiteZap (WhatsApp) (40 tools)" no mesmo segundo, com o
+Claude aberto o tempo todo. A documentação do MCPB não promete isso, então o app diz só que as ferramentas
+"podem levar alguns segundos para aparecer".
+
+**Estado.** O app considera "Conectado via extensão" quando existe a pasta da extensão nas extensões do Claude:
+`~/Library/Application Support/Claude/Claude Extensions/local.mcpb.litezap.litezap/` no macOS (o Claude dá esse id a
+um `.mcpb` sem assinatura instalado de um arquivo: `local.mcpb.<autor>.<nome>`), ou qualquer pasta ali cujo
+`manifest.json` tenha `"name": "litezap"`. Se `Claude Extensions Settings/<id>.json` disser `"isEnabled": false`,
+mostra **extensão desativada** (ative em Configurações > Extensões, no Claude).
 
 A extensão não traz uma cópia das ferramentas: o binário dela (`litezap-mcpb`, sem CGO, poucos MB) só encontra o app
 instalado e roda `<app> mcp`, então as ferramentas são sempre as da versão do app. Ordem de busca:
@@ -123,17 +143,29 @@ quando o Claude encerra a extensão, o `LiteZap.exe mcp` encerra junto.
 Sem o app, a extensão sai com "o app LiteZap não foi encontrado" (aparece no log do Claude). O ZIP do Windows traz o
 `LiteZap.mcpb` ao lado do `LiteZap.exe`; no macOS ele fica em `LiteZap.app/Contents/Resources`.
 
+Instalar a extensão remove a configuração manual do LiteZap (abaixo), se houver, para as ferramentas não aparecerem
+em dobro. Com o Claude aberto, a cópia antiga pode continuar visível até a próxima vez que ele abrir; não atrapalha.
+
+### Claude Code
+
+- **Conectar (só ferramentas)**: `claude mcp add --scope user litezap -- <app> mcp`. Toda sessão do Claude Code
+  que começa depois disso vê as ferramentas: abra uma nova sessão (ou use `/mcp`); não há o que reiniciar.
+- **Instalar plugin LiteZap (comandos e agentes prontos)**: o painel mostra os dois comandos para colar no Claude
+  Code, com botão de copiar. O plugin traz as ferramentas, os comandos e os agentes atendente, SDR e follow-up. Veja
+  [Claude Code: plugin e agentes](/docs/mcp/claude-code-plugin/). Use um ou outro, não os dois (as ferramentas
+  apareceriam em dobro).
+
 ### Arquivo de configuração
 
-No menu do ícone, **Conectar a IA** tem um item por cliente; o painel tem a mesma coisa na aba **Conectar a IA** (no
-Claude Desktop, como **Configurar manualmente (arquivo de config)**). Um
-clique grava, na configuração do cliente, a entrada `mcpServers.litezap` apontando para o próprio executável do app
-com `["mcp"]`. Não há token para copiar: `litezap-app mcp` lê o endereço e o token admin da pasta de dados (arquivo
-`0600`, só do seu usuário).
+No menu do ícone, **Conectar a IA** tem um item por cliente; o painel tem a mesma coisa na aba **Conectar a IA**. No
+Claude Desktop, essa opção fica em **Avançado** (painel) ou **Claude Desktop: avançado** (menu do ícone), porque ela
+exige reiniciar o Claude. Um clique grava, na configuração do cliente, a entrada `mcpServers.litezap` apontando para
+o próprio executável do app com `["mcp"]`. Não há token para copiar: `litezap-app mcp` lê o endereço e o token admin
+da pasta de dados (arquivo `0600`, só do seu usuário).
 
 | Cliente | Onde grava |
 |---|---|
-| Claude Desktop | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`; Windows `%APPDATA%\Claude\claude_desktop_config.json`; Linux `~/.config/Claude/claude_desktop_config.json` |
+| Claude Desktop (avançado) | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`; Windows `%APPDATA%\Claude\claude_desktop_config.json`; Linux `~/.config/Claude/claude_desktop_config.json` |
 | Claude Code | `claude mcp add --scope user litezap -- <app> mcp` quando o `claude` é encontrado; senão, `mcpServers` de `~/.claude.json` |
 | Cursor | `~/.cursor/mcp.json` |
 
@@ -149,15 +181,14 @@ com `["mcp"]`. Não há token para copiar: `litezap-app mcp` lê o endereço e o
   um clique corrige. **Desconectar** remove só a entrada `litezap`.
 - Conecte com o app num lugar fixo (Aplicativos no macOS, uma pasta como Documentos no Windows): rodando de dentro
   do `.dmg` ou do `.zip`, ou de uma pasta temporária, o app recusa e pede para movê-lo.
-- Depois de conectar, reinicie o cliente de IA (no Claude Code, abra uma sessão nova; no Cursor, recarregue a
-  janela).
-- **Claude Desktop aberto.** Ele guarda a configuração na memória e a regrava ao fechar, apagando uma entrada gravada
-  enquanto estava aberto. O app detecta o Claude aberto (macOS: processo `Claude.app/Contents/MacOS/Claude`, bundle
-  `com.anthropic.claudefordesktop`; Windows: `Claude.exe`), avisa "O Claude está aberto: feche com Cmd+Q e abra de
-  novo para ver as ferramentas do LiteZap" e mostra **conectado (reinicie o Claude)** até o Claude fechar. Enquanto
-  isso, vigia o arquivo: se o Claude, ao fechar, apagar a entrada, o app a grava de novo (só a chave `litezap`, no
-  máximo 3 vezes) e avisa. A vigia acaba quando o Claude abre de novo, 2 minutos depois de ele fechar, ou em 30
-  minutos.
+- Depois de conectar: no Claude Code, abra uma nova sessão (ou use `/mcp`); no Cursor, recarregue a janela.
+- **Claude Desktop pelo arquivo (avançado).** O Claude Desktop só lê esse arquivo ao abrir e guarda a configuração
+  na memória, regravando-a ao fechar, o que apaga uma entrada gravada enquanto estava aberto. Por isso este caminho,
+  e só ele, pede para fechar o Claude por completo e abrir de novo. O app detecta o Claude aberto (macOS: processo
+  `Claude.app/Contents/MacOS/Claude`, bundle `com.anthropic.claudefordesktop`; Windows: `Claude.exe`), avisa e
+  mostra **conectado (reinicie o Claude)** até o Claude fechar. Enquanto isso, vigia o arquivo: se o Claude, ao
+  fechar, apagar a entrada, o app a grava de novo (só a chave `litezap`, no máximo 3 vezes) e avisa. A vigia acaba
+  quando o Claude abre de novo, 2 minutos depois de ele fechar, ou em 30 minutos. A extensão não tem nada disso.
 
 **Com o app fechado**, `litezap-app mcp` continua respondendo ao cliente, mas as ferramentas devolvem
 `app_not_running` ("abra o app LiteZap"). Ele não sobe um motor próprio: um segundo motor na mesma pasta brigaria com a

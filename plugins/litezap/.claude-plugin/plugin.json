@@ -1,0 +1,14 @@
+{
+  "name": "litezap",
+  "displayName": "LiteZap (WhatsApp)",
+  "version": "0.1.0",
+  "description": "Use o seu WhatsApp pelo Claude Code: as ferramentas do app LiteZap deste computador, comandos para resumir e responder conversas e agentes prontos de atendimento, SDR e follow-up.",
+  "author": {
+    "name": "LiteZap",
+    "url": "https://litezap.com"
+  },
+  "homepage": "https://litezap.com/docs/mcp/claude-code-plugin/",
+  "repository": "https://github.com/douglasdf99/litezap",
+  "license": "Apache-2.0",
+  "keywords": ["whatsapp", "mcp", "atendimento", "sdr", "follow-up", "litezap"]
+}

@@ -91,15 +91,22 @@ func TestInstallExtensionRemovesManualEntry(t *testing.T) {
 
 	// No manual entry: nothing removed, no guard.
 	res, err := c.InstallExtension()
-	if err != nil || res.ManualRemoved || res.ManualError != "" {
+	if err != nil || res.ManualRemoved || res.ManualError != "" || res.Hint != ExtensionReadyHint {
 		t.Fatalf("no entry: %+v, %v", res, err)
+	}
+	// The extension path never tells the user to restart Claude.
+	for _, s := range []string{res.Hint, manualRemovedHint} {
+		if l := strings.ToLower(s); strings.Contains(l, "reinicie") || strings.Contains(l, "cmd+q") || strings.Contains(l, "feche") {
+			t.Errorf("restart wording in the extension path: %q", s)
+		}
 	}
 
 	// Manual entry and Claude open: removed now, and again after Claude writes it back.
 	restoreEntry(t, c)
 	f.open.Store(true)
 	res, err = c.InstallExtension()
-	if err != nil || !res.ManualRemoved || !res.Running || !strings.Contains(res.Hint, "concluir") {
+	if err != nil || !res.ManualRemoved || !res.Running || res.ManualHint != manualRemovedHint ||
+		res.Hint != ExtensionReadyHint {
 		t.Fatalf("install: %+v, %v", res, err)
 	}
 	if c.Status(ClaudeDesktop).Present {
@@ -125,13 +132,48 @@ func TestInstallExtensionRemovesManualEntry(t *testing.T) {
 
 func TestExtensionInstalled(t *testing.T) {
 	c := testConnector(t)
-	if c.Status(ClaudeDesktop).ExtensionInstalled {
+	if st := c.Status(ClaudeDesktop); st.ExtensionInstalled || st.ExtensionDisabled {
 		t.Fatal("installed with no extensions folder")
 	}
 	p, _ := c.ConfigPath(ClaudeDesktop)
-	writeFile(t, filepath.Join(filepath.Dir(p), "Claude Extensions", "other", "manifest.json"), `{"name":"other"}`)
-	writeFile(t, filepath.Join(filepath.Dir(p), "Claude Extensions", "local.mcpb.litezap", "manifest.json"), `{"name":"litezap"}`)
-	if !c.Status(ClaudeDesktop).ExtensionInstalled {
-		t.Error("installed extension not seen")
+	base := filepath.Dir(p)
+	writeFile(t, filepath.Join(base, "Claude Extensions", "other", "manifest.json"), `{"name":"other"}`)
+	if c.Status(ClaudeDesktop).ExtensionInstalled {
+		t.Fatal("another extension seen as LiteZap")
+	}
+
+	// The folder Claude Desktop really uses (seen on macOS), switch on.
+	writeFile(t, filepath.Join(base, "Claude Extensions", ExtensionID, "manifest.json"), `{"name":"litezap"}`)
+	writeFile(t, filepath.Join(base, "Claude Extensions Settings", ExtensionID+".json"), `{"isEnabled": true}`)
+	st := c.Status(ClaudeDesktop)
+	if !st.ExtensionInstalled || st.ExtensionDisabled || !strings.Contains(st.Hint, "Conectado via extensão") {
+		t.Errorf("installed extension: %+v", st)
+	}
+	writeFile(t, filepath.Join(base, "Claude Extensions Settings", ExtensionID+".json"), `{"isEnabled": false}`)
+	if st := c.Status(ClaudeDesktop); !st.ExtensionInstalled || !st.ExtensionDisabled {
+		t.Errorf("disabled extension: %+v", st)
+	}
+
+	// Another folder name (a signed copy, a future id): found by the manifest name.
+	if err := os.RemoveAll(filepath.Join(base, "Claude Extensions", ExtensionID)); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(base, "Claude Extensions", "ant.dir.litezap", "manifest.json"), `{"name":"litezap"}`)
+	if st := c.Status(ClaudeDesktop); !st.ExtensionInstalled || st.ExtensionDisabled {
+		t.Errorf("extension under another id: %+v", st)
+	}
+}
+
+func TestClaudeCodeNoRestart(t *testing.T) {
+	c := testConnector(t)
+	st := c.Status(ClaudeCode)
+	if st.Hint != ClaudeCodeHint || !strings.Contains(st.Hint, "/mcp") || strings.Contains(strings.ToLower(st.Hint), "reinicie") {
+		t.Errorf("hint: %q", st.Hint)
+	}
+	if len(st.PluginCommands) != 2 || st.PluginCommands[1] != "/plugin install litezap@litezap" {
+		t.Errorf("plugin commands: %q", st.PluginCommands)
+	}
+	if c.Status(Cursor).PluginCommands != nil {
+		t.Error("plugin commands outside Claude Code")
 	}
 }

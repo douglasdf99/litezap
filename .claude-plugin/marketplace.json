@@ -1,0 +1,15 @@
+{
+  "name": "litezap",
+  "description": "Plugins do LiteZap para o Claude Code: o WhatsApp pelo app LiteZap deste computador.",
+  "owner": {
+    "name": "LiteZap",
+    "url": "https://litezap.com"
+  },
+  "plugins": [
+    {
+      "name": "litezap",
+      "source": "./plugins/litezap",
+      "description": "Ferramentas do WhatsApp (MCP do app LiteZap), os comandos whatsapp-resumo, whatsapp-responder e whatsapp-agente e agentes de atendimento, SDR e follow-up."
+    }
+  ]
+}
