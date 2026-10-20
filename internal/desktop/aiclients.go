@@ -61,12 +61,25 @@ func ClientName(id string) string {
 	return ""
 }
 
+// ClaudeCodeHint is what to do after connecting Claude Code.
+const ClaudeCodeHint = "Abra uma nova sessão do Claude Code (ou use /mcp) para ver as ferramentas do LiteZap."
+
+// PluginCommands install the LiteZap Claude Code plugin (WhatsApp tools plus ready-made
+// commands and agents: .claude-plugin/marketplace.json and plugins/litezap in this repo),
+// pasted in a Claude Code session.
+var PluginCommands = []string{
+	"/plugin marketplace add douglasdf99/litezap",
+	"/plugin install litezap@litezap",
+}
+
 // RestartHint tells the user what to do after connecting id on goos; running says
 // whether the client is open right now.
 func RestartHint(goos, id string, running bool) string {
 	switch id {
 	case ClaudeCode:
-		return "Feche a sessão do Claude Code e abra uma nova (ou reinicie o Claude Code) para ver as ferramentas do LiteZap."
+		// `claude mcp add --scope user` is read by every session that starts after it: no
+		// restart of anything, only a new session (or /mcp in the open one).
+		return ClaudeCodeHint
 	case Cursor:
 		if running {
 			return "O Cursor está aberto: recarregue a janela (Ctrl/Cmd+Shift+P > \"Developer: Reload Window\") ou reinicie o Cursor para ver as ferramentas do LiteZap."
@@ -91,7 +104,7 @@ func DisconnectHint(goos, id string, running bool) string {
 	}
 	switch id {
 	case ClaudeCode:
-		return "Feche a sessão do Claude Code e abra uma nova para concluir."
+		return "As sessões novas do Claude Code já não veem o LiteZap; uma sessão aberta o mantém até ser fechada."
 	case Cursor:
 		return "O Cursor está aberto: recarregue a janela (Ctrl/Cmd+Shift+P > \"Developer: Reload Window\") ou reinicie o Cursor para concluir."
 	default:
@@ -194,9 +207,13 @@ type AIStatus struct {
 	// Hint is what to do to see the tools after connecting.
 	Hint string `json:"hint"`
 	// Extension: the Claude Desktop extension can be installed from this app;
-	// ExtensionInstalled: Claude Desktop has it installed (best effort).
+	// ExtensionInstalled: Claude Desktop has it installed ("Conectado via extensão"),
+	// ExtensionDisabled: but switched off in Claude (best effort, see ExtensionState).
 	Extension          bool `json:"extension,omitempty"`
 	ExtensionInstalled bool `json:"extension_installed,omitempty"`
+	ExtensionDisabled  bool `json:"extension_disabled,omitempty"`
+	// PluginCommands (Claude Code): what to paste to install the LiteZap plugin.
+	PluginCommands []string `json:"plugin_commands,omitempty"`
 }
 
 // AIResult describes what Connect or Disconnect did.
@@ -305,7 +322,14 @@ func (c *Connector) Status(id string) AIStatus {
 	st.Hint = RestartHint(c.GOOS, id, st.Running)
 	if id == ClaudeDesktop {
 		st.Extension = c.ExtensionAvailable()
-		st.ExtensionInstalled = c.extensionInstalled()
+		ext := c.ExtensionState()
+		st.ExtensionInstalled, st.ExtensionDisabled = ext.Installed, ext.Disabled
+		if ext.Installed && !ext.Disabled {
+			st.Hint = "Conectado via extensão: as ferramentas já estão no Claude, sem reiniciar."
+		}
+	}
+	if id == ClaudeCode {
+		st.PluginCommands = PluginCommands
 	}
 	f, err := readClientConfig(p)
 	if err != nil {

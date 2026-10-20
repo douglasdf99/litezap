@@ -497,6 +497,10 @@ ul.plain li { padding: .25rem 0; }
 .ai-head h3 { margin: 0; }
 .ai-card { display: flex; flex-direction: column; gap: .5rem; }
 .ai-card code { word-break: break-all; }
+.ai-cmd { flex-wrap: nowrap; }
+.ai-cmd code { flex: 1; min-width: 0; }
+.ai-plugin { display: flex; flex-direction: column; gap: .5rem; }
+.ai-plugin[hidden] { display: none; }
 .lead { color: var(--lz-text-muted); max-width: 46rem; }
 
 /* ---------- modal ---------- */

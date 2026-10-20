@@ -11,9 +11,18 @@ regras de ritmo, rampa e janela da API. São [40 ferramentas](/docs/mcp/ferramen
 
 ## Pelo app, em um clique
 
-Com o [app do LiteZap](/docs/baixar/) aberto, use **Conectar a IA > Claude Desktop** (ou Claude Code, ou Cursor) no
-ícone da barra de menus/bandeja e reinicie o cliente. O app grava a entrada abaixo, sem token: `litezap-app mcp` lê o
-endereço e o token da pasta de dados do app. Detalhes em [App local](/docs/app-local/#conectar-a-ia-claude-desktop-claude-code-cursor).
+Com o [app do LiteZap](/docs/baixar/) aberto, use **Conectar a IA** no painel ou no ícone da barra de menus/bandeja.
+Nenhum desses caminhos pede para reiniciar o cliente:
+
+- **Claude Desktop:** **Instalar extensão**. O Claude mostra a tela de instalação; clique em **Instalar** e as
+  ferramentas aparecem (pode levar alguns segundos para aparecer).
+- **Claude Code:** **Conectar (só ferramentas)** e abra uma nova sessão (ou use `/mcp`), ou o
+  [plugin LiteZap](/docs/mcp/claude-code-plugin/), que também traz comandos e agentes prontos.
+- **Cursor:** **Conectar** e recarregue a janela.
+
+Quando usa um arquivo de configuração (Claude Code, Cursor e a opção avançada do Claude Desktop), o app grava a
+entrada abaixo, sem token: `litezap-app mcp` lê o endereço e o token da pasta de dados do app. Detalhes em
+[App local](/docs/app-local/#conectar-a-ia-claude-desktop-claude-code-cursor).
 
 ```json
 {

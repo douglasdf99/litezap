@@ -160,7 +160,12 @@ export default defineConfig({
 				{
 					label: 'MCP e IA',
 					collapsed: true,
-					items: ['docs/mcp', 'docs/mcp/ferramentas', 'docs/mcp/hook-de-agente'],
+					items: [
+						'docs/mcp',
+						'docs/mcp/ferramentas',
+						{ slug: 'docs/mcp/claude-code-plugin', badge: { text: 'Novo', variant: 'success' } },
+						'docs/mcp/hook-de-agente',
+					],
 				},
 				{
 					label: 'SDKs e ferramentas',
