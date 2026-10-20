@@ -112,7 +112,7 @@ A fila de envio nunca responde `429`: ela segura as mensagens e envia no ritmo c
 - [Mensagens](/docs/api/mensagens/) · [Chats](/docs/api/chats/) · [Contatos](/docs/api/contatos/) · [Números](/docs/api/numeros/) · [Mídia](/docs/api/midia/)
 - [Grupos](/docs/api/grupos/) · [Comunidades](/docs/api/comunidades/) · [Perfil e privacidade](/docs/api/perfil-e-privacidade/)
 - [Status](/docs/api/status/) · [Canais](/docs/api/canais/) · [Etiquetas e Business](/docs/api/business/)
-- [Atendente IA](/docs/api/atendente-ia/) · [MCP](/docs/api/mcp/)
+- [Atendente IA](/docs/api/atendente-ia/) · [Agentes](/docs/api/agentes/) · [MCP](/docs/api/mcp/)
 - [Webhooks](/docs/api/webhooks/) · [Eventos em tempo real](/docs/api/sse/) · [Operação](/docs/api/operacao/)
 
 Cada operação tem a própria página, com parâmetros, exemplos em cURL, Node.js, Python, Go e PHP, resposta, erros, eventos gerados e o equivalente na Z-API. Os payloads dos eventos estão no [catálogo de eventos](/docs/eventos/). O que ainda não existe está no [roadmap](/docs/roadmap/).

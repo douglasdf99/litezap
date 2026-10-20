@@ -69,6 +69,9 @@ Cada entrega é um `POST` com o envelope como corpo (`Content-Type: application/
 | [`agent.lead`](/docs/eventos/agent-lead/) | Lead qualificado pelo atendente embutido | M5b |
 | [`agent.appointment_requested`](/docs/eventos/agent-appointment-requested/) | Pedido de agendamento coletado pelo atendente | M5b |
 | [`agent.order_draft`](/docs/eventos/agent-order-draft/) | Rascunho de pedido montado pelo atendente | M5b |
+| [`agent.run.completed`](/docs/eventos/agent-run-completed/) | Um agente LiteZap terminou uma execução | A1 |
+| [`agent.draft.created`](/docs/eventos/agent-draft-created/) | Um agente em modo aprovação criou um rascunho (envio, etiqueta, grupo) | A1 |
+| [`agent.draft.decided`](/docs/eventos/agent-draft-decided/) | Um rascunho de agente foi aprovado (e executado) ou rejeitado | A1 |
 | [`history.synced`](/docs/eventos/history-synced/) | Fim da sincronização de histórico | M3 |
 
 ## Filtros

@@ -130,6 +130,24 @@ tags:
       resposta em voz opcional. O provedor (Anthropic ou OpenAI-compatível) e as chaves são do admin; as chaves
       ficam cifradas e nunca voltam na API. O passo a passo está em [Atendente IA](/docs/guias/atendimento-ia/).
     x-concept: /docs/guias/atendimento-ia/
+  - name: Agentes
+    description: Agentes LiteZap — o Claude operando o WhatsApp com as ferramentas do LiteZap, dentro de permissões e limites.
+    x-slug: agentes
+    x-intro: |
+      Um agente roda um loop de *tool use*: o modelo chama as ferramentas do LiteZap (as mesmas do MCP,
+      executadas dentro do motor, com as mesmas validações) até concluir a tarefa. Cada agente tem
+      **instruções**, **grupos de permissão** (`ler`, `responder_no_chat`, `enviar_outros_chats`,
+      `etiquetas`, `grupos`, `midia`), um **modo** (`aprovacao`, o padrão: cada escrita vira um rascunho
+      que alguém aprova; `autonomo`; `sugerir`: só notas) e **limites** (8 passos por execução, 3
+      destinatários distintos). O motor aplica as regras, não só o prompt: um envio para outro chat sem
+      `enviar_outros_chats` é recusado. Todo envio passa pela fila (ritmo, janela, rampa).
+
+      O gatilho "mensagem nova" usa o hook de agente com `target: "agents"` (um por vez por chat, pausa
+      quando um humano responde, proteção contra loop). Há também "Executar agora" e o simulador, que
+      nunca executa escritas. O provedor (Anthropic ou OpenAI-compatível com function calling) e os limites
+      de gasto são os do [Atendente IA](/docs/guias/atendimento-ia/), configurados pelo admin. Guia em
+      [Agentes](/docs/guias/agentes/).
+    x-concept: /docs/guias/agentes/
   - name: Webhooks
     description: Cadastrar endpoints que recebem eventos assinados, com retry e dead-letter.
     x-slug: webhooks
@@ -1996,6 +2014,327 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/InstanceNotFound" }
 
+  /v1/instances/{id}/agents:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Agentes]
+      operationId: listAgents
+      x-litezap-milestone: A1
+      summary: Listar agentes
+      x-litezap-scope: instancia
+      description: Agentes da instância, com as execuções e o custo estimado de hoje (UTC), e a lista de grupos de permissão.
+      responses:
+        "200":
+          description: Agentes.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents: { type: array, items: { $ref: "#/components/schemas/Agent" } }
+                  groups: { type: array, items: { type: string }, example: [ler, responder_no_chat, enviar_outros_chats, etiquetas, grupos, midia] }
+                  risky_groups: { type: array, items: { type: string }, example: [enviar_outros_chats, grupos] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+    post:
+      tags: [Agentes]
+      operationId: createAgent
+      x-litezap-milestone: A1
+      summary: Criar agente
+      x-litezap-scope: instancia
+      description: |
+        Campos ausentes vêm dos padrões: `tools: [ler, responder_no_chat]`, `mode: aprovacao`, gatilho
+        "mensagem nova" só em conversas 1:1, `limits: {max_steps: 8, max_recipients: 3, daily_runs: 200}` e
+        `enabled: false`. Até 20 agentes por instância. Para responder a mensagens novas, o hook de agente
+        da instância precisa estar com `target: "agents"` e ligado.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentInput" }
+            example:
+              name: Atendente da loja
+              enabled: true
+              mode: aprovacao
+              instructions: "Responda dúvidas sobre horário e entrega. Horário: seg a sáb, 9h às 18h. Para descontos, diga que uma pessoa vai responder."
+              tools: [ler, responder_no_chat]
+              trigger: { type: message, keywords: [], groups: false }
+      responses:
+        "201":
+          description: Agente criado.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+  /v1/instances/{id}/agents/{agent_id}:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: agent_id, in: path, required: true, description: "Id do agente (`agn_...`).", schema: { type: string } }
+    get:
+      tags: [Agentes]
+      operationId: getAgent
+      x-litezap-milestone: A1
+      summary: Ler agente
+      x-litezap-scope: instancia
+      responses:
+        "200":
+          description: Agente.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Agentes]
+      operationId: updateAgent
+      x-litezap-milestone: A1
+      summary: Alterar agente
+      x-litezap-scope: instancia
+      description: "Atualização parcial: campos omitidos ficam como estão (por exemplo `{\"enabled\": false}` pausa o agente)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentInput" }
+            example: { enabled: false }
+      responses:
+        "200":
+          description: Agente alterado.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Agentes]
+      operationId: deleteAgent
+      x-litezap-milestone: A1
+      summary: Excluir agente
+      x-litezap-scope: instancia
+      description: Apaga o agente com as execuções e os rascunhos dele.
+      responses:
+        "204": { description: Excluído. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/agents/{agent_id}/run:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: agent_id, in: path, required: true, description: "Id do agente (`agn_...`).", schema: { type: string } }
+    post:
+      tags: [Agentes]
+      operationId: runAgent
+      x-litezap-milestone: A1
+      summary: Executar agente agora
+      x-litezap-scope: instancia
+      x-litezap-events: [agent.run.completed, agent.draft.created]
+      x-litezap-notes: "Cada passo é uma chamada paga ao provedor e conta nos limites do Atendente IA."
+      description: |
+        Roda o agente agora (ligado ou não) e espera o resultado (até 3 minutos). Com `chat`, as últimas
+        mensagens dele são o contexto e as ferramentas de resposta respondem nele; `input` é um pedido seu para
+        esta execução. O modo do agente vale: em `aprovacao` as escritas viram rascunhos. Uma execução por chat
+        de cada vez (`409 agent_busy`).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                chat: { type: string, description: "Chat do gatilho: JID ou número com DDI (opcional)." }
+                input: { type: string, maxLength: 4000, description: Pedido para esta execução (opcional). }
+            example: { chat: "5511999999999", input: "Veja se o cliente ficou sem resposta e responda." }
+      responses:
+        "200":
+          description: A execução terminada.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentRun" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`not_configured` (sem provedor de IA ou sem chave: configure no Atendente IA) ou `agent_busy`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: not_configured, message: "no AI provider configured: set it up in the Atendente IA tab (admin)", retryable: false } }
+        "429":
+          description: "`rate_limited`: limite diário (do agente, do chat ou da instância) atingido."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/instances/{id}/agents/{agent_id}/runs:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: agent_id, in: path, required: true, description: "Id do agente (`agn_...`).", schema: { type: string } }
+    get:
+      tags: [Agentes]
+      operationId: listAgentRuns
+      x-litezap-milestone: A1
+      summary: Execuções do agente
+      x-litezap-scope: instancia
+      description: Execuções mais recentes primeiro (guardadas por 30 dias), com os passos resumidos.
+      parameters: [{ $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200":
+          description: Execuções.
+          content:
+            application/json:
+              schema: { type: object, properties: { runs: { type: array, items: { $ref: "#/components/schemas/AgentRun" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/agents/runs/{run_id}:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: run_id, in: path, required: true, description: "Id da execução (`arun_...`).", schema: { type: string } }
+    get:
+      tags: [Agentes]
+      operationId: getAgentRun
+      x-litezap-milestone: A1
+      summary: Ler execução
+      x-litezap-scope: instancia
+      responses:
+        "200":
+          description: Execução.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentRun" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/agents/drafts:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Agentes]
+      operationId: listAgentDrafts
+      x-litezap-milestone: A1
+      summary: Listar rascunhos
+      x-litezap-scope: instancia
+      description: |
+        Escritas de agentes em modo `aprovacao` esperando uma decisão, mais recentes primeiro. `args` é
+        exatamente o que a aprovação executa (destinatário em `to` ou `chat`, texto em `text`). Um rascunho
+        vale por 24 horas; depois fica `expired`.
+      parameters:
+        - { name: status, in: query, description: "pending, approved, rejected, failed ou expired (omitido: todos).", schema: { type: string, enum: [pending, approved, rejected, failed, expired] } }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Rascunhos.
+          content:
+            application/json:
+              schema: { type: object, properties: { drafts: { type: array, items: { $ref: "#/components/schemas/AgentDraft" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+  /v1/instances/{id}/agents/drafts/{draft_id}/approve:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: draft_id, in: path, required: true, description: "Id do rascunho (`adr_...`).", schema: { type: string } }
+    post:
+      tags: [Agentes]
+      operationId: approveAgentDraft
+      x-litezap-milestone: A1
+      summary: Aprovar rascunho
+      x-litezap-scope: instancia
+      x-litezap-events: [agent.draft.decided]
+      description: |
+        Executa exatamente a chamada guardada (mesma ferramenta e argumentos), pela fila normal de envio.
+        `status` volta `approved` (com o id da mensagem em `result`) ou `failed` (o erro em `result`).
+        Um rascunho já decidido ou expirado responde `409 conflict`.
+      responses:
+        "200":
+          description: Rascunho decidido.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentDraft" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`conflict`: já decidido ou expirado."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/instances/{id}/agents/drafts/{draft_id}/reject:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: draft_id, in: path, required: true, description: "Id do rascunho (`adr_...`).", schema: { type: string } }
+    post:
+      tags: [Agentes]
+      operationId: rejectAgentDraft
+      x-litezap-milestone: A1
+      summary: Rejeitar rascunho
+      x-litezap-scope: instancia
+      x-litezap-events: [agent.draft.decided]
+      description: Descarta o rascunho; nada é enviado.
+      responses:
+        "200":
+          description: Rascunho rejeitado.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentDraft" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`conflict`: já decidido ou expirado."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/instances/{id}/agents/simulate:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Agentes]
+      operationId: simulateAgent
+      x-litezap-milestone: A1
+      summary: Simular agente
+      x-litezap-scope: instancia
+      x-litezap-notes: "É uma chamada real ao provedor e conta no limite do simulador."
+      description: |
+        Roda um agente salvo (`agent_id`), um não salvo (`agent`) ou um salvo com alterações (os dois) contra
+        mensagens de exemplo (`from`: `customer`, `agent`, `human`, `automatic`). As ferramentas de escrita são
+        **sempre faz de conta**: cada passo `dry_run` mostra o que o agente faria. As de leitura leem dados reais
+        (com `chat`, os do chat informado). Nada é guardado nem enviado.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                agent_id: { type: string }
+                agent: { $ref: "#/components/schemas/AgentInput" }
+                messages: { type: array, maxItems: 50, items: { type: object, properties: { from: { type: string, enum: [customer, agent, human, automatic] }, text: { type: string } } } }
+                chat: { type: string }
+                input: { type: string, maxLength: 4000 }
+            example: { agent: { name: Teste, instructions: "Responda dúvidas de horário: seg a sáb, 9h às 18h." }, messages: [{ text: "vocês abrem sábado?" }] }
+      responses:
+        "200":
+          description: "O que o agente faria (`dry_run: true`, sem `id`)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentRun" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`not_configured`: sem provedor de IA."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/webhooks:
     post:
       tags: [Webhooks]
@@ -4477,7 +4816,7 @@ components:
       type: object
       properties:
         configured: { type: boolean }
-        target: { type: string, enum: [url, builtin], description: "url: POST assinado para `url`; builtin: Atendente LiteZap embutido." }
+        target: { type: string, enum: [url, builtin, agents], description: "url: POST assinado para `url`; builtin: Atendente LiteZap embutido; agents: Agentes LiteZap (aba Agentes)." }
         url: { type: string }
         enabled: { type: boolean }
         timeout: { type: string, example: 30s }
@@ -4494,7 +4833,7 @@ components:
       type: object
       additionalProperties: false
       properties:
-        target: { type: string, enum: [url, builtin] }
+        target: { type: string, enum: [url, builtin, agents] }
         url: { type: string }
         secret: { type: string }
         enabled: { type: boolean }
@@ -4591,6 +4930,95 @@ components:
             active: { type: boolean }
             created_at: { type: string, format: date-time }
             updated_at: { type: string, format: date-time }
+    AgentTrigger:
+      type: object
+      properties:
+        type: { type: string, enum: [message, manual], default: message, description: "message: cada mensagem nova (pelo hook de agente com target agents); manual: só Executar agora." }
+        chats: { type: array, items: { type: string }, description: Só nestes chats (JIDs ou números). Vazio = todos. }
+        labels: { type: array, items: { type: string }, description: Só em chats com uma destas etiquetas (id ou nome). }
+        keywords: { type: array, items: { type: string }, description: Só quando a mensagem contém uma destas palavras (sem diferenciar maiúsculas). }
+        groups: { type: boolean, default: false, description: Também em grupos (desligado = só conversas 1:1). }
+    AgentLimits:
+      type: object
+      properties:
+        max_steps: { type: integer, minimum: 1, maximum: 20, default: 8, description: Chamadas ao modelo por execução. }
+        max_recipients: { type: integer, minimum: 1, maximum: 10, default: 3, description: Destinatários distintos por execução. }
+        daily_runs: { type: integer, minimum: 0, default: 200, description: Execuções por dia UTC (0 = sem limite do agente; os limites do Atendente IA continuam valendo). }
+    AgentInput:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 80 }
+        enabled: { type: boolean }
+        mode: { type: string, enum: [aprovacao, autonomo, sugerir], description: "aprovacao: escritas viram rascunhos; autonomo: executa; sugerir: só notas." }
+        instructions: { type: string, maxLength: 20000, description: "O que o agente faz (confiável: escrito por você)." }
+        tools: { type: array, items: { type: string, enum: [ler, responder_no_chat, enviar_outros_chats, etiquetas, grupos, midia] } }
+        trigger: { $ref: "#/components/schemas/AgentTrigger" }
+        limits: { $ref: "#/components/schemas/AgentLimits" }
+    Agent:
+      type: object
+      properties:
+        id: { type: string, example: agn_3c9e1a7f5d2b4086 }
+        name: { type: string }
+        enabled: { type: boolean }
+        mode: { type: string, enum: [aprovacao, autonomo, sugerir] }
+        instructions: { type: string }
+        tools: { type: array, items: { type: string } }
+        trigger: { $ref: "#/components/schemas/AgentTrigger" }
+        limits: { $ref: "#/components/schemas/AgentLimits" }
+        today: { type: object, properties: { runs: { type: integer }, cost_usd: { type: number } } }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AgentStep:
+      type: object
+      properties:
+        n: { type: integer, description: Chamada ao modelo que pediu a ferramenta. }
+        tool: { type: string }
+        args: { type: string, description: Argumentos (JSON resumido). }
+        outcome: { type: string, enum: [read, executed, draft, note, dry_run, refused, error] }
+        result: { type: string, description: Resultado resumido (ou o motivo da recusa). }
+        draft_id: { type: string }
+        chat: { type: string, description: Destinatário ou chat em que a escrita age. }
+    AgentRun:
+      type: object
+      properties:
+        id: { type: string, example: arun_7a3c1e9f5d2b4068 }
+        agent_id: { type: string }
+        agent_name: { type: string }
+        trigger: { type: string, enum: [message, manual] }
+        chat: { type: string }
+        message_id: { type: string }
+        mode: { type: string }
+        status: { type: string, enum: [running, completed, step_limit, failed, discarded], description: "discarded: um humano assumiu o chat durante a execução." }
+        steps: { type: array, items: { $ref: "#/components/schemas/AgentStep" } }
+        output: { type: string, description: Resumo final do agente para você (não é enviado a ninguém). }
+        model: { type: string }
+        model_calls: { type: integer }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        cost_usd: { type: number }
+        sent: { type: integer, description: Escritas executadas. }
+        drafts: { type: integer, description: Rascunhos criados. }
+        error: { type: string }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time }
+        dry_run: { type: boolean, description: Só no simulador. }
+    AgentDraft:
+      type: object
+      properties:
+        id: { type: string, example: adr_5b1d3f9a7c2e4086 }
+        agent_id: { type: string }
+        agent_name: { type: string }
+        run_id: { type: string }
+        tool: { type: string, example: send_message }
+        chat: { type: string, example: "5511999999999@s.whatsapp.net" }
+        args: { type: object, description: Os argumentos exatos que a aprovação executa. }
+        status: { type: string, enum: [pending, approving, approved, rejected, failed, expired] }
+        decided_by: { type: string }
+        decided_at: { type: string, format: date-time }
+        result: { type: string }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
   responses:
     InstanceOK:
       description: A instância logo após a ação (o estado pode ainda ser o anterior).
@@ -5507,5 +5935,80 @@ webhooks:
           application/json:
             schema: { $ref: "#/components/schemas/Envelope" }
             example: { id: evt_4e0a2c8f6b1d3957, type: agent.order_draft, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T19:20:00.000Z", data: { chat: "5511999999999@s.whatsapp.net", message_id: msg_1a2b3c4d5e6f7a8b, agent_id: agt_5b1d3f9a7c2e4086, agent_name: Bia, mode: pedido, items: [{ name: Pizza Margherita, quantity: 2, unit_price: 45, subtotal: 90, in_catalog: true }], total: 90, currency: BRL, all_items_in_catalog: true, address: "Rua B, 5", notes: "sem cebola", customer_name: Ana } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  agent.run.completed:
+    post:
+      summary: Execução de agente terminou
+      x-slug: agent-run-completed
+      x-litezap-milestone: A1
+      x-zapi: (sem equivalente)
+      description: |
+        Um agente LiteZap terminou uma execução (mensagem nova ou Executar agora). `status`: `completed`,
+        `step_limit` (limite de passos), `failed` (provedor, limite diário) ou `discarded` (um humano assumiu
+        o chat). Os passos ficam em `GET /agents/runs/{run_id}`.
+      x-related: [agent.draft.created, agent.draft.decided]
+      x-fields:
+        - [run_id, string, "Id da execução."]
+        - [agent_id, string, "Agente."]
+        - [agent_name, string, "Nome do agente."]
+        - [trigger, string, "message ou manual."]
+        - [chat, string, "Chat do gatilho (pode ser vazio)."]
+        - [status, string, "completed, step_limit, failed ou discarded."]
+        - [mode, string, "aprovacao, autonomo ou sugerir."]
+        - [sent, integer, "Escritas executadas."]
+        - [drafts, integer, "Rascunhos criados."]
+        - [cost_usd, number, "Custo estimado."]
+        - [error, string, "Motivo, quando não completou."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_1c3e5a7b9d2f4068, type: agent.run.completed, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-20T14:02:11.020Z", data: { run_id: arun_7a3c1e9f5d2b4068, agent_id: agn_3c9e1a7f5d2b4086, agent_name: Atendente, trigger: message, chat: "5511999999999@s.whatsapp.net", message_id: msg_1a2b3c4d5e6f7a8b, mode: aprovacao, status: completed, steps: 1, model_calls: 2, sent: 0, drafts: 1, cost_usd: 0.0042, error: "" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  agent.draft.created:
+    post:
+      summary: Rascunho de agente criado
+      x-slug: agent-draft-created
+      x-litezap-milestone: A1
+      x-zapi: (sem equivalente)
+      description: Um agente em modo `aprovacao` quis executar uma escrita (enviar, etiquetar, mudar grupo); ela espera aprovação em `POST /agents/drafts/{draft_id}/approve` por até 24 horas.
+      x-related: [agent.draft.decided, agent.run.completed]
+      x-fields:
+        - [draft_id, string, "Id do rascunho."]
+        - [agent_id, string, "Agente."]
+        - [run_id, string, "Execução."]
+        - [tool, string, "Ferramenta (send_message, label_chat...)."]
+        - [chat, string, "Destinatário ou chat."]
+        - [args, object, "Argumentos que a aprovação executa."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_3e5a7c9b1d2f4068, type: agent.draft.created, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-20T14:02:10.500Z", data: { draft_id: adr_5b1d3f9a7c2e4086, agent_id: agn_3c9e1a7f5d2b4086, agent_name: Atendente, run_id: arun_7a3c1e9f5d2b4068, tool: send_message, chat: "5511999999999@s.whatsapp.net", args: { to: "5511999999999@s.whatsapp.net", text: "Abrimos sábado das 9h às 13h!" } } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  agent.draft.decided:
+    post:
+      summary: Rascunho de agente decidido
+      x-slug: agent-draft-decided
+      x-litezap-milestone: A1
+      x-zapi: (sem equivalente)
+      description: Alguém aprovou (a chamada foi executada pela fila) ou rejeitou um rascunho de agente.
+      x-related: [agent.draft.created]
+      x-fields:
+        - [draft_id, string, "Id do rascunho."]
+        - [agent_id, string, "Agente."]
+        - [tool, string, "Ferramenta."]
+        - [chat, string, "Destinatário ou chat."]
+        - [decision, string, "approved, rejected ou failed (aprovado, mas a execução falhou)."]
+        - [decided_by, string, "admin ou instance."]
+        - [result, string, "Id da mensagem enfileirada ou o erro."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_5a7c9e1b3d2f4068, type: agent.draft.decided, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-20T14:05:00.000Z", data: { draft_id: adr_5b1d3f9a7c2e4086, agent_id: agn_3c9e1a7f5d2b4086, agent_name: Atendente, run_id: arun_7a3c1e9f5d2b4068, tool: send_message, chat: "5511999999999@s.whatsapp.net", decision: approved, decided_by: admin, result: "queued as message msg_9f8e7d6c5b4a3210" } }
       responses:
         "2XX": { description: Qualquer 2xx confirma a entrega. }
