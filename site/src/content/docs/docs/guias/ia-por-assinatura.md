@@ -95,6 +95,23 @@ Cada execução é isolada:
   aprovação/autônomo/sugerir, pausa quando um humano responde e a fila anti-ban.
 - **Limites de tempo e de chamadas:** a execução tem um tempo máximo (150 s) e um teto de chamadas de ferramenta (3 ×
   "passos por execução").
+- **Vigiado em tempo real:** o LiteZap lê os eventos do Codex enquanto ele roda. Se aparecer qualquer coisa além do
+  texto do modelo, do raciocínio ou de uma chamada às ferramentas do LiteZap (um comando, uma mudança de arquivo, uma
+  busca na web, outro servidor MCP ou um tipo novo), o Codex é encerrado na hora e a execução falha com
+  `codex_violation`.
+- **Casa privada:** cada processo do Codex roda com um `HOME` e um `CODEX_HOME` temporários (pasta `0700`) que só têm
+  uma cópia do seu `auth.json` (`0600`), apagados no fim. O Codex não vê o seu `~/.codex`, a pasta de dados do LiteZap
+  nem o resto da sua pasta pessoal. Se o Codex renovar o token durante a execução, o `auth.json` novo é gravado de volta
+  no seu `~/.codex` (só se o original não mudou nesse meio tempo).
+- **Binário conferido:** o `codex` (e o `node`, quando o `codex` é um script) só roda se nem o arquivo nem nenhuma pasta
+  acima dele puder ser alterada por outro usuário, conferido de novo a cada execução. O `PATH` do processo tem só essas
+  pastas e `/usr/bin` e `/bin`.
+- **Falha fechada:** o runtime só fica pronto numa faixa de versões verificada (codex-cli 0.145.x até antes de 0.200) e
+  quando o `codex features list` funciona e lista todos os recursos perigosos (shell, exec, apps, plugins, hooks,
+  navegador, computer use, sub-agentes), que são desligados. Fora disso, o card mostra o motivo e nada roda.
+- **Rede:** o Codex recebe as variáveis de proxy do LiteZap (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`) e os
+  certificados (`SSL_CERT_FILE`, `SSL_CERT_DIR`), para chegar à OpenAI pelo mesmo caminho que o resto do computador.
+  Nenhuma outra variável de ambiente é repassada.
 
 O custo mostrado nas execuções é US$ 0 (os tokens aparecem, mas o uso conta no seu plano, não na API).
 
@@ -106,7 +123,9 @@ O custo mostrado nas execuções é US$ 0 (os tokens aparecem, mas o uso conta n
 3. No painel: aba **Agentes** > card **IA por assinatura**. Ele mostra se o Codex foi encontrado e se está logado
    (detectar só roda `codex --version`, `codex login status` e `codex features list`, sem chamar o modelo).
 4. Edite um agente e, em **Quem pensa**, escolha **Minha assinatura ChatGPT (Codex)** e aceite o aviso. Só o token
-   admin pode fazer essa troca, porque ela usa o login do computador onde o LiteZap roda.
+   admin pode criar, editar, executar ou simular um agente com esse runtime, porque ele usa o login do computador onde
+   o LiteZap roda (as mensagens novas continuam disparando o agente normalmente).
+   O login precisa estar no arquivo `~/.codex/auth.json` (o padrão do `codex login`).
 5. Teste com o simulador ou **Executar agora** antes de ligar o gatilho.
 
 Pela API: `PUT /v1/instances/{id}/agents/{agent_id}` com `{"runtime": "codex_cli", "accept_runtime_notice": true}`, e

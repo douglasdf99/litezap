@@ -10,15 +10,18 @@ package agents
 // instance or admin token: the run token only reaches this one endpoint, which only offers
 // the agent's tools and dies with the run.
 //
+// It fails closed: only a checked Codex version range, only when every dangerous Codex
+// feature can be disabled, in a private home, and the run is killed as soon as Codex
+// reports using anything but LiteZap's tools (clitrust.go).
+//
 // Policy note (see docs/guias/ia-por-assinatura): OpenAI documents `codex exec` for
 // scripts and says it reuses the saved CLI login, while recommending API keys for
 // automation; the ChatGPT Terms of Use forbid extracting output "automatically or
 // programmatically". Whether a third-party app may drive a user's ChatGPT-plan login is
-// not stated, so the runtime is off until the operator accepts CodexNotice per agent.
+// not stated, so the runtime is off until the admin accepts CodexNotice per agent.
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -31,7 +34,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -64,17 +66,29 @@ const CodexNotice = "Este agente vai usar o Codex CLI instalado e logado neste c
 	"plano assim. Você decide e responde por isso: o uso conta nos limites do seu plano e pode ser bloqueado pela OpenAI. " +
 	"O conteúdo das conversas vai para a OpenAI. As permissões e limites do agente continuam valendo."
 
-// checkRuntimeNotice guards the switch of an agent to codex_cli: it uses the Codex login
-// of the computer running LiteZap, so only the admin may choose it (an instance token
-// must not spend the owner's plan), and accept_runtime_notice must confirm CodexNotice.
-// In-process callers without a scope (tests, tools) are trusted.
+// requireCodexAdmin refuses a non-admin caller: a codex_cli agent uses the Codex login of
+// the computer running LiteZap, so only the admin may create, change, run or simulate one
+// (an instance token must not spend the owner's plan nor reprogram what runs on it).
+// In-process callers without a scope (the agent hook, tests) are trusted.
+func requireCodexAdmin(ctx context.Context) error {
+	if sc, ok := service.ScopeFrom(ctx); ok && !sc.Admin {
+		return apierr.New(http.StatusForbidden, "forbidden", "only the admin token can create, change, run or simulate an agent "+
+			"with the codex_cli runtime (it uses the Codex login of the computer running LiteZap)", false)
+	}
+	return nil
+}
+
+// checkRuntimeNotice guards a create or change: touching a codex_cli agent (before or
+// after) needs the admin, and switching to codex_cli also accept_runtime_notice.
 func checkRuntimeNotice(ctx context.Context, prev, next string, in Input) error {
-	if next != RuntimeCodexCLI || prev == RuntimeCodexCLI {
+	if next != RuntimeCodexCLI && prev != RuntimeCodexCLI {
 		return nil
 	}
-	if sc, ok := service.ScopeFrom(ctx); ok && !sc.Admin {
-		return apierr.New(http.StatusForbidden, "forbidden", "only the admin token can switch an agent to the codex_cli runtime "+
-			"(it uses the Codex login of the computer running LiteZap)", false)
+	if err := requireCodexAdmin(ctx); err != nil {
+		return err
+	}
+	if next != RuntimeCodexCLI || prev == RuntimeCodexCLI {
+		return nil
 	}
 	if in.AcceptRuntimeNotice != nil && *in.AcceptRuntimeNotice {
 		return nil
@@ -83,14 +97,100 @@ func checkRuntimeNotice(ctx context.Context, prev, next string, in Input) error 
 		"runtime codex_cli needs accept_runtime_notice: true (read the notice: "+CodexNotice+")", false)
 }
 
-// codexDenyFeatures are Codex features turned off for agent runs (when this Codex version
-// has them): shell, files, browser, computer use, plugins, hooks, sub-agents... Codex then
-// only has the LiteZap MCP tools. The sandbox is read-only and the working folder empty
-// anyway.
-var codexDenyFeatures = []string{"shell_tool", "unified_exec", "shell_snapshot", "apps", "browser_use",
-	"browser_use_external", "in_app_browser", "computer_use", "image_generation", "multi_agent", "multi_agent_v2",
-	"plugins", "remote_plugin", "hooks", "memories", "goals", "tool_suggest", "skill_mcp_dependency_install",
-	"skill_search", "workspace_dependencies", "code_mode", "code_mode_host", "standalone_web_search", "js_repl"}
+// codexCriticalFeatures must all be listed by `codex features list` (and get disabled);
+// otherwise the runtime is not ready. Any other listed feature starting with one of
+// codexRiskyPrefixes (and not "removed") is disabled too.
+var codexCriticalFeatures = []string{"shell_tool", "unified_exec", "apps", "plugins", "hooks", "browser_use",
+	"computer_use", "multi_agent"}
+
+var codexRiskyPrefixes = []string{"shell_", "unified_exec", "multi_agent", "browser_use", "computer_use", "code_mode",
+	"js_repl", "apply_patch", "exec_", "plugin", "remote_plugin", "hooks", "apps", "in_app_browser", "image_generation",
+	"memories", "goals", "tool_suggest", "skill_", "workspace_dependencies", "standalone_web_search",
+	"request_permissions", "artifact", "chronicle", "external_agent"}
+
+// codexDisabled returns the features to turn off, or an error when a critical one is not
+// listed (this Codex could still have it on under another name).
+func codexDisabled(featuresOut string) ([]string, error) {
+	stage := map[string]string{}
+	var order []string
+	for _, line := range strings.Split(featuresOut, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		st := ""
+		if len(f) > 2 {
+			st = strings.Join(f[1:len(f)-1], " ")
+		}
+		if _, dup := stage[f[0]]; !dup {
+			order = append(order, f[0])
+		}
+		stage[f[0]] = st
+	}
+	var missing []string
+	for _, c := range codexCriticalFeatures {
+		if st, ok := stage[c]; !ok || st == "removed" {
+			missing = append(missing, c)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("esta versão do Codex não lista os recursos %s", strings.Join(missing, ", "))
+	}
+	out := []string{}
+	for _, name := range order {
+		if stage[name] == "removed" {
+			continue
+		}
+		if slices.Contains(codexCriticalFeatures, name) ||
+			slices.ContainsFunc(codexRiskyPrefixes, func(p string) bool { return strings.HasPrefix(name, p) }) {
+			out = append(out, name)
+		}
+	}
+	return out, nil
+}
+
+// Codex versions this runtime was checked against (flags, config keys, feature names,
+// --json events): [codexMinVersion, codexMaxVersion).
+var (
+	codexMinVersion = [3]int{0, 145, 0}
+	codexMaxVersion = [3]int{0, 200, 0}
+)
+
+// parseCodexVersion reads "codex-cli 0.145.0".
+func parseCodexVersion(s string) ([3]int, bool) {
+	var v [3]int
+	f := strings.Fields(strings.TrimSpace(s))
+	if len(f) != 2 || f[0] != "codex-cli" {
+		return v, false
+	}
+	core, _, _ := strings.Cut(f[1], "-")
+	parts := strings.Split(core, ".")
+	if len(parts) != 3 {
+		return v, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return v, false
+		}
+		v[i] = n
+	}
+	return v, true
+}
+
+func versionLess(a, b [3]int) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
+}
+
+func supportedCodexVersion(s string) bool {
+	v, ok := parseCodexVersion(s)
+	return ok && !versionLess(v, codexMinVersion) && versionLess(v, codexMaxVersion)
+}
 
 // codexTokenEnv carries the run token to Codex (never on the command line).
 const codexTokenEnv = "LITEZAP_AGENT_RUN_TOKEN"
@@ -104,7 +204,10 @@ type CodexCLI struct {
 	Model string
 	// Timeout bounds one run (default 150s; the agent hook allows 3 minutes).
 	Timeout time.Duration
-	Log     *slog.Logger
+	// CodexHome is where the user's Codex login lives ("" = $CODEX_HOME, else ~/.codex).
+	// Only its auth.json is copied into each process's private home.
+	CodexHome string
+	Log       *slog.Logger
 
 	mu       sync.Mutex
 	cached   CodexStatus
@@ -135,7 +238,8 @@ type CodexStatus struct {
 
 const codexStatusTTL = 30 * time.Second
 
-// Status detects Codex (cached for 30s unless refresh).
+// Status detects Codex (cached for 30s unless refresh). Every process start re-checks the
+// binary anyway (trustedPATH).
 func (c *CodexCLI) Status(ctx context.Context, refresh bool) CodexStatus {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -151,14 +255,26 @@ func (c *CodexCLI) detect(ctx context.Context) CodexStatus {
 	st := CodexStatus{Disabled: []string{}, Notice: CodexNotice, CheckedAt: time.Now().UTC()}
 	bin, err := c.resolve()
 	if err != nil {
-		st.Detail = "Codex CLI não encontrado. Instale (npm install -g @openai/codex ou brew install codex) e rode `codex login`."
+		st.Detail = "Codex CLI não encontrado (ou instalado numa pasta que outros usuários podem alterar). Instale " +
+			"(npm install -g @openai/codex ou brew install codex) e rode `codex login`."
 		return st
 	}
 	st.Installed, st.Path = true, bin
-	if out, _, err := c.cmd(ctx, bin, 15*time.Second, nil, nil, "--version"); err == nil {
+	if _, err := trustedPATH(bin); err != nil {
+		st.Detail = "O LiteZap não confia neste Codex: " + err.Error()
+		return st
+	}
+	quick := runOpts{timeout: 15 * time.Second}
+	if out, _, _, err := c.run(ctx, bin, quick, "--version"); err == nil {
 		st.Version = clipText(strings.TrimSpace(out), 80)
 	}
-	out, errOut, err := c.cmd(ctx, bin, 15*time.Second, nil, nil, "login", "status")
+	if !supportedCodexVersion(st.Version) {
+		st.Detail = fmt.Sprintf("Versão do Codex não suportada (%q): o LiteZap foi verificado com codex-cli de %d.%d.%d até antes de %d.%d.%d. "+
+			"Instale uma versão dessa faixa ou atualize o LiteZap.", st.Version, codexMinVersion[0], codexMinVersion[1],
+			codexMinVersion[2], codexMaxVersion[0], codexMaxVersion[1], codexMaxVersion[2])
+		return st
+	}
+	out, errOut, _, err := c.run(ctx, bin, quick, "login", "status")
 	text := strings.ToLower(out + "\n" + errOut)
 	switch {
 	case err != nil && strings.Contains(text, "not logged in"):
@@ -178,44 +294,40 @@ func (c *CodexCLI) detect(ctx context.Context) CodexStatus {
 	default:
 		st.Auth = "unknown"
 	}
-	if out, _, err := c.cmd(ctx, bin, 15*time.Second, nil, nil, "features", "list"); err == nil {
-		have := map[string]bool{}
-		for _, line := range strings.Split(out, "\n") {
-			if f := strings.Fields(line); len(f) > 0 {
-				have[f[0]] = true
-			}
-		}
-		for _, f := range codexDenyFeatures {
-			if have[f] {
-				st.Disabled = append(st.Disabled, f)
-			}
-		}
+	fout, _, _, err := c.run(ctx, bin, quick, "features", "list")
+	if err != nil {
+		st.Detail = strings.TrimSpace(st.Detail + " Não foi possível listar os recursos do Codex (`codex features list` falhou): " +
+			"sem isso o LiteZap não consegue desligar o shell e os arquivos, então não roda.")
+		return st
 	}
-	if !slices.Contains(st.Disabled, "shell_tool") {
-		// Older or newer Codex without that switch: still read-only sandbox, empty folder.
-		st.Detail = strings.TrimSpace(st.Detail + " Esta versão do Codex não permite desligar o shell: ele fica no sandbox somente leitura, numa pasta vazia.")
+	disabled, err := codexDisabled(fout)
+	if err != nil {
+		st.Detail = strings.TrimSpace(st.Detail + " " + err.Error() + ": o LiteZap não consegue desligar todos os recursos " +
+			"perigosos desta versão, então não roda.")
+		return st
 	}
+	st.Disabled = disabled
 	st.Ready = true
 	return st
 }
 
-// resolve finds the codex executable.
+// resolve finds a trusted codex executable.
 func (c *CodexCLI) resolve() (string, error) {
 	if c.Path != "" {
 		if isExecutable(c.Path) {
 			return c.Path, nil
 		}
-		return "", fmt.Errorf("%s is not an executable", c.Path)
-	}
-	if p, err := exec.LookPath("codex"); err == nil {
-		if abs, err := filepath.Abs(p); err == nil {
-			return abs, nil
-		}
-		return p, nil
+		return "", fmt.Errorf("%s is not a trusted executable", c.Path)
 	}
 	home, _ := os.UserHomeDir()
-	cands := []string{filepath.Join(home, ".local/bin/codex"), "/opt/homebrew/bin/codex", "/usr/local/bin/codex",
-		filepath.Join(home, ".volta/bin/codex"), filepath.Join(home, ".bun/bin/codex")}
+	var cands []string
+	if p, err := exec.LookPath("codex"); err == nil {
+		if abs, err := filepath.Abs(p); err == nil {
+			cands = append(cands, abs)
+		}
+	}
+	cands = append(cands, filepath.Join(home, ".local/bin/codex"), "/opt/homebrew/bin/codex", "/usr/local/bin/codex",
+		filepath.Join(home, ".volta/bin/codex"), filepath.Join(home, ".bun/bin/codex"))
 	nvm, _ := filepath.Glob(filepath.Join(home, ".nvm/versions/node/*/bin/codex"))
 	sort.Sort(sort.Reverse(sort.StringSlice(nvm)))
 	for _, p := range append(cands, nvm...) {
@@ -224,86 +336,6 @@ func (c *CodexCLI) resolve() (string, error) {
 		}
 	}
 	return "", errors.New("codex not found")
-}
-
-// isExecutable accepts a regular executable file that neither it nor its folder can be
-// changed by group or others (on Unix), so no other local user can swap what LiteZap runs.
-func isExecutable(p string) bool {
-	real, err := filepath.EvalSymlinks(p)
-	if err != nil {
-		return false
-	}
-	fi, err := os.Stat(real)
-	if err != nil || fi.IsDir() || fi.Mode()&0o111 == 0 {
-		return false
-	}
-	if runtime.GOOS == "windows" {
-		return true
-	}
-	dir, err := os.Stat(filepath.Dir(real))
-	return err == nil && fi.Mode().Perm()&0o022 == 0 && (dir.Mode().Perm()&0o022 == 0 || dir.Mode()&os.ModeSticky != 0)
-}
-
-// env is the environment of a codex process: only what it needs to find node, its login
-// (HOME, CODEX_HOME) and the network. Provider keys (OPENAI_API_KEY, CODEX_API_KEY...) are
-// NOT passed, so Codex uses the user's saved login and LiteZap's own secrets stay out.
-func (c *CodexCLI) env(bin string, extra ...string) []string {
-	path := filepath.Dir(bin)
-	if p := os.Getenv("PATH"); p != "" {
-		path += string(os.PathListSeparator) + p
-	}
-	path += ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-	env := []string{"PATH=" + path}
-	for _, k := range []string{"HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "CODEX_HOME", "SSL_CERT_FILE",
-		"SSL_CERT_DIR", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"} {
-		if v, ok := os.LookupEnv(k); ok {
-			env = append(env, k+"="+v)
-		}
-	}
-	return append(env, extra...)
-}
-
-// cmd runs codex and returns its stdout and stderr (each capped at 4MB).
-func (c *CodexCLI) cmd(ctx context.Context, bin string, timeout time.Duration, stdin []byte, extraEnv []string,
-	args ...string) (string, string, error) {
-	cctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	cmd := exec.CommandContext(cctx, bin, args...)
-	cmd.Env = c.env(bin, extraEnv...)
-	cmd.Dir = os.TempDir()
-	cmd.WaitDelay = 3 * time.Second
-	setProcessGroup(cmd)
-	if stdin != nil {
-		cmd.Stdin = bytes.NewReader(stdin)
-	}
-	var out, errb capped
-	out.max, errb.max = 4<<20, 1<<20
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	err := cmd.Run()
-	if cctx.Err() != nil {
-		err = context.DeadlineExceeded
-		if ctx.Err() != nil {
-			err = ctx.Err()
-		}
-	}
-	return out.String(), errb.String(), err
-}
-
-// capped is a bounded buffer.
-type capped struct {
-	bytes.Buffer
-	max int
-}
-
-func (b *capped) Write(p []byte) (int, error) {
-	if room := b.max - b.Len(); room > 0 {
-		if len(p) > room {
-			b.Buffer.Write(p[:room])
-		} else {
-			b.Buffer.Write(p)
-		}
-	}
-	return len(p), nil
 }
 
 func (c *CodexCLI) timeout() time.Duration {
@@ -315,16 +347,17 @@ func (c *CodexCLI) timeout() time.Duration {
 
 // execArgs is the `codex exec` command line of a run.
 func (c *CodexCLI) execArgs(st CodexStatus, url, workdir, lastFile string) []string {
+	srv := "mcp_servers." + codexServerName + "."
 	args := []string{"exec", "--json", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules",
 		"--sandbox", "read-only", "--cd", workdir, "--output-last-message", lastFile, "--color", "never",
 		"-c", `approval_policy="never"`,
 		"-c", `web_search="disabled"`,
-		"-c", `mcp_servers.litezap.url="` + url + `"`,
-		"-c", `mcp_servers.litezap.bearer_token_env_var="` + codexTokenEnv + `"`,
-		"-c", "mcp_servers.litezap.required=true",
-		"-c", `mcp_servers.litezap.default_tools_approval_mode="approve"`,
-		"-c", "mcp_servers.litezap.startup_timeout_sec=20",
-		"-c", "mcp_servers.litezap.tool_timeout_sec=60",
+		"-c", srv + `url="` + url + `"`,
+		"-c", srv + `bearer_token_env_var="` + codexTokenEnv + `"`,
+		"-c", srv + "required=true",
+		"-c", srv + `default_tools_approval_mode="approve"`,
+		"-c", srv + "startup_timeout_sec=20",
+		"-c", srv + "tool_timeout_sec=60",
 	}
 	for _, f := range st.Disabled {
 		args = append(args, "--disable", f)
@@ -341,6 +374,7 @@ func (c *CodexCLI) execArgs(st CodexStatus, url, workdir, lastFile string) []str
 // token that exists only for that run. Every call goes through the run's executor.
 type runMCP struct {
 	url   string
+	host  string // 127.0.0.1:port, the only Host accepted
 	token string
 	srv   *http.Server
 
@@ -367,8 +401,8 @@ func startRunMCP(ctx context.Context, ex *executor, specs []attendant.ToolSpec, 
 	if err != nil {
 		return nil, err
 	}
-	m := &runMCP{token: token, ctx: ctx, ex: ex, delim: attendant.NewDelimiter(), max: maxCalls}
-	m.url = "http://" + ln.Addr().String() + "/mcp"
+	m := &runMCP{token: token, ctx: ctx, ex: ex, delim: attendant.NewDelimiter(), max: maxCalls, host: ln.Addr().String()}
+	m.url = "http://" + m.host + "/mcp"
 	server := sdk.NewServer(&sdk.Implementation{Name: "litezap-agent-run", Version: "1"}, &sdk.ServerOptions{
 		Instructions: "LiteZap tools of one agent run. LiteZap enforces the agent's permissions and limits: a refused call is final.",
 	})
@@ -378,6 +412,11 @@ func startRunMCP(ctx context.Context, ex *executor, specs []attendant.ToolSpec, 
 	h := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, &sdk.StreamableHTTPOptions{})
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only Codex, on this exact address: no browser (Origin), no other Host (DNS rebinding).
+		if r.Host != m.host || r.Header.Get("Origin") != "" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok || !secure.Equal(strings.TrimSpace(got), m.token) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -431,7 +470,7 @@ func (m *runMCP) handle(_ context.Context, req *sdk.CallToolRequest) (*sdk.CallT
 
 // codexPreamble tells Codex where it is: no workspace, only the LiteZap tools.
 const codexPreamble = `# Environment
-You are running inside LiteZap through the Codex CLI. There is no code or workspace here: do not run shell commands, read or write files, browse the web or plan code changes. Your ONLY tools are the "litezap" MCP tools listed for this run. Everything below the security rules is the task.
+You are running inside LiteZap through the Codex CLI. There is no code or workspace here: do not run shell commands, read or write files, browse the web or plan code changes. Your ONLY tools are the "litezap" MCP tools listed for this run; using anything else stops the run. Everything below the security rules is the task.
 
 `
 
@@ -439,10 +478,16 @@ You are running inside LiteZap through the Codex CLI. There is no code or worksp
 // model turns instead; Codex runs its own loop).
 func cliMaxCalls(l Limits) int { return max(4, 3*l.MaxSteps) }
 
-// runCLI performs a run on the Codex CLI. Errors before Codex starts (not installed, not
-// logged in) are returned as not_configured; later failures end the run with status failed.
+// maxLastMessage bounds the final message read back from Codex.
+const maxLastMessage = 64 << 10
+
+// runCLI performs a run on the Codex CLI. Errors before Codex starts (not admin, not
+// installed, not logged in) are returned; later failures end the run with status failed.
 func (r *Runner) runCLI(ctx context.Context, in RunInput) (RunResult, error) {
 	a := in.Agent
+	if err := requireCodexAdmin(ctx); err != nil {
+		return RunResult{}, err
+	}
 	if r.Codex == nil {
 		return RunResult{}, &agenthook.CallError{Reason: "not_configured", Detail: "the codex_cli runtime is not available in this LiteZap"}
 	}
@@ -499,27 +544,31 @@ func (r *Runner) runCLI(ctx context.Context, in RunInput) (RunResult, error) {
 		"You have at most "+strconv.Itoa(cliMaxCalls(a.Limits))+" tool calls in this run.", 1)
 	prompt += "\n# This run\n" + userTurn(in, now, loc) + "\n"
 
-	work, err := os.MkdirTemp("", "litezap-codex-")
+	work, err := os.MkdirTemp("", "litezap-codex-run-")
 	if err != nil {
 		run.Status, run.Error = StatusFailed, "codex_error: could not create the run folder"
 		return r.finish(ctx, in, run, ex, false), nil
 	}
 	defer os.RemoveAll(work)
 	last := filepath.Join(work, ".last-message.txt")
-	bin := cst.Path
-	stdout, stderr, runErr := r.Codex.cmd(rctx, bin, r.Codex.timeout()+5*time.Second, []byte(prompt),
-		[]string{codexTokenEnv + "=" + srv.token}, r.Codex.execArgs(cst, srv.url, work, last)...)
+	stdout, stderr, violation, runErr := r.Codex.run(rctx, cst.Path, runOpts{timeout: r.Codex.timeout() + 5*time.Second,
+		stdin: []byte(prompt), env: []string{codexTokenEnv + "=" + srv.token}, dir: work, onLine: codexItemViolation},
+		r.Codex.execArgs(cst, srv.url, work, last)...)
 
 	ev := parseCodexEvents(stdout)
 	run.ModelCalls = max(1, ev.turns)
 	run.InputTokens, run.OutputTokens = ev.input, ev.output
 	run.Output = ev.lastMessage
-	if b, err := os.ReadFile(last); err == nil && strings.TrimSpace(string(b)) != "" {
+	if b, err := readLimited(last, maxLastMessage); err == nil && strings.TrimSpace(string(b)) != "" {
 		run.Output = string(b)
 	}
 	limited := srv.end() // waits for a call in flight: the executor is ours again
 	srv.close()
 	switch {
+	case violation != "":
+		run.Status = StatusFailed
+		run.Error = "codex_violation: Codex tried to use " + violation + "; LiteZap stopped it (only LiteZap's tools are allowed)"
+		r.log().Warn("agents: codex violation", "instance_id", in.InstanceID, "run_id", run.ID, "what", violation)
 	case errors.Is(runErr, context.DeadlineExceeded) || rctx.Err() != nil:
 		run.Status, run.Error = StatusFailed, "timeout: the Codex CLI did not finish in "+r.Codex.timeout().String()
 	case ex.stopped != nil:
@@ -537,11 +586,6 @@ func (r *Runner) runCLI(ctx context.Context, in RunInput) (RunResult, error) {
 		run.Status, run.Error = StatusStepLimit, fmt.Sprintf("tool call limit reached (%d calls)", cliMaxCalls(a.Limits))
 	default:
 		run.Status = StatusCompleted
-	}
-	if len(ev.builtin) > 0 {
-		note := "warning: Codex used built-in tools (" + strings.Join(ev.builtin, ", ") + ")"
-		run.Error = strings.TrimPrefix(strings.TrimSpace(run.Error+" · "+note), "· ")
-		r.log().Warn("agents: codex used built-in tools", "instance_id", in.InstanceID, "run_id", run.ID, "tools", ev.builtin)
 	}
 	return r.finish(ctx, in, run, ex, codexLeaks(run.Output, canary, srv.token)), nil
 }
@@ -567,7 +611,6 @@ type codexEvents struct {
 	input, output int64
 	lastMessage   string
 	failure       string
-	builtin       []string // Codex's own tools that ran (should never happen)
 }
 
 func parseCodexEvents(out string) codexEvents {
@@ -607,19 +650,9 @@ func parseCodexEvents(out string) codexEvents {
 			}
 		case "error":
 			ev.failure = e.Message
-		case "item.completed", "item.started":
-			if e.Item == nil {
-				continue
-			}
-			switch e.Item.Type {
-			case "agent_message":
-				if e.Type == "item.completed" && strings.TrimSpace(e.Item.Text) != "" {
-					ev.lastMessage = e.Item.Text
-				}
-			case "command_execution", "file_change", "web_search":
-				if e.Type == "item.started" && !slices.Contains(ev.builtin, e.Item.Type) {
-					ev.builtin = append(ev.builtin, e.Item.Type)
-				}
+		case "item.completed":
+			if e.Item != nil && e.Item.Type == "agent_message" && strings.TrimSpace(e.Item.Text) != "" {
+				ev.lastMessage = e.Item.Text
 			}
 		}
 	}

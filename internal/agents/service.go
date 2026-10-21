@@ -431,16 +431,12 @@ func (r *Runner) Simulate(ctx context.Context, instanceID string, in SimulateInp
 		if a.Name == "" {
 			a.Name = "Agente (simulação)"
 		}
-		prev := RuntimeProvider
-		if in.AgentID != "" {
-			if stored, err := r.getAgent(ctx, instanceID, in.AgentID); err == nil {
-				prev = stored.Runtime
-			}
-		}
 		if err := a.validate(); err != nil {
 			return RunView{}, apierr.Validation(err.Error())
 		}
-		if err := checkRuntimeNotice(ctx, prev, a.Runtime, *in.Agent); err != nil {
+		// An inline agent is judged by itself: a codex_cli one always needs the admin and
+		// the notice, whatever the stored agent it is based on.
+		if err := checkRuntimeNotice(ctx, RuntimeProvider, a.Runtime, *in.Agent); err != nil {
 			return RunView{}, err
 		}
 	case in.AgentID != "":

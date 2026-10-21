@@ -5003,7 +5003,7 @@ components:
         tools: { type: array, items: { type: string, enum: [ler, ler_outros_chats, responder_no_chat, enviar_outros_chats, etiquetas, grupos, midia] } }
         trigger: { $ref: "#/components/schemas/AgentTrigger" }
         limits: { $ref: "#/components/schemas/AgentLimits" }
-        runtime: { type: string, enum: [provider, codex_cli], default: provider, description: "Quem pensa. provider: o provedor de IA da instância (chave de API). codex_cli (opt-in, só token admin): o Codex CLI logado neste computador com a sua conta ChatGPT; veja Guias > IA por assinatura." }
+        runtime: { type: string, enum: [provider, codex_cli], default: provider, description: "Quem pensa. provider: o provedor de IA da instância (chave de API). codex_cli (opt-in): o Codex CLI logado neste computador com a sua conta ChatGPT; só o token admin cria, edita, executa ou simula um agente codex_cli. Veja Guias > IA por assinatura." }
         accept_runtime_notice: { type: boolean, description: "Obrigatório (true) ao mudar um agente para codex_cli: confirma o aviso sobre os termos da OpenAI e os limites do seu plano." }
     Agent:
       type: object
