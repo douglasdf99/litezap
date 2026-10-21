@@ -650,3 +650,10 @@ input[type="checkbox"].ag-switch:disabled { opacity: .55; cursor: progress; }
 .ai-steps { margin: .75rem 0; padding-left: 1.25rem; display: grid; gap: .35rem; }
 .ai-progress-row { display: flex; align-items: center; gap: .6rem; margin-top: .5rem; }
 .ai-progress { flex: 1; height: .7rem; accent-color: var(--lz-primary); }
+/* IA por assinatura (subscription.js) */
+.ag-sub h2 { margin: 0 0 .25rem; }
+.ag-sub h3 { margin: 0 0 .35rem; font-size: 1rem; }
+.ag-sub-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-top: .75rem; }
+.ag-sub-grid section { border: 1px solid var(--lz-line); border-radius: var(--radius-sm); padding: .75rem; }
+.ag-sub code { overflow-wrap: anywhere; }
+.ag-perm-info { cursor: default; opacity: .9; }

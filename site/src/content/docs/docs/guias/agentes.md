@@ -16,6 +16,11 @@ Por baixo, o agente roda um **loop de ferramentas** (*tool use*): o modelo chama
 [MCP do LiteZap](/docs/mcp/), executadas dentro do motor (sem rede) e com as mesmas validações da API, até concluir a
 tarefa. Cada execução fica registrada, com os passos, o custo e o que foi enviado.
 
+:::tip[Já paga uma assinatura?]
+Em vez de uma chave de API, um agente pode rodar no **Codex CLI** logado com a sua conta ChatGPT, e uma sessão sua do
+Claude Code pode ficar de **plantão** com a sua assinatura Claude. Veja [IA por assinatura](/docs/guias/ia-por-assinatura/).
+:::
+
 :::note[Agentes x Atendente IA]
 O [Atendente IA](/docs/guias/atendimento-ia/) responde a um chat com um texto, seguindo um roteiro. O agente decide o
 que fazer com ferramentas, e pode agir em mais de uma coisa por execução. Os dois usam o **mesmo provedor**, as

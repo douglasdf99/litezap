@@ -2309,6 +2309,48 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/agents/runtimes:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: refresh, in: query, required: false, description: "1 detecta o Codex CLI de novo (o resultado fica 30 s em cache).", schema: { type: string, enum: ["1"] } }
+    get:
+      tags: [Agentes]
+      operationId: getAgentRuntimes
+      x-litezap-milestone: A1
+      summary: Quem pode rodar agentes
+      x-litezap-scope: instancia
+      description: |
+        O provedor de IA da instância, o Codex CLI local (runtime `codex_cli`: instalado? logado com ChatGPT ou
+        com chave de API? quais recursos do Codex ficam desligados) e como usar uma assinatura Claude (pelo plugin
+        do Claude Code, que o LiteZap não roda sozinho). Detectar o Codex só roda `codex --version`,
+        `codex login status` e `codex features list`: nenhuma chamada ao modelo.
+      responses:
+        "200":
+          description: Runtimes.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  provider: { type: object }
+                  codex_cli:
+                    type: object
+                    nullable: true
+                    properties:
+                      installed: { type: boolean }
+                      path: { type: string }
+                      version: { type: string }
+                      logged_in: { type: boolean }
+                      auth: { type: string, enum: [chatgpt, api_key, unknown] }
+                      ready: { type: boolean }
+                      detail: { type: string }
+                      disabled_features: { type: array, items: { type: string } }
+                      notice: { type: string }
+                      checked_at: { type: string, format: date-time }
+                  claude_code: { type: object, properties: { runtime: { type: boolean }, how: { type: string }, docs: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/instances/{id}/agents/drafts:
     parameters: [{ $ref: "#/components/parameters/InstanceID" }]
     get:
@@ -5112,6 +5154,8 @@ components:
         tools: { type: array, items: { type: string, enum: [ler, ler_outros_chats, responder_no_chat, enviar_outros_chats, etiquetas, grupos, midia] } }
         trigger: { $ref: "#/components/schemas/AgentTrigger" }
         limits: { $ref: "#/components/schemas/AgentLimits" }
+        runtime: { type: string, enum: [provider, codex_cli], default: provider, description: "Quem pensa. provider: o provedor de IA da instância (chave de API). codex_cli (opt-in): o Codex CLI logado neste computador com a sua conta ChatGPT; só o token admin cria, edita, executa ou simula um agente codex_cli. Veja Guias > IA por assinatura." }
+        accept_runtime_notice: { type: boolean, description: "Obrigatório (true) ao mudar um agente para codex_cli: confirma o aviso sobre os termos da OpenAI e os limites do seu plano." }
     Agent:
       type: object
       properties:
@@ -5123,6 +5167,7 @@ components:
         tools: { type: array, items: { type: string } }
         trigger: { $ref: "#/components/schemas/AgentTrigger" }
         limits: { $ref: "#/components/schemas/AgentLimits" }
+        runtime: { type: string, enum: [provider, codex_cli] }
         today: { type: object, properties: { runs: { type: integer }, cost_usd: { type: number } } }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }

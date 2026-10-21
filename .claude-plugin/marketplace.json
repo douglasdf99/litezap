@@ -9,7 +9,7 @@
     {
       "name": "litezap",
       "source": "./plugins/litezap",
-      "description": "Ferramentas do WhatsApp (MCP do app LiteZap), os comandos whatsapp-resumo, whatsapp-responder e whatsapp-agente e agentes de atendimento, SDR e follow-up."
+      "description": "Ferramentas do WhatsApp (MCP do app LiteZap), os comandos whatsapp-resumo, whatsapp-responder, whatsapp-plantao e whatsapp-agente e agentes de atendimento, SDR e follow-up."
     }
   ]
 }

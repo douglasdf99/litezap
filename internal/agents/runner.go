@@ -71,6 +71,10 @@ type Runner struct {
 	Events events.Publisher // nil: no events
 	Clock  func() time.Time
 	Log    *slog.Logger
+	// Codex runs agents whose runtime is codex_cli (nil: that runtime is unavailable).
+	Codex *CodexCLI
+	// Location is the instance's timezone for runs without a provider session (nil: UTC).
+	Location func(ctx context.Context, instanceID string) *time.Location
 
 	mu       sync.Mutex
 	chats    map[string]chan struct{} // instance|chat -> held while a run is in flight
@@ -183,6 +187,9 @@ const (
 // configured) are returned; later failures end the run with status failed.
 func (r *Runner) run(ctx context.Context, in RunInput) (RunResult, error) {
 	a := in.Agent
+	if a.Runtime == RuntimeCodexCLI {
+		return r.runCLI(ctx, in)
+	}
 	sess, err := r.Sessions(ctx, in.InstanceID)
 	if err != nil {
 		return RunResult{}, err
@@ -288,7 +295,14 @@ func (r *Runner) run(ctx context.Context, in RunInput) (RunResult, error) {
 	if run.Status == StatusStepLimit {
 		run.Error = fmt.Sprintf("step limit reached (%d model calls)", a.Limits.MaxSteps)
 	}
-	if sess.Leaks(run.Output, canary) {
+	return r.finish(ctx, in, run, ex, sess.Leaks(run.Output, canary)), nil
+}
+
+// finish stores a run that ended (not in the simulator) and announces it; leaked blocks
+// an output that echoed the instructions or a key.
+func (r *Runner) finish(ctx context.Context, in RunInput, run store.AgentRun, ex *executor, leaked bool) RunResult {
+	a := in.Agent
+	if leaked {
 		run.Output = "(resumo bloqueado: continha as instruções do agente ou uma chave)"
 	}
 	run.Output = clipText(strings.TrimSpace(run.Output), 4000)
@@ -299,7 +313,7 @@ func (r *Runner) run(ctx context.Context, in RunInput) (RunResult, error) {
 	run.StepsJSON = clipSteps(stepsJSON, stored)
 	res := RunResult{Run: run, Steps: ex.steps, exec: ex, Agent: a, DryRun: in.DryRun}
 	if in.DryRun {
-		return res, nil
+		return res
 	}
 	if err := r.Store.FinishAgentRun(context.WithoutCancel(ctx), run); err != nil {
 		r.log().Error("agents: save run", "instance_id", in.InstanceID, "run_id", run.ID, "err", err)
@@ -308,7 +322,7 @@ func (r *Runner) run(ctx context.Context, in RunInput) (RunResult, error) {
 		"trigger": run.Trigger, "chat": run.ChatJID, "message_id": run.MessageID, "mode": run.Mode, "status": run.Status,
 		"steps": len(ex.steps), "model_calls": run.ModelCalls, "sent": run.Sent, "drafts": run.Drafts,
 		"cost_usd": usd(run.CostMicros), "error": run.Error})
-	return res, nil
+	return res
 }
 
 // phoneRe matches phone numbers (and the user part of phone JIDs).

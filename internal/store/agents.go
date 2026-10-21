@@ -21,17 +21,20 @@ type AgentRow struct {
 	ToolsJSON    string
 	TriggerJSON  string
 	LimitsJSON   string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// Runtime is who runs the agent: "provider" (or "", the default) or "codex_cli"
+	// (migration 0014).
+	Runtime   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
-const agentCols = `id, instance_id, name, enabled, mode, instructions, tools_json, trigger_json, limits_json, created_at, updated_at`
+const agentCols = `id, instance_id, name, enabled, mode, instructions, tools_json, trigger_json, limits_json, runtime, created_at, updated_at`
 
 func scanAgent(row scanner) (AgentRow, error) {
 	var a AgentRow
 	var created, updated string
 	err := row.Scan(&a.ID, &a.InstanceID, &a.Name, &a.Enabled, &a.Mode, &a.Instructions, &a.ToolsJSON, &a.TriggerJSON,
-		&a.LimitsJSON, &created, &updated)
+		&a.LimitsJSON, &a.Runtime, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -41,15 +44,15 @@ func scanAgent(row scanner) (AgentRow, error) {
 
 func (s *Store) CreateAgent(ctx context.Context, a AgentRow) error {
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO agents (`+agentCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.ID, a.InstanceID, a.Name, a.Enabled, a.Mode, a.Instructions, a.ToolsJSON, a.TriggerJSON, a.LimitsJSON, ts, ts)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO agents (`+agentCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.InstanceID, a.Name, a.Enabled, a.Mode, a.Instructions, a.ToolsJSON, a.TriggerJSON, a.LimitsJSON, a.Runtime, ts, ts)
 	return err
 }
 
 func (s *Store) UpdateAgent(ctx context.Context, a AgentRow) error {
 	return s.exec1(ctx, `UPDATE agents SET name = ?, enabled = ?, mode = ?, instructions = ?, tools_json = ?, trigger_json = ?,
-		limits_json = ?, updated_at = ? WHERE instance_id = ? AND id = ?`,
-		a.Name, a.Enabled, a.Mode, a.Instructions, a.ToolsJSON, a.TriggerJSON, a.LimitsJSON, now(), a.InstanceID, a.ID)
+		limits_json = ?, runtime = ?, updated_at = ? WHERE instance_id = ? AND id = ?`,
+		a.Name, a.Enabled, a.Mode, a.Instructions, a.ToolsJSON, a.TriggerJSON, a.LimitsJSON, a.Runtime, now(), a.InstanceID, a.ID)
 }
 
 // GetAgent returns an agent of the instance (ErrNotFound for another instance's).

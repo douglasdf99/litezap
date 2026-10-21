@@ -141,8 +141,11 @@ type Agent struct {
 	Tools        []string // permission groups
 	Trigger      Trigger
 	Limits       Limits
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// Runtime is who thinks: RuntimeProvider (the instance's AI provider, the default) or
+	// RuntimeCodexCLI (the user's own Codex CLI, see cliruntime.go).
+	Runtime   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Input creates or changes an agent; nil fields keep their value (or take the default on
@@ -155,12 +158,16 @@ type Input struct {
 	Tools        []string `json:"tools"`
 	Trigger      *Trigger `json:"trigger"`
 	Limits       *Limits  `json:"limits"`
+	Runtime      *string  `json:"runtime"`
+	// AcceptRuntimeNotice confirms the notice of an opt-in runtime (codex_cli): required
+	// when an agent switches to it.
+	AcceptRuntimeNotice *bool `json:"accept_runtime_notice"`
 }
 
 // defaultAgent is the starting point of a new agent: read + reply in the trigger chat,
 // approval mode, new 1:1 messages, off until enabled.
 func defaultAgent() Agent {
-	return Agent{Mode: ModeApproval, Tools: []string{GroupRead, GroupReply},
+	return Agent{Mode: ModeApproval, Tools: []string{GroupRead, GroupReply}, Runtime: RuntimeProvider,
 		Trigger: Trigger{Type: TriggerMessage, Chats: []string{}, Labels: []string{}, Keywords: []string{}},
 		Limits:  defaultLimits()}
 }
@@ -183,6 +190,9 @@ func (in Input) apply(a Agent) Agent {
 	}
 	if in.Instructions != nil {
 		a.Instructions = strings.TrimSpace(*in.Instructions)
+	}
+	if in.Runtime != nil {
+		a.Runtime = strings.TrimSpace(*in.Runtime)
 	}
 	if in.Tools != nil {
 		a.Tools = append([]string{}, in.Tools...)
@@ -223,6 +233,8 @@ func (a *Agent) validate() error {
 		return fmt.Errorf("name is required (at most %d characters)", maxNameLen)
 	case a.Mode != ModeApproval && a.Mode != ModeAutonomous && a.Mode != ModeSuggest:
 		return errors.New(`mode must be "aprovacao", "autonomo" or "sugerir"`)
+	case a.Runtime != "" && a.Runtime != RuntimeProvider && a.Runtime != RuntimeCodexCLI:
+		return errors.New(`runtime must be "provider" or "codex_cli"`)
 	case utf8.RuneCountInString(a.Instructions) > maxInstructions:
 		return fmt.Errorf("instructions are limited to %d characters", maxInstructions)
 	case a.Trigger.Type != TriggerMessage && a.Trigger.Type != TriggerManual:
@@ -241,6 +253,9 @@ func (a *Agent) validate() error {
 		return errors.New("limits.daily_runs must be between 0 (no limit) and 100000")
 	case len(a.Trigger.Chats) > maxFilterItems || len(a.Trigger.Labels) > maxFilterItems || len(a.Trigger.Keywords) > maxFilterItems:
 		return fmt.Errorf("trigger filters accept at most %d items each", maxFilterItems)
+	}
+	if a.Runtime == "" {
+		a.Runtime = RuntimeProvider
 	}
 	tools := []string{}
 	for _, g := range a.Tools {

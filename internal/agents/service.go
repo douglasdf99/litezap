@@ -28,6 +28,7 @@ type View struct {
 	Tools        []string  `json:"tools"`
 	Trigger      Trigger   `json:"trigger"`
 	Limits       Limits    `json:"limits"`
+	Runtime      string    `json:"runtime"`
 	Today        DayStats  `json:"today"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -41,12 +42,15 @@ type DayStats struct {
 
 func view(a Agent, st DayStats) View {
 	return View{ID: a.ID, Name: a.Name, Enabled: a.Enabled, Mode: a.Mode, Instructions: a.Instructions, Tools: a.Tools,
-		Trigger: a.Trigger, Limits: a.Limits, Today: st, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt}
+		Trigger: a.Trigger, Limits: a.Limits, Runtime: a.Runtime, Today: st, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt}
 }
 
 func decodeAgent(row store.AgentRow) (Agent, error) {
 	a := defaultAgent()
 	a.ID, a.Name, a.Enabled, a.Mode, a.Instructions = row.ID, row.Name, row.Enabled, row.Mode, row.Instructions
+	if row.Runtime != "" {
+		a.Runtime = row.Runtime
+	}
 	a.CreatedAt, a.UpdatedAt = row.CreatedAt, row.UpdatedAt
 	if err := json.Unmarshal([]byte(row.ToolsJSON), &a.Tools); err != nil {
 		return a, fmt.Errorf("stored agent tools: %w", err)
@@ -70,7 +74,7 @@ func encodeAgent(instanceID string, a Agent) store.AgentRow {
 	trig, _ := json.Marshal(a.Trigger)
 	lim, _ := json.Marshal(a.Limits)
 	return store.AgentRow{ID: a.ID, InstanceID: instanceID, Name: a.Name, Enabled: a.Enabled, Mode: a.Mode,
-		Instructions: a.Instructions, ToolsJSON: string(tools), TriggerJSON: string(trig), LimitsJSON: string(lim)}
+		Instructions: a.Instructions, ToolsJSON: string(tools), TriggerJSON: string(trig), LimitsJSON: string(lim), Runtime: a.Runtime}
 }
 
 func (r *Runner) instance(ctx context.Context, id string) error {
@@ -172,6 +176,9 @@ func (r *Runner) Create(ctx context.Context, instanceID string, in Input) (View,
 	if err := a.validate(); err != nil {
 		return View{}, apierr.Validation(err.Error())
 	}
+	if err := checkRuntimeNotice(ctx, RuntimeProvider, a.Runtime, in); err != nil {
+		return View{}, err
+	}
 	a.ID = secure.NewID("agn_")
 	if err := r.Store.CreateAgent(ctx, encodeAgent(instanceID, a)); err != nil {
 		return View{}, err
@@ -185,9 +192,13 @@ func (r *Runner) Update(ctx context.Context, instanceID, id string, in Input) (V
 	if err != nil {
 		return View{}, err
 	}
+	prev := a.Runtime
 	a = in.apply(a)
 	if err := a.validate(); err != nil {
 		return View{}, apierr.Validation(err.Error())
+	}
+	if err := checkRuntimeNotice(ctx, prev, a.Runtime, in); err != nil {
+		return View{}, err
 	}
 	if err := r.Store.UpdateAgent(ctx, encodeAgent(instanceID, a)); err != nil {
 		return View{}, err
@@ -422,6 +433,11 @@ func (r *Runner) Simulate(ctx context.Context, instanceID string, in SimulateInp
 		}
 		if err := a.validate(); err != nil {
 			return RunView{}, apierr.Validation(err.Error())
+		}
+		// An inline agent is judged by itself: a codex_cli one always needs the admin and
+		// the notice, whatever the stored agent it is based on.
+		if err := checkRuntimeNotice(ctx, RuntimeProvider, a.Runtime, *in.Agent); err != nil {
+			return RunView{}, err
 		}
 	case in.AgentID != "":
 		var err error
