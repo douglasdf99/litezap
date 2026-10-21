@@ -546,6 +546,7 @@ function summary(ev) {
     case 'call.ended': return `chamada de ${phoneOf(d.caller)} encerrada${d.missed ? ' (perdida)' : d.reason ? ` (${d.reason})` : ''}`;
     case 'chat.updated': return `${phoneOf(d.chat)}: ${(d.changed || []).join(', ')} (${d.source === 'api' ? 'API' : 'celular'})`;
     case 'history.synced': return `${d.messages} mensagens em ${d.chats} blocos (${d.new_messages} novas)`;
+    case 'business.profile_updated': return `perfil da empresa alterado: ${(d.fields || []).join(', ')}`;
     default: return '';
   }
 }

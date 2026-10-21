@@ -24,6 +24,7 @@ type SocialBackend interface {
 	Labels(ctx context.Context, id string) ([]service.LabelView, error)
 	LabelChat(ctx context.Context, id, label, chat string, labeled bool) (service.LabelView, error)
 	BusinessProfile(ctx context.Context, id string) (service.BusinessAccountView, error)
+	UpdateBusinessProfile(ctx context.Context, id string, p service.BusinessProfilePatch) (service.BusinessAccountView, error)
 }
 
 // SocialService is the subset of service.Social used by Local.
@@ -36,6 +37,7 @@ type SocialService interface {
 	Labels(ctx context.Context, instanceID string) ([]service.LabelView, error)
 	LabelChat(ctx context.Context, instanceID, id, chat string, labeled bool) (service.LabelView, error)
 	BusinessProfile(ctx context.Context, instanceID string) (service.BusinessAccountView, error)
+	UpdateBusinessProfile(ctx context.Context, instanceID string, p service.BusinessProfilePatch) (service.BusinessAccountView, error)
 }
 
 var (
@@ -119,6 +121,14 @@ func (l *Local) BusinessProfile(ctx context.Context, id string) (service.Busines
 		return service.BusinessAccountView{}, err
 	}
 	return s.BusinessProfile(ctx, id)
+}
+
+func (l *Local) UpdateBusinessProfile(ctx context.Context, id string, p service.BusinessProfilePatch) (service.BusinessAccountView, error) {
+	s, err := l.social(id)
+	if err != nil {
+		return service.BusinessAccountView{}, err
+	}
+	return s.UpdateBusinessProfile(ctx, id, p)
 }
 
 func channelSegment(raw string) (string, error) {
@@ -213,7 +223,37 @@ func (r *REST) BusinessProfile(ctx context.Context, id string) (service.Business
 	return v, err
 }
 
+func (r *REST) UpdateBusinessProfile(ctx context.Context, id string, p service.BusinessProfilePatch) (service.BusinessAccountView, error) {
+	var v service.BusinessAccountView
+	err := r.call(ctx, restTimeout, "PATCH", instPath(id, "business", "profile"), nil, p, &v)
+	return v, err
+}
+
 // ---- tools ----
+
+type updateBusinessProfileInput struct {
+	InstanceID  string                `json:"instance_id,omitempty" jsonschema:"Instance whose business profile to change"`
+	Description *string               `json:"description,omitempty" jsonschema:"Business description (up to 512 characters; empty clears it)."`
+	Address     *string               `json:"address,omitempty" jsonschema:"Address (up to 256 characters)."`
+	Email       *string               `json:"email,omitempty" jsonschema:"Contact e-mail (empty clears it)."`
+	Websites    []string              `json:"websites,omitempty" jsonschema:"Up to 2 http(s) URLs; they replace the current ones."`
+	Latitude    *float64              `json:"latitude,omitempty" jsonschema:"Map pin latitude (with longitude)."`
+	Longitude   *float64              `json:"longitude,omitempty" jsonschema:"Map pin longitude (with latitude)."`
+	Categories  []string              `json:"categories,omitempty" jsonschema:"1 to 3 category ids (category_list of get_business_profile); they replace the current ones."`
+	Hours       *service.BusinessWeek `json:"hours,omitempty" jsonschema:"The whole week: {timezone, days: {mon: {mode: open|closed|24h|appointment, open: \"09:00\", close: \"18:00\"}}}; days left out are closed. Read business_hours from get_business_profile, change it and send it back."`
+}
+
+func (in updateBusinessProfileInput) patch() service.BusinessProfilePatch {
+	p := service.BusinessProfilePatch{Description: in.Description, Address: in.Address, Email: in.Email,
+		Latitude: in.Latitude, Longitude: in.Longitude, Hours: in.Hours}
+	if in.Websites != nil {
+		p.Websites = &in.Websites
+	}
+	if in.Categories != nil {
+		p.Categories = &in.Categories
+	}
+	return p
+}
 
 type statusListInput struct {
 	InstanceID string `json:"instance_id,omitempty" jsonschema:"Instance whose statuses to list"`
@@ -395,7 +435,7 @@ func (t *tools) registerSocial(s *sdk.Server) {
 	add(t, s, &sdk.Tool{
 		Name:        "get_business_profile",
 		Title:       "Get the business profile",
-		Description: "Reads this number's WhatsApp Business profile: business name, address, email, categories, hours and website options. Answers business_account_required for personal accounts.",
+		Description: "Reads this number's WhatsApp Business profile: business name, description, address, location, email, websites, categories (with ids), hours (business_hours in the shape update_business_profile takes) and options. Answers business_account_required for personal accounts.",
 		InputSchema: schema[instanceInput](map[string]func(*jsonschema.Schema){"instance_id": instID}),
 		Annotations: read,
 	}, func(ctx context.Context, in instanceInput) (*sdk.CallToolResult, service.BusinessAccountView, error) {
@@ -404,6 +444,24 @@ func (t *tools) registerSocial(s *sdk.Server) {
 			return nil, service.BusinessAccountView{}, err
 		}
 		v, err := sb.BusinessProfile(ctx, id)
+		return nil, v, err
+	})
+
+	add(t, s, &sdk.Tool{
+		Name:  "update_business_profile",
+		Title: "Change the business profile",
+		Description: "Changes this number's public WhatsApp Business profile (description, address, e-mail, websites, map pin, categories, hours); " +
+			"every customer sees it. Only when the user explicitly asks, with the values they gave: read it first with get_business_profile, " +
+			"send only the fields to change, and tell the user what changed. Never invent hours, addresses or contacts. " +
+			"Limited to 5 changes per minute (rate_limited: stop). Answers business_account_required for personal accounts.",
+		InputSchema: schema[updateBusinessProfileInput](map[string]func(*jsonschema.Schema){"instance_id": instID}),
+		Annotations: &sdk.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
+	}, func(ctx context.Context, in updateBusinessProfileInput) (*sdk.CallToolResult, service.BusinessAccountView, error) {
+		id, err := t.instance(ctx, in.InstanceID)
+		if err != nil {
+			return nil, service.BusinessAccountView{}, err
+		}
+		v, err := sb.UpdateBusinessProfile(ctx, id, in.patch())
 		return nil, v, err
 	})
 }

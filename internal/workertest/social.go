@@ -25,6 +25,7 @@ type fakeSocial struct {
 	labels   []*workerv1.LabelActionRequest
 	business bool
 	profile  *workerv1.BusinessProfileInfo
+	bizSets  []*workerv1.SetBusinessProfileRequest
 	calls    []string
 	err      error
 	next     int
@@ -251,6 +252,57 @@ func (f *FakeWA) BusinessProfile(_ context.Context, jid string) (*workerv1.Busin
 		p.Jid = jid
 	}
 	return p, nil
+}
+
+// SetBusinessProfile applies the delta to the fake profile (category names are the ids).
+func (f *FakeWA) SetBusinessProfile(_ context.Context, req *workerv1.SetBusinessProfileRequest) (*workerv1.BusinessProfileInfo, error) {
+	err := f.slock("business_set")
+	defer f.soc.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if !f.soc.business {
+		return nil, status.Error(codes.FailedPrecondition, "business_account_required: not a WhatsApp Business account")
+	}
+	f.soc.bizSets = append(f.soc.bizSets, proto.Clone(req).(*workerv1.SetBusinessProfileRequest))
+	p := f.soc.profile
+	if p == nil {
+		p = &workerv1.BusinessProfileInfo{Jid: "5511999999999@s.whatsapp.net"}
+		f.soc.profile = p
+	}
+	if req.Description != nil {
+		p.Description = *req.Description
+	}
+	if req.Address != nil {
+		p.Address = *req.Address
+	}
+	if req.Email != nil {
+		p.Email = *req.Email
+	}
+	if req.SetWebsites {
+		p.Websites = append([]string(nil), req.Websites...)
+	}
+	if req.SetLocation {
+		p.HasLocation, p.Latitude, p.Longitude = true, req.Latitude, req.Longitude
+	}
+	if req.SetCategories {
+		p.Categories, p.CategoryList = nil, nil
+		for _, id := range req.CategoryIds {
+			p.Categories = append(p.Categories, "cat "+id)
+			p.CategoryList = append(p.CategoryList, &workerv1.BusinessCategory{Id: id, Name: "cat " + id})
+		}
+	}
+	if req.Hours != nil {
+		p.Timezone, p.Hours = req.Hours.Timezone, req.Hours.Days
+	}
+	return proto.Clone(p).(*workerv1.BusinessProfileInfo), nil
+}
+
+// BusinessSets returns the SetBusinessProfile requests received so far.
+func (f *FakeWA) BusinessSets() []*workerv1.SetBusinessProfileRequest {
+	f.soc.mu.Lock()
+	defer f.soc.mu.Unlock()
+	return append([]*workerv1.SetBusinessProfileRequest(nil), f.soc.bizSets...)
 }
 
 // Social is the Social client of the fake worker (marco 10).

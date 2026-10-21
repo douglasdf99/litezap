@@ -5,6 +5,25 @@ description: O que mudou em cada marco do LiteZap.
 
 As versões seguem os marcos do motor. Mudanças que quebram compatibilidade são marcadas com **Quebra**.
 
+## Perfil comercial editável (M12a)
+
+**Novo**
+
+- [`PATCH /v1/instances/{id}/business/profile`](/docs/api/business/editar-perfil-comercial/): edita o perfil do
+  WhatsApp Business da conta (descrição, endereço, localização, e-mail, até 2 sites, até 3 categorias por id e o
+  horário de cada dia: aberto com horário ou turnos, fechado, 24 horas ou com agendamento). Só os campos enviados
+  mudam; a resposta é o perfil lido de novo do WhatsApp. Token admin ou da instância (chaves `lzk_` não podem);
+  5 alterações por minuto e 50 por dia.
+- `GET /business/profile` passa a trazer `description`, `websites`, `location`, `category_list` (com ids) e
+  `business_hours` (a semana no formato do PATCH). Os campos antigos continuam iguais.
+- Evento [`business.profile_updated`](/docs/eventos/business-profile-updated/), ferramenta MCP
+  `update_business_profile` e a seção **Perfil da empresa** na aba Perfil do painel (só contas Business; o mapa só
+  abre quando você clica, nada é enviado a serviços de geocodificação).
+- Status: pronto, aguardando validação num número Business real. O envio segue o formato do WhatsApp Web e do
+  Baileys (IQ `w:biz`, `business_profile v="3" mutation_type="delta"`); localização, categorias e remover os sites
+  seguem o formato da leitura. Se o WhatsApp recusar algo, a resposta é `400 validation_failed` com o código do
+  servidor.
+
 ## IA grátis (A2)
 
 **Novo**

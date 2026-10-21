@@ -36,6 +36,7 @@ type SocialService interface {
 	LabelMessage(ctx context.Context, instanceID, id, msgID string, labeled bool) error
 
 	BusinessProfile(ctx context.Context, instanceID string) (service.BusinessAccountView, error)
+	UpdateBusinessProfile(ctx context.Context, instanceID string, p service.BusinessProfilePatch) (service.BusinessAccountView, error)
 }
 
 // socialRoutes mounts the marco 10 routes inside /instances/{id}.
@@ -71,6 +72,8 @@ func (s *server) socialRoutes(r chi.Router) {
 	r.Delete("/labels/{label_id}/messages/{msg_id}", s.labelMessage(false))
 
 	r.Get("/business/profile", s.businessProfile)
+	// A write: admin or instance token (scoped API keys never reach PATCH routes).
+	r.Patch("/business/profile", s.patchBusinessProfile)
 }
 
 // waitParam reads ?wait=true&timeout=30s.
@@ -358,6 +361,20 @@ func (s *server) labelMessage(labeled bool) http.HandlerFunc {
 
 func (s *server) businessProfile(w http.ResponseWriter, r *http.Request) {
 	v, err := s.opt.Social.BusinessProfile(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+func (s *server) patchBusinessProfile(w http.ResponseWriter, r *http.Request) {
+	var p service.BusinessProfilePatch
+	if err := decodeStrict(w, r, &p); err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	v, err := s.opt.Social.UpdateBusinessProfile(r.Context(), chi.URLParam(r, "id"), p)
 	if err != nil {
 		s.writeErr(w, err)
 		return

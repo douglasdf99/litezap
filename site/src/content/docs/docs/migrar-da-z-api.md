@@ -124,7 +124,8 @@ fora do escopo** de propósito.
 | Reagir e ler publicações de canal | reagir e listar publicações; marcar como visto não | <span class="lz-badge lz-badge--soon">Parcial</span> |
 | Administração avançada de canais (editar, apagar, assinantes, admins) | — | <span class="lz-badge lz-badge--no">Avaliar</span> |
 | Etiquetas e perfil comercial (leitura) | [Etiquetas e Business](/docs/api/business/) e [`label.updated`](/docs/eventos/label-updated/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
-| Catálogo, coleções, perfil comercial editável | — | <span class="lz-badge lz-badge--no">Avaliar</span> |
+| Editar perfil comercial (descrição, endereço, e-mail, sites, horário, categorias) | [`PATCH /business/profile`](/docs/api/business/editar-perfil-comercial/) e [`business.profile_updated`](/docs/eventos/business-profile-updated/) | <span class="lz-badge lz-badge--ok">Disponível</span> (aguardando validação num número Business real) |
+| Catálogo e coleções | — | <span class="lz-badge lz-badge--no">Avaliar</span> |
 | Listas de transmissão | — (envio em massa é gatilho de banimento) | <span class="lz-badge lz-badge--no">Fora</span> |
 | Chamadas de voz / SIP | — (não suportado pela biblioteca de protocolo) | <span class="lz-badge lz-badge--no">Fora</span> |
 

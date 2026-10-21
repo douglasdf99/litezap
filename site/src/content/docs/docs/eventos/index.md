@@ -62,6 +62,7 @@ Cada entrega é um `POST` com o envelope como corpo (`Content-Type: application/
 | [`status.received`](/docs/eventos/status-received/) | Status (story) de um contato (opt-in) | M10 |
 | [`channel.message`](/docs/eventos/channel-message/) | Publicação num canal seguido (opt-in) | M10 |
 | [`label.updated`](/docs/eventos/label-updated/) | Etiqueta do WhatsApp Business criada, alterada ou aplicada, pela API ou no celular | M10 |
+| [`business.profile_updated`](/docs/eventos/business-profile-updated/) | Perfil comercial alterado pela API, com os campos alterados e o perfil novo | M12 |
 | [`instance.paired`](/docs/eventos/instance-paired/) | Pareamento concluído (inclusive pelo link hospedado) | M11 |
 | [`instance.proxy_failed`](/docs/eventos/instance-proxy-failed/) | O proxy da instância falhou (com o erro, sem credenciais) | M11 |
 | [`agent.failed`](/docs/eventos/agent-failed/) | O atendente IA falhou ou o limite de respostas estourou | M5 |

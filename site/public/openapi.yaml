@@ -208,8 +208,10 @@ tags:
     x-slug: business
     x-intro: |
       Só contas WhatsApp Business (em conta pessoal, `409 business_account_required`). As etiquetas vêm do
-      celular pelo app state e cada mudança sai em `label.updated`. O perfil comercial é só leitura;
-      catálogo, coleções e pedidos não existem no whatsmeow.
+      celular pelo app state e cada mudança sai em `label.updated`. O perfil comercial pode ser lido e
+      editado (descrição, endereço, localização, e-mail, sites, categorias e horário; marco 12, aguardando
+      validação num número Business real); cada edição sai em `business.profile_updated`. Catálogo,
+      coleções e pedidos não existem no whatsmeow.
     x-concept: /docs/conceitos/instancias/
   - name: Operação
     description: Saúde do processo, prontidão e identidade do token.
@@ -4209,17 +4211,56 @@ paths:
       x-zapi: "Dados da conta business"
       summary: Perfil comercial
       x-litezap-scope: instancia
-      description: Endereço, e-mail, categorias, horário de funcionamento e opções (site, descrição) da própria conta Business (somente leitura).
+      description: |
+        Descrição, endereço, localização, e-mail, sites, categorias (com ids) e horário de funcionamento da
+        própria conta Business. `business_hours` traz a semana no mesmo formato que o PATCH aceita (leia,
+        altere e mande de volta); `hours` e `timezone` são as entradas brutas do WhatsApp (minutos desde a
+        meia-noite).
       responses:
         "200":
           description: Perfil comercial.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BusinessProfile" }
-              example: { jid: 5511999999999@s.whatsapp.net, business_name: "Loja Exemplo", address: "Rua A, 10", email: "oi@loja.exemplo", categories: [Varejo], timezone: America/Sao_Paulo, hours: [{ day: mon, mode: open_24h }] }
+              example: { jid: 5511999999999@s.whatsapp.net, business_name: "Loja Exemplo", description: "Pizzas artesanais", address: "Rua A, 10", email: "oi@loja.exemplo", websites: ["https://loja.exemplo"], location: { latitude: -23.5505, longitude: -46.6333 }, categories: [Restaurante], category_list: [{ id: "133436743388217", name: Restaurante }], timezone: America/Sao_Paulo, hours: [{ day: mon, mode: specific_hours, open: "540", close: "1080" }], business_hours: { timezone: America/Sao_Paulo, days: { sun: { mode: closed }, mon: { mode: open, open: "09:00", close: "18:00" }, tue: { mode: closed }, wed: { mode: closed }, thu: { mode: closed }, fri: { mode: closed }, sat: { mode: closed } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/BusinessRequired" }
+    patch:
+      tags: [Etiquetas e Business]
+      operationId: updateBusinessProfile
+      x-litezap-milestone: M12
+      x-zapi: "Editar perfil comercial (descrição, endereço, e-mail, sites, horário, categorias)"
+      x-litezap-events: [business.profile_updated]
+      summary: Editar perfil comercial
+      x-litezap-scope: instancia
+      description: |
+        Altera só os campos enviados (os ausentes ou `null` ficam como estão) e devolve o perfil lido de novo do
+        WhatsApp. `websites` e `categories` substituem as listas atuais (`websites: []` remove os sites);
+        `hours` substitui a semana inteira (dias ausentes ficam fechados); `latitude` e `longitude` vão
+        juntas. Token admin ou da instância; chaves de API com escopo (`lzk_`) não podem. Limite de 5
+        alterações por minuto e 50 por dia por instância.
+
+        Os campos vão ao WhatsApp como o WhatsApp Web e o Baileys enviam (IQ `w:biz`, mutação `delta`).
+        Localização, categorias e remover os sites ainda aguardam validação num número Business real: se o
+        WhatsApp recusar um valor, a resposta é `400 validation_failed` com o código do servidor.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BusinessProfilePatch" }
+            example: { description: "Pizzas artesanais no forno a lenha", websites: ["https://loja.exemplo"], categories: ["133436743388217"], hours: { timezone: America/Sao_Paulo, days: { mon: { mode: open, open: "09:00", close: "18:00" }, tue: { mode: open, intervals: [{ open: "11:00", close: "14:00" }, { open: "18:00", close: "23:00" }] }, sat: { mode: 24h }, sun: { mode: closed } } } }
+      responses:
+        "200":
+          description: O perfil lido de novo depois da alteração.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessProfile" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/BusinessRequired" }
+        "429": { $ref: "#/components/responses/SocialRateLimited" }
 
 components:
   securitySchemes:
@@ -4912,20 +4953,84 @@ components:
       properties:
         jid: { type: string }
         business_name: { type: string }
+        description: { type: string }
         address: { type: string }
         email: { type: string }
-        categories: { type: array, items: { type: string } }
-        timezone: { type: string }
-        hours:
+        websites: { type: array, items: { type: string } }
+        location:
+          type: object
+          description: O pino no mapa, quando o perfil tem um.
+          properties:
+            latitude: { type: number }
+            longitude: { type: number }
+        categories: { type: array, items: { type: string }, description: Nomes das categorias. }
+        category_list:
           type: array
+          description: Categorias com o id (o PATCH recebe os ids).
           items:
             type: object
             properties:
-              day: { type: string }
-              mode: { type: string }
+              id: { type: string }
+              name: { type: string }
+        timezone: { type: string }
+        hours:
+          type: array
+          description: Entradas brutas do WhatsApp (open/close em minutos desde a meia-noite).
+          items:
+            type: object
+            properties:
+              day: { type: string, enum: [sun, mon, tue, wed, thu, fri, sat] }
+              mode: { type: string, enum: [specific_hours, open_24h, appointment_only] }
               open: { type: string }
               close: { type: string }
+        business_hours: { $ref: "#/components/schemas/BusinessWeek" }
         options: { type: object, additionalProperties: { type: string } }
+    BusinessWeek:
+      type: object
+      description: A semana de funcionamento no formato do PATCH (na leitura, todos os dias aparecem).
+      required: [timezone]
+      properties:
+        timezone: { type: string, description: "Fuso IANA, como America/Sao_Paulo." }
+        days:
+          type: object
+          description: "Chaves sun, mon, tue, wed, thu, fri, sat. No PATCH, dia ausente = fechado."
+          additionalProperties: { $ref: "#/components/schemas/BusinessDay" }
+    BusinessDay:
+      type: object
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [open, closed, 24h, appointment], description: "open: com horário; 24h: aberto o dia todo; appointment: só com agendamento." }
+        open: { type: string, example: "09:00", description: "mode open: abre (HH:MM)." }
+        close: { type: string, example: "18:00", description: "mode open: fecha (HH:MM; 24:00 = meia-noite)." }
+        intervals:
+          type: array
+          maxItems: 3
+          description: "mode open: turnos, no lugar de open/close (ex.: 11:00-14:00 e 18:00-23:00)."
+          items:
+            type: object
+            properties:
+              open: { type: string }
+              close: { type: string }
+    BusinessProfilePatch:
+      type: object
+      description: Só os campos enviados mudam.
+      properties:
+        description: { type: string, maxLength: 512, description: '"" apaga.' }
+        address: { type: string, maxLength: 256 }
+        email: { type: string, maxLength: 128, description: 'Endereço simples (contato@loja.com); "" apaga.' }
+        websites: { type: array, maxItems: 2, items: { type: string, maxLength: 256 }, description: "URLs http(s); substituem as atuais ([] remove)." }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        categories: { type: array, minItems: 1, maxItems: 3, items: { type: string, pattern: "^[0-9]+$" }, description: "Ids de categoria (category_list do GET); substituem as atuais." }
+        hours: { $ref: "#/components/schemas/BusinessWeek" }
+    BusinessProfileUpdatedEvent:
+      type: object
+      description: Dados de `business.profile_updated`.
+      properties:
+        fields: { type: array, items: { type: string, enum: [description, address, email, websites, location, categories, hours] } }
+        profile: { $ref: "#/components/schemas/BusinessProfile" }
+        source: { type: string, enum: [api] }
+        timestamp: { type: string, format: date-time }
     ChannelMessageEvent:
       type: object
       description: Dados de `channel.message`.
@@ -6015,6 +6120,27 @@ webhooks:
           application/json:
             schema: { $ref: "#/components/schemas/Envelope" }
             example: { id: evt_3e7a1c9d5b2f8046, type: label.updated, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T12:32:00.000Z", data: { kind: chat, label_id: "5", chat: 5511988887777@s.whatsapp.net, labeled: true, source: device, timestamp: "2026-10-18T12:32:00Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  business.profile_updated:
+    post:
+      summary: Perfil comercial alterado
+      x-slug: business-profile-updated
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      description: |
+        O perfil comercial da conta Business foi alterado pela API (`PATCH /business/profile`, painel ou MCP).
+        Traz os campos alterados e o perfil lido de novo do WhatsApp. Mudanças feitas no celular não geram
+        este evento.
+      x-fields:
+        - [fields, array, "Campos alterados: description, address, email, websites, location, categories, hours."]
+        - [profile, object, "O perfil depois da alteração (mesmo formato do GET /business/profile)."]
+        - [source, string, "api."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_4c8e2a6b1d3f5079, type: business.profile_updated, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-20T15:00:00.000Z", data: { fields: [description], profile: { jid: 5511999999999@s.whatsapp.net, description: "Pizzas artesanais", websites: [], categories: [], category_list: [], hours: [] }, source: api, timestamp: "2026-10-20T15:00:00Z" } }
       responses:
         "2XX": { description: Qualquer 2xx confirma a entrega. }
   agent.failed:

@@ -486,6 +486,14 @@ details.adv .field { margin-top: .75rem; }
 .chat-actions { margin-left: auto; gap: .35rem; }
 .avatar-big { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; background: var(--lz-surface-2); display: flex; align-items: center; justify-content: center; color: var(--lz-text-subtle); font-size: .8rem; }
 .profile-head { display: flex; gap: 1rem; align-items: center; margin: .5rem 0 1rem; }
+.biz-week { display: flex; flex-direction: column; gap: .4rem; margin-bottom: .75rem; }
+.biz-day { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; padding: .35rem 0; border-bottom: 1px solid var(--lz-line); }
+.biz-day:last-child { border-bottom: 0; }
+.biz-day-name { width: 5.5rem; font-weight: 600; }
+.biz-day select { width: auto; }
+.biz-day small { flex-basis: 100%; }
+.biz-chip { display: inline-flex; align-items: center; gap: .25rem; padding: .15rem .5rem; border-radius: var(--radius-sm); background: var(--lz-surface-2); font-size: .82rem; }
+.biz-chip-x { border: 0; background: none; cursor: pointer; color: var(--lz-text-muted); font-size: 1rem; line-height: 1; padding: 0 .1rem; }
 ul.plain { list-style: none; padding: 0; margin: 0 0 .75rem; }
 ul.plain li { padding: .25rem 0; }
 .status-list { display: flex; flex-direction: column; gap: .5rem; }

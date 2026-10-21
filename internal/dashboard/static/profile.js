@@ -1,7 +1,9 @@
-// "Perfil" tab (marco 9): the account's name, about text and picture, the privacy
-// settings, the blocklist and the auto-read option.
+// "Perfil" tab (marco 9): the account's name, about text and picture, the business
+// profile (Business accounts, marco 12), the privacy settings, the blocklist and the
+// auto-read option.
 import * as api from './api.js';
 import { h, mount, toast, errMsg, field, phoneOf, confirmDanger } from './ui.js';
+import { businessProfileBox } from './bizprofile.js';
 
 const PRIVACY = [
   ['last_seen', 'Visto por último', ['all', 'contacts', 'contact_blacklist', 'none']],
@@ -31,7 +33,9 @@ export function profilePanel(ctx) {
   const privacyBox = h('div', { class: 'card settings' }, h('p', { class: 'muted' }, 'Carregando…'));
   const blockBox = h('div', { class: 'card' }, h('p', { class: 'muted' }, 'Carregando…'));
   const readBox = h('div', { class: 'card settings' });
+  const biz = businessProfileBox(ctx); // hidden unless the account is a Business one
   let alive = true;
+  let bizLoaded = false;
 
   const notConnected = (e) => (e.code === 'instance_not_connected' ? 'Instância desconectada: conecte para ver e alterar o perfil.' : errMsg(e));
 
@@ -92,7 +96,11 @@ export function profilePanel(ctx) {
     field('Recado', about, 'Até 139 caracteres.'),
     h('div', { class: 'row end' }, save)));
   };
-  const loadProfile = () => api.get(`${ctx.base}/profile`).then((p) => alive && renderProfile(p))
+  const loadProfile = () => api.get(`${ctx.base}/profile`).then((p) => {
+    if (!alive) return;
+    renderProfile(p);
+    if (p.business_name && !bizLoaded) { bizLoaded = true; biz.load(); }
+  })
     .catch((e) => alive && mount(profileBox, h('h2', null, 'Perfil'), h('p', { class: 'muted' }, notConnected(e))));
 
   // ---------- privacy ----------
@@ -183,6 +191,6 @@ export function profilePanel(ctx) {
   loadProfile();
   loadPrivacy();
   loadBlocked();
-  const el = h('div', { class: 'profile' }, profileBox, readBox, privacyBox, blockBox);
-  return { el, cleanup() { alive = false; } };
+  const el = h('div', { class: 'profile' }, profileBox, biz.el, readBox, privacyBox, blockBox);
+  return { el, cleanup() { alive = false; biz.cleanup(); } };
 }

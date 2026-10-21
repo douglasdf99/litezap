@@ -160,6 +160,7 @@ WhatsApp vêm marcadas como destrutivas ou com aviso de risco, para o cliente pe
 | `list_channels` · `get_channel` · `get_channel_messages` | Canais seguidos, um canal, publicações recentes | [Canais](/docs/api/canais/) |
 | `follow_channel` | Segue ou deixa de seguir um canal | [Canais](/docs/api/canais/) |
 | `list_labels` · `label_chat` · `get_business_profile` | Etiquetas e suas conversas; etiquetar um chat; perfil comercial | [Etiquetas e Business](/docs/api/business/) |
+| `update_business_profile` | Edita o perfil comercial (descrição, endereço, localização, e-mail, sites, categorias, horário). Visível para todos os clientes: só quando o usuário pedir, com os valores dele; 5 por minuto | [Editar perfil comercial](/docs/api/business/editar-perfil-comercial/) |
 | `get_attendant` · `get_attendant_agent` | Leitura do atendente IA embutido (provedor e modelo, sem chaves) e de um agente | [Atendente IA](/docs/api/atendente-ia/) |
 
 ## O que não existe por MCP (de propósito)
