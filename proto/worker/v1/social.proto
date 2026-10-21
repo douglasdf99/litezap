@@ -173,13 +173,12 @@ message SetBusinessProfileRequest {
   repeated string category_ids = 10;
   // hours, when set, replace the whole week: days without an entry are closed.
   BusinessHoursSet hours = 11;
-  // Explicit clears (marco 12). clear_location removes the map pin, with the encoding
-  // named by location_clear ("" = the worker's default, see bizprofile.go):
-  // empty_elements | empty_content | empty_address. clear_hours removes the business
-  // hours entirely (an empty <business_hours/> without timezone). Both still need
-  // validation on a real Business number.
-  bool clear_location = 12;
-  string location_clear = 13;
+  // Explicit clear (marco 12): clear_hours removes the business hours entirely (an empty
+  // <business_hours/> without timezone; validated on a real device on 2026-10-21). The
+  // map pin cannot be cleared from a linked device: every encoding tried on 2026-10-21
+  // was refused (406) or ignored, so clear_location (12) and location_clear (13) are gone.
+  reserved 12, 13;
+  reserved "clear_location", "location_clear";
   bool clear_hours = 14;
 }
 

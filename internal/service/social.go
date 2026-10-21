@@ -41,9 +41,6 @@ type Social struct {
 	Events    events.Publisher // label.updated for API changes (nil: not published)
 	// Now is the clock of the quotas (tests); nil means time.Now.
 	Now func() time.Time
-	// LocationClear is the default encoding of a location clear (config
-	// business_location_clear; "" = the worker's default, empty_elements).
-	LocationClear string
 
 	quota    windowQuota // per instance and kind (follow, create, react, label, mute)
 	bizMu    sync.Mutex

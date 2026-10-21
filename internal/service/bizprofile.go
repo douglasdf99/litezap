@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
 	"net/mail"
 	"net/url"
 	"regexp"
@@ -61,15 +62,13 @@ type BusinessWeek struct {
 // categories replace the current lists; hours replace the whole week (days left out are
 // closed); latitude and longitude go together.
 //
-// Clearing is explicit, with one API: clear lists the fields to remove (location, hours,
-// email, websites, description, address). A JSON null on those fields is refused (it
-// would be ambiguous with "absent"); "" and [] still clear the text fields and the
-// websites as before. location_clear (experimental) picks the IQ encoding of the location
-// clear while it is validated on real devices: empty_elements (default) | empty_content |
-// empty_address.
+// Clearing is explicit, with one API: clear lists the fields to remove (hours, email,
+// websites, description, address). A JSON null on those fields is refused (it would be
+// ambiguous with "absent"); "" and [] still clear the text fields and the websites as
+// before. "location" is refused with not_supported: on a real device (2026-10-21)
+// WhatsApp rejected or ignored every encoding of the clear from a linked device.
 type BusinessProfilePatch struct {
-	Clear         []string `json:"clear,omitempty"`
-	LocationClear string   `json:"location_clear,omitempty"`
+	Clear []string `json:"clear,omitempty"`
 
 	Description *string       `json:"description,omitempty"`
 	Address     *string       `json:"address,omitempty"`
@@ -82,7 +81,11 @@ type BusinessProfilePatch struct {
 }
 
 // clearableFields are the fields of clear, in a stable order.
-var clearableFields = []string{"description", "address", "email", "websites", "location", "hours"}
+var clearableFields = []string{"description", "address", "email", "websites", "hours"}
+
+// errLocationClear: WhatsApp only removes the map pin from the phone app.
+var errLocationClear = apierr.New(http.StatusUnprocessableEntity, "not_supported",
+	"WhatsApp does not allow removing the map location from a linked device; remove it in the WhatsApp Business app (Business profile > Address)", false)
 
 // UnmarshalJSON refuses an explicit null on a clearable field (use clear) and unknown
 // fields, like the strict decoder of the API.
@@ -93,11 +96,10 @@ func (p *BusinessProfilePatch) UnmarshalJSON(b []byte) error {
 	}
 	for _, k := range []string{"description", "address", "email", "websites", "latitude", "longitude", "hours", "location"} {
 		if v, ok := raw[k]; ok && string(bytes.TrimSpace(v)) == "null" {
-			f := k
-			if k == "latitude" || k == "longitude" {
-				f = "location"
+			if k == "latitude" || k == "longitude" || k == "location" {
+				return errLocationClear
 			}
-			return apierr.Validation(fmt.Sprintf(`%s: null is not a clear; send "clear": ["%s"]`, k, f))
+			return apierr.Validation(fmt.Sprintf(`%s: null is not a clear; send "clear": ["%s"]`, k, k))
 		}
 	}
 	if v, ok := raw["categories"]; ok && string(bytes.TrimSpace(v)) == "null" {
@@ -166,13 +168,16 @@ func businessSetRequest(p BusinessProfilePatch) (*workerv1.SetBusinessProfileReq
 	clear := map[string]bool{}
 	for _, f := range p.Clear {
 		f = strings.ToLower(strings.TrimSpace(f))
+		if f == "location" {
+			return nil, nil, errLocationClear
+		}
 		if !slices.Contains(clearableFields, f) {
-			return nil, nil, apierr.Validation("clear takes location, hours, email, websites, description and address")
+			return nil, nil, apierr.Validation("clear takes hours, email, websites, description and address")
 		}
 		clear[f] = true
 	}
 	set := map[string]bool{"description": p.Description != nil, "address": p.Address != nil, "email": p.Email != nil,
-		"websites": p.Websites != nil, "location": p.Latitude != nil || p.Longitude != nil, "hours": p.Hours != nil}
+		"websites": p.Websites != nil, "hours": p.Hours != nil}
 	for _, f := range clearableFields {
 		if clear[f] && set[f] {
 			return nil, nil, apierr.Validation(f + ": send a value or clear it, not both")
@@ -192,23 +197,9 @@ func businessSetRequest(p BusinessProfilePatch) (*workerv1.SetBusinessProfileReq
 			p.Email = &empty
 		case "websites":
 			p.Websites = &[]string{}
-		case "location":
-			req.ClearLocation = true
 		case "hours":
 			req.ClearHours = true
 		}
-	}
-	if p.LocationClear != "" {
-		if !req.ClearLocation {
-			return nil, nil, apierr.Validation(`location_clear only applies with "clear": ["location"]`)
-		}
-		if !slices.Contains([]string{"empty_elements", "empty_content", "empty_address"}, p.LocationClear) {
-			return nil, nil, apierr.Validation("location_clear must be empty_elements, empty_content or empty_address")
-		}
-		if p.LocationClear == "empty_address" && p.Address != nil {
-			return nil, nil, apierr.Validation("location_clear empty_address clears the address too: do not send address with it")
-		}
-		req.LocationClear = p.LocationClear
 	}
 	if p.Description != nil {
 		if utf8.RuneCountInString(*p.Description) > maxBizDescription {
@@ -280,9 +271,6 @@ func businessSetRequest(p BusinessProfilePatch) (*workerv1.SetBusinessProfileReq
 			return nil, nil, err
 		}
 		req.Hours, fields = hs, append(fields, "hours")
-	}
-	if req.ClearLocation {
-		fields = append(fields, "location")
 	}
 	if req.ClearHours {
 		fields = append(fields, "hours")
@@ -407,9 +395,6 @@ func (s *Social) UpdateBusinessProfile(ctx context.Context, instanceID string, p
 	req, fields, err := businessSetRequest(p)
 	if err != nil {
 		return BusinessAccountView{}, err
-	}
-	if req.ClearLocation && req.LocationClear == "" {
-		req.LocationClear = s.LocationClear
 	}
 	cli, err := s.client(ctx, instanceID)
 	if err != nil {

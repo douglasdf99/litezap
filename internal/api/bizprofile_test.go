@@ -52,18 +52,25 @@ func TestPatchBusinessProfile(t *testing.T) {
 		t.Fatalf("worker sets = %d", n)
 	}
 	// Explicit clears: "clear" only; a null is refused with a hint.
-	for _, bad := range []string{`{"hours":null}`, `{"latitude":null,"longitude":null}`, `{"clear":["categories"]}`,
-		`{"clear":["location"],"location_clear":"bogus"}`} {
+	for _, bad := range []string{`{"hours":null}`, `{"clear":["categories"]}`,
+		`{"clear":["hours"],"location_clear":"empty_content"}`} {
 		if code, out := e.do("PATCH", base+"/business/profile", admin, bad); code != 400 {
 			t.Errorf("%s = %d %v", bad, code, out)
 		}
 	}
-	if code, out := e.do("PATCH", base+"/business/profile", admin, `{"clear":["location","hours"],"location_clear":"empty_content"}`); code != 200 ||
-		out["business_hours"] != nil || out["location"] != nil {
+	// The map pin cannot be removed from a linked device: refused before the worker.
+	if code, out := e.do("PATCH", base+"/business/profile", admin, `{"clear":["location","hours"]}`); code != 422 ||
+		out["error"].(map[string]any)["code"] != "not_supported" {
+		t.Fatalf("location clear = %d %v", code, out)
+	}
+	if n := len(f.WA.BusinessSets()); n != 2 {
+		t.Fatalf("location clear reached the worker: %d sets", n)
+	}
+	if code, out := e.do("PATCH", base+"/business/profile", admin, `{"clear":["hours"]}`); code != 200 || out["business_hours"] != nil {
 		t.Fatalf("clear = %d %v", code, out)
 	}
 	sets := f.WA.BusinessSets()
-	if last := sets[len(sets)-1]; !last.ClearLocation || !last.ClearHours || last.LocationClear != "empty_content" {
+	if last := sets[len(sets)-1]; !last.ClearHours {
 		t.Fatalf("clear request = %v", last)
 	}
 }

@@ -28,15 +28,22 @@ As versões seguem os marcos do motor. Mudanças que quebram compatibilidade sã
   preço, descrição e disponibilidade), atualizada a cada 10 minutos.
 - Painel: aba **Catálogo** (só contas Business), com a grade de produtos, preço em reais, produtos ocultos ou em
   análise marcados, filtro por coleção, **Enviar para…** e os pedidos recentes.
-- Perfil comercial: `clear` remove campos de forma explícita (`location`, `hours`, `email`, `websites`,
-  `description`, `address`); é o único jeito de tirar o pin do mapa e o horário. Botões **Remover localização** e **Remover horário** no painel e `clear` em
-  `update_business_profile`.
+- Perfil comercial: `clear` remove campos de forma explícita (`hours`, `email`, `websites`, `description`,
+  `address`); é o único jeito de tirar o horário (validado no aparelho em 2026-10-21). Botão **Remover horário** no
+  painel e `clear` em `update_business_profile`.
+- O pin do mapa **não pode ser removido** por um aparelho conectado: `clear: ["location"]` responde
+  `422 not_supported` sem chamar o WhatsApp. Num número Business real (2026-10-21), `<latitude/><longitude/>` e
+  `<latitude></latitude><longitude></longitude>` voltaram `406 not-acceptable` e `<address/>` foi aceito mas manteve
+  o pin; o WhatsApp Web também só oferece "editar o mapa no celular". Remova no app WhatsApp Business (Perfil
+  comercial > Endereço); o painel mostra esse aviso ao lado da localização. Trocar latitude/longitude continua
+  funcionando. `location_clear` e `business_location_clear` saíram.
 
 **Quebra**
 
-- `PATCH /business/profile`: `null` em `description`, `address`, `email`, `websites`, `latitude`, `longitude`,
-  `hours` e `categories` agora responde `400 validation_failed` (antes era ignorado como "ausente"). Para remover,
-  use `clear`; categorias não podem ser removidas (uma conta Business tem ao menos uma).
+- `PATCH /business/profile`: `null` em `description`, `address`, `email`, `websites`, `hours` e `categories` agora
+  responde `400 validation_failed` (antes era ignorado como "ausente"); em `latitude` e `longitude`,
+  `422 not_supported`. Para remover, use `clear`; categorias não podem ser removidas (uma conta Business tem ao
+  menos uma).
 
 **Segurança**
 
@@ -52,9 +59,10 @@ As versões seguem os marcos do motor. Mudanças que quebram compatibilidade sã
   um fluxo não documentado, que pode pedir verificação por e-mail e tem código de bloqueio próprio. Os produtos
   continuam sendo criados no app WhatsApp Business (Ferramentas comerciais > Catálogo).
 
-**Aguardando validação num número Business real**: os `doc_id` do GraphQL, as codificações de `clear` da
-localização e do horário (`location_clear` escolhe entre `empty_elements`, `empty_content` e `empty_address`),
-como o cartão de produto aparece no celular e se o IQ de detalhes do pedido ainda responde.
+**Validado no aparelho em 2026-10-21** (número Business real): a leitura do catálogo pelo GraphQL (1 produto
+aprovado lido), o cartão de produto (entregue e exibido no celular), o pedido recebido (com os detalhes pelo
+GraphQL, porque o `GetOrderDetails` do socket não respondeu) e o `clear` do horário. O `clear` da localização não é
+possível (veja acima).
 
 ## Perfil comercial editável (M12a)
 

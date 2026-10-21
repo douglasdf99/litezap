@@ -298,9 +298,6 @@ func (f *FakeWA) SetBusinessProfile(_ context.Context, req *workerv1.SetBusiness
 	if req.Hours != nil {
 		p.Timezone, p.Hours = req.Hours.Timezone, req.Hours.Days
 	}
-	if req.ClearLocation {
-		p.HasLocation, p.Latitude, p.Longitude = false, 0, 0
-	}
 	if req.ClearHours {
 		p.Timezone, p.Hours = "", nil
 	}

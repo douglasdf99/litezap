@@ -21,7 +21,7 @@ prometidas; a ordem é. O detalhe de cada entrega está no [changelog](/docs/cha
 | M9 | Chats, contatos, perfil e privacidade, leitura automática, `chat.updated` | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | M10 | Status, canais, etiquetas e perfil comercial | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | M11 | Plataforma e parceiros: pareamento hospedado, chaves com escopo, allowlist de IP, lote, uso por instância | <span class="lz-badge lz-badge--ok">Entregue</span> |
-| M12a | Perfil comercial editável: descrição, endereço, localização, e-mail, sites, categorias e horário, `business.profile_updated`; `clear` para remover campos | <span class="lz-badge lz-badge--soon">Validado em parte num número Business (os `clear` aguardam)</span> |
+| M12a | Perfil comercial editável: descrição, endereço, localização, e-mail, sites, categorias e horário, `business.profile_updated`; `clear` para remover campos | <span class="lz-badge lz-badge--soon">Validado em parte num número Business (o pin do mapa só sai no celular)</span> |
 | M12b | Catálogo e pedidos, fase 1: ler catálogos, enviar produto, `order.received` e detalhes do pedido, atendente com o catálogo | <span class="lz-badge lz-badge--soon">Pronto, aguardando validação num número Business</span> |
 | M12c | Catálogo, fase 2: criar e editar produtos e coleções (fluxo de token de anúncios, opt-in por instância) | <span class="lz-badge lz-badge--no">Avaliar (risco para o número)</span> |
 | M2b | Complementos: retenção de mensagens e mídia, `/metrics`, watchdog de conexão e nome de grupos entregues; falta a busca full-text | <span class="lz-badge lz-badge--soon">Parcial</span> |

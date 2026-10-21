@@ -248,8 +248,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	msg.OnSettingsChanged = rt.SettingsChanged
 	groups := &service.Groups{Store: st, Workers: mgr, Resolver: resolver, Sending: cl.sending,
 		Fetcher: msg.Fetcher, Defaults: cfg.InstanceDefaults, DefaultProxy: cfg.DefaultProxyURL}
-	social := &service.Social{Store: st, Workers: mgr, Messaging: msg, Sending: cl.sending, Fetcher: msg.Fetcher, Events: bus,
-		LocationClear: cfg.BusinessLocationClear}
+	social := &service.Social{Store: st, Workers: mgr, Messaging: msg, Sending: cl.sending, Fetcher: msg.Fetcher, Events: bus}
 	attAdmin := &attendant.Admin{A: att}
 	mcpDeps := mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Groups: groups, Logger: log, Account: acct,
 		Social: social, Attendant: attAdmin, PublicHost: publicHost(cfg.PublicURL)}

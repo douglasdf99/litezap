@@ -21,12 +21,12 @@ curl -s "$B/orders" -H "Authorization: Bearer $TOK"
 
 | Recurso | Como | Situação |
 |---|---|---|
-| Ler o catálogo (próprio ou de outra empresa) | [`GET /catalog`](/docs/api/catalogo/ler-o-catalogo/), paginado, com `catalog_link` | Pronto, aguardando validação num número real |
-| Ler um produto, as coleções e a foto | `GET /catalog/products/{id}`, `/catalog/collections`, `/catalog/products/{id}/image` | Idem |
-| Enviar um produto | `POST /messages` com `type: "product"` | Idem |
+| Ler o catálogo (próprio ou de outra empresa) | [`GET /catalog`](/docs/api/catalogo/ler-o-catalogo/), paginado, com `catalog_link` | Pronto; validado no aparelho em 2026-10-21 (1 produto aprovado lido) |
+| Ler um produto, as coleções e a foto | `GET /catalog/products/{id}`, `/catalog/collections`, `/catalog/products/{id}/image` | Pronto, aguardando validação num número real |
+| Enviar um produto | `POST /messages` com `type: "product"` | Pronto; validado no aparelho em 2026-10-21 (entregue e exibido no celular) |
 | Compartilhar o catálogo inteiro | Envie o `catalog_link` (`https://wa.me/c/<número>`) como texto com `link_preview: "auto"` | Pronto |
-| Receber pedidos | mensagem de tipo `order` e o evento [`order.received`](/docs/eventos/order-received/) | Pronto |
-| Ler os itens de um pedido | [`GET /orders/{order_id}`](/docs/api/catalogo/detalhes-de-um-pedido/) | Idem |
+| Receber pedidos | mensagem de tipo `order` e o evento [`order.received`](/docs/eventos/order-received/) | Pronto; validado no aparelho em 2026-10-21 |
+| Ler os itens de um pedido | [`GET /orders/{order_id}`](/docs/api/catalogo/detalhes-de-um-pedido/) | Pronto; validado no aparelho em 2026-10-21 (pelo GraphQL: o `GetOrderDetails` do socket não respondeu) |
 | Atendente IA com o catálogo | `knowledge_source: "catalog"` no perfil do agente | Pronto |
 | Agentes | `get_catalog` e `get_product` em `ler`; `send_product` em `midia` | Pronto |
 | Painel | aba **Catálogo** (só contas Business) | Pronto |
@@ -79,7 +79,8 @@ for público.
 Quando um cliente faz um pedido pelo carrinho, chegam uma mensagem `order` e o evento `order.received`, com o
 número do pedido, a quantidade de itens e o total. O **token** do pedido fica guardado no servidor e nunca aparece
 na API, nos eventos ou nos webhooks. `GET /orders/{order_id}` busca os itens primeiro pelo socket (o
-`GetOrderDetails` do whatsmeow) e, se o WhatsApp não responder, pelo GraphQL; `source` diz qual respondeu.
+`GetOrderDetails` do whatsmeow) e, se o WhatsApp não responder, pelo GraphQL; `source` diz qual respondeu. No teste no aparelho (2026-10-21) o socket não respondeu e os
+detalhes vieram pelo GraphQL.
 Aceitar ou recusar o pedido é feito no app WhatsApp Business.
 
 A mensagem de pedido é escrita pelo cliente, então o LiteZap se protege: um pedido fica preso à conversa que o

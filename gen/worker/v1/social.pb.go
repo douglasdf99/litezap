@@ -1208,15 +1208,8 @@ type SetBusinessProfileRequest struct {
 	SetCategories bool                   `protobuf:"varint,9,opt,name=set_categories,json=setCategories,proto3" json:"set_categories,omitempty"` // category ids replace the current ones
 	CategoryIds   []string               `protobuf:"bytes,10,rep,name=category_ids,json=categoryIds,proto3" json:"category_ids,omitempty"`
 	// hours, when set, replace the whole week: days without an entry are closed.
-	Hours *BusinessHoursSet `protobuf:"bytes,11,opt,name=hours,proto3" json:"hours,omitempty"`
-	// Explicit clears (marco 12). clear_location removes the map pin, with the encoding
-	// named by location_clear ("" = the worker's default, see bizprofile.go):
-	// empty_elements | empty_content | empty_address. clear_hours removes the business
-	// hours entirely (an empty <business_hours/> without timezone). Both still need
-	// validation on a real Business number.
-	ClearLocation bool   `protobuf:"varint,12,opt,name=clear_location,json=clearLocation,proto3" json:"clear_location,omitempty"`
-	LocationClear string `protobuf:"bytes,13,opt,name=location_clear,json=locationClear,proto3" json:"location_clear,omitempty"`
-	ClearHours    bool   `protobuf:"varint,14,opt,name=clear_hours,json=clearHours,proto3" json:"clear_hours,omitempty"`
+	Hours         *BusinessHoursSet `protobuf:"bytes,11,opt,name=hours,proto3" json:"hours,omitempty"`
+	ClearHours    bool              `protobuf:"varint,14,opt,name=clear_hours,json=clearHours,proto3" json:"clear_hours,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1326,20 +1319,6 @@ func (x *SetBusinessProfileRequest) GetHours() *BusinessHoursSet {
 		return x.Hours
 	}
 	return nil
-}
-
-func (x *SetBusinessProfileRequest) GetClearLocation() bool {
-	if x != nil {
-		return x.ClearLocation
-	}
-	return false
-}
-
-func (x *SetBusinessProfileRequest) GetLocationClear() string {
-	if x != nil {
-		return x.LocationClear
-	}
-	return ""
 }
 
 func (x *SetBusinessProfileRequest) GetClearHours() bool {
@@ -1742,7 +1721,7 @@ const file_worker_v1_social_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"6\n" +
 	"\x10BusinessCategory\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"\xaa\x04\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"\x88\x04\n" +
 	"\x19SetBusinessProfileRequest\x12%\n" +
 	"\vdescription\x18\x01 \x01(\tH\x00R\vdescription\x88\x01\x01\x12\x1d\n" +
 	"\aaddress\x18\x02 \x01(\tH\x01R\aaddress\x88\x01\x01\x12\x19\n" +
@@ -1755,15 +1734,13 @@ const file_worker_v1_social_proto_rawDesc = "" +
 	"\x0eset_categories\x18\t \x01(\bR\rsetCategories\x12!\n" +
 	"\fcategory_ids\x18\n" +
 	" \x03(\tR\vcategoryIds\x121\n" +
-	"\x05hours\x18\v \x01(\v2\x1b.worker.v1.BusinessHoursSetR\x05hours\x12%\n" +
-	"\x0eclear_location\x18\f \x01(\bR\rclearLocation\x12%\n" +
-	"\x0elocation_clear\x18\r \x01(\tR\rlocationClear\x12\x1f\n" +
+	"\x05hours\x18\v \x01(\v2\x1b.worker.v1.BusinessHoursSetR\x05hours\x12\x1f\n" +
 	"\vclear_hours\x18\x0e \x01(\bR\n" +
 	"clearHoursB\x0e\n" +
 	"\f_descriptionB\n" +
 	"\n" +
 	"\b_addressB\b\n" +
-	"\x06_email\"\\\n" +
+	"\x06_emailJ\x04\b\f\x10\rJ\x04\b\r\x10\x0eR\x0eclear_locationR\x0elocation_clear\"\\\n" +
 	"\x10BusinessHoursSet\x12\x1a\n" +
 	"\btimezone\x18\x01 \x01(\tR\btimezone\x12,\n" +
 	"\x04days\x18\x02 \x03(\v2\x18.worker.v1.BusinessHoursR\x04days\"B\n" +

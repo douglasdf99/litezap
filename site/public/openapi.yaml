@@ -4249,20 +4249,23 @@ paths:
       x-litezap-scope: instancia
       description: |
         Altera só os campos enviados (os ausentes ficam como estão) e devolve o perfil lido de novo do
-        WhatsApp. Para remover, use `clear` com os campos (`location`, `hours`, `email`, `websites`,
+        WhatsApp. Para remover, use `clear` com os campos (`hours`, `email`, `websites`,
         `description`, `address`); `null` num desses campos (e em `categories`, que não podem ser removidas) responde `400` (seria ambíguo com "ausente").
-        `"clear": ["location"]` tira o pin do mapa e `"clear": ["hours"]` tira o horário inteiro (sem fuso),
-        os dois **aguardando validação no aparelho**. `location_clear` (experimental) escolhe a codificação
-        do IQ enquanto isso: `empty_elements` (padrão, ou o `business_location_clear` da config),
-        `empty_content` ou `empty_address` (esta também apaga o endereço). `websites` e `categories` substituem as listas atuais (`websites: []` remove os sites);
+        `"clear": ["hours"]` tira o horário inteiro (sem fuso), validado num número Business em 2026-10-21.
+        O **pin do mapa não pode ser removido** por um aparelho conectado: `"clear": ["location"]` (e
+        `latitude`/`longitude` `null`) responde `422 not_supported` sem chamar o WhatsApp; remova no app
+        WhatsApp Business (Perfil comercial > Endereço). No aparelho, em 2026-10-21, `<latitude/><longitude/>`
+        e `<latitude></latitude><longitude></longitude>` voltaram `406 not-acceptable` e `<address/>` foi
+        aceito mas manteve o pin; o WhatsApp Web só oferece "editar o mapa no celular". Trocar a localização
+        (`latitude` + `longitude`) funciona. `websites` e `categories` substituem as listas atuais (`websites: []` remove os sites);
         `hours` substitui a semana inteira (dias ausentes ficam fechados); `latitude` e `longitude` vão
         juntas. Token admin ou da instância; chaves de API com escopo (`lzk_`) não podem. Limite de 5
         alterações por minuto e 50 por dia por instância.
 
         Os campos vão ao WhatsApp como o WhatsApp Web e o Baileys enviam (IQ `w:biz`, mutação `delta`).
         Em 2026-10-21, num número Business real, descrição, endereço, localização e horário foram aceitos e
-        apareceram no celular, e `""` apagou descrição e endereço. Categorias, remover sites e os `clear` de
-        localização e horário ainda aguardam essa validação: se o WhatsApp recusar um valor, a resposta é
+        apareceram no celular, `""` apagou descrição e endereço e `clear: ["hours"]` tirou o horário.
+        Categorias e remover sites ainda aguardam essa validação: se o WhatsApp recusar um valor, a resposta é
         `400 validation_failed` com o código do servidor.
       requestBody:
         required: true
@@ -4280,6 +4283,11 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/BusinessRequired" }
+        "422":
+          description: '`not_supported`: `clear: ["location"]` (o WhatsApp não permite remover o pin do mapa por um aparelho conectado).'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "429": { $ref: "#/components/responses/SocialRateLimited" }
 
   /v1/instances/{id}/catalog:
@@ -5203,12 +5211,8 @@ components:
         hours: { $ref: "#/components/schemas/BusinessWeek" }
         clear:
           type: array
-          items: { type: string, enum: [location, hours, email, websites, description, address] }
-          description: "Campos a remover. Não combine com o mesmo campo preenchido. Localização e horário só saem assim."
-        location_clear:
-          type: string
-          enum: [empty_elements, empty_content, empty_address]
-          description: "Experimental: codificação do IQ de `clear: [location]` enquanto é validada no aparelho."
+          items: { type: string, enum: [hours, email, websites, description, address] }
+          description: "Campos a remover. Não combine com o mesmo campo preenchido. O horário só sai assim. `location` responde `422 not_supported`: o pin do mapa só sai no app WhatsApp Business (Perfil comercial > Endereço)."
     CatalogProduct:
       type: object
       properties:

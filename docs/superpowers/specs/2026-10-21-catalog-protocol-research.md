@@ -560,4 +560,11 @@ The response is at `data.xwa_checkout_get_order_info.order`. The image dimension
 - WA Web **never removes the map pin**: the address field shows "Edit map on mobile", and `editBusinessProfile` sends `<latitude>`/`<longitude>` as `String(value)` only when defined. A null would be sent as the text "null", which WA Web never does.
 - WA Web **always sends a timezone** with `<business_hours>` (the browser's when the profile has none) and has no "no hours" action; it may add `<business_hours_note>`.
 - WA Web clears the websites with a **contentless** `<website/>` (`wap("website", null)`), not with empty text. The child order is address, latitude, longitude, description, email, website, categories, business_hours.
-- So no public client shows the clear encodings. LiteZap tries, behind `location_clear` (request) / `business_location_clear` (config): `empty_elements` (`<latitude/><longitude/>`, like the website clear, default), `empty_content` (`<latitude></latitude>…`) and `empty_address` (`<address/>` alone). Hours clear: `<business_hours/>` with no timezone and no configs. Golden tests pin each encoding (`internal/worker/catalog_test.go`).
+- So no public client shows the clear encodings. LiteZap tried three location encodings — `empty_elements` (`<latitude/><longitude/>`, like the website clear), `empty_content` (`<latitude></latitude>…`) and `empty_address` (`<address/>` alone) — and, for the hours, `<business_hours/>` with no timezone and no configs.
+
+**Real-device result, 2026-10-21 (Business number).**
+- Location clear: **impossible over the web protocol**. `empty_elements` and `empty_content` answered `406 not-acceptable`; `empty_address` was accepted but the pin stayed. This matches WA Web, which only offers "Edit map on mobile". LiteZap removed the three encodings, the `location_clear` request field and the `business_location_clear` config; `clear: ["location"]` (and a `null` latitude/longitude) now answers `422 not_supported` in the supervisor, before the worker, telling the user to remove the pin in the WhatsApp Business app (Business profile > Address). Setting latitude/longitude still works.
+- Hours clear: **works** (`<business_hours/>` removes the hours). Golden test in `internal/worker/catalog_test.go`.
+- Catalog read (GraphQL, §2): works; 1 approved product read.
+- Product message (§5): delivered and rendered on the phone.
+- Order: received (`order` message, `order.received`); the details came from the GraphQL fallback (`xwa_checkout_get_order_info`) because the socket `GetOrderDetails` did not answer.

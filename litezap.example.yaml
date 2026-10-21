@@ -47,9 +47,6 @@ shutdown_timeout: 0s
 #   access_token: ""
 #   lang: pt_BR
 #   doc_ids: { catalog: "", product: "", collections: "", order: "" }
-# Codificação do IQ que remove o pin do mapa do perfil comercial, enquanto é validada:
-# empty_elements (padrão) | empty_content | empty_address. Também LITEZAP_BUSINESS_LOCATION_CLEAR.
-# business_location_clear: empty_elements
 
 # Padrões de envio por instância (cada instância pode sobrescrever via PUT /settings).
 # Pisos: min_interval_ms >= 1000 e max_per_minute <= 60, salvo unsafe_pacing: true.

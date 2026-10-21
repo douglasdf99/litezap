@@ -17,30 +17,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Explicit clears of the business profile (device validation pending: see bizprofile.go).
+// Explicit clear of the business hours (validated on a real device on 2026-10-21; the
+// map pin cannot be cleared from a linked device, see bizprofile.go).
 func TestBuildBusinessProfileClearsGolden(t *testing.T) {
-	for strategy, want := range map[string]string{
-		"":                         `<business_profile mutation_type="delta" v="3"><latitude/><longitude/></business_profile>`,
-		LocationClearEmptyElements: `<business_profile mutation_type="delta" v="3"><latitude/><longitude/></business_profile>`,
-		LocationClearEmptyContent:  `<business_profile mutation_type="delta" v="3"><latitude></latitude><longitude></longitude></business_profile>`,
-		LocationClearEmptyAddress:  `<business_profile mutation_type="delta" v="3"><address/></business_profile>`,
-	} {
-		n, err := buildBusinessProfileSet(&workerv1.SetBusinessProfileRequest{ClearLocation: true, LocationClear: strategy})
-		if err != nil || n.String() != want {
-			t.Errorf("location clear %q = %s, %v\nwant %s", strategy, n.String(), err, want)
-		}
-	}
 	n, err := buildBusinessProfileSet(&workerv1.SetBusinessProfileRequest{ClearHours: true, Description: proto.String("")})
 	if want := `<business_profile mutation_type="delta" v="3"><description></description><business_hours/></business_profile>`; err != nil || n.String() != want {
 		t.Fatalf("hours clear = %s, %v\nwant %s", n.String(), err, want)
 	}
 	for name, req := range map[string]*workerv1.SetBusinessProfileRequest{
-		"set and clear location": {ClearLocation: true, SetLocation: true, Latitude: 1, Longitude: 1},
-		"set and clear hours":    {ClearHours: true, Hours: &workerv1.BusinessHoursSet{Timezone: "UTC"}},
-		"unknown strategy":       {ClearLocation: true, LocationClear: "nope"},
-		"strategy without clear": {LocationClear: LocationClearEmptyContent, Description: proto.String("x")},
-		"address with empty_address": {ClearLocation: true, LocationClear: LocationClearEmptyAddress,
-			Address: proto.String("Rua A")},
+		"set and clear hours": {ClearHours: true, Hours: &workerv1.BusinessHoursSet{Timezone: "UTC"}},
 	} {
 		if _, err := buildBusinessProfileSet(req); err == nil {
 			t.Errorf("%s: accepted", name)

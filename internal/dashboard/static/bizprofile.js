@@ -105,8 +105,8 @@ export function businessProfileBox(ctx) {
     const rows = DAYS.map(([k, l]) => dayRow(k, l, (week.days || {})[k] || { mode: 'closed' }));
 
     const save = h('button', { class: 'btn primary', type: 'submit' }, 'Salvar perfil da empresa');
-    // Explicit clears ("clear"): the map pin and the hours cannot be emptied by leaving the
-    // fields blank.
+    // Explicit clear ("clear"): the hours cannot be emptied by leaving the fields blank. The
+    // map pin cannot be removed from a linked device at all (only in the phone app).
     const clearBtn = (label, field, question) => h('button', {
       class: 'btn small ghost', type: 'button', onclick: async (ev) => {
         if (!(await confirmDanger(question, { ok: 'Remover' }))) return;
@@ -118,7 +118,6 @@ export function businessProfileBox(ctx) {
         } catch (e) { toast(e, 'error'); ev.target.disabled = false; }
       },
     }, label);
-    const clearLoc = loc ? clearBtn('Remover localização', 'location', 'Remover o pin do mapa do perfil da empresa? (Recurso novo: confira no celular se sumiu.)') : null;
     const clearHours = p.business_hours ? clearBtn('Remover horário', 'hours', 'Remover o horário de funcionamento do perfil? Os clientes deixam de ver se está aberto.') : null;
     mount(box, h('form', {
       onsubmit: async (ev) => {
@@ -159,7 +158,8 @@ export function businessProfileBox(ctx) {
     field('Descrição', desc, 'Até 512 caracteres.'),
     field('Endereço', address),
     h('div', { class: 'grid2' }, field('Latitude', lat), field('Longitude', lng)),
-    h('div', { class: 'row' }, mapLink, searchLink, clearLoc),
+    h('div', { class: 'row' }, mapLink, searchLink),
+    h('p', { class: 'small muted' }, 'Para remover o pin do mapa, use o app WhatsApp Business no celular (Perfil comercial > Endereço): o WhatsApp não permite removê-lo por um aparelho conectado.'),
     h('p', { class: 'small muted' }, '"Usar endereço" abre o endereço no OpenStreetMap numa nova aba: clique no local, copie as coordenadas e cole aqui (colar "lat, long" na latitude preenche as duas). Nada é enviado a serviços de mapa sem você clicar.'),
     h('div', { class: 'grid2' }, field('E-mail', email), field('Site 1', sites[0]), field('Site 2', sites[1])),
     field('Categorias', h('div', null, catList, h('div', { class: 'row' }, catInput, addCat)), 'Até 3. Para adicionar, use o id da categoria (o WhatsApp não tem busca de categorias pela API).'),

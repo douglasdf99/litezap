@@ -241,7 +241,7 @@ type updateBusinessProfileInput struct {
 	Longitude   *float64              `json:"longitude,omitempty" jsonschema:"Map pin longitude (with latitude)."`
 	Categories  []string              `json:"categories,omitempty" jsonschema:"1 to 3 category ids (category_list of get_business_profile); they replace the current ones."`
 	Hours       *service.BusinessWeek `json:"hours,omitempty" jsonschema:"The whole week: {timezone, days: {mon: {mode: open|closed|24h|appointment, open: \"09:00\", close: \"18:00\"}}}; days left out are closed. Read business_hours from get_business_profile, change it and send it back."`
-	Clear       []string              `json:"clear,omitempty" jsonschema:"Fields to remove entirely: location (the map pin), hours, email, websites, description, address. Only when the user asks to remove them."`
+	Clear       []string              `json:"clear,omitempty" jsonschema:"Fields to remove entirely: hours, email, websites, description, address. Only when the user asks to remove them. The map pin (location) cannot be removed from a linked device (not_supported): the user must remove it in the WhatsApp Business app (Business profile > Address)."`
 }
 
 func (in updateBusinessProfileInput) patch() service.BusinessProfilePatch {

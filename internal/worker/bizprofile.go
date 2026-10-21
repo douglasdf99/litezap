@@ -37,14 +37,11 @@ import (
 // 2026-10-21 confirmed description, address, latitude/longitude and hours; "" clears the
 // description and the address, and a week without days leaves the timezone with no hours.
 //
-// Clears (device validation pending). WA Web never removes the map pin (its form says
-// "Edit map on mobile") and always sends a timezone with the hours, so neither clear has
-// a reference encoding. WA Web does clear the websites with a contentless <website/>,
-// which is why that form is tried first here:
-//   - location, by strategy (LocationClear*): <latitude/><longitude/> (no content), then
-//     <latitude></latitude><longitude></longitude> (empty content), then an empty
-//     <address/> without the coordinates. The supervisor picks one (config or request).
-//   - hours: <business_hours/> with no timezone and no configs.
+// Clears. Hours: <business_hours/> with no timezone and no configs (validated on a real
+// device on 2026-10-21). The map pin cannot be removed from a linked device: WA Web only
+// offers "Edit map on mobile", and on 2026-10-21 <latitude/><longitude/> and
+// <latitude></latitude><longitude></longitude> got 406 not-acceptable while an empty
+// <address/> was accepted but kept the pin. The supervisor refuses that clear.
 const (
 	bizNamespace      = "w:biz"
 	bizReadVersion    = "244" // as whatsmeow and Baileys read it
@@ -57,29 +54,6 @@ const (
 	maxBizCategories  = 3
 	maxBizHourEntries = 21 // 7 days, up to 3 intervals each
 )
-
-// Location clear strategies (SetBusinessProfileRequest.location_clear).
-const (
-	LocationClearEmptyElements = "empty_elements" // <latitude/><longitude/>: the default
-	LocationClearEmptyContent  = "empty_content"  // <latitude></latitude><longitude></longitude>
-	LocationClearEmptyAddress  = "empty_address"  // <address/> without the coordinates
-)
-
-// LocationClearStrategies lists the strategies in the order to try them on a device.
-var LocationClearStrategies = []string{LocationClearEmptyElements, LocationClearEmptyContent, LocationClearEmptyAddress}
-
-// locationClearNodes encodes "remove the map pin" with a strategy.
-func locationClearNodes(strategy string) ([]waBinary.Node, error) {
-	switch strategy {
-	case "", LocationClearEmptyElements:
-		return []waBinary.Node{{Tag: "latitude"}, {Tag: "longitude"}}, nil
-	case LocationClearEmptyContent:
-		return []waBinary.Node{{Tag: "latitude", Content: []byte{}}, {Tag: "longitude", Content: []byte{}}}, nil
-	case LocationClearEmptyAddress:
-		return []waBinary.Node{{Tag: "address"}}, nil
-	}
-	return nil, invalid("location_clear must be empty_elements, empty_content or empty_address")
-}
 
 var bizDays = map[string]bool{"sun": true, "mon": true, "tue": true, "wed": true, "thu": true, "fri": true, "sat": true}
 
@@ -204,14 +178,8 @@ func minutes(s string) (int, bool) {
 func buildBusinessProfileSet(req *workerv1.SetBusinessProfileRequest) (waBinary.Node, error) {
 	var kids []waBinary.Node
 	switch {
-	case req.ClearLocation && req.SetLocation:
-		return waBinary.Node{}, invalid("location: set or clear, not both")
 	case req.ClearHours && req.Hours != nil:
 		return waBinary.Node{}, invalid("hours: set or clear, not both")
-	case req.ClearLocation && req.Address != nil && req.LocationClear == LocationClearEmptyAddress:
-		return waBinary.Node{}, invalid("the empty_address location clear also clears the address: do not send an address with it")
-	case !req.ClearLocation && req.LocationClear != "":
-		return waBinary.Node{}, invalid("location_clear only applies when clearing the location")
 	}
 	text := func(tag, v string, max int) error {
 		if utf8.RuneCountInString(v) > max || strings.ContainsRune(v, 0) {
@@ -264,13 +232,6 @@ func buildBusinessProfileSet(req *workerv1.SetBusinessProfileRequest) (waBinary.
 		kids = append(kids,
 			waBinary.Node{Tag: "latitude", Content: []byte(strconv.FormatFloat(req.Latitude, 'f', -1, 64))},
 			waBinary.Node{Tag: "longitude", Content: []byte(strconv.FormatFloat(req.Longitude, 'f', -1, 64))})
-	}
-	if req.ClearLocation {
-		nodes, err := locationClearNodes(req.LocationClear)
-		if err != nil {
-			return waBinary.Node{}, err
-		}
-		kids = append(kids, nodes...)
 	}
 	if req.SetCategories {
 		if len(req.CategoryIds) == 0 || len(req.CategoryIds) > maxBizCategories {
