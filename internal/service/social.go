@@ -1055,16 +1055,23 @@ type BusinessHoursView struct {
 	Close string `json:"close,omitempty"`
 }
 
-// BusinessAccountView is the account's business profile (read only).
+// BusinessAccountView is the account's business profile. hours/timezone are WhatsApp's
+// raw entries (minutes from midnight); business_hours is the same week in the shape
+// PATCH takes, so a GET can be edited and sent back.
 type BusinessAccountView struct {
-	JID          string              `json:"jid"`
-	BusinessName string              `json:"business_name,omitempty"`
-	Address      string              `json:"address,omitempty"`
-	Email        string              `json:"email,omitempty"`
-	Categories   []string            `json:"categories"`
-	Timezone     string              `json:"timezone,omitempty"`
-	Hours        []BusinessHoursView `json:"hours"`
-	Options      map[string]string   `json:"options,omitempty"`
+	JID           string                 `json:"jid"`
+	BusinessName  string                 `json:"business_name,omitempty"`
+	Description   string                 `json:"description,omitempty"`
+	Address       string                 `json:"address,omitempty"`
+	Email         string                 `json:"email,omitempty"`
+	Websites      []string               `json:"websites"`
+	Location      *BusinessLocation      `json:"location,omitempty"`
+	Categories    []string               `json:"categories"`
+	CategoryList  []BusinessCategoryView `json:"category_list"`
+	Timezone      string                 `json:"timezone,omitempty"`
+	Hours         []BusinessHoursView    `json:"hours"`
+	BusinessHours *BusinessWeek          `json:"business_hours,omitempty"`
+	Options       map[string]string      `json:"options,omitempty"`
 }
 
 // BusinessProfile reads the account's own business profile (409 for personal accounts).
@@ -1079,10 +1086,5 @@ func (s *Social) BusinessProfile(ctx context.Context, instanceID string) (Busine
 	if err != nil {
 		return BusinessAccountView{}, socialErr(err)
 	}
-	v := BusinessAccountView{JID: p.Jid, BusinessName: p.BusinessName, Address: p.Address, Email: p.Email,
-		Categories: nonNil(p.Categories), Timezone: p.Timezone, Options: p.Options, Hours: []BusinessHoursView{}}
-	for _, h := range p.Hours {
-		v.Hours = append(v.Hours, BusinessHoursView{Day: h.Day, Mode: h.Mode, Open: h.Open, Close: h.Close})
-	}
-	return v, nil
+	return businessView(p), nil
 }

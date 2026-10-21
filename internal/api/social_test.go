@@ -123,6 +123,7 @@ func TestSocialRoutesWithAPIKeys(t *testing.T) {
 		{"DELETE", "/labels/1", ""},
 		{"PUT", "/labels/1/chats/5511988887777", ""},
 		{"PUT", "/labels/1/messages/msg_x", ""},
+		{"PATCH", "/business/profile", `{"description":"x"}`},
 	} {
 		if code, body := e.do(d.method, base+d.path, key, d.body); code != 403 {
 			t.Errorf("key %s %s = %d %v", d.method, d.path, code, body)

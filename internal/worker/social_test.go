@@ -10,6 +10,7 @@ import (
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/proto/waSyncAction"
 	"go.mau.fi/whatsmeow/types"
@@ -261,16 +262,28 @@ func TestLabelActionNeedsBusiness(t *testing.T) {
 func TestBusinessProfile(t *testing.T) {
 	w := newMsgAdapter(t)
 	ctx := context.Background()
-	w.social.bizProfile = func(_ context.Context, j types.JID) (*types.BusinessProfile, error) {
-		return &types.BusinessProfile{JID: j, Email: "a@b.c", Categories: []types.Category{{ID: "1", Name: "Loja"}},
-			BusinessHours: []types.BusinessHoursConfig{{DayOfWeek: "mon", Mode: "open_24h"}}}, nil
+	var asked []waBinary.Node
+	w.social.bizIQ = func(_ context.Context, typ string, n waBinary.Node) (*waBinary.Node, error) {
+		asked = append(asked, n)
+		j := n.GetChildByTag("profile").Attrs["jid"].(types.JID)
+		return &waBinary.Node{Tag: "iq", Content: []waBinary.Node{{Tag: "business_profile", Content: []waBinary.Node{{
+			Tag: "profile", Attrs: waBinary.Attrs{"jid": j}, Content: []waBinary.Node{
+				{Tag: "email", Content: []byte("a@b.c")},
+				{Tag: "categories", Content: []waBinary.Node{{Tag: "category", Attrs: waBinary.Attrs{"id": "1"}, Content: []byte("Loja")}}},
+				{Tag: "business_hours", Attrs: waBinary.Attrs{"timezone": "America/Sao_Paulo"}, Content: []waBinary.Node{
+					{Tag: "business_hours_config", Attrs: waBinary.Attrs{"day_of_week": "mon", "mode": "open_24h"}}}},
+			}}}}}}, nil
 	}
 	if c, code := codeOf(errOf(w.BusinessProfile(ctx, ""))); c != codes.FailedPrecondition || code != "business_account_required" {
 		t.Fatalf("own profile of a personal account = %v %v", c, code)
 	}
 	bp, err := w.BusinessProfile(ctx, dm.String())
-	if err != nil || bp.Email != "a@b.c" || bp.Categories[0] != "Loja" || bp.Hours[0].Mode != "open_24h" {
+	if err != nil || bp.Email != "a@b.c" || bp.Categories[0] != "Loja" || bp.CategoryList[0].Id != "1" || bp.Hours[0].Mode != "open_24h" ||
+		bp.Timezone != "America/Sao_Paulo" {
 		t.Fatalf("contact profile = %+v, %v", bp, err)
+	}
+	if len(asked) != 1 || asked[0].Tag != "business_profile" || asked[0].Attrs["v"] != "244" {
+		t.Fatalf("read IQ = %+v", asked)
 	}
 	w.social.business = func() bool { return true }
 	if bp, err := w.BusinessProfile(ctx, ""); err != nil || bp.Jid != "5511999999999@s.whatsapp.net" {

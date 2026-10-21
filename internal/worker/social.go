@@ -11,6 +11,7 @@ import (
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/proto/waSyncAction"
 	"go.mau.fi/whatsmeow/types"
@@ -33,6 +34,7 @@ type SocialClient interface {
 	// LabelAction returns the chat (chat/message kinds) as label events name it.
 	LabelAction(ctx context.Context, req *workerv1.LabelActionRequest) (string, error)
 	BusinessProfile(ctx context.Context, jid string) (*workerv1.BusinessProfileInfo, error)
+	SetBusinessProfile(ctx context.Context, req *workerv1.SetBusinessProfileRequest) (*workerv1.BusinessProfileInfo, error)
 }
 
 var _ SocialClient = (*Whatsmeow)(nil)
@@ -144,6 +146,14 @@ func (g *SocialServer) GetBusinessProfile(ctx context.Context, req *workerv1.Get
 	return c.BusinessProfile(ctx, req.Jid)
 }
 
+func (g *SocialServer) SetBusinessProfile(ctx context.Context, req *workerv1.SetBusinessProfileRequest) (*workerv1.BusinessProfileInfo, error) {
+	c, err := g.client()
+	if err != nil {
+		return nil, err
+	}
+	return c.SetBusinessProfile(ctx, req)
+}
+
 // socialHooks are the whatsmeow calls of the marco 10 methods; nil fields default to the
 // client (tests replace them).
 type socialHooks struct {
@@ -158,7 +168,8 @@ type socialHooks struct {
 	channelPosts  func(context.Context, types.JID, *whatsmeow.GetNewsletterMessagesParams) ([]*types.NewsletterMessage, error)
 	react         func(context.Context, types.JID, types.MessageServerID, string, types.MessageID) error
 	uploadChannel func(context.Context, io.ReadSeeker, whatsmeow.MediaType) (whatsmeow.UploadResponse, error)
-	bizProfile    func(context.Context, types.JID) (*types.BusinessProfile, error)
+	// bizIQ sends a w:biz IQ (get: the profile read; set: the profile mutation).
+	bizIQ func(ctx context.Context, typ string, content waBinary.Node) (*waBinary.Node, error)
 	// business reports whether the account is a WhatsApp Business account (the pairing
 	// stored a business name).
 	business func() bool
@@ -200,9 +211,6 @@ func (w *Whatsmeow) socialAPI() socialHooks {
 	}
 	if h.uploadChannel == nil {
 		h.uploadChannel = w.cli.UploadNewsletterReader
-	}
-	if h.bizProfile == nil {
-		h.bizProfile = w.cli.GetBusinessProfile
 	}
 	if h.resyncRegular == nil {
 		h.resyncRegular = func(ctx context.Context) error {
@@ -545,21 +553,14 @@ func (w *Whatsmeow) BusinessProfile(ctx context.Context, raw string) (*workerv1.
 	} else if !w.socialAPI().business() {
 		return nil, grpcErr(codes.FailedPrecondition, "business_account_required", "not a WhatsApp Business account")
 	}
-	bp, err := w.socialAPI().bizProfile(ctx, target)
+	out, err := w.fetchBusinessProfile(ctx, target)
 	if err != nil {
 		return nil, socialErr(err)
 	}
-	if bp == nil {
+	if out == nil {
 		return nil, grpcErr(codes.NotFound, "not_found", "no business profile")
 	}
-	out := &workerv1.BusinessProfileInfo{Jid: target.String(), Address: bp.Address, Email: bp.Email,
-		Timezone: bp.BusinessHoursTimeZone, Options: bp.ProfileOptions}
-	for _, c := range bp.Categories {
-		out.Categories = append(out.Categories, c.Name)
-	}
-	for _, h := range bp.BusinessHours {
-		out.Hours = append(out.Hours, &workerv1.BusinessHours{Day: h.DayOfWeek, Mode: h.Mode, Open: h.OpenTime, Close: h.CloseTime})
-	}
+	out.Jid = target.String()
 	if own && w.cli.Store != nil {
 		out.BusinessName = w.cli.Store.BusinessName
 	}

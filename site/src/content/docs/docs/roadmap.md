@@ -21,6 +21,7 @@ prometidas; a ordem é. O detalhe de cada entrega está no [changelog](/docs/cha
 | M9 | Chats, contatos, perfil e privacidade, leitura automática, `chat.updated` | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | M10 | Status, canais, etiquetas e perfil comercial | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | M11 | Plataforma e parceiros: pareamento hospedado, chaves com escopo, allowlist de IP, lote, uso por instância | <span class="lz-badge lz-badge--ok">Entregue</span> |
+| M12a | Perfil comercial editável: descrição, endereço, localização, e-mail, sites, categorias e horário, `business.profile_updated` | <span class="lz-badge lz-badge--soon">Pronto, aguardando validação num número Business</span> |
 | M2b | Complementos: retenção de mensagens e mídia, `/metrics`, watchdog de conexão e nome de grupos entregues; falta a busca full-text | <span class="lz-badge lz-badge--soon">Parcial</span> |
 | App local v1 | Painel web em `/app/`, app de bandeja `litezap-app`, downloads para macOS (`.dmg`), Windows e Linux, **Conectar a IA** em um clique | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | Distribuição | CI, binários pelo GoReleaser, imagem Docker em `ghcr.io`, instalador `install.sh` | <span class="lz-badge lz-badge--ok">Entregue</span> |
@@ -57,7 +58,7 @@ status será publicada junto com a nuvem LiteZap.
 
 - **Experimental**: botões, listas, OTP/PIX e carrossel, atrás de opção explícita e só se houver demanda. Veja
   [mensagens interativas](/docs/guias/mensagens-interativas/).
-- **Em avaliação**: catálogo e coleções, perfil comercial editável, administração avançada de canais, eventos de
+- **Em avaliação**: catálogo e coleções, administração avançada de canais, eventos de
   agenda, pedidos e pagamentos no WhatsApp, desativar comunidade.
 - **Fora**: registro do número sem celular, fazer chamadas de voz/SIP, listas de transmissão, recursos de
   "aquecimento" artificial de números, cobrança no motor (fica na nuvem).

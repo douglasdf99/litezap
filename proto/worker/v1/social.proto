@@ -31,6 +31,11 @@ service Social {
   // LabelAction changes labels through the app state (the phone follows).
   rpc LabelAction(LabelActionRequest) returns (LabelActionResponse);
   rpc GetBusinessProfile(GetBusinessProfileRequest) returns (BusinessProfileInfo);
+  // SetBusinessProfile changes the account's own business profile (only the fields that
+  // are set) and returns it read back. Not a business account: FailedPrecondition
+  // "business_account_required"; WhatsApp refused a value (400/406): InvalidArgument
+  // "validation_failed" with the server code in the message.
+  rpc SetBusinessProfile(SetBusinessProfileRequest) returns (BusinessProfileInfo);
 }
 
 message GetStatusPrivacyRequest {}
@@ -136,4 +141,39 @@ message BusinessProfileInfo {
   repeated BusinessHours hours = 6;
   map<string, string> options = 7; // profile_options (e.g. website, description)
   string business_name = 8;        // own account: the verified business name
+  string description = 9;
+  repeated string websites = 10;
+  // The location pin, when the profile has one.
+  bool has_location = 11;
+  double latitude = 12;
+  double longitude = 13;
+  repeated BusinessCategory category_list = 14; // categories with their ids
+}
+
+message BusinessCategory {
+  string id = 1;
+  string name = 2;
+}
+
+// SetBusinessProfile is a delta: unset fields are not sent, so WhatsApp keeps them.
+message SetBusinessProfileRequest {
+  optional string description = 1; // "" clears it
+  optional string address = 2;
+  optional string email = 3;
+  bool set_websites = 4;           // websites replace the current ones (none: cleared)
+  repeated string websites = 5;
+  bool set_location = 6;
+  double latitude = 7;
+  double longitude = 8;
+  bool set_categories = 9;         // category ids replace the current ones
+  repeated string category_ids = 10;
+  // hours, when set, replace the whole week: days without an entry are closed.
+  BusinessHoursSet hours = 11;
+}
+
+message BusinessHoursSet {
+  string timezone = 1;             // IANA, e.g. America/Sao_Paulo
+  // day sun..sat; mode specific_hours (open/close in minutes from midnight) | open_24h |
+  // appointment_only. A day may repeat for split hours.
+  repeated BusinessHours days = 2;
 }

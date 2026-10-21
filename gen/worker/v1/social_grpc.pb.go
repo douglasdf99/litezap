@@ -28,6 +28,7 @@ const (
 	Social_ChannelReact_FullMethodName       = "/worker.v1.Social/ChannelReact"
 	Social_LabelAction_FullMethodName        = "/worker.v1.Social/LabelAction"
 	Social_GetBusinessProfile_FullMethodName = "/worker.v1.Social/GetBusinessProfile"
+	Social_SetBusinessProfile_FullMethodName = "/worker.v1.Social/SetBusinessProfile"
 )
 
 // SocialClient is the client API for Social service.
@@ -57,6 +58,11 @@ type SocialClient interface {
 	// LabelAction changes labels through the app state (the phone follows).
 	LabelAction(ctx context.Context, in *LabelActionRequest, opts ...grpc.CallOption) (*LabelActionResponse, error)
 	GetBusinessProfile(ctx context.Context, in *GetBusinessProfileRequest, opts ...grpc.CallOption) (*BusinessProfileInfo, error)
+	// SetBusinessProfile changes the account's own business profile (only the fields that
+	// are set) and returns it read back. Not a business account: FailedPrecondition
+	// "business_account_required"; WhatsApp refused a value (400/406): InvalidArgument
+	// "validation_failed" with the server code in the message.
+	SetBusinessProfile(ctx context.Context, in *SetBusinessProfileRequest, opts ...grpc.CallOption) (*BusinessProfileInfo, error)
 }
 
 type socialClient struct {
@@ -157,6 +163,16 @@ func (c *socialClient) GetBusinessProfile(ctx context.Context, in *GetBusinessPr
 	return out, nil
 }
 
+func (c *socialClient) SetBusinessProfile(ctx context.Context, in *SetBusinessProfileRequest, opts ...grpc.CallOption) (*BusinessProfileInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BusinessProfileInfo)
+	err := c.cc.Invoke(ctx, Social_SetBusinessProfile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SocialServer is the server API for Social service.
 // All implementations must embed UnimplementedSocialServer
 // for forward compatibility.
@@ -184,6 +200,11 @@ type SocialServer interface {
 	// LabelAction changes labels through the app state (the phone follows).
 	LabelAction(context.Context, *LabelActionRequest) (*LabelActionResponse, error)
 	GetBusinessProfile(context.Context, *GetBusinessProfileRequest) (*BusinessProfileInfo, error)
+	// SetBusinessProfile changes the account's own business profile (only the fields that
+	// are set) and returns it read back. Not a business account: FailedPrecondition
+	// "business_account_required"; WhatsApp refused a value (400/406): InvalidArgument
+	// "validation_failed" with the server code in the message.
+	SetBusinessProfile(context.Context, *SetBusinessProfileRequest) (*BusinessProfileInfo, error)
 	mustEmbedUnimplementedSocialServer()
 }
 
@@ -220,6 +241,9 @@ func (UnimplementedSocialServer) LabelAction(context.Context, *LabelActionReques
 }
 func (UnimplementedSocialServer) GetBusinessProfile(context.Context, *GetBusinessProfileRequest) (*BusinessProfileInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetBusinessProfile not implemented")
+}
+func (UnimplementedSocialServer) SetBusinessProfile(context.Context, *SetBusinessProfileRequest) (*BusinessProfileInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetBusinessProfile not implemented")
 }
 func (UnimplementedSocialServer) mustEmbedUnimplementedSocialServer() {}
 func (UnimplementedSocialServer) testEmbeddedByValue()                {}
@@ -404,6 +428,24 @@ func _Social_GetBusinessProfile_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Social_SetBusinessProfile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetBusinessProfileRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SocialServer).SetBusinessProfile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Social_SetBusinessProfile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SocialServer).SetBusinessProfile(ctx, req.(*SetBusinessProfileRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Social_ServiceDesc is the grpc.ServiceDesc for Social service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -446,6 +488,10 @@ var Social_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetBusinessProfile",
 			Handler:    _Social_GetBusinessProfile_Handler,
+		},
+		{
+			MethodName: "SetBusinessProfile",
+			Handler:    _Social_SetBusinessProfile_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -39,6 +39,19 @@ func TestSocialTools(t *testing.T) {
 			ok(t, cs, "list_status_updates", nil, &st)
 			fails(t, cs, "list_labels", nil, "business")
 			fails(t, cs, "get_business_profile", nil, "business")
+			fails(t, cs, "update_business_profile", map[string]any{"description": "x"}, "business")
+
+			wa.SetBusiness(true, &workerv1.BusinessProfileInfo{Jid: "5511999999999@s.whatsapp.net", Email: "oi@loja.x"})
+			var bp service.BusinessAccountView
+			ok(t, cs, "update_business_profile", map[string]any{"description": "Pizza", "websites": []string{},
+				"hours": map[string]any{"timezone": "America/Sao_Paulo", "days": map[string]any{"mon": map[string]any{"mode": "24h"}}}}, &bp)
+			if bp.Description != "Pizza" || bp.Email != "oi@loja.x" || bp.BusinessHours == nil || bp.BusinessHours.Days["mon"].Mode != "24h" {
+				t.Fatalf("updated = %+v", bp)
+			}
+			if sets := wa.BusinessSets(); len(sets) != 1 || !sets[0].SetWebsites || sets[0].Email != nil {
+				t.Fatalf("worker requests = %v", sets)
+			}
+			fails(t, cs, "update_business_profile", map[string]any{"latitude": 1.5}, "latitude")
 		})
 	}
 }

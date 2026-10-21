@@ -31,11 +31,16 @@ function append(el, children) {
 // External pages the free-AI setup links to (exact URLs, nothing built from data).
 const EXTERNAL = new Set(['https://ollama.com/download', 'https://aistudio.google.com/apikey', 'https://console.groq.com/keys']);
 
-// safeHref allows only in-app hash routes, blob: URLs we created, the public docs and the
-// few external setup pages above.
+// OpenStreetMap pages the business profile links to (opened by the user in a new tab; the
+// dashboard itself never calls a map or geocoding service): a pin and an address search.
+const OSM_PIN = /^https:\/\/www\.openstreetmap\.org\/\?mlat=-?\d{1,3}(\.\d+)?&mlon=-?\d{1,3}(\.\d+)?#map=17\/-?\d{1,3}(\.\d+)?\/-?\d{1,3}(\.\d+)?$/;
+const OSM_SEARCH = /^https:\/\/www\.openstreetmap\.org\/search\?query=[A-Za-z0-9%._~-]*$/;
+
+// safeHref allows only in-app hash routes, blob: URLs we created, the public docs, the
+// few external setup pages above and the map links.
 function safeHref(v) {
   const s = String(v);
-  return /^(#|blob:|https:\/\/litezap\.com\/)/.test(s) || EXTERNAL.has(s) ? s : '#';
+  return /^(#|blob:|https:\/\/litezap\.com\/)/.test(s) || EXTERNAL.has(s) || OSM_PIN.test(s) || OSM_SEARCH.test(s) ? s : '#';
 }
 
 export function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
