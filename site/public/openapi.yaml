@@ -4250,7 +4250,7 @@ paths:
       description: |
         Altera só os campos enviados (os ausentes ficam como estão) e devolve o perfil lido de novo do
         WhatsApp. Para remover, use `clear` com os campos (`location`, `hours`, `email`, `websites`,
-        `description`, `address`); `null` num desses campos responde `400` (seria ambíguo com "ausente").
+        `description`, `address`); `null` num desses campos (e em `categories`, que não podem ser removidas) responde `400` (seria ambíguo com "ausente").
         `"clear": ["location"]` tira o pin do mapa e `"clear": ["hours"]` tira o horário inteiro (sem fuso),
         os dois **aguardando validação no aparelho**. `location_clear` (experimental) escolhe a codificação
         do IQ enquanto isso: `empty_elements` (padrão, ou o `business_location_clear` da config),
@@ -4378,7 +4378,7 @@ paths:
       x-litezap-scope: instancia
       description: |
         A primeira foto do produto, baixada da CDN do WhatsApp pela proxy da instância (só hosts da CDN da
-        Meta, até 5 MB). Limite de 120 por minuto por instância.
+        Meta, até 5 MB), guardada por 5 minutos. Limite de 60 downloads novos por minuto por instância.
       parameters:
         - { name: jid, in: query, description: "Número da empresa; padrão, o próprio número.", schema: { type: string } }
       responses:
@@ -4421,7 +4421,9 @@ paths:
       summary: Detalhes de um pedido
       x-litezap-scope: instancia
       description: |
-        Itens, quantidades, preços e total de um pedido recebido. Primeiro pelo socket (`GetOrderDetails` do
+        Itens, quantidades, preços e total de um pedido recebido. Um pedido fica preso à conversa que o enviou
+        (outra conversa com o mesmo id não o substitui), e o LiteZap guarda até 20 pedidos por conversa e 1000
+        por instância a cada 24 horas. Primeiro pelo socket (`GetOrderDetails` do
         whatsmeow, IQ `fb:thrift_iq`), depois pelo GraphQL público do catálogo se o IQ falhar: `source` diz
         qual respondeu. Aceitar ou recusar o pedido continua sendo no app WhatsApp Business.
       responses:
@@ -5791,7 +5793,7 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: { code: catalog_not_found, message: "this number has no WhatsApp catalog", retryable: false } }
     CatalogRateLimited:
-      description: "`rate_limited`: o serviço de catálogo do WhatsApp limitou (por IP) ou o limite da instância (30 leituras novas/min, 120 fotos/min)."
+      description: "`rate_limited`: o serviço de catálogo do WhatsApp limitou (por IP) ou o limite da instância (30 leituras novas/min, 60 fotos/min)."
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }

@@ -46,7 +46,7 @@ func TestBusinessPatchNulls(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"clear":["location"],"description":"oi"}`), &p); err != nil || p.Clear[0] != "location" || *p.Description != "oi" {
 		t.Fatalf("decode = %+v, %v", p, err)
 	}
-	for _, body := range []string{`{"hours":null}`, `{"latitude":null,"longitude":null}`, `{"location":null}`, `{"email":null}`} {
+	for _, body := range []string{`{"hours":null}`, `{"latitude":null,"longitude":null}`, `{"location":null}`, `{"email":null}`, `{"categories":null}`} {
 		err := json.Unmarshal([]byte(body), &p)
 		if apiCode(err) != "validation_failed" || !strings.Contains(err.Error(), "clear") {
 			t.Errorf("%s: %v", body, err)

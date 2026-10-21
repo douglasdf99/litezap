@@ -52,6 +52,9 @@ func (s *Messaging) composeProduct(ctx context.Context, instanceID, id string, i
 	if prod.Hidden {
 		return apierr.Validation("this product is hidden in the catalog: customers could not open it")
 	}
+	if prod.ReviewStatus != "" && prod.ReviewStatus != "approved" {
+		return apierr.Validation("this product is " + prod.ReviewStatus + " in WhatsApp's review: customers cannot open it yet")
+	}
 	if len(prod.Images) == 0 {
 		return apierr.Validation("this product has no image: WhatsApp shows product cards with their image")
 	}

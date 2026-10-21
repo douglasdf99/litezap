@@ -29,9 +29,22 @@ As versões seguem os marcos do motor. Mudanças que quebram compatibilidade sã
 - Painel: aba **Catálogo** (só contas Business), com a grade de produtos, preço em reais, produtos ocultos ou em
   análise marcados, filtro por coleção, **Enviar para…** e os pedidos recentes.
 - Perfil comercial: `clear` remove campos de forma explícita (`location`, `hours`, `email`, `websites`,
-  `description`, `address`); é o único jeito de tirar o pin do mapa e o horário. `null` nesses campos agora
-  responde `400`. Botões **Remover localização** e **Remover horário** no painel e `clear` em
+  `description`, `address`); é o único jeito de tirar o pin do mapa e o horário. Botões **Remover localização** e **Remover horário** no painel e `clear` em
   `update_business_profile`.
+
+**Quebra**
+
+- `PATCH /business/profile`: `null` em `description`, `address`, `email`, `websites`, `latitude`, `longitude`,
+  `hours` e `categories` agora responde `400 validation_failed` (antes era ignorado como "ausente"). Para remover,
+  use `clear`; categorias não podem ser removidas (uma conta Business tem ao menos uma).
+
+**Segurança**
+
+- Nomes e descrições do catálogo chegam ao Atendente IA neutralizados, num bloco de dados separado das
+  informações da empresa; a lista é atualizada em segundo plano (falhas só são tentadas de novo depois de 2 min).
+- Pedidos ficam presos à conversa que os enviou; até 20 por conversa e 1000 por instância a cada 24 horas.
+- Produtos ocultos, em análise ou recusados não são enviados. Agentes só leem e enviam o catálogo do próprio
+  número. Leituras simultâneas iguais viram uma só chamada à Meta; fotos ficam 5 minutos em cache (60 por minuto).
 
 **Ainda não (de propósito)**
 

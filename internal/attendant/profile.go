@@ -45,6 +45,9 @@ type KnowledgeEntry struct {
 	Title   string   `json:"title"`           // question, product name or label
 	Content string   `json:"content"`         // answer or description
 	Price   *float64 `json:"price,omitempty"` // products
+	// Source is "catalog" for products read from the WhatsApp catalog (never stored:
+	// they are third-party text, rendered as untrusted data).
+	Source string `json:"-"`
 }
 
 // Profile is an agent's "training": mode, script, tone, business context.

@@ -373,9 +373,32 @@ func enum(s, prefix string) string {
 	return strings.ToLower(strings.TrimPrefix(s, prefix))
 }
 
+// Parse-time caps on third-party product text (WhatsApp's own limits are lower).
+const (
+	maxName        = 200
+	maxDescription = 5000
+	maxURL         = 1024
+	maxShort       = 100 // ids, retailer ids, enums
+	maxImages      = 10
+)
+
+// clipRunes shortens s to n runes.
+func clipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n])
+	}
+	return s
+}
+
 func (w wire) product() Product {
-	p := Product{ID: string(w.ID), Name: w.Name, Description: w.Description, Currency: w.Currency,
-		RetailerID: w.RetailerID, URL: w.URL, Availability: enum(w.Availability, "AVAILABILITY_"), Images: []string{}}
+	p := Product{ID: clipRunes(string(w.ID), maxShort), Name: clipRunes(w.Name, maxName),
+		Description: clipRunes(w.Description, maxDescription), Currency: clipRunes(w.Currency, 8),
+		RetailerID: clipRunes(w.RetailerID, maxShort), Availability: clipRunes(enum(w.Availability, "AVAILABILITY_"), maxShort),
+		Images: []string{}}
+	if len(w.URL) <= maxURL {
+		p.URL = w.URL // a longer link is dropped, not cut into a different one
+	}
 	p.PriceAmount1000, _ = strconv.ParseInt(string(w.Price), 10, 64)
 	p.MaxAvailable, _ = strconv.ParseInt(string(w.MaxAvailable), 10, 64)
 	switch h := enum(string(w.IsHidden), "ISHIDDEN_"); h {
@@ -386,12 +409,12 @@ func (w wire) product() Product {
 		p.SaleAmount1000, _ = strconv.ParseInt(string(w.SalePrice.Price), 10, 64)
 	}
 	if w.StatusInfo != nil {
-		p.ReviewStatus = enum(w.StatusInfo.Status, "STATUS_")
+		p.ReviewStatus = clipRunes(enum(w.StatusInfo.Status, "STATUS_"), maxShort)
 	}
 	if w.Media != nil {
 		for _, im := range w.Media.Images {
 			u := firstNonEmpty(im.OriginalImageURL, im.RequestImageURL)
-			if u != "" {
+			if u != "" && len(u) <= 4096 && len(p.Images) < maxImages {
 				p.Images = append(p.Images, u)
 			}
 		}
@@ -565,7 +588,7 @@ func ImageHostAllowed(raw string) bool {
 		return false
 	}
 	h := strings.ToLower(u.Hostname())
-	for _, suffix := range []string{".whatsapp.net", ".fbcdn.net", ".fbsbx.com"} {
+	for _, suffix := range []string{".whatsapp.net", ".fbcdn.net"} {
 		if strings.HasSuffix(h, suffix) {
 			return true
 		}

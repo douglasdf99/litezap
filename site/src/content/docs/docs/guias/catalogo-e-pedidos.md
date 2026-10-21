@@ -61,7 +61,7 @@ WhatsApp Web, e o LiteZap faz o mesmo. Isso tem três consequências:
   versão do LiteZap.
 
 O serviço limita por IP. O LiteZap guarda cada resposta por **5 minutos** e limita leituras novas a 30 por minuto
-por instância (fotos, 120 por minuto). Não use para varrer catálogos de terceiros em massa.
+por instância (fotos, 60 por minuto, cada uma guardada por 5 minutos; leituras iguais e simultâneas viram uma só). Não use para varrer catálogos de terceiros em massa.
 
 O endpoint público pode não mostrar produtos **ocultos** ou **em análise** do próprio número: produtos novos e
 editados passam por revisão da Meta (`review_status: pending`) e coleções podem levar até 24 horas.
@@ -71,7 +71,7 @@ editados passam por revisão da Meta (`review_status: pending`) e coleções pod
 `type: "product"` lê o produto no catálogo, baixa a primeira foto pela proxy, envia a foto como imagem normal
 (cifrada, com miniatura) e monta o cartão como o WhatsApp Web (`ProductMessage` com o dono do catálogo). Vai pela
 fila com as mesmas pausas, rampa e janela de qualquer envio. Produtos ocultos ou sem foto são recusados: o cliente
-não conseguiria abrir. `catalog_owner` envia um produto de outra empresa, mas o botão "Ver" só abre se o produto
+não conseguiria abrir; produtos ainda em análise (ou recusados) também. `catalog_owner` envia um produto de outra empresa, mas o botão "Ver" só abre se o produto
 for público.
 
 ### Pedidos
@@ -82,12 +82,21 @@ na API, nos eventos ou nos webhooks. `GET /orders/{order_id}` busca os itens pri
 `GetOrderDetails` do whatsmeow) e, se o WhatsApp não responder, pelo GraphQL; `source` diz qual respondeu.
 Aceitar ou recusar o pedido é feito no app WhatsApp Business.
 
+A mensagem de pedido é escrita pelo cliente, então o LiteZap se protege: um pedido fica preso à conversa que o
+enviou (outra conversa com o mesmo número de pedido não substitui o token), e são guardados no máximo 20 pedidos
+por conversa e 1000 por instância a cada 24 horas. Acima disso a mensagem ainda chega, mas sem `order.received`.
+
 ### Atendente IA com o catálogo
 
 No perfil do agente, **Lista de produtos > Catálogo do WhatsApp** (ou `knowledge_source: "catalog"` na API) troca
 os produtos digitados pelos do catálogo do número: nome, preço (o promocional, quando houver), descrição e
 disponibilidade. A lista é atualizada a cada 10 minutos; se o catálogo falhar, o agente segue com a última lista
-boa. Produtos ocultos ou em análise não entram.
+boa. Produtos ocultos ou em análise não entram. A atualização roda em segundo plano: uma resposta nunca espera
+o WhatsApp (só a primeira, com até 2 segundos), e uma falha só é tentada de novo depois de 2 minutos.
+
+Nomes e descrições do catálogo são escritos por quem edita o catálogo: o agente os recebe como **dados**, num
+bloco separado das informações da empresa e com quebras de linha e marcações neutralizadas, nunca como
+instruções.
 
 ## Por que criar e editar produtos ainda não é oferecido
 

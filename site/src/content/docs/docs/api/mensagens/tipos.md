@@ -103,7 +103,7 @@ vídeo redondo, sem legenda. Todos usam `media` como os outros anexos.
 
 Cartão com foto, nome, preço e botão "Ver", de um produto do catálogo do próprio número (ou de `catalog_owner`,
 o número de outra empresa). O LiteZap lê o produto no catálogo, baixa a primeira foto e envia como imagem com
-miniatura, pela fila como qualquer envio. Produtos ocultos ou sem foto: `400`. `body` até 1024 caracteres,
+miniatura, pela fila como qualquer envio. Produtos ocultos, em análise ou sem foto: `400`. `body` até 1024 caracteres,
 `footer` até 60. Veja [Catálogo e pedidos](/docs/guias/catalogo-e-pedidos/). Para mandar o catálogo inteiro,
 envie o `catalog_link` de `GET /catalog` como texto com `link_preview: "auto"`.
 

@@ -131,7 +131,8 @@ func TestSendProduct(t *testing.T) {
 	f := withCatalog(t, e)
 	ctx := context.Background()
 	f.Catalogs[ownJID] = []catalogtest.Product{{ID: "101", Name: "Camiseta", Description: "Algodão", Price: 59900, Currency: "BRL"},
-		{ID: "102", Name: "Oculto", Price: 1000, Currency: "BRL", Hidden: true}, {ID: "103", Name: "Sem foto", NoImage: true}}
+		{ID: "102", Name: "Oculto", Price: 1000, Currency: "BRL", Hidden: true}, {ID: "103", Name: "Sem foto", NoImage: true},
+		{ID: "104", Name: "Em análise", Price: 1000, Currency: "BRL", Status: "PENDING"}}
 	v, err := e.svc.Send(ctx, "i1", SendInput{To: "5511988887777", Type: "product", ProductID: "101", Body: "Olha esta", Footer: "Loja X"}, 2*time.Second)
 	if err != nil || v.Status != "sent" || v.Type != "product" {
 		t.Fatalf("send = %+v, %v", v, err)
@@ -154,6 +155,7 @@ func TestSendProduct(t *testing.T) {
 		"no product":   {To: "5511988887777", Type: "product"},
 		"hidden":       {To: "5511988887777", Type: "product", ProductID: "102"},
 		"no image":     {To: "5511988887777", Type: "product", ProductID: "103"},
+		"in review":    {To: "5511988887777", Type: "product", ProductID: "104"},
 		"text":         {To: "5511988887777", Type: "product", ProductID: "101", Text: "x"},
 		"long footer":  {To: "5511988887777", Type: "product", ProductID: "101", Footer: strings.Repeat("a", 61)},
 		"body on text": {To: "5511988887777", Type: "text", Text: "x", Body: "y"},

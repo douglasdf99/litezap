@@ -100,6 +100,9 @@ func (p *BusinessProfilePatch) UnmarshalJSON(b []byte) error {
 			return apierr.Validation(fmt.Sprintf(`%s: null is not a clear; send "clear": ["%s"]`, k, f))
 		}
 	}
+	if v, ok := raw["categories"]; ok && string(bytes.TrimSpace(v)) == "null" {
+		return apierr.Validation("categories: null is not allowed and categories cannot be cleared; send 1 to 3 category ids")
+	}
 	type plain BusinessProfilePatch
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()

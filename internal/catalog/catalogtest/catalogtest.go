@@ -39,6 +39,8 @@ type Fake struct {
 	Requests   []map[string]any
 	Images     int // image downloads
 	Proxies    []string
+	// Hold, when set, makes every request wait until it is closed (concurrency tests).
+	Hold chan struct{}
 }
 
 // New returns an empty fake.
@@ -93,6 +95,12 @@ type doer func(*http.Request) (*http.Response, error)
 func (d doer) Do(r *http.Request) (*http.Response, error) { return d(r) }
 
 func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	hold := f.Hold
+	f.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if strings.HasSuffix(r.URL.Host, ".whatsapp.net") {
@@ -169,6 +177,13 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = io.WriteString(w, `{"error":{"code":100,"message":"unknown query"}}`)
 	}
+}
+
+// ImageCount returns how many images the fake served.
+func (f *Fake) ImageCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.Images
 }
 
 // Calls returns how many GraphQL requests the fake answered.

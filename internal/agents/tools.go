@@ -27,6 +27,25 @@ type ToolDef struct {
 // sends never wait, and idempotency keys are set by the engine.
 var hiddenArgs = []string{"instance_id", "wait", "timeout_seconds", "client_message_id"}
 
+// toolHiddenArgs are per-tool arguments the executor removes: agents read and send only
+// the instance's own catalog (another business's catalog is third-party content, and a
+// product of another catalog could be anything).
+var toolHiddenArgs = map[string][]string{
+	"get_catalog":  {"jid"},
+	"get_product":  {"jid"},
+	"send_product": {"catalog_owner"},
+}
+
+// dropHidden removes the executor-owned arguments of a tool from args or schema props.
+func dropHidden(tool string, m map[string]any) {
+	for _, k := range hiddenArgs {
+		delete(m, k)
+	}
+	for _, k := range toolHiddenArgs[tool] {
+		delete(m, k)
+	}
+}
+
 // toolSpecs builds the tools offered to the model: the agent's allowed tools from the
 // MCP table, with the executor-owned arguments removed from their schemas.
 func toolSpecs(defs []ToolDef, allowed map[string]bool, readOther bool) ([]attendant.ToolSpec, map[string]ToolDef, error) {
@@ -49,9 +68,7 @@ func toolSpecs(defs []ToolDef, allowed map[string]bool, readOther bool) ([]atten
 			return nil, nil, err
 		}
 		props, _ := m["properties"].(map[string]any)
-		for _, k := range hiddenArgs {
-			delete(props, k)
-		}
+		dropHidden(d.Name, props)
 		desc := d.Description
 		optional := func(key, doc string) { // key defaults to the trigger chat
 			if p, ok := props[key].(map[string]any); ok {
@@ -176,9 +193,7 @@ func (e *executor) run(ctx context.Context, call attendant.ToolCall, st *Step) (
 			return toolError("the arguments must be a JSON object")
 		}
 	}
-	for _, k := range hiddenArgs {
-		delete(args, k)
-	}
+	dropHidden(call.Name, args)
 	if !writeTools[call.Name] {
 		if err := e.checkRead(call.Name, args); err != nil {
 			return e.refuse(st, err.Error())

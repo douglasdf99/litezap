@@ -182,6 +182,10 @@ func (in *Ingestor) order(ctx context.Context, instanceID string, m *workerv1.Me
 		SellerJID: o.SellerJid, Token: o.Token, ItemCount: int(o.ItemCount), Total1000: o.TotalAmount_1000,
 		Currency: o.Currency, Title: o.Title, Note: o.Message, Status: o.Status, FromMe: m.FromMe, ReceivedAt: rec.Timestamp}
 	created, err := in.Store.UpsertOrder(ctx, instanceID, so)
+	if errors.Is(err, store.ErrOrderCap) {
+		in.Log.Warn("order not stored: too many orders from this chat or today", "instance_id", instanceID)
+		return nil, nil // the message is logged; no order, no order.received
+	}
 	if err != nil || !created || m.FromMe {
 		return nil, err
 	}

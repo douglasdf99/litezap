@@ -188,7 +188,7 @@ func (t *tools) registerCatalog(s *sdk.Server) {
 		Description: "Sends a product card from a WhatsApp catalog (photo, name, price, \"View\" button) to a real person or group. " +
 			"Only send products the user asked to send, to the recipient they named; get the product_id from get_catalog first and never invent one. " +
 			"It goes through the same anti-ban queue as send_message: it may stay queued and be sent later (sent=false); do not send it again. " +
-			"Hidden products and products without a photo are refused (customers could not open them).",
+			"Hidden products, products still in review and products without a photo are refused (customers could not open them).",
 		InputSchema: schema[sendProductInput](map[string]func(*jsonschema.Schema){
 			"instance_id": instID, "wait": boolDefault(true), "timeout_seconds": intRange(30, 1, maxWaitSeconds),
 		}),

@@ -16,6 +16,8 @@ CREATE TABLE orders (
   status        TEXT NOT NULL DEFAULT '',
   from_me       INTEGER NOT NULL DEFAULT 0,
   received_at   TEXT NOT NULL,
+  stored_at     TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (instance_id, order_id)
 );
 CREATE INDEX orders_recent ON orders (instance_id, received_at);
+CREATE INDEX orders_stored ON orders (instance_id, stored_at);

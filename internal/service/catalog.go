@@ -40,7 +40,7 @@ const (
 // Upstream calls per instance (cache misses only).
 var (
 	catalogQuota = []window{{time.Minute, 30}, {24 * time.Hour, 1000}}
-	imageQuota   = []window{{time.Minute, 120}, {24 * time.Hour, 3000}}
+	imageQuota   = []window{{time.Minute, 60}, {24 * time.Hour, 1500}}
 )
 
 // CatalogReader reads catalogs through each instance's proxy, with a cache.
@@ -59,6 +59,8 @@ type CatalogReader struct {
 	cache   map[string]catalogEntry
 	clients map[string]catalog.Doer // by proxy URL
 	quota   windowQuota
+	flights map[string]*catalogFlight // upstream calls in progress (one per key)
+	images  imageCache
 }
 
 type catalogEntry struct {
@@ -280,17 +282,60 @@ func (r *CatalogReader) call(ctx context.Context, instanceID, kind, key string, 
 	if err != nil {
 		return nil, false, err
 	}
-	if !r.quota.take(kind+"\x00"+instanceID, r.now(), quota...) {
-		return nil, false, socialLimited("catalog read")
-	}
-	c, cancel := context.WithTimeout(ctx, catalogRPCTimeout)
-	defer cancel()
-	v, err := fn(c, d)
+	v, err := r.shared(ctx, ck, func(c context.Context) (any, error) {
+		if v, ok := r.cached(ck); ok { // a flight that just finished
+			return v, nil
+		}
+		if !r.quota.take(kind+"\x00"+instanceID, r.now(), quota...) {
+			return nil, socialLimited("catalog read")
+		}
+		v, err := fn(c, d)
+		if err == nil {
+			r.store(ck, v)
+		}
+		return v, err
+	})
 	if err != nil {
 		return nil, false, err
 	}
-	r.store(ck, v)
 	return v, false, nil
+}
+
+// catalogFlight is one upstream call in progress; concurrent misses wait for it.
+type catalogFlight struct {
+	done chan struct{}
+	v    any
+	err  error
+}
+
+// shared runs fn once per key at a time: concurrent callers with the same key wait for
+// the first one's result instead of all reaching Meta. The call is not cut when the
+// first caller gives up (the others may still want it); it has its own timeout.
+func (r *CatalogReader) shared(ctx context.Context, key string, fn func(context.Context) (any, error)) (any, error) {
+	r.mu.Lock()
+	if f, ok := r.flights[key]; ok {
+		r.mu.Unlock()
+		select {
+		case <-f.done:
+			return f.v, f.err
+		case <-ctx.Done():
+			return nil, apierr.New(http.StatusServiceUnavailable, "catalog_unavailable", "the WhatsApp catalog service did not answer in time", true)
+		}
+	}
+	f := &catalogFlight{done: make(chan struct{})}
+	if r.flights == nil {
+		r.flights = map[string]*catalogFlight{}
+	}
+	r.flights[key] = f
+	r.mu.Unlock()
+	c, cancel := context.WithTimeout(context.WithoutCancel(ctx), catalogRPCTimeout)
+	f.v, f.err = fn(c)
+	cancel()
+	r.mu.Lock()
+	delete(r.flights, key)
+	r.mu.Unlock()
+	close(f.done)
+	return f.v, f.err
 }
 
 func (r *CatalogReader) instance(ctx context.Context, instanceID string) (store.Instance, error) {
@@ -410,20 +455,107 @@ func (r *CatalogReader) image(ctx context.Context, instanceID string, in store.I
 	if len(p.Images) == 0 {
 		return nil, "", apierr.New(http.StatusNotFound, "not_found", "this product has no image", false)
 	}
+	key := instanceID + "\x00" + p.ID
+	if img, ok := r.images.get(key, r.now()); ok {
+		return img.data, img.mime, nil
+	}
 	d, err := r.doer(in)
 	if err != nil {
 		return nil, "", err
 	}
-	if !r.quota.take("image\x00"+instanceID, r.now(), imageQuota...) {
-		return nil, "", socialLimited("catalog image")
-	}
-	c, cancel := context.WithTimeout(ctx, catalogRPCTimeout)
-	defer cancel()
-	b, mime, err := catalog.FetchImage(c, d, p.Images[0])
+	v, err := r.shared(ctx, "image\x00"+key, func(c context.Context) (any, error) {
+		if img, ok := r.images.get(key, r.now()); ok {
+			return img, nil
+		}
+		if !r.quota.take("image\x00"+instanceID, r.now(), imageQuota...) {
+			return nil, socialLimited("catalog image")
+		}
+		b, mime, err := catalog.FetchImage(c, d, p.Images[0])
+		if err != nil {
+			return nil, catalogErr(err, "image")
+		}
+		img := cachedImage{data: b, mime: mime, at: r.now()}
+		r.images.put(key, img)
+		return img, nil
+	})
 	if err != nil {
-		return nil, "", catalogErr(err, "image")
+		return nil, "", err
 	}
-	return b, mime, nil
+	img := v.(cachedImage)
+	return img.data, img.mime, nil
+}
+
+// Product image cache: a small LRU by instance and product, kept 5 minutes.
+const (
+	imageCacheTTL     = 5 * time.Minute
+	imageCacheEntries = 64
+	imageCacheBytes   = 24 << 20
+)
+
+type cachedImage struct {
+	data []byte
+	mime string
+	at   time.Time
+}
+
+type imageCache struct {
+	mu    sync.Mutex
+	order []string // least recently used first
+	items map[string]cachedImage
+	bytes int
+}
+
+func (c *imageCache) get(key string, now time.Time) (cachedImage, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	img, ok := c.items[key]
+	if !ok {
+		return cachedImage{}, false
+	}
+	if now.Sub(img.at) >= imageCacheTTL {
+		c.remove(key)
+		return cachedImage{}, false
+	}
+	c.remove(key) // move to the most recently used end
+	c.add(key, img)
+	return img, true
+}
+
+func (c *imageCache) put(key string, img cachedImage) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(img.data) > imageCacheBytes/4 {
+		return // too large to keep
+	}
+	c.remove(key)
+	c.add(key, img)
+	for len(c.order) > imageCacheEntries || c.bytes > imageCacheBytes {
+		c.remove(c.order[0])
+	}
+}
+
+func (c *imageCache) add(key string, img cachedImage) {
+	if c.items == nil {
+		c.items = map[string]cachedImage{}
+	}
+	c.items[key] = img
+	c.order = append(c.order, key)
+	c.bytes += len(img.data)
+}
+
+func (c *imageCache) remove(key string) {
+	img, ok := c.items[key]
+	if !ok {
+		return
+	}
+	delete(c.items, key)
+	c.bytes -= len(img.data)
+	for i, k := range c.order {
+		if k == key {
+			c.order = append(c.order[:i:i], c.order[i+1:]...)
+			return
+		}
+	}
 }
 
 // Products reads up to max products of the instance's own catalog (all pages, cached),
