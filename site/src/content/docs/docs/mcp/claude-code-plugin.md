@@ -44,6 +44,7 @@ Os comandos do plugin levam o prefixo `litezap:`.
 |---|---|
 | `/litezap:whatsapp-resumo [foco]` | Resume as conversas de hoje: quem precisa de resposta, o que foi resolvido, destaques dos grupos. Só lê: não envia nem marca como lido. |
 | `/litezap:whatsapp-responder [tom ou contexto]` | Rascunha respostas para os chats não lidos (até 10 por vez) e **pergunta** quais enviar antes de mandar qualquer coisa. |
+| `/litezap:whatsapp-plantao [autônomo] [perfil: ...]` | Uma rodada de plantão: confere mensagens novas e responde por um perfil (rascunho por padrão; autônomo só se você disser). Repita com `/loop 3m /litezap:whatsapp-plantao`. Veja [IA por assinatura](/docs/guias/ia-por-assinatura/). |
 | `/litezap:whatsapp-agente <descrição>` | Cria um subagente seu (`.claude/agents/<nome>.md`) a partir de uma descrição, com as ferramentas mínimas e as regras de segurança do LiteZap. |
 
 O resumo também é usado sozinho quando você pede "resume meu WhatsApp de hoje". Os outros dois só rodam quando

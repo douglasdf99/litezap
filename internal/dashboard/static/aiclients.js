@@ -135,7 +135,7 @@ export function aiClientsView({ root, shell }) {
       h('p', { class: 'small' }, 'Cole os dois comandos, um de cada vez, numa sessão do Claude Code:'),
       cmds.map(commandRow),
       h('p', { class: 'small muted' }, 'O plugin traz as ferramentas do WhatsApp, os comandos /litezap:whatsapp-resumo, ',
-        '/litezap:whatsapp-responder e /litezap:whatsapp-agente e os agentes atendente, SDR e follow-up. ',
+        '/litezap:whatsapp-responder, /litezap:whatsapp-plantao e /litezap:whatsapp-agente e os agentes atendente, SDR e follow-up. ',
         'Com o plugin, você não precisa do "Conectar (só ferramentas)": use um dos dois para não ver as ferramentas em dobro.'));
     const pluginBtn = h('button', { class: 'btn', onclick: () => { plugin.hidden = !plugin.hidden; } },
       'Instalar plugin LiteZap (comandos e agentes prontos)');
