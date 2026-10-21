@@ -164,9 +164,18 @@ export function attendantPanel(ctx) {
     };
     (a.knowledge || []).forEach(addKB);
     // Marco 12: the product list may come from the WhatsApp catalog (Business accounts).
+    // The Cardápio (LiteZap's own catalog) is the recommended source once it has items.
     const kbSource = h('select', null, h('option', { value: 'manual' }, 'Produtos digitados aqui'),
+      h('option', { value: 'menu' }, 'Cardápio do LiteZap (itens, preços e opções)'),
       h('option', { value: 'catalog' }, 'Catálogo do WhatsApp (nome, preço, descrição e disponibilidade)'));
     kbSource.value = a.knowledge_source || 'manual';
+    let kbTouched = false;
+    kbSource.addEventListener('change', () => { kbTouched = true; });
+    api.get(`${ctx.base}/menu`).then((m) => {
+      if (!m || !m.item_count) return;
+      kbSource.options[1].textContent = `Cardápio do LiteZap (recomendado: ${m.item_count} itens, preços e opções)`;
+      if (!a.id && !kbTouched) kbSource.value = 'menu';
+    }).catch(() => {});
     const voice = h('select', null, h('option', { value: 'off' }, 'Sempre texto'), h('option', { value: 'when_audio' }, 'Voz quando o cliente mandar áudio'), h('option', { value: 'always' }, 'Sempre voz'));
     voice.value = a.voice_reply || 'off';
     const callFollow = h('input', { type: 'checkbox', checked: !!a.call_followup });
@@ -209,7 +218,7 @@ export function attendantPanel(ctx) {
     h('fieldset', null, h('legend', null, 'Ações permitidas'), actionBoxes.map((cb) => h('label', { class: 'check' }, cb, ' ', ACTION_LABEL[cb.dataset.action]))),
     field('Contexto do negócio', business, 'Informação confiável que o agente usa. Nunca coloque senhas ou chaves aqui.'),
     h('fieldset', null, h('legend', null, 'Base de conhecimento (perguntas, catálogo com preço, horários, políticas)'),
-      field('Lista de produtos', kbSource, 'Com "Catálogo do WhatsApp", os produtos do catálogo do número (atualizados a cada 10 minutos) substituem os itens do tipo produto abaixo. Produtos ocultos ou em análise não entram.'),
+      field('Lista de produtos', kbSource, 'Com "Cardápio do LiteZap", os itens da aba Cardápio (preços, opções e esgotados) substituem os itens do tipo produto abaixo, e o rascunho de pedido recalcula os preços com as opções. Com "Catálogo do WhatsApp", os produtos do catálogo do número (atualizados a cada 10 minutos); ocultos ou em análise não entram.'),
       h('table', { class: 'table small' }, h('thead', null, h('tr', null, h('th', null, 'Tipo'), h('th', null, 'Título'), h('th', null, 'Conteúdo'), h('th', null, 'Preço'), h('th', null, ''))), kbBody),
       h('button', { class: 'btn small', type: 'button', onclick: () => addKB() }, 'Adicionar item')),
     h('fieldset', null, h('legend', null, 'Voz, ligações e privacidade'),
