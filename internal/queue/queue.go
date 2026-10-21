@@ -58,6 +58,26 @@ type Payload struct {
 	TypingMS int `json:"typing_ms,omitempty"`
 	// StatusStyle is the look of a text status (marco 10).
 	StatusStyle *StatusStyle `json:"status_style,omitempty"`
+	// Product is the catalog product of a type product send (marco 12); MediaFile holds
+	// its first image.
+	Product *Product `json:"product,omitempty"`
+}
+
+// Product is a catalog product snapshot (prices in thousandths of the currency unit).
+type Product struct {
+	ProductID        string `json:"product_id"`
+	Title            string `json:"title"`
+	Description      string `json:"description,omitempty"`
+	Currency         string `json:"currency,omitempty"`
+	PriceAmount1000  int64  `json:"price_amount_1000,omitempty"`
+	SaleAmount1000   int64  `json:"sale_price_amount_1000,omitempty"`
+	RetailerID       string `json:"retailer_id,omitempty"`
+	URL              string `json:"url,omitempty"`
+	ImageCount       uint32 `json:"image_count,omitempty"`
+	BusinessOwnerJID string `json:"business_owner_jid"`
+	Body             string `json:"body,omitempty"`
+	Footer           string `json:"footer,omitempty"`
+	Thumbnail        []byte `json:"thumbnail,omitempty"`
 }
 
 // StatusStyle is the background, text color (ARGB) and font of a text status.
@@ -806,6 +826,12 @@ func buildRequest(item store.Outbound, p Payload) (*workerv1.SendRequest, error)
 	}
 	if t := p.Target; t != nil {
 		req.TargetId, req.TargetFromMe, req.TargetSender = t.WAMessageID, t.FromMe, t.Sender
+	}
+	if pr := p.Product; pr != nil {
+		req.Product = &workerv1.Product{ProductId: pr.ProductID, Title: pr.Title, Description: pr.Description,
+			Currency: pr.Currency, PriceAmount_1000: pr.PriceAmount1000, SalePriceAmount_1000: pr.SaleAmount1000,
+			RetailerId: pr.RetailerID, Url: pr.URL, ImageCount: pr.ImageCount, BusinessOwnerJid: pr.BusinessOwnerJID,
+			Body: pr.Body, Footer: pr.Footer, Thumbnail: pr.Thumbnail}
 	}
 	return req, nil
 }

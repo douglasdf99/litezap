@@ -51,4 +51,19 @@ func TestPatchBusinessProfile(t *testing.T) {
 	if n := len(f.WA.BusinessSets()); n != 2 {
 		t.Fatalf("worker sets = %d", n)
 	}
+	// Explicit clears: "clear" only; a null is refused with a hint.
+	for _, bad := range []string{`{"hours":null}`, `{"latitude":null,"longitude":null}`, `{"clear":["categories"]}`,
+		`{"clear":["location"],"location_clear":"bogus"}`} {
+		if code, out := e.do("PATCH", base+"/business/profile", admin, bad); code != 400 {
+			t.Errorf("%s = %d %v", bad, code, out)
+		}
+	}
+	if code, out := e.do("PATCH", base+"/business/profile", admin, `{"clear":["location","hours"],"location_clear":"empty_content"}`); code != 200 ||
+		out["business_hours"] != nil || out["location"] != nil {
+		t.Fatalf("clear = %d %v", code, out)
+	}
+	sets := f.WA.BusinessSets()
+	if last := sets[len(sets)-1]; !last.ClearLocation || !last.ClearHours || last.LocationClear != "empty_content" {
+		t.Fatalf("clear request = %v", last)
+	}
 }

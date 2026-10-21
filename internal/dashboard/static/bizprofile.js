@@ -3,7 +3,7 @@
 // the "Perfil" tab only for Business accounts. No external calls: the map links open in a
 // new tab only when the user clicks them.
 import * as api from './api.js';
-import { h, mount, toast, errMsg, field } from './ui.js';
+import { h, mount, toast, errMsg, field, confirmDanger } from './ui.js';
 
 const DAYS = [['sun', 'Domingo'], ['mon', 'Segunda'], ['tue', 'Terça'], ['wed', 'Quarta'], ['thu', 'Quinta'], ['fri', 'Sexta'], ['sat', 'Sábado']];
 const MODES = [['open', 'Aberto'], ['closed', 'Fechado'], ['24h', '24 horas'], ['appointment', 'Com agendamento']];
@@ -105,6 +105,21 @@ export function businessProfileBox(ctx) {
     const rows = DAYS.map(([k, l]) => dayRow(k, l, (week.days || {})[k] || { mode: 'closed' }));
 
     const save = h('button', { class: 'btn primary', type: 'submit' }, 'Salvar perfil da empresa');
+    // Explicit clears ("clear"): the map pin and the hours cannot be emptied by leaving the
+    // fields blank.
+    const clearBtn = (label, field, question) => h('button', {
+      class: 'btn small ghost', type: 'button', onclick: async (ev) => {
+        if (!(await confirmDanger(question, { ok: 'Remover' }))) return;
+        ev.target.disabled = true;
+        try {
+          const v = await api.patch(`${ctx.base}/business/profile`, { clear: [field] });
+          toast('Removido do perfil da empresa');
+          if (alive) render(v);
+        } catch (e) { toast(e, 'error'); ev.target.disabled = false; }
+      },
+    }, label);
+    const clearLoc = loc ? clearBtn('Remover localização', 'location', 'Remover o pin do mapa do perfil da empresa? (Recurso novo: confira no celular se sumiu.)') : null;
+    const clearHours = p.business_hours ? clearBtn('Remover horário', 'hours', 'Remover o horário de funcionamento do perfil? Os clientes deixam de ver se está aberto.') : null;
     mount(box, h('form', {
       onsubmit: async (ev) => {
         ev.preventDefault();
@@ -144,13 +159,14 @@ export function businessProfileBox(ctx) {
     field('Descrição', desc, 'Até 512 caracteres.'),
     field('Endereço', address),
     h('div', { class: 'grid2' }, field('Latitude', lat), field('Longitude', lng)),
-    h('div', { class: 'row' }, mapLink, searchLink),
+    h('div', { class: 'row' }, mapLink, searchLink, clearLoc),
     h('p', { class: 'small muted' }, '"Usar endereço" abre o endereço no OpenStreetMap numa nova aba: clique no local, copie as coordenadas e cole aqui (colar "lat, long" na latitude preenche as duas). Nada é enviado a serviços de mapa sem você clicar.'),
     h('div', { class: 'grid2' }, field('E-mail', email), field('Site 1', sites[0]), field('Site 2', sites[1])),
     field('Categorias', h('div', null, catList, h('div', { class: 'row' }, catInput, addCat)), 'Até 3. Para adicionar, use o id da categoria (o WhatsApp não tem busca de categorias pela API).'),
     h('h3', null, 'Horário de funcionamento'),
     field('Fuso horário', tz, 'Nome IANA, como America/Sao_Paulo.'),
     h('div', { class: 'biz-week' }, rows.map((r) => r.el)),
+    clearHours ? h('div', { class: 'row' }, clearHours) : null,
     h('div', { class: 'row end' }, save)));
   };
 

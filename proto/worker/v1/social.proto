@@ -36,6 +36,10 @@ service Social {
   // "business_account_required"; WhatsApp refused a value (400/406): InvalidArgument
   // "validation_failed" with the server code in the message.
   rpc SetBusinessProfile(SetBusinessProfileRequest) returns (BusinessProfileInfo);
+  // GetOrder reads an order the account received (marco 12: catalog phase 1) with
+  // whatsmeow's GetOrderDetails (fb:thrift_iq <order op="get">). The supervisor keeps the
+  // order token and falls back to the public catalog GraphQL when this fails.
+  rpc GetOrder(GetOrderRequest) returns (OrderDetails);
 }
 
 message GetStatusPrivacyRequest {}
@@ -169,6 +173,14 @@ message SetBusinessProfileRequest {
   repeated string category_ids = 10;
   // hours, when set, replace the whole week: days without an entry are closed.
   BusinessHoursSet hours = 11;
+  // Explicit clears (marco 12). clear_location removes the map pin, with the encoding
+  // named by location_clear ("" = the worker's default, see bizprofile.go):
+  // empty_elements | empty_content | empty_address. clear_hours removes the business
+  // hours entirely (an empty <business_hours/> without timezone). Both still need
+  // validation on a real Business number.
+  bool clear_location = 12;
+  string location_clear = 13;
+  bool clear_hours = 14;
 }
 
 message BusinessHoursSet {
@@ -176,4 +188,30 @@ message BusinessHoursSet {
   // day sun..sat; mode specific_hours (open/close in minutes from midnight) | open_24h |
   // appointment_only. A day may repeat for split hours.
   repeated BusinessHours days = 2;
+}
+
+message GetOrderRequest {
+  string order_id = 1;
+  string token = 2; // base64, from the OrderMessage
+}
+
+message OrderItem {
+  string product_id = 1;
+  string name = 2;
+  int64 price_amount_1000 = 3;
+  string currency = 4;
+  int32 quantity = 5;
+  string image_url = 6;
+  string variant = 7;
+}
+
+message OrderDetails {
+  string id = 1;
+  int64 created_ms = 2;
+  string catalog_id = 3;
+  int64 subtotal_amount_1000 = 4;
+  int64 total_amount_1000 = 5;
+  string currency = 6;
+  string price_status = 7;
+  repeated OrderItem items = 8;
 }

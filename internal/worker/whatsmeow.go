@@ -66,6 +66,8 @@ type Whatsmeow struct {
 	acct accountHooks
 	// Status, channels, labels and the business profile (social.go, marco 10).
 	social socialHooks
+	// orderDetails reads an order (catalog.go, marco 12); nil means the client.
+	orderDetails func(ctx context.Context, orderID, token string) (*types.OrderDetails, error)
 
 	// Signals to pairLoop; all are buffered (1) and sent to without blocking.
 	restart    chan struct{} // from PairPhone: end the current round now

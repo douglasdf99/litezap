@@ -26,7 +26,7 @@ type Filters struct {
 
 // MessageTypes a filter may name (the types of received and sent messages).
 var MessageTypes = []string{"text", "image", "video", "gif", "ptv", "audio", "document", "sticker",
-	"location", "contact", "poll", "reaction", "button_reply", "unknown"}
+	"location", "contact", "poll", "reaction", "button_reply", "product", "order", "unknown"}
 
 const maxFilterChats = 500
 

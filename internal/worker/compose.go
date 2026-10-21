@@ -116,6 +116,8 @@ func (w *Whatsmeow) build(ctx context.Context, to types.JID, req *workerv1.SendR
 		return w.buildPin(ctx, to, req)
 	case "forward":
 		msg, err = buildForward(req.ForwardKind, req.ForwardRef)
+	case "product":
+		msg, err = w.buildProduct(ctx, req)
 	default:
 		msg, err = w.buildUpload(ctx, req)
 	}
@@ -463,6 +465,8 @@ func setContextInfo(msg *waE2E.Message, ci *waE2E.ContextInfo) bool {
 		msg.ContactsArrayMessage.ContextInfo = ci
 	case msg.PollCreationMessage != nil:
 		msg.PollCreationMessage.ContextInfo = ci
+	case msg.ProductMessage != nil:
+		msg.ProductMessage.ContextInfo = ci
 	default:
 		return false
 	}

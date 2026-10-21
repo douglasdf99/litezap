@@ -1208,7 +1208,15 @@ type SetBusinessProfileRequest struct {
 	SetCategories bool                   `protobuf:"varint,9,opt,name=set_categories,json=setCategories,proto3" json:"set_categories,omitempty"` // category ids replace the current ones
 	CategoryIds   []string               `protobuf:"bytes,10,rep,name=category_ids,json=categoryIds,proto3" json:"category_ids,omitempty"`
 	// hours, when set, replace the whole week: days without an entry are closed.
-	Hours         *BusinessHoursSet `protobuf:"bytes,11,opt,name=hours,proto3" json:"hours,omitempty"`
+	Hours *BusinessHoursSet `protobuf:"bytes,11,opt,name=hours,proto3" json:"hours,omitempty"`
+	// Explicit clears (marco 12). clear_location removes the map pin, with the encoding
+	// named by location_clear ("" = the worker's default, see bizprofile.go):
+	// empty_elements | empty_content | empty_address. clear_hours removes the business
+	// hours entirely (an empty <business_hours/> without timezone). Both still need
+	// validation on a real Business number.
+	ClearLocation bool   `protobuf:"varint,12,opt,name=clear_location,json=clearLocation,proto3" json:"clear_location,omitempty"`
+	LocationClear string `protobuf:"bytes,13,opt,name=location_clear,json=locationClear,proto3" json:"location_clear,omitempty"`
+	ClearHours    bool   `protobuf:"varint,14,opt,name=clear_hours,json=clearHours,proto3" json:"clear_hours,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1320,6 +1328,27 @@ func (x *SetBusinessProfileRequest) GetHours() *BusinessHoursSet {
 	return nil
 }
 
+func (x *SetBusinessProfileRequest) GetClearLocation() bool {
+	if x != nil {
+		return x.ClearLocation
+	}
+	return false
+}
+
+func (x *SetBusinessProfileRequest) GetLocationClear() string {
+	if x != nil {
+		return x.LocationClear
+	}
+	return ""
+}
+
+func (x *SetBusinessProfileRequest) GetClearHours() bool {
+	if x != nil {
+		return x.ClearHours
+	}
+	return false
+}
+
 type BusinessHoursSet struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Timezone string                 `protobuf:"bytes,1,opt,name=timezone,proto3" json:"timezone,omitempty"` // IANA, e.g. America/Sao_Paulo
@@ -1370,6 +1399,250 @@ func (x *BusinessHoursSet) GetTimezone() string {
 func (x *BusinessHoursSet) GetDays() []*BusinessHours {
 	if x != nil {
 		return x.Days
+	}
+	return nil
+}
+
+type GetOrderRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OrderId       string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	Token         string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"` // base64, from the OrderMessage
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetOrderRequest) Reset() {
+	*x = GetOrderRequest{}
+	mi := &file_worker_v1_social_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetOrderRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetOrderRequest) ProtoMessage() {}
+
+func (x *GetOrderRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_social_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetOrderRequest.ProtoReflect.Descriptor instead.
+func (*GetOrderRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_social_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *GetOrderRequest) GetOrderId() string {
+	if x != nil {
+		return x.OrderId
+	}
+	return ""
+}
+
+func (x *GetOrderRequest) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+type OrderItem struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	ProductId        string                 `protobuf:"bytes,1,opt,name=product_id,json=productId,proto3" json:"product_id,omitempty"`
+	Name             string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	PriceAmount_1000 int64                  `protobuf:"varint,3,opt,name=price_amount_1000,json=priceAmount1000,proto3" json:"price_amount_1000,omitempty"`
+	Currency         string                 `protobuf:"bytes,4,opt,name=currency,proto3" json:"currency,omitempty"`
+	Quantity         int32                  `protobuf:"varint,5,opt,name=quantity,proto3" json:"quantity,omitempty"`
+	ImageUrl         string                 `protobuf:"bytes,6,opt,name=image_url,json=imageUrl,proto3" json:"image_url,omitempty"`
+	Variant          string                 `protobuf:"bytes,7,opt,name=variant,proto3" json:"variant,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *OrderItem) Reset() {
+	*x = OrderItem{}
+	mi := &file_worker_v1_social_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrderItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrderItem) ProtoMessage() {}
+
+func (x *OrderItem) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_social_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrderItem.ProtoReflect.Descriptor instead.
+func (*OrderItem) Descriptor() ([]byte, []int) {
+	return file_worker_v1_social_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *OrderItem) GetProductId() string {
+	if x != nil {
+		return x.ProductId
+	}
+	return ""
+}
+
+func (x *OrderItem) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *OrderItem) GetPriceAmount_1000() int64 {
+	if x != nil {
+		return x.PriceAmount_1000
+	}
+	return 0
+}
+
+func (x *OrderItem) GetCurrency() string {
+	if x != nil {
+		return x.Currency
+	}
+	return ""
+}
+
+func (x *OrderItem) GetQuantity() int32 {
+	if x != nil {
+		return x.Quantity
+	}
+	return 0
+}
+
+func (x *OrderItem) GetImageUrl() string {
+	if x != nil {
+		return x.ImageUrl
+	}
+	return ""
+}
+
+func (x *OrderItem) GetVariant() string {
+	if x != nil {
+		return x.Variant
+	}
+	return ""
+}
+
+type OrderDetails struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Id                  string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	CreatedMs           int64                  `protobuf:"varint,2,opt,name=created_ms,json=createdMs,proto3" json:"created_ms,omitempty"`
+	CatalogId           string                 `protobuf:"bytes,3,opt,name=catalog_id,json=catalogId,proto3" json:"catalog_id,omitempty"`
+	SubtotalAmount_1000 int64                  `protobuf:"varint,4,opt,name=subtotal_amount_1000,json=subtotalAmount1000,proto3" json:"subtotal_amount_1000,omitempty"`
+	TotalAmount_1000    int64                  `protobuf:"varint,5,opt,name=total_amount_1000,json=totalAmount1000,proto3" json:"total_amount_1000,omitempty"`
+	Currency            string                 `protobuf:"bytes,6,opt,name=currency,proto3" json:"currency,omitempty"`
+	PriceStatus         string                 `protobuf:"bytes,7,opt,name=price_status,json=priceStatus,proto3" json:"price_status,omitempty"`
+	Items               []*OrderItem           `protobuf:"bytes,8,rep,name=items,proto3" json:"items,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *OrderDetails) Reset() {
+	*x = OrderDetails{}
+	mi := &file_worker_v1_social_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrderDetails) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrderDetails) ProtoMessage() {}
+
+func (x *OrderDetails) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_social_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrderDetails.ProtoReflect.Descriptor instead.
+func (*OrderDetails) Descriptor() ([]byte, []int) {
+	return file_worker_v1_social_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *OrderDetails) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *OrderDetails) GetCreatedMs() int64 {
+	if x != nil {
+		return x.CreatedMs
+	}
+	return 0
+}
+
+func (x *OrderDetails) GetCatalogId() string {
+	if x != nil {
+		return x.CatalogId
+	}
+	return ""
+}
+
+func (x *OrderDetails) GetSubtotalAmount_1000() int64 {
+	if x != nil {
+		return x.SubtotalAmount_1000
+	}
+	return 0
+}
+
+func (x *OrderDetails) GetTotalAmount_1000() int64 {
+	if x != nil {
+		return x.TotalAmount_1000
+	}
+	return 0
+}
+
+func (x *OrderDetails) GetCurrency() string {
+	if x != nil {
+		return x.Currency
+	}
+	return ""
+}
+
+func (x *OrderDetails) GetPriceStatus() string {
+	if x != nil {
+		return x.PriceStatus
+	}
+	return ""
+}
+
+func (x *OrderDetails) GetItems() []*OrderItem {
+	if x != nil {
+		return x.Items
 	}
 	return nil
 }
@@ -1469,7 +1742,7 @@ const file_worker_v1_social_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"6\n" +
 	"\x10BusinessCategory\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"\xbb\x03\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"\xaa\x04\n" +
 	"\x19SetBusinessProfileRequest\x12%\n" +
 	"\vdescription\x18\x01 \x01(\tH\x00R\vdescription\x88\x01\x01\x12\x1d\n" +
 	"\aaddress\x18\x02 \x01(\tH\x01R\aaddress\x88\x01\x01\x12\x19\n" +
@@ -1482,14 +1755,41 @@ const file_worker_v1_social_proto_rawDesc = "" +
 	"\x0eset_categories\x18\t \x01(\bR\rsetCategories\x12!\n" +
 	"\fcategory_ids\x18\n" +
 	" \x03(\tR\vcategoryIds\x121\n" +
-	"\x05hours\x18\v \x01(\v2\x1b.worker.v1.BusinessHoursSetR\x05hoursB\x0e\n" +
+	"\x05hours\x18\v \x01(\v2\x1b.worker.v1.BusinessHoursSetR\x05hours\x12%\n" +
+	"\x0eclear_location\x18\f \x01(\bR\rclearLocation\x12%\n" +
+	"\x0elocation_clear\x18\r \x01(\tR\rlocationClear\x12\x1f\n" +
+	"\vclear_hours\x18\x0e \x01(\bR\n" +
+	"clearHoursB\x0e\n" +
 	"\f_descriptionB\n" +
 	"\n" +
 	"\b_addressB\b\n" +
 	"\x06_email\"\\\n" +
 	"\x10BusinessHoursSet\x12\x1a\n" +
 	"\btimezone\x18\x01 \x01(\tR\btimezone\x12,\n" +
-	"\x04days\x18\x02 \x03(\v2\x18.worker.v1.BusinessHoursR\x04days2\xb6\x06\n" +
+	"\x04days\x18\x02 \x03(\v2\x18.worker.v1.BusinessHoursR\x04days\"B\n" +
+	"\x0fGetOrderRequest\x12\x19\n" +
+	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\xd9\x01\n" +
+	"\tOrderItem\x12\x1d\n" +
+	"\n" +
+	"product_id\x18\x01 \x01(\tR\tproductId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12*\n" +
+	"\x11price_amount_1000\x18\x03 \x01(\x03R\x0fpriceAmount1000\x12\x1a\n" +
+	"\bcurrency\x18\x04 \x01(\tR\bcurrency\x12\x1a\n" +
+	"\bquantity\x18\x05 \x01(\x05R\bquantity\x12\x1b\n" +
+	"\timage_url\x18\x06 \x01(\tR\bimageUrl\x12\x18\n" +
+	"\avariant\x18\a \x01(\tR\avariant\"\xa5\x02\n" +
+	"\fOrderDetails\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
+	"\n" +
+	"created_ms\x18\x02 \x01(\x03R\tcreatedMs\x12\x1d\n" +
+	"\n" +
+	"catalog_id\x18\x03 \x01(\tR\tcatalogId\x120\n" +
+	"\x14subtotal_amount_1000\x18\x04 \x01(\x03R\x12subtotalAmount1000\x12*\n" +
+	"\x11total_amount_1000\x18\x05 \x01(\x03R\x0ftotalAmount1000\x12\x1a\n" +
+	"\bcurrency\x18\x06 \x01(\tR\bcurrency\x12!\n" +
+	"\fprice_status\x18\a \x01(\tR\vpriceStatus\x12*\n" +
+	"\x05items\x18\b \x03(\v2\x14.worker.v1.OrderItemR\x05items2\xf7\x06\n" +
 	"\x06Social\x12P\n" +
 	"\x10GetStatusPrivacy\x12\".worker.v1.GetStatusPrivacyRequest\x1a\x18.worker.v1.StatusPrivacy\x12O\n" +
 	"\fListChannels\x12\x1e.worker.v1.ListChannelsRequest\x1a\x1f.worker.v1.ListChannelsResponse\x12>\n" +
@@ -1501,7 +1801,8 @@ const file_worker_v1_social_proto_rawDesc = "" +
 	"\fChannelReact\x12\x1e.worker.v1.ChannelReactRequest\x1a\x1f.worker.v1.ChannelReactResponse\x12L\n" +
 	"\vLabelAction\x12\x1d.worker.v1.LabelActionRequest\x1a\x1e.worker.v1.LabelActionResponse\x12Z\n" +
 	"\x12GetBusinessProfile\x12$.worker.v1.GetBusinessProfileRequest\x1a\x1e.worker.v1.BusinessProfileInfo\x12Z\n" +
-	"\x12SetBusinessProfile\x12$.worker.v1.SetBusinessProfileRequest\x1a\x1e.worker.v1.BusinessProfileInfoB7Z5github.com/douglasdf99/litezap/gen/worker/v1;workerv1b\x06proto3"
+	"\x12SetBusinessProfile\x12$.worker.v1.SetBusinessProfileRequest\x1a\x1e.worker.v1.BusinessProfileInfo\x12?\n" +
+	"\bGetOrder\x12\x1a.worker.v1.GetOrderRequest\x1a\x17.worker.v1.OrderDetailsB7Z5github.com/douglasdf99/litezap/gen/worker/v1;workerv1b\x06proto3"
 
 var (
 	file_worker_v1_social_proto_rawDescOnce sync.Once
@@ -1515,7 +1816,7 @@ func file_worker_v1_social_proto_rawDescGZIP() []byte {
 	return file_worker_v1_social_proto_rawDescData
 }
 
-var file_worker_v1_social_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_worker_v1_social_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_worker_v1_social_proto_goTypes = []any{
 	(*GetStatusPrivacyRequest)(nil),   // 0: worker.v1.GetStatusPrivacyRequest
 	(*StatusPrivacy)(nil),             // 1: worker.v1.StatusPrivacy
@@ -1538,42 +1839,48 @@ var file_worker_v1_social_proto_goTypes = []any{
 	(*BusinessCategory)(nil),          // 18: worker.v1.BusinessCategory
 	(*SetBusinessProfileRequest)(nil), // 19: worker.v1.SetBusinessProfileRequest
 	(*BusinessHoursSet)(nil),          // 20: worker.v1.BusinessHoursSet
-	nil,                               // 21: worker.v1.BusinessProfileInfo.OptionsEntry
-	(*ChannelPost)(nil),               // 22: worker.v1.ChannelPost
+	(*GetOrderRequest)(nil),           // 21: worker.v1.GetOrderRequest
+	(*OrderItem)(nil),                 // 22: worker.v1.OrderItem
+	(*OrderDetails)(nil),              // 23: worker.v1.OrderDetails
+	nil,                               // 24: worker.v1.BusinessProfileInfo.OptionsEntry
+	(*ChannelPost)(nil),               // 25: worker.v1.ChannelPost
 }
 var file_worker_v1_social_proto_depIdxs = []int32{
 	2,  // 0: worker.v1.ListChannelsResponse.channels:type_name -> worker.v1.Channel
-	22, // 1: worker.v1.ChannelMessagesResponse.posts:type_name -> worker.v1.ChannelPost
+	25, // 1: worker.v1.ChannelMessagesResponse.posts:type_name -> worker.v1.ChannelPost
 	16, // 2: worker.v1.BusinessProfileInfo.hours:type_name -> worker.v1.BusinessHours
-	21, // 3: worker.v1.BusinessProfileInfo.options:type_name -> worker.v1.BusinessProfileInfo.OptionsEntry
+	24, // 3: worker.v1.BusinessProfileInfo.options:type_name -> worker.v1.BusinessProfileInfo.OptionsEntry
 	18, // 4: worker.v1.BusinessProfileInfo.category_list:type_name -> worker.v1.BusinessCategory
 	20, // 5: worker.v1.SetBusinessProfileRequest.hours:type_name -> worker.v1.BusinessHoursSet
 	16, // 6: worker.v1.BusinessHoursSet.days:type_name -> worker.v1.BusinessHours
-	0,  // 7: worker.v1.Social.GetStatusPrivacy:input_type -> worker.v1.GetStatusPrivacyRequest
-	3,  // 8: worker.v1.Social.ListChannels:input_type -> worker.v1.ListChannelsRequest
-	5,  // 9: worker.v1.Social.GetChannel:input_type -> worker.v1.GetChannelRequest
-	6,  // 10: worker.v1.Social.CreateChannel:input_type -> worker.v1.CreateChannelRequest
-	7,  // 11: worker.v1.Social.ChannelAction:input_type -> worker.v1.ChannelActionRequest
-	9,  // 12: worker.v1.Social.ChannelMessages:input_type -> worker.v1.ChannelMessagesRequest
-	11, // 13: worker.v1.Social.ChannelReact:input_type -> worker.v1.ChannelReactRequest
-	13, // 14: worker.v1.Social.LabelAction:input_type -> worker.v1.LabelActionRequest
-	15, // 15: worker.v1.Social.GetBusinessProfile:input_type -> worker.v1.GetBusinessProfileRequest
-	19, // 16: worker.v1.Social.SetBusinessProfile:input_type -> worker.v1.SetBusinessProfileRequest
-	1,  // 17: worker.v1.Social.GetStatusPrivacy:output_type -> worker.v1.StatusPrivacy
-	4,  // 18: worker.v1.Social.ListChannels:output_type -> worker.v1.ListChannelsResponse
-	2,  // 19: worker.v1.Social.GetChannel:output_type -> worker.v1.Channel
-	2,  // 20: worker.v1.Social.CreateChannel:output_type -> worker.v1.Channel
-	8,  // 21: worker.v1.Social.ChannelAction:output_type -> worker.v1.ChannelActionResponse
-	10, // 22: worker.v1.Social.ChannelMessages:output_type -> worker.v1.ChannelMessagesResponse
-	12, // 23: worker.v1.Social.ChannelReact:output_type -> worker.v1.ChannelReactResponse
-	14, // 24: worker.v1.Social.LabelAction:output_type -> worker.v1.LabelActionResponse
-	17, // 25: worker.v1.Social.GetBusinessProfile:output_type -> worker.v1.BusinessProfileInfo
-	17, // 26: worker.v1.Social.SetBusinessProfile:output_type -> worker.v1.BusinessProfileInfo
-	17, // [17:27] is the sub-list for method output_type
-	7,  // [7:17] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	22, // 7: worker.v1.OrderDetails.items:type_name -> worker.v1.OrderItem
+	0,  // 8: worker.v1.Social.GetStatusPrivacy:input_type -> worker.v1.GetStatusPrivacyRequest
+	3,  // 9: worker.v1.Social.ListChannels:input_type -> worker.v1.ListChannelsRequest
+	5,  // 10: worker.v1.Social.GetChannel:input_type -> worker.v1.GetChannelRequest
+	6,  // 11: worker.v1.Social.CreateChannel:input_type -> worker.v1.CreateChannelRequest
+	7,  // 12: worker.v1.Social.ChannelAction:input_type -> worker.v1.ChannelActionRequest
+	9,  // 13: worker.v1.Social.ChannelMessages:input_type -> worker.v1.ChannelMessagesRequest
+	11, // 14: worker.v1.Social.ChannelReact:input_type -> worker.v1.ChannelReactRequest
+	13, // 15: worker.v1.Social.LabelAction:input_type -> worker.v1.LabelActionRequest
+	15, // 16: worker.v1.Social.GetBusinessProfile:input_type -> worker.v1.GetBusinessProfileRequest
+	19, // 17: worker.v1.Social.SetBusinessProfile:input_type -> worker.v1.SetBusinessProfileRequest
+	21, // 18: worker.v1.Social.GetOrder:input_type -> worker.v1.GetOrderRequest
+	1,  // 19: worker.v1.Social.GetStatusPrivacy:output_type -> worker.v1.StatusPrivacy
+	4,  // 20: worker.v1.Social.ListChannels:output_type -> worker.v1.ListChannelsResponse
+	2,  // 21: worker.v1.Social.GetChannel:output_type -> worker.v1.Channel
+	2,  // 22: worker.v1.Social.CreateChannel:output_type -> worker.v1.Channel
+	8,  // 23: worker.v1.Social.ChannelAction:output_type -> worker.v1.ChannelActionResponse
+	10, // 24: worker.v1.Social.ChannelMessages:output_type -> worker.v1.ChannelMessagesResponse
+	12, // 25: worker.v1.Social.ChannelReact:output_type -> worker.v1.ChannelReactResponse
+	14, // 26: worker.v1.Social.LabelAction:output_type -> worker.v1.LabelActionResponse
+	17, // 27: worker.v1.Social.GetBusinessProfile:output_type -> worker.v1.BusinessProfileInfo
+	17, // 28: worker.v1.Social.SetBusinessProfile:output_type -> worker.v1.BusinessProfileInfo
+	23, // 29: worker.v1.Social.GetOrder:output_type -> worker.v1.OrderDetails
+	19, // [19:30] is the sub-list for method output_type
+	8,  // [8:19] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_worker_v1_social_proto_init() }
@@ -1589,7 +1896,7 @@ func file_worker_v1_social_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_worker_v1_social_proto_rawDesc), len(file_worker_v1_social_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   22,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

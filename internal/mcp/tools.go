@@ -559,6 +559,7 @@ func (t *tools) register(s *sdk.Server) {
 	t.registerGroups(s)    // marco 8 (groups.go)
 	t.registerAccount(s)   // marco 9 (account.go)
 	t.registerSocial(s)    // marco 10 (social.go)
+	t.registerCatalog(s)   // marco 12 (catalog.go)
 	t.registerAttendant(s) // built-in attendant, read-only (attendant.go)
 }
 

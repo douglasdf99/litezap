@@ -98,13 +98,13 @@ o seu sistema (webhook, n8n).
 
 | Grupo | Ferramentas | Observação |
 |---|---|---|
-| `ler` | `get_messages`, `get_message_status`, `get_contact` e `get_group` **só da conversa do gatilho**; `list_chats` (só nomes, horário e não lidas, sem texto), `list_groups`, `list_labels`, `get_instance_status` | Padrão |
+| `ler` | `get_messages`, `get_message_status`, `get_contact` e `get_group` **só da conversa do gatilho**; `list_chats` (só nomes, horário e não lidas, sem texto), `list_groups`, `list_labels`, `get_instance_status`, `get_catalog` e `get_product` (catálogo do WhatsApp) | Padrão |
 | `ler_outros_chats` | As mesmas leituras em **qualquer** conversa, mais `list_contacts` (agenda) | **Risco**: o conteúdo de outras conversas vai para o provedor de IA; pede confirmação |
 | `responder_no_chat` | `send_message`, `send_reaction` | Só no chat que disparou a execução. Padrão |
 | `enviar_outros_chats` | `send_message`, `send_reaction` em qualquer chat | **Risco**: pede confirmação no painel |
 | `etiquetas` | `label_chat` | Só contas Business. Pode etiquetar **qualquer** conversa |
 | `grupos` | `create_group`, `update_group`, `manage_group_participants`, `get_group_invite_link` | **Risco de banimento**: pede confirmação. O link de convite conta como escrita (rascunho na aprovação) |
-| `midia` | `send_media` | Segue a regra de chat de `responder_no_chat` |
+| `midia` | `send_media`, `send_product` (produto do catálogo) | Segue a regra de chat de `responder_no_chat` e os limites de envio da execução |
 
 O **motor** aplica as permissões, não só o prompt. Um envio para outro chat sem `enviar_outros_chats` é recusado,
 mesmo que uma mensagem convença o modelo a tentar, e a recusa aparece como passo `refused` na execução. Ferramentas

@@ -64,7 +64,8 @@ fora do escopo** de propósito.
 | Link com prévia | `link_preview` (`auto` ou cartão pronto) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Enquete e votos | `type: poll` e [`message.poll_vote`](/docs/eventos/message-poll-vote/); votar pela API não | <span class="lz-badge lz-badge--soon">Parcial</span> |
 | Eventos (agenda) | — | <span class="lz-badge lz-badge--no">Avaliar</span> |
-| Produto, catálogo, pedidos | — | <span class="lz-badge lz-badge--no">Avaliar</span> |
+| Enviar produto do catálogo | `type: product` ([tipos](/docs/api/mensagens/tipos/)); catálogo inteiro pelo `catalog_link` | <span class="lz-badge lz-badge--soon">Disponível</span> (aguardando validação num número Business real) |
+| Pedidos | [`order.received`](/docs/eventos/order-received/) e [`GET /orders/{order_id}`](/docs/api/catalogo/detalhes-de-um-pedido/) (só leitura) | <span class="lz-badge lz-badge--soon">Parcial</span> |
 | Botões, listas, OTP/PIX, carrossel | — (respostas a eles chegam em [`message.button_reply`](/docs/eventos/message-button-reply/)) | <span class="lz-badge lz-badge--exp">Exp</span> |
 
 ### Fila
@@ -125,7 +126,8 @@ fora do escopo** de propósito.
 | Administração avançada de canais (editar, apagar, assinantes, admins) | — | <span class="lz-badge lz-badge--no">Avaliar</span> |
 | Etiquetas e perfil comercial (leitura) | [Etiquetas e Business](/docs/api/business/) e [`label.updated`](/docs/eventos/label-updated/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Editar perfil comercial (descrição, endereço, e-mail, sites, horário, categorias) | [`PATCH /business/profile`](/docs/api/business/editar-perfil-comercial/) e [`business.profile_updated`](/docs/eventos/business-profile-updated/) | <span class="lz-badge lz-badge--ok">Disponível</span> (aguardando validação num número Business real) |
-| Catálogo e coleções | — | <span class="lz-badge lz-badge--no">Avaliar</span> |
+| Catálogo e coleções (leitura) | [Catálogo e pedidos](/docs/api/catalogo/) | <span class="lz-badge lz-badge--soon">Disponível</span> (aguardando validação num número Business real) |
+| Criar, editar e apagar produtos e coleções | — (exige o fluxo de token de anúncios do WhatsApp; risco para o número) | <span class="lz-badge lz-badge--no">Avaliar</span> |
 | Listas de transmissão | — (envio em massa é gatilho de banimento) | <span class="lz-badge lz-badge--no">Fora</span> |
 | Chamadas de voz / SIP | — (não suportado pela biblioteca de protocolo) | <span class="lz-badge lz-badge--no">Fora</span> |
 

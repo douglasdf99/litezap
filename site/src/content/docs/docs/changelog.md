@@ -5,6 +5,44 @@ description: O que mudou em cada marco do LiteZap.
 
 As versões seguem os marcos do motor. Mudanças que quebram compatibilidade são marcadas com **Quebra**.
 
+## Catálogo e pedidos, fase 1 (M12b)
+
+**Novo**
+
+- [Catálogo e pedidos](/docs/guias/catalogo-e-pedidos/): ler o catálogo do WhatsApp Business do próprio número ou
+  o catálogo público de outra empresa ([`GET /catalog`](/docs/api/catalogo/ler-o-catalogo/), produtos, coleções e
+  a foto de cada produto), pela proxy da instância e com cache de 5 minutos. O catálogo vem do serviço GraphQL
+  que o WhatsApp Web usa; o token e os `doc_id` ficam em `whatsapp_catalog` na config, para serem trocados sem
+  nova versão quando a Meta mudar (a API responde `upstream_changed`).
+- Mensagem `type: "product"` em `POST /messages` (`product_id`, `catalog_owner`, `body`, `footer`): cartão de
+  produto com foto, pela fila de envio como qualquer mensagem. `catalog_link` (`https://wa.me/c/<número>`) para
+  compartilhar o catálogo inteiro como texto.
+- Pedidos: mensagens de pedido chegam como tipo `order` e no evento novo
+  [`order.received`](/docs/eventos/order-received/); [`GET /orders`](/docs/api/catalogo/pedidos-recebidos/) e
+  [`GET /orders/{order_id}`](/docs/api/catalogo/detalhes-de-um-pedido/) (pelo socket com `GetOrderDetails`, com o
+  GraphQL como alternativa). O token do pedido fica no servidor. Mensagens de produto recebidas também ganham
+  `product` nos dados.
+- MCP: `get_catalog`, `get_product`, `send_product` e `get_order`. Agentes: `get_catalog` e `get_product` no grupo
+  `ler`, `send_product` no grupo `midia` (com as regras de chat e os limites de envio da execução).
+- Atendente IA: `knowledge_source: "catalog"` no perfil usa o catálogo do WhatsApp como lista de produtos (nome,
+  preço, descrição e disponibilidade), atualizada a cada 10 minutos.
+- Painel: aba **Catálogo** (só contas Business), com a grade de produtos, preço em reais, produtos ocultos ou em
+  análise marcados, filtro por coleção, **Enviar para…** e os pedidos recentes.
+- Perfil comercial: `clear` remove campos de forma explícita (`location`, `hours`, `email`, `websites`,
+  `description`, `address`); é o único jeito de tirar o pin do mapa e o horário. `null` nesses campos agora
+  responde `400`. Botões **Remover localização** e **Remover horário** no painel e `clear` em
+  `update_business_profile`.
+
+**Ainda não (de propósito)**
+
+- Criar, editar, ocultar ou apagar produtos e coleções: no WhatsApp isso exige um token de conta de anúncios por
+  um fluxo não documentado, que pode pedir verificação por e-mail e tem código de bloqueio próprio. Os produtos
+  continuam sendo criados no app WhatsApp Business (Ferramentas comerciais > Catálogo).
+
+**Aguardando validação num número Business real**: os `doc_id` do GraphQL, as codificações de `clear` da
+localização e do horário (`location_clear` escolhe entre `empty_elements`, `empty_content` e `empty_address`),
+como o cartão de produto aparece no celular e se o IQ de detalhes do pedido ainda responde.
+
 ## Perfil comercial editável (M12a)
 
 **Novo**

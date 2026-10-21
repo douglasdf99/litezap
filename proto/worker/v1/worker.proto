@@ -189,7 +189,7 @@ message Message {
   int64 timestamp_ms = 6;
   string push_name = 7;
   // text | image | video | gif | ptv | audio | document | sticker | location | contact |
-  // poll | reaction | button_reply | unknown, and the updates edit | revoke | poll_vote (not new messages:
+  // poll | reaction | button_reply | product | order | unknown, and the updates edit | revoke | poll_vote (not new messages:
   // target_id names the message they change).
   string type = 8;
   string text = 9;      // body, caption, reaction emoji, poll name, new text of an edit
@@ -206,6 +206,39 @@ message Message {
   // revoke: WhatsApp marked it as an admin deleting another member's message (groups)
   bool admin_revoke = 20;
   ButtonReply button_reply = 21; // type button_reply
+  Product product = 22; // type product: a catalog product card
+  Order order = 23;     // type order: an order placed from the catalog (token included)
+}
+
+// Product is a catalog product as sent in a ProductMessage (prices in thousandths).
+message Product {
+  string product_id = 1;
+  string title = 2;
+  string description = 3;
+  string currency = 4;
+  int64 price_amount_1000 = 5;      // 0 with currency "": no price shown
+  int64 sale_price_amount_1000 = 6; // 0: no sale price
+  string retailer_id = 7;
+  string url = 8;
+  uint32 image_count = 9;
+  string business_owner_jid = 10;   // <number>@s.whatsapp.net
+  string body = 11;                 // caption under the card
+  string footer = 12;
+  bytes thumbnail = 13;             // small JPEG of the image (send)
+}
+
+// Order is a received OrderMessage. The token authorizes reading the order details; the
+// supervisor keeps it server-side and never exposes it.
+message Order {
+  string order_id = 1;
+  string token = 2;
+  string seller_jid = 3;
+  int32 item_count = 4;
+  string title = 5;
+  string message = 6;
+  int64 total_amount_1000 = 7;
+  string currency = 8;
+  string status = 9; // inquiry | accepted | declined
 }
 
 // ButtonReply is the answer to a button, list, template or interactive message.
@@ -281,7 +314,7 @@ message SendRequest {
   string to = 1;         // chat JID
   string message_id = 2; // WhatsApp message id chosen by the supervisor (same on every retry)
   // text | image | video | gif | ptv | audio | document | sticker | location | contact |
-  // poll | reaction | edit | revoke | pin | forward
+  // poll | reaction | edit | revoke | pin | forward | product
   string type = 3;
   // body, caption, reaction emoji ("" removes a reaction), poll name or new text of an edit
   string text = 4;
@@ -312,6 +345,9 @@ message SendRequest {
   bytes forward_ref = 26;
   bool forwarded = 27;
   StatusStyle status_style = 28; // text to status@broadcast
+  // type product (marco 12): the catalog product; media_path is its first image, uploaded
+  // as a normal encrypted image (with thumbnail as its JPEG thumbnail).
+  Product product = 29;
 }
 message SendResponse {
   string message_id = 1;

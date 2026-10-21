@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/mail"
@@ -55,10 +57,20 @@ type BusinessWeek struct {
 	Days     map[string]BusinessDay `json:"days"`
 }
 
-// BusinessProfilePatch changes the business profile; absent (or null) fields are kept.
-// websites and categories replace the current lists; hours replace the whole week (days
-// left out are closed); latitude and longitude go together.
+// BusinessProfilePatch changes the business profile; absent fields are kept. websites and
+// categories replace the current lists; hours replace the whole week (days left out are
+// closed); latitude and longitude go together.
+//
+// Clearing is explicit, with one API: clear lists the fields to remove (location, hours,
+// email, websites, description, address). A JSON null on those fields is refused (it
+// would be ambiguous with "absent"); "" and [] still clear the text fields and the
+// websites as before. location_clear (experimental) picks the IQ encoding of the location
+// clear while it is validated on real devices: empty_elements (default) | empty_content |
+// empty_address.
 type BusinessProfilePatch struct {
+	Clear         []string `json:"clear,omitempty"`
+	LocationClear string   `json:"location_clear,omitempty"`
+
 	Description *string       `json:"description,omitempty"`
 	Address     *string       `json:"address,omitempty"`
 	Email       *string       `json:"email,omitempty"`
@@ -67,6 +79,36 @@ type BusinessProfilePatch struct {
 	Longitude   *float64      `json:"longitude,omitempty"`
 	Categories  *[]string     `json:"categories,omitempty"` // category ids (see category_list in GET)
 	Hours       *BusinessWeek `json:"hours,omitempty"`
+}
+
+// clearableFields are the fields of clear, in a stable order.
+var clearableFields = []string{"description", "address", "email", "websites", "location", "hours"}
+
+// UnmarshalJSON refuses an explicit null on a clearable field (use clear) and unknown
+// fields, like the strict decoder of the API.
+func (p *BusinessProfilePatch) UnmarshalJSON(b []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	for _, k := range []string{"description", "address", "email", "websites", "latitude", "longitude", "hours", "location"} {
+		if v, ok := raw[k]; ok && string(bytes.TrimSpace(v)) == "null" {
+			f := k
+			if k == "latitude" || k == "longitude" {
+				f = "location"
+			}
+			return apierr.Validation(fmt.Sprintf(`%s: null is not a clear; send "clear": ["%s"]`, k, f))
+		}
+	}
+	type plain BusinessProfilePatch
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	var out plain
+	if err := dec.Decode(&out); err != nil {
+		return err
+	}
+	*p = BusinessProfilePatch(out)
+	return nil
 }
 
 var (
@@ -118,6 +160,53 @@ func validWebsite(raw string) bool {
 func businessSetRequest(p BusinessProfilePatch) (*workerv1.SetBusinessProfileRequest, []string, error) {
 	req := &workerv1.SetBusinessProfileRequest{}
 	var fields []string
+	clear := map[string]bool{}
+	for _, f := range p.Clear {
+		f = strings.ToLower(strings.TrimSpace(f))
+		if !slices.Contains(clearableFields, f) {
+			return nil, nil, apierr.Validation("clear takes location, hours, email, websites, description and address")
+		}
+		clear[f] = true
+	}
+	set := map[string]bool{"description": p.Description != nil, "address": p.Address != nil, "email": p.Email != nil,
+		"websites": p.Websites != nil, "location": p.Latitude != nil || p.Longitude != nil, "hours": p.Hours != nil}
+	for _, f := range clearableFields {
+		if clear[f] && set[f] {
+			return nil, nil, apierr.Validation(f + ": send a value or clear it, not both")
+		}
+	}
+	empty := ""
+	for _, f := range clearableFields {
+		if !clear[f] {
+			continue
+		}
+		switch f {
+		case "description":
+			p.Description = &empty
+		case "address":
+			p.Address = &empty
+		case "email":
+			p.Email = &empty
+		case "websites":
+			p.Websites = &[]string{}
+		case "location":
+			req.ClearLocation = true
+		case "hours":
+			req.ClearHours = true
+		}
+	}
+	if p.LocationClear != "" {
+		if !req.ClearLocation {
+			return nil, nil, apierr.Validation(`location_clear only applies with "clear": ["location"]`)
+		}
+		if !slices.Contains([]string{"empty_elements", "empty_content", "empty_address"}, p.LocationClear) {
+			return nil, nil, apierr.Validation("location_clear must be empty_elements, empty_content or empty_address")
+		}
+		if p.LocationClear == "empty_address" && p.Address != nil {
+			return nil, nil, apierr.Validation("location_clear empty_address clears the address too: do not send address with it")
+		}
+		req.LocationClear = p.LocationClear
+	}
 	if p.Description != nil {
 		if utf8.RuneCountInString(*p.Description) > maxBizDescription {
 			return nil, nil, apierr.Validation("description: up to 512 characters")
@@ -189,8 +278,14 @@ func businessSetRequest(p BusinessProfilePatch) (*workerv1.SetBusinessProfileReq
 		}
 		req.Hours, fields = hs, append(fields, "hours")
 	}
+	if req.ClearLocation {
+		fields = append(fields, "location")
+	}
+	if req.ClearHours {
+		fields = append(fields, "hours")
+	}
 	if len(fields) == 0 {
-		return nil, nil, apierr.Validation("nothing to change: send at least one of description, address, email, websites, latitude/longitude, categories, hours")
+		return nil, nil, apierr.Validation("nothing to change: send at least one of description, address, email, websites, latitude/longitude, categories, hours, clear")
 	}
 	return req, fields, nil
 }
@@ -310,6 +405,9 @@ func (s *Social) UpdateBusinessProfile(ctx context.Context, instanceID string, p
 	if err != nil {
 		return BusinessAccountView{}, err
 	}
+	if req.ClearLocation && req.LocationClear == "" {
+		req.LocationClear = s.LocationClear
+	}
 	cli, err := s.client(ctx, instanceID)
 	if err != nil {
 		return BusinessAccountView{}, err
@@ -330,8 +428,14 @@ func (s *Social) UpdateBusinessProfile(ctx context.Context, instanceID string, p
 	}
 	v := businessView(out)
 	if s.Events != nil {
+		var cleared []string
+		for _, f := range clearableFields {
+			if slices.ContainsFunc(p.Clear, func(c string) bool { return strings.EqualFold(strings.TrimSpace(c), f) }) {
+				cleared = append(cleared, f)
+			}
+		}
 		s.Events.Publish(instanceID, events.TypeBusinessProfileUpdated, events.BusinessProfileUpdated{
-			Fields: fields, Profile: v, Source: "api", Timestamp: s.now().UTC()})
+			Fields: fields, Cleared: cleared, Profile: v, Source: "api", Timestamp: s.now().UTC()})
 	}
 	return v, nil
 }

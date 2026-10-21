@@ -546,3 +546,18 @@ The response is at `data.xwa_checkout_get_order_info.order`. The image dimension
 - [Auties00/Cobalt](https://github.com/Auties00/Cobalt): `wire-stanza/.../iq/biz/IqUpdateCartEnabledRequest.java`, `wire-graphql/.../facebook/business/BizCatalogManagement*`, `whatsappWeb/auth/BpAccessTokenAndSessionCookies*`.
 - [ZanaNowshad/AMWAPOS](https://github.com/ZanaNowshad/AMWAPOS) `crates/amwapos-hub/src/whatsapp/catalog_proto.rs` (Rust port of the legacy IQs; prices in thousandths).
 - Product and collection review timing: third-party guides, e.g. [interakt.shop](https://www.interakt.shop/blog/whatsapp-collections/), [digilogy.co](https://digilogy.co/news/whatsapp-business-catalog-collections/).
+
+---
+
+## 12. Addendum, 2026-10-21: phase 1 built, and clearing profile fields
+
+**Built (phase 1, device validation pending).**
+- Reads use the public GraphQL of §2 from the supervisor (`internal/catalog`), through the instance's effective proxy, cached 5 minutes. Token, `lang` and the four doc_ids are config (`whatsapp_catalog`). The product-list IQ fallback (§2.2) was **not** built: one transport is enough until GraphQL fails on a device.
+- `type: "product"` sends follow §5 (normal encrypted image with JPEG thumbnail, `businessOwnerJID`, no `CatalogSnapshot`). The catalog-image upload of §4 is not needed for phase 1 and was not built.
+- Orders: `OrderMessage` parsed in the worker; the token is stored server-side; details try `GetOrderDetails` (10 s) and fall back to `xwa_checkout_get_order_info`.
+
+**Clearing the business profile's location and hours [L].** Read in the current wa-diff bundle (`WAWebBusinessProfileJob`, `WAWebEditFormBusinessAddressField.react`, `WAWebBusinessHoursModal.react`):
+- WA Web **never removes the map pin**: the address field shows "Edit map on mobile", and `editBusinessProfile` sends `<latitude>`/`<longitude>` as `String(value)` only when defined. A null would be sent as the text "null", which WA Web never does.
+- WA Web **always sends a timezone** with `<business_hours>` (the browser's when the profile has none) and has no "no hours" action; it may add `<business_hours_note>`.
+- WA Web clears the websites with a **contentless** `<website/>` (`wap("website", null)`), not with empty text. The child order is address, latitude, longitude, description, email, website, categories, business_hours.
+- So no public client shows the clear encodings. LiteZap tries, behind `location_clear` (request) / `business_location_clear` (config): `empty_elements` (`<latitude/><longitude/>`, like the website clear, default), `empty_content` (`<latitude></latitude>…`) and `empty_address` (`<address/>` alone). Hours clear: `<business_hours/>` with no timezone and no configs. Golden tests pin each encoding (`internal/worker/catalog_test.go`).

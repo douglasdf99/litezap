@@ -210,9 +210,22 @@ tags:
       Só contas WhatsApp Business (em conta pessoal, `409 business_account_required`). As etiquetas vêm do
       celular pelo app state e cada mudança sai em `label.updated`. O perfil comercial pode ser lido e
       editado (descrição, endereço, localização, e-mail, sites, categorias e horário; marco 12, aguardando
-      validação num número Business real); cada edição sai em `business.profile_updated`. Catálogo,
-      coleções e pedidos não existem no whatsmeow.
+      validação num número Business real); cada edição sai em `business.profile_updated`. Para remover um
+      campo, use `clear` (a localização e o horário só saem assim). Catálogo e pedidos estão em
+      [Catálogo e pedidos](/docs/api/catalogo/).
     x-concept: /docs/conceitos/instancias/
+  - name: Catálogo e pedidos
+    description: Ler catálogos do WhatsApp Business, enviar produtos e ler pedidos.
+    x-slug: catalogo
+    x-intro: |
+      Fase 1 do catálogo (marco 12): só leitura. O catálogo do próprio número (ou o catálogo público de
+      outra empresa, por `jid`) vem do serviço GraphQL que o WhatsApp Web usa, pela proxy da instância, com
+      cache de 5 minutos. Produtos são enviados como mensagem `type: "product"` (pela fila). Pedidos feitos
+      pelo carrinho chegam como mensagem `order` e no evento `order.received`. Criar, editar ou apagar
+      produtos e coleções **não** é oferecido: no WhatsApp isso exige um token de conta de anúncios obtido
+      por um fluxo não documentado, com risco para o número. Veja o guia
+      [Catálogo e pedidos](/docs/guias/catalogo-e-pedidos/).
+    x-concept: /docs/guias/catalogo-e-pedidos/
   - name: Operação
     description: Saúde do processo, prontidão e identidade do token.
     x-slug: operacao
@@ -4235,15 +4248,22 @@ paths:
       summary: Editar perfil comercial
       x-litezap-scope: instancia
       description: |
-        Altera só os campos enviados (os ausentes ou `null` ficam como estão) e devolve o perfil lido de novo do
-        WhatsApp. `websites` e `categories` substituem as listas atuais (`websites: []` remove os sites);
+        Altera só os campos enviados (os ausentes ficam como estão) e devolve o perfil lido de novo do
+        WhatsApp. Para remover, use `clear` com os campos (`location`, `hours`, `email`, `websites`,
+        `description`, `address`); `null` num desses campos responde `400` (seria ambíguo com "ausente").
+        `"clear": ["location"]` tira o pin do mapa e `"clear": ["hours"]` tira o horário inteiro (sem fuso),
+        os dois **aguardando validação no aparelho**. `location_clear` (experimental) escolhe a codificação
+        do IQ enquanto isso: `empty_elements` (padrão, ou o `business_location_clear` da config),
+        `empty_content` ou `empty_address` (esta também apaga o endereço). `websites` e `categories` substituem as listas atuais (`websites: []` remove os sites);
         `hours` substitui a semana inteira (dias ausentes ficam fechados); `latitude` e `longitude` vão
         juntas. Token admin ou da instância; chaves de API com escopo (`lzk_`) não podem. Limite de 5
         alterações por minuto e 50 por dia por instância.
 
         Os campos vão ao WhatsApp como o WhatsApp Web e o Baileys enviam (IQ `w:biz`, mutação `delta`).
-        Localização, categorias e remover os sites ainda aguardam validação num número Business real: se o
-        WhatsApp recusar um valor, a resposta é `400 validation_failed` com o código do servidor.
+        Em 2026-10-21, num número Business real, descrição, endereço, localização e horário foram aceitos e
+        apareceram no celular, e `""` apagou descrição e endereço. Categorias, remover sites e os `clear` de
+        localização e horário ainda aguardam essa validação: se o WhatsApp recusar um valor, a resposta é
+        `400 validation_failed` com o código do servidor.
       requestBody:
         required: true
         content:
@@ -4261,6 +4281,158 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/BusinessRequired" }
         "429": { $ref: "#/components/responses/SocialRateLimited" }
+
+  /v1/instances/{id}/catalog:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Catálogo e pedidos]
+      operationId: getCatalog
+      x-litezap-milestone: M12
+      x-zapi: "Listar produtos"
+      summary: Ler o catálogo
+      x-litezap-scope: instancia
+      description: |
+        Uma página de produtos do catálogo do próprio número (sem `jid`) ou do catálogo público de outra
+        empresa (`jid`: número com DDI). Preços em `price_amount_1000` (milésimos da moeda, a convenção do
+        WhatsApp: R$ 12,50 = 12500), `price` na unidade e `price_text` formatado em BRL. `catalog_link`
+        (`https://wa.me/c/<número>`) compartilha o catálogo inteiro: envie como texto, com prévia de link.
+        `image_path` baixa a primeira foto pelo LiteZap. Lido pela proxy da instância, com cache de 5
+        minutos e limite de 30 leituras novas por minuto por instância. O endpoint público pode omitir
+        produtos ocultos ou em análise. Catálogo vazio: `products: []`; número sem catálogo:
+        `404 catalog_not_found`.
+      parameters:
+        - { name: jid, in: query, description: "Número ou JID (…@s.whatsapp.net) da empresa; padrão, o próprio número.", schema: { type: string } }
+        - { name: limit, in: query, description: "Produtos por página (padrão 30, máximo 50).", schema: { type: integer, minimum: 1, maximum: 50, default: 30 } }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: Uma página do catálogo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Catalog" }
+              example: { owner: 5511999990000@s.whatsapp.net, catalog_link: "https://wa.me/c/5511999990000", products: [{ id: "8364718273645", name: Camiseta, description: "Algodão", price: 59.9, price_amount_1000: 59900, currency: BRL, price_text: "R$ 59,90", hidden: false, availability: in_stock, review_status: approved, image_count: 1, image_path: "/v1/instances/inst_7f3a9c2e5b1d4086/catalog/products/8364718273645/image?jid=5511999990000" }], next_cursor: "", cached: false }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/CatalogNotFound" }
+        "429": { $ref: "#/components/responses/CatalogRateLimited" }
+        "502": { $ref: "#/components/responses/UpstreamChanged" }
+        "503": { $ref: "#/components/responses/CatalogUnavailable" }
+  /v1/instances/{id}/catalog/collections:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Catálogo e pedidos]
+      operationId: catalogCollections
+      x-litezap-milestone: M12
+      x-zapi: "Listar coleções"
+      summary: Ler as coleções
+      x-litezap-scope: instancia
+      description: |
+        As coleções do catálogo (o próprio, ou de `jid`) com os primeiros produtos de cada uma. Coleções novas
+        podem levar até 24h na revisão do WhatsApp antes de aparecer aos clientes.
+      parameters:
+        - { name: jid, in: query, description: "Número da empresa; padrão, o próprio número.", schema: { type: string } }
+      responses:
+        "200":
+          description: Coleções.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogCollections" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/CatalogRateLimited" }
+        "502": { $ref: "#/components/responses/UpstreamChanged" }
+  /v1/instances/{id}/catalog/products/{product_id}:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: product_id, in: path, required: true, schema: { type: string, pattern: "^[0-9]+$" } }
+    get:
+      tags: [Catálogo e pedidos]
+      operationId: catalogProduct
+      x-litezap-milestone: M12
+      x-zapi: "Obter produto"
+      summary: Ler um produto
+      x-litezap-scope: instancia
+      parameters:
+        - { name: jid, in: query, description: "Número da empresa; padrão, o próprio número.", schema: { type: string } }
+      responses:
+        "200":
+          description: O produto.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogProduct" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/CatalogNotFound" }
+        "502": { $ref: "#/components/responses/UpstreamChanged" }
+  /v1/instances/{id}/catalog/products/{product_id}/image:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: product_id, in: path, required: true, schema: { type: string, pattern: "^[0-9]+$" } }
+    get:
+      tags: [Catálogo e pedidos]
+      operationId: catalogProductImage
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Baixar a foto de um produto
+      x-litezap-scope: instancia
+      description: |
+        A primeira foto do produto, baixada da CDN do WhatsApp pela proxy da instância (só hosts da CDN da
+        Meta, até 5 MB). Limite de 120 por minuto por instância.
+      parameters:
+        - { name: jid, in: query, description: "Número da empresa; padrão, o próprio número.", schema: { type: string } }
+      responses:
+        "200":
+          description: A imagem (JPEG, PNG ou WebP).
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/CatalogNotFound" }
+  /v1/instances/{id}/orders:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Catálogo e pedidos]
+      operationId: listOrders
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Pedidos recebidos
+      x-litezap-scope: instancia
+      description: |
+        Os pedidos mais recentes que clientes fizeram pelo carrinho do catálogo (guardados a partir da mensagem
+        de pedido, a mesma do evento `order.received`). O token do pedido fica no servidor.
+      parameters:
+        - { name: limit, in: query, description: "1 a 100 (padrão 20).", schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        "200":
+          description: Pedidos, do mais novo para o mais antigo.
+          content:
+            application/json:
+              schema: { type: object, properties: { orders: { type: array, items: { $ref: "#/components/schemas/Order" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/instances/{id}/orders/{order_id}:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: order_id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Catálogo e pedidos]
+      operationId: getOrder
+      x-litezap-milestone: M12
+      x-zapi: "Detalhes do pedido"
+      summary: Detalhes de um pedido
+      x-litezap-scope: instancia
+      description: |
+        Itens, quantidades, preços e total de um pedido recebido. Primeiro pelo socket (`GetOrderDetails` do
+        whatsmeow, IQ `fb:thrift_iq`), depois pelo GraphQL público do catálogo se o IQ falhar: `source` diz
+        qual respondeu. Aceitar ou recusar o pedido continua sendo no app WhatsApp Business.
+      responses:
+        "200":
+          description: O pedido com os itens.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderDetails" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/CatalogNotFound" }
+        "502": { $ref: "#/components/responses/UpstreamChanged" }
 
 components:
   securitySchemes:
@@ -4426,7 +4598,7 @@ components:
         exclude_chats: { type: array, items: { type: string }, description: Todos menos estes chats. }
         message_types:
           type: array
-          items: { type: string, enum: [text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, button_reply, unknown] }
+          items: { type: string, enum: [text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, button_reply, product, order, unknown] }
           description: "Só eventos de mensagem destes tipos (received, sent, reaction, button_reply)."
         from_me: { type: boolean, description: "true: só mensagens nossas; false: exclui as nossas. Omitido: ambas. Não se aplica a message.status." }
     ChatPresenceEvent:
@@ -4613,8 +4785,12 @@ components:
       required: [to, type]
       properties:
         to: { type: string, description: "Número com DDI (10 a 15 dígitos) ou JID." }
-        type: { type: string, enum: [text, image, video, audio, document, reaction] }
+        type: { type: string, enum: [text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, edit, revoke, pin, forward, product] }
         text: { type: string, description: "Obrigatório em `text` (até 64KB)." }
+        product_id: { type: string, description: "`product`: id numérico do produto (GET /catalog)." }
+        catalog_owner: { type: string, description: "`product`: número da empresa dona do catálogo; padrão, o próprio número." }
+        body: { type: string, maxLength: 1024, description: "`product`: texto abaixo do cartão." }
+        footer: { type: string, maxLength: 60, description: "`product`: rodapé." }
         caption: { type: string, description: "Legenda de image, video e document." }
         media: { $ref: "#/components/schemas/MediaInput" }
         reaction:
@@ -5023,11 +5199,117 @@ components:
         longitude: { type: number, minimum: -180, maximum: 180 }
         categories: { type: array, minItems: 1, maxItems: 3, items: { type: string, pattern: "^[0-9]+$" }, description: "Ids de categoria (category_list do GET); substituem as atuais." }
         hours: { $ref: "#/components/schemas/BusinessWeek" }
+        clear:
+          type: array
+          items: { type: string, enum: [location, hours, email, websites, description, address] }
+          description: "Campos a remover. Não combine com o mesmo campo preenchido. Localização e horário só saem assim."
+        location_clear:
+          type: string
+          enum: [empty_elements, empty_content, empty_address]
+          description: "Experimental: codificação do IQ de `clear: [location]` enquanto é validada no aparelho."
+    CatalogProduct:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        price: { type: number, description: "price_amount_1000 / 1000." }
+        price_amount_1000: { type: integer, description: "Milésimos da moeda (R$ 12,50 = 12500)." }
+        currency: { type: string }
+        price_text: { type: string, description: "Só BRL: \"R$ 59,90\"." }
+        sale_price: { type: number }
+        sale_price_amount_1000: { type: integer }
+        retailer_id: { type: string }
+        url: { type: string }
+        hidden: { type: boolean }
+        availability: { type: string, description: "in_stock, out_of_stock…" }
+        review_status: { type: string, description: "approved, pending, rejected…" }
+        image_count: { type: integer }
+        image_url: { type: string, description: "Link da CDN do WhatsApp (assinado, expira)." }
+        image_path: { type: string, description: "Caminho da API para baixar a primeira foto." }
+    Catalog:
+      type: object
+      properties:
+        owner: { type: string }
+        catalog_link: { type: string, description: "https://wa.me/c/<número>: envie como texto para compartilhar o catálogo inteiro." }
+        products: { type: array, items: { $ref: "#/components/schemas/CatalogProduct" } }
+        next_cursor: { type: string }
+        cached: { type: boolean }
+    CatalogCollections:
+      type: object
+      properties:
+        owner: { type: string }
+        catalog_link: { type: string }
+        collections:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              review_status: { type: string }
+              products: { type: array, items: { $ref: "#/components/schemas/CatalogProduct" } }
+    Order:
+      type: object
+      properties:
+        order_id: { type: string }
+        message_id: { type: string, description: "Id do LiteZap da mensagem de pedido." }
+        chat: { type: string }
+        seller: { type: string }
+        item_count: { type: integer }
+        total_amount_1000: { type: integer }
+        total: { type: number }
+        currency: { type: string }
+        total_text: { type: string }
+        title: { type: string }
+        note: { type: string, description: "Mensagem do cliente com o pedido." }
+        status: { type: string, enum: [inquiry, accepted, declined] }
+        received_at: { type: string, format: date-time }
+    OrderDetails:
+      allOf:
+        - { $ref: "#/components/schemas/Order" }
+        - type: object
+          properties:
+            created_at: { type: string, format: date-time }
+            subtotal_amount_1000: { type: integer }
+            source: { type: string, enum: [socket, graphql] }
+            items:
+              type: array
+              items:
+                type: object
+                properties:
+                  product_id: { type: string }
+                  name: { type: string }
+                  quantity: { type: integer }
+                  price_amount_1000: { type: integer }
+                  price: { type: number }
+                  currency: { type: string }
+                  image_url: { type: string }
+                  variant: { type: string }
+    OrderReceivedEvent:
+      type: object
+      description: Dados de `order.received`.
+      properties:
+        order_id: { type: string }
+        message_id: { type: string }
+        wa_message_id: { type: string }
+        chat: { type: string }
+        seller: { type: string }
+        item_count: { type: integer }
+        total_amount_1000: { type: integer }
+        total: { type: number }
+        currency: { type: string }
+        title: { type: string }
+        note: { type: string }
+        status: { type: string }
+        push_name: { type: string }
+        timestamp: { type: string, format: date-time }
     BusinessProfileUpdatedEvent:
       type: object
       description: Dados de `business.profile_updated`.
       properties:
         fields: { type: array, items: { type: string, enum: [description, address, email, websites, location, categories, hours] } }
+        cleared: { type: array, items: { type: string }, description: "Os campos removidos com `clear`." }
         profile: { $ref: "#/components/schemas/BusinessProfile" }
         source: { type: string, enum: [api] }
         timestamp: { type: string, format: date-time }
@@ -5502,6 +5784,30 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: { code: rate_limited, message: "daily status (10 per day) limit reached for this instance; try again later", retryable: true } }
+    CatalogNotFound:
+      description: "`catalog_not_found` (número sem catálogo), `product_not_found` (produto ausente ou oculto) ou `order_not_found`."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: catalog_not_found, message: "this number has no WhatsApp catalog", retryable: false } }
+    CatalogRateLimited:
+      description: "`rate_limited`: o serviço de catálogo do WhatsApp limitou (por IP) ou o limite da instância (30 leituras novas/min, 120 fotos/min)."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: rate_limited, message: "the WhatsApp catalog service is rate limiting; try again in a few minutes", retryable: true } }
+    UpstreamChanged:
+      description: "`upstream_changed`: o WhatsApp mudou o token ou os doc_ids do serviço de catálogo. Atualize `whatsapp_catalog` na config (sem nova versão) ou o LiteZap."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: upstream_changed, message: "WhatsApp changed its catalog service (catalog: the answer has no xwa_product_catalog_get_product_catalog …); update whatsapp_catalog in the config or LiteZap", retryable: false } }
+    CatalogUnavailable:
+      description: "`catalog_unavailable`: o serviço de catálogo não respondeu (rede, proxy ou erro do servidor)."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: catalog_unavailable, message: "the WhatsApp catalog service could not be reached", retryable: true } }
     BusinessRequired:
       description: "`business_account_required`: só contas WhatsApp Business; ou `app_state_not_synced` logo após parear."
       content:
@@ -6134,6 +6440,7 @@ webhooks:
         este evento.
       x-fields:
         - [fields, array, "Campos alterados: description, address, email, websites, location, categories, hours."]
+        - [cleared, array, "Campos removidos com clear (quando houver)."]
         - [profile, object, "O perfil depois da alteração (mesmo formato do GET /business/profile)."]
         - [source, string, "api."]
       requestBody:
@@ -6141,6 +6448,33 @@ webhooks:
           application/json:
             schema: { $ref: "#/components/schemas/Envelope" }
             example: { id: evt_4c8e2a6b1d3f5079, type: business.profile_updated, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-20T15:00:00.000Z", data: { fields: [description], profile: { jid: 5511999999999@s.whatsapp.net, description: "Pizzas artesanais", websites: [], categories: [], category_list: [], hours: [] }, source: api, timestamp: "2026-10-20T15:00:00Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  order.received:
+    post:
+      summary: Pedido recebido
+      x-slug: order-received
+      x-litezap-milestone: M12
+      x-zapi: "Pedido recebido"
+      description: |
+        Um cliente fez um pedido pelo carrinho do catálogo. A mensagem também chega em `message.received`
+        (tipo `order`). Valores em milésimos da moeda (`total` na unidade). O token do pedido fica no
+        servidor: leia os itens com [Detalhes de um pedido](/docs/api/catalogo/detalhes-de-um-pedido/). Pedidos do próprio
+        número (de outro aparelho) não geram este evento.
+      x-fields:
+        - [order_id, string, "Id do pedido (GET /orders/{order_id})."]
+        - [message_id, string, "Id do LiteZap da mensagem de pedido."]
+        - [chat, string, "Conversa do cliente."]
+        - [item_count, integer, "Quantidade de itens."]
+        - [total_amount_1000, integer, "Total em milésimos (total: na unidade)."]
+        - [currency, string, "Moeda (BRL)."]
+        - [note, string, "Mensagem do cliente com o pedido."]
+        - [status, string, "inquiry, accepted ou declined."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_5d9f3b7a1c2e4068, type: order.received, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-21T15:00:00.000Z", data: { order_id: "1234567890", message_id: msg_b52e7c1a9d3f4086, wa_message_id: 3EB0A1B2C3D4E5F6A7B8, chat: 5511988887777@s.whatsapp.net, seller: 5511999990000@s.whatsapp.net, item_count: 3, total_amount_1000: 119800, total: 119.8, currency: BRL, title: "Loja X", note: "sem cebola", status: inquiry, push_name: Ana, timestamp: "2026-10-21T15:00:00Z" } }
       responses:
         "2XX": { description: Qualquer 2xx confirma a entrega. }
   agent.failed:

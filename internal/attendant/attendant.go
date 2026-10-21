@@ -41,6 +41,11 @@ type Attendant struct {
 	// Location is the instance's timezone (nil: UTC).
 	Location func(ctx context.Context, instanceID string) *time.Location
 	Log      *slog.Logger
+	// Catalog lists the WhatsApp catalog products for profiles with knowledge_source
+	// "catalog" (marco 12; nil: those profiles use their manual products).
+	Catalog CatalogSource
+
+	catalog catalogCache
 
 	mu      sync.Mutex
 	marks   map[string]eventMark // instance|chat|type -> last emitted (dedupe)
@@ -465,6 +470,7 @@ const messageTask = `Write your answer to the customer's new message as the JSON
 
 // run calls the model and turns its answer into a safe result.
 func (a *Attendant) run(ctx context.Context, in runInput) (runResult, error) {
+	in.profile = a.withCatalog(ctx, in.instanceID, in.profile)
 	p, s := in.profile, in.settings
 	canary := newCanary()
 	task := messageTask

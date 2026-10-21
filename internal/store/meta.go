@@ -14,6 +14,34 @@ type MessageMeta struct {
 	LinkPreview *LinkPreview  `json:"link_preview,omitempty"`
 	ButtonReply *ButtonReply  `json:"button_reply,omitempty"`
 	Starred     bool          `json:"starred,omitempty"` // marco 9: starred on some device of the account
+	// Marco 12: a catalog product card, or an order placed from a catalog (no token).
+	Product *ProductCard `json:"product,omitempty"`
+	Order   *OrderCard   `json:"order,omitempty"`
+}
+
+// ProductCard is the product of a product message (prices in thousandths of the unit).
+type ProductCard struct {
+	ProductID       string `json:"product_id"`
+	Title           string `json:"title,omitempty"`
+	Description     string `json:"description,omitempty"`
+	PriceAmount1000 int64  `json:"price_amount_1000,omitempty"`
+	Currency        string `json:"currency,omitempty"`
+	RetailerID      string `json:"retailer_id,omitempty"`
+	URL             string `json:"url,omitempty"`
+	BusinessOwner   string `json:"business_owner_jid,omitempty"`
+	Body            string `json:"body,omitempty"`
+	Footer          string `json:"footer,omitempty"`
+}
+
+// OrderCard is an order message (the token stays in the orders table).
+type OrderCard struct {
+	OrderID         string `json:"order_id"`
+	ItemCount       int    `json:"item_count"`
+	TotalAmount1000 int64  `json:"total_amount_1000,omitempty"`
+	Currency        string `json:"currency,omitempty"`
+	Seller          string `json:"seller_jid,omitempty"`
+	Title           string `json:"title,omitempty"`
+	Status          string `json:"status,omitempty"`
 }
 
 // ButtonReply is a received answer to a button, list, template or interactive message.
@@ -54,7 +82,8 @@ type LinkPreview struct {
 // Empty reports whether m carries nothing.
 func (m MessageMeta) Empty() bool {
 	return m.ReplyTo == "" && len(m.Mentions) == 0 && !m.Forwarded && m.Location == nil &&
-		len(m.Contacts) == 0 && m.Poll == nil && m.LinkPreview == nil && m.ButtonReply == nil
+		len(m.Contacts) == 0 && m.Poll == nil && m.LinkPreview == nil && m.ButtonReply == nil &&
+		m.Product == nil && m.Order == nil
 }
 
 // JSON encodes m for meta_json ("" when empty).

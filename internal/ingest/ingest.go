@@ -91,6 +91,15 @@ func meta(m *workerv1.Message) store.MessageMeta {
 	if b := m.ButtonReply; b != nil {
 		mm.ButtonReply = &store.ButtonReply{Kind: b.Kind, ID: b.Id, Title: b.Title, Description: b.Description}
 	}
+	if p := m.Product; p != nil {
+		mm.Product = &store.ProductCard{ProductID: p.ProductId, Title: p.Title, Description: p.Description,
+			PriceAmount1000: p.PriceAmount_1000, Currency: p.Currency, RetailerID: p.RetailerId, URL: p.Url,
+			BusinessOwner: p.BusinessOwnerJid, Body: p.Body, Footer: p.Footer}
+	}
+	if o := m.Order; o != nil { // the token is not part of the logged message
+		mm.Order = &store.OrderCard{OrderID: o.OrderId, ItemCount: int(o.ItemCount), TotalAmount1000: o.TotalAmount_1000,
+			Currency: o.Currency, Seller: o.SellerJid, Title: o.Title, Status: o.Status}
+	}
 	return mm
 }
 
@@ -134,8 +143,20 @@ func (in *Ingestor) message(ctx context.Context, instanceID string, m *workerv1.
 	}
 	rec := record(m, source)
 	isNew, err := in.Store.InsertMessage(ctx, instanceID, rec, chatUpdate(m, true))
-	if err != nil || !isNew || in.Events == nil {
+	if err != nil || !isNew {
 		return err
+	}
+	var orderEv *events.OrderReceived
+	if o := m.Order; o != nil && o.OrderId != "" {
+		if orderEv, err = in.order(ctx, instanceID, m, rec); err != nil {
+			return err
+		}
+	}
+	if in.Events == nil {
+		return nil
+	}
+	if orderEv != nil { // after the message itself
+		defer in.Events.Publish(instanceID, events.TypeOrderReceived, *orderEv)
 	}
 	typ := events.TypeMessageReceived
 	switch {
@@ -148,6 +169,26 @@ func (in *Ingestor) message(ctx context.Context, instanceID string, m *workerv1.
 	}
 	in.Events.Publish(instanceID, typ, eventMessage(instanceID, m, rec))
 	return nil
+}
+
+// order stores a received catalog order (with its token, kept server-side) and returns
+// the order.received to publish for orders customers placed (not the account's own).
+func (in *Ingestor) order(ctx context.Context, instanceID string, m *workerv1.Message, rec store.Message) (*events.OrderReceived, error) {
+	o := m.Order
+	if len(o.OrderId) > 64 || len(o.Token) > 4096 {
+		return nil, nil // not a plausible order: logged as a message only
+	}
+	so := store.Order{OrderID: o.OrderId, MessageID: rec.ID, WAMessageID: rec.WAMessageID, ChatJID: rec.ChatJID,
+		SellerJID: o.SellerJid, Token: o.Token, ItemCount: int(o.ItemCount), Total1000: o.TotalAmount_1000,
+		Currency: o.Currency, Title: o.Title, Note: o.Message, Status: o.Status, FromMe: m.FromMe, ReceivedAt: rec.Timestamp}
+	created, err := in.Store.UpsertOrder(ctx, instanceID, so)
+	if err != nil || !created || m.FromMe {
+		return nil, err
+	}
+	return &events.OrderReceived{
+		OrderID: so.OrderID, MessageID: so.MessageID, WAMessageID: so.WAMessageID, Chat: so.ChatJID, Seller: so.SellerJID,
+		ItemCount: so.ItemCount, TotalAmount1000: so.Total1000, Total: float64(so.Total1000) / 1000, Currency: so.Currency,
+		Title: so.Title, Note: so.Note, Status: so.Status, PushName: m.PushName, Timestamp: rec.Timestamp}, nil
 }
 
 // eventMessage is the event data of a logged message.

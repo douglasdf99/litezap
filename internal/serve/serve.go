@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/douglasdf99/litezap/internal/agenthook"
@@ -18,6 +19,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/api"
 	"github.com/douglasdf99/litezap/internal/attendant"
 	"github.com/douglasdf99/litezap/internal/autoread"
+	"github.com/douglasdf99/litezap/internal/catalog"
 	"github.com/douglasdf99/litezap/internal/config"
 	"github.com/douglasdf99/litezap/internal/dashboard"
 	"github.com/douglasdf99/litezap/internal/events"
@@ -231,6 +233,10 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		SignedURLs: cfg.PublicURL != "" || isLoopback(cfg.ListenAddr),
 	}
 	acct.Messaging = msg
+	// Marco 12: WhatsApp catalog reads, through each instance's proxy (catalog.go).
+	msg.Catalog = &service.CatalogReader{Client: catalog.New(cfg.WhatsAppCatalog), Store: st,
+		Defaults: cfg.InstanceDefaults, DefaultProxy: cfg.DefaultProxyURL, RequireProxy: cfg.RequireProxy}
+	att.Catalog = catalogKnowledge(msg.Catalog)
 	loopback := isLoopback(cfg.ListenAddr)
 	// New sends (REST and MCP) are refused while the operator suspends sending.
 	guarded := service.GuardedMessaging{Messaging: msg, Sending: cl.sending}
@@ -242,7 +248,8 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	msg.OnSettingsChanged = rt.SettingsChanged
 	groups := &service.Groups{Store: st, Workers: mgr, Resolver: resolver, Sending: cl.sending,
 		Fetcher: msg.Fetcher, Defaults: cfg.InstanceDefaults, DefaultProxy: cfg.DefaultProxyURL}
-	social := &service.Social{Store: st, Workers: mgr, Messaging: msg, Sending: cl.sending, Fetcher: msg.Fetcher, Events: bus}
+	social := &service.Social{Store: st, Workers: mgr, Messaging: msg, Sending: cl.sending, Fetcher: msg.Fetcher, Events: bus,
+		LocationClear: cfg.BusinessLocationClear}
 	attAdmin := &attendant.Admin{A: att}
 	mcpDeps := mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Groups: groups, Logger: log, Account: acct,
 		Social: social, Attendant: attAdmin, PublicHost: publicHost(cfg.PublicURL)}
@@ -381,6 +388,51 @@ func workerEnv(st *store.Store, cfg config.Config) func(context.Context, string)
 		}
 		return env, nil
 	}
+}
+
+// catalogKnowledge lists an instance's own catalog as the attendant's product knowledge
+// (knowledge_source "catalog"): name, price, description and availability.
+func catalogKnowledge(r *service.CatalogReader) attendant.CatalogSource {
+	return func(ctx context.Context, instanceID string) ([]attendant.KnowledgeEntry, error) {
+		list, err := r.Products(ctx, instanceID, 200)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]attendant.KnowledgeEntry, 0, len(list))
+		for _, p := range list {
+			if p.Hidden || p.Name == "" {
+				continue // customers cannot see it: never offered
+			}
+			e := attendant.KnowledgeEntry{Kind: "product", Title: clipRunes(p.Name, 200), Content: clipRunes(p.Description, 3500)}
+			if p.PriceAmount1000 > 0 {
+				price := float64(p.PriceAmount1000) / 1000
+				if p.SaleAmount1000 > 0 && p.SaleAmount1000 < p.PriceAmount1000 {
+					price = float64(p.SaleAmount1000) / 1000
+				}
+				e.Price = &price
+			}
+			switch p.Availability {
+			case "out_of_stock":
+				e.Content = strings.TrimSpace(e.Content + " (esgotado)")
+			case "in_stock", "":
+			default:
+				e.Content = strings.TrimSpace(e.Content + " (disponibilidade: " + p.Availability + ")")
+			}
+			if p.ReviewStatus != "" && p.ReviewStatus != "approved" {
+				continue // pending or rejected: not visible to customers yet
+			}
+			out = append(out, e)
+		}
+		return out, nil
+	}
+}
+
+func clipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n])
+	}
+	return s
 }
 
 // publicHost is the host[:port] of public_url ("" when unset or invalid).

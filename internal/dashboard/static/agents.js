@@ -37,7 +37,7 @@ const STATUS = {
   failed: ['falhou', 'tone-danger'], discarded: ['descartada (humano assumiu)', 'tone-warn'],
 };
 const TOOL_LABEL = {
-  send_message: 'Mensagem', send_reaction: 'Reação', send_media: 'Mídia', label_chat: 'Etiqueta',
+  send_message: 'Mensagem', send_reaction: 'Reação', send_media: 'Mídia', send_product: 'Produto do catálogo', label_chat: 'Etiqueta',
   create_group: 'Criar grupo', update_group: 'Alterar grupo', manage_group_participants: 'Participantes do grupo',
   get_group_invite_link: 'Link de convite do grupo',
 };
@@ -263,6 +263,7 @@ function draftsPanel(ctx, base) {
         case 'send_message': what = h('div', { class: 'ag-bubble prewrap' }, a.text || ''); break;
         case 'send_reaction': what = h('div', { class: 'ag-bubble' }, `Reação ${a.emoji || ''} na mensagem ${a.message_id || ''}`); break;
         case 'send_media': what = h('div', { class: 'ag-bubble' }, `${a.type || 'arquivo'}: ${a.url || ''}`, a.caption ? h('div', { class: 'prewrap' }, a.caption) : null); break;
+        case 'send_product': what = h('div', { class: 'ag-bubble' }, `Produto ${a.product_id || ''}${a.catalog_owner ? ` do catálogo de ${a.catalog_owner}` : ''}`, a.body ? h('div', { class: 'prewrap' }, a.body) : null); break;
         case 'label_chat': what = h('div', { class: 'ag-bubble' }, `${a.labeled === false ? 'Tirar' : 'Aplicar'} a etiqueta ${a.label || ''}`); break;
         default: what = h('pre', { class: 'json' }, JSON.stringify(a, null, 2));
       }

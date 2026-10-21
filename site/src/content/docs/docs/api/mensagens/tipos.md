@@ -95,6 +95,18 @@ vídeo redondo, sem legenda. Todos usam `media` como os outros anexos.
 2 a 12 opções distintas; `max_selections` padrão 1 (`0` = qualquer número). Os votos chegam no evento
 [`message.poll_vote`](/docs/eventos/message-poll-vote/), já decifrados.
 
+### Produto do catálogo <span class="lz-badge lz-badge--soon">M12</span>
+
+```json
+{ "to": "5511999999999", "type": "product", "product_id": "8364718273645", "body": "Chegou hoje!", "footer": "Loja X" }
+```
+
+Cartão com foto, nome, preço e botão "Ver", de um produto do catálogo do próprio número (ou de `catalog_owner`,
+o número de outra empresa). O LiteZap lê o produto no catálogo, baixa a primeira foto e envia como imagem com
+miniatura, pela fila como qualquer envio. Produtos ocultos ou sem foto: `400`. `body` até 1024 caracteres,
+`footer` até 60. Veja [Catálogo e pedidos](/docs/guias/catalogo-e-pedidos/). Para mandar o catálogo inteiro,
+envie o `catalog_link` de `GET /catalog` como texto com `link_preview: "auto"`.
+
 ## Ações sobre mensagens <span class="lz-badge lz-badge--ok">M6</span>
 
 `edit`, `revoke` e `pin` usam `message_id` (id do LiteZap ou `wa_message_id`); com id do LiteZap, `to` é opcional.
@@ -131,7 +143,7 @@ Valem para mensagens novas (não para `reaction`, `edit`, `revoke` e `pin`):
 | Tipo | Situação |
 |---|---|
 | Evento de agenda | <span class="lz-badge lz-badge--no">Avaliar</span> |
-| Produto e catálogo | <span class="lz-badge lz-badge--no">Avaliar</span> |
+| Vários produtos numa mensagem (lista de produtos) | <span class="lz-badge lz-badge--no">Avaliar</span>: listas não aparecem bem em aparelhos vinculados e no WhatsApp Web |
 | Botões, listas, OTP/PIX, carrossel | <span class="lz-badge lz-badge--exp">Exp</span>: não são enviados (instáveis no WhatsApp); respostas a eles chegam em [`message.button_reply`](/docs/eventos/message-button-reply/). |
 
 Um `type` desconhecido responde `400 validation_failed`. A fila desses envios pode ser vista e cancelada em

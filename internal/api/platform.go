@@ -85,7 +85,9 @@ var (
 		`contacts|contacts/[^/]+|contacts/[^/]+/(picture|profile)|media/[^/]+|groups|groups/[^/]+|communities|communities/[^/]+|` +
 		`communities/[^/]+/groups|blocklist|profile|profile/picture|privacy|events|usage|` +
 		// marco 10 reads (no secrets): statuses, channels, labels, business profile
-		`status|status/privacy|channels|channels/[^/]+|channels/[^/]+/messages|labels|business/profile))$`)
+		`status|status/privacy|channels|channels/[^/]+|channels/[^/]+/messages|labels|business/profile|` +
+		// marco 12 reads: catalog, collections, products and orders (no tokens)
+		`catalog|catalog/collections|catalog/products/[^/]+|catalog/products/[^/]+/image|orders|orders/[^/]+))$`)
 	keySendPostRe = regexp.MustCompile(`^/v1/instances/[^/]+/messages$`)
 	keySendGetRe  = regexp.MustCompile(`^/v1/(me|instances/[^/]+/messages/[^/]+)$`)
 )

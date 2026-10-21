@@ -8,6 +8,7 @@ import { agentsPanel } from './agents.js';
 import { groupsPanel } from './groups.js';
 import { statusPanel, channelsPanel, labelsPanel } from './social.js';
 import { profilePanel } from './profile.js';
+import { catalogPanel } from './catalog.js';
 import { chatActions, chatMarks } from './chatactions.js';
 import { editInstance, tagChips } from './platform.js';
 import { connectPanel, initials } from './wizard.js';
@@ -31,7 +32,7 @@ export function availableActions(state) {
 }
 
 const TABS = [
-  ['chats', 'Conversas'], ['groups', 'Grupos'], ['status', 'Status'], ['channels', 'Canais'], ['labels', 'Etiquetas'],
+  ['chats', 'Conversas'], ['groups', 'Grupos'], ['status', 'Status'], ['channels', 'Canais'], ['labels', 'Etiquetas'], ['catalog', 'Catálogo'],
   ['pair', 'Conectar'], ['settings', 'Configurações'],
   ['agent', 'Atendente IA'], ['agents', 'Agentes'], ['profile', 'Perfil'], ['webhooks', 'Webhooks'], ['events', 'Eventos ao vivo'],
 ];
@@ -40,6 +41,7 @@ export function instanceView(id, { root, shell, setLive, openWizard }) {
   const base = `/v1/instances/${encodeURIComponent(id)}`;
   const ctx = {
     id, base, inst: null, events: [], listeners: new Set(), settingsCache: null,
+    business: null, // true/false once known (the Catálogo tab is only for Business accounts)
     on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
     async settings(force) {
       if (!this.settingsCache || force) this.settingsCache = await api.get(`${base}/settings`);
@@ -87,10 +89,21 @@ export function instanceView(id, { root, shell, setLive, openWizard }) {
     }
   };
 
+  let shown = 'chats';
+  const renderTabs = () => mount(tabs, TABS.filter(([t]) => t !== 'catalog' || ctx.business || shown === 'catalog')
+    .map(([t, label]) => h('a', { href: ctx.href(t), class: t === shown ? 'active' : '' }, label)));
+  // Whether the account is a Business one: the business profile answers, or says it is not.
+  const checkBusiness = () => {
+    if (ctx.business !== null || !ctx.inst || ctx.inst.state !== 'connected') return;
+    api.get(`${base}/business/profile`).then(() => { ctx.business = true; renderTabs(); })
+      .catch((e) => { if (e.code === 'business_account_required') { ctx.business = false; renderTabs(); } });
+  };
+
   const refresh = async () => {
     try {
       ctx.inst = await api.get(base);
       renderHeader();
+      checkBusiness();
     } catch (e) {
       if (e.status === 404) { toast('Instância não encontrada', 'error'); location.hash = '#/'; } else toast(e, 'error');
     }
@@ -115,12 +128,13 @@ export function instanceView(id, { root, shell, setLive, openWizard }) {
   return {
     id,
     show(tab, rest) {
-      if (!TABS.some(([t]) => t === tab)) tab = 'chats';
-      mount(tabs, TABS.map(([t, label]) => h('a', { href: ctx.href(t), class: t === tab ? 'active' : '' }, label)));
+      if (!TABS.some(([t]) => t === tab) || (tab === 'catalog' && ctx.business === false)) tab = 'chats';
+      shown = tab;
+      renderTabs();
       if (current && current.name === tab && current.update) { current.update(rest); return; }
       if (current && current.cleanup) current.cleanup();
       const make = { chats: chatsTab, pair: pairTab, settings: settingsTab, webhooks: webhooksTab, events: eventsTab, agent: agentPanel, agents: agentsPanel, groups: groupsPanel, profile: profilePanel,
-        status: statusPanel, channels: channelsPanel, labels: labelsPanel }[tab];
+        status: statusPanel, channels: channelsPanel, labels: labelsPanel, catalog: catalogPanel }[tab];
       current = { name: tab, ...make(ctx, rest) };
       mount(body, current.el);
       renderHeader();

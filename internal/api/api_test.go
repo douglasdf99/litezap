@@ -17,6 +17,8 @@ import (
 	"github.com/douglasdf99/litezap/internal/agenthook"
 	"github.com/douglasdf99/litezap/internal/agents"
 	"github.com/douglasdf99/litezap/internal/attendant"
+	"github.com/douglasdf99/litezap/internal/catalog"
+	"github.com/douglasdf99/litezap/internal/catalog/catalogtest"
 	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/ingest"
 	"github.com/douglasdf99/litezap/internal/lookup"
@@ -43,6 +45,7 @@ type env struct {
 	bus *events.Bus
 	st  *store.Store
 	rt  *realtime.Handler
+	cat *catalogtest.Fake // marco 12
 }
 
 func newEnv(t *testing.T) *env {
@@ -75,6 +78,10 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 	msg := &service.Messaging{Store: st, Manager: mgr, Queues: q, Fetcher: &media.Fetcher{AllowPrivate: true},
 		Signer:  media.NewSigner([]byte("0123456789abcdef0123456789abcdef"), "http://example.invalid"),
 		DataDir: dir, Defaults: defaults, Resolver: resolver, SignedURLs: true}
+	// Marco 12: the catalog over a fake GraphQL endpoint (no network).
+	cat := catalogtest.New()
+	msg.Catalog = &service.CatalogReader{Client: cat.Client(), Store: st, Defaults: defaults,
+		HTTP: func(p string) (catalog.Doer, error) { return cat.Doer(p), nil }}
 	rt := &realtime.Handler{Workers: mgr, Events: bus, Log: log,
 		Settings: func(ctx context.Context, id string) (settings.Settings, error) { return msg.Settings(ctx, id) }}
 	rt.SetSender(msg)
@@ -124,7 +131,7 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 	h := New(svc, msg, opt, log)
 	srv := httptest.NewServer(h)
 	t.Cleanup(func() { bus.CloseSubscribers(); srv.Close() })
-	return &env{t: t, srv: srv, sp: sp, bus: bus, st: st, rt: rt}
+	return &env{t: t, srv: srv, sp: sp, bus: bus, st: st, rt: rt, cat: cat}
 }
 
 func (e *env) do(method, path, token, body string) (int, map[string]any) {

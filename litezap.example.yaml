@@ -41,6 +41,16 @@ shutdown_timeout: 0s
 # operator_allowed_ips: []         # idem para o token do operador
 # pairing_frame_ancestors: []      # origens que podem embutir /pair/ num iframe (ex.: https://app.exemplo.com)
 
+# Catálogo do WhatsApp Business (marco 12). Vazio = valores do WhatsApp Web de 2026-10-21. A Meta troca o
+# token e os doc_ids a cada versão do WhatsApp Web: quando a API responder upstream_changed, atualize aqui.
+# whatsapp_catalog:
+#   access_token: ""
+#   lang: pt_BR
+#   doc_ids: { catalog: "", product: "", collections: "", order: "" }
+# Codificação do IQ que remove o pin do mapa do perfil comercial, enquanto é validada:
+# empty_elements (padrão) | empty_content | empty_address. Também LITEZAP_BUSINESS_LOCATION_CLEAR.
+# business_location_clear: empty_elements
+
 # Padrões de envio por instância (cada instância pode sobrescrever via PUT /settings).
 # Pisos: min_interval_ms >= 1000 e max_per_minute <= 60, salvo unsafe_pacing: true.
 instance_defaults:

@@ -26,10 +26,13 @@ type fakeSocial struct {
 	business bool
 	profile  *workerv1.BusinessProfileInfo
 	bizSets  []*workerv1.SetBusinessProfileRequest
-	calls    []string
-	err      error
-	next     int
-	onResync func()
+	// Marco 12: order details by id, and the tokens Order received.
+	orders      map[string]*workerv1.OrderDetails
+	orderTokens []string
+	calls       []string
+	err         error
+	next        int
+	onResync    func()
 }
 
 func (s *fakeSocial) init() {
@@ -295,7 +298,42 @@ func (f *FakeWA) SetBusinessProfile(_ context.Context, req *workerv1.SetBusiness
 	if req.Hours != nil {
 		p.Timezone, p.Hours = req.Hours.Timezone, req.Hours.Days
 	}
+	if req.ClearLocation {
+		p.HasLocation, p.Latitude, p.Longitude = false, 0, 0
+	}
+	if req.ClearHours {
+		p.Timezone, p.Hours = "", nil
+	}
 	return proto.Clone(p).(*workerv1.BusinessProfileInfo), nil
+}
+
+// SetOrder makes Order answer id with d (nil: the order IQ fails, as when WhatsApp no
+// longer answers it).
+func (f *FakeWA) SetOrder(id string, d *workerv1.OrderDetails) {
+	f.soc.mu.Lock()
+	defer f.soc.mu.Unlock()
+	if f.soc.orders == nil {
+		f.soc.orders = map[string]*workerv1.OrderDetails{}
+	}
+	f.soc.orders[id] = d
+}
+
+// Order answers the orders set with SetOrder; others time out like the legacy IQ.
+func (f *FakeWA) Order(_ context.Context, id, token string) (*workerv1.OrderDetails, error) {
+	f.soc.mu.Lock()
+	defer f.soc.mu.Unlock()
+	f.soc.orderTokens = append(f.soc.orderTokens, token)
+	if d := f.soc.orders[id]; d != nil {
+		return proto.Clone(d).(*workerv1.OrderDetails), nil
+	}
+	return nil, status.Error(codes.DeadlineExceeded, "worker_timeout: WhatsApp did not answer the order query")
+}
+
+// OrderTokens returns the tokens Order received.
+func (f *FakeWA) OrderTokens() []string {
+	f.soc.mu.Lock()
+	defer f.soc.mu.Unlock()
+	return append([]string(nil), f.soc.orderTokens...)
 }
 
 // BusinessSets returns the SetBusinessProfile requests received so far.

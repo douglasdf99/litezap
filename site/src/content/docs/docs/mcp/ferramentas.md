@@ -160,7 +160,10 @@ WhatsApp vêm marcadas como destrutivas ou com aviso de risco, para o cliente pe
 | `list_channels` · `get_channel` · `get_channel_messages` | Canais seguidos, um canal, publicações recentes | [Canais](/docs/api/canais/) |
 | `follow_channel` | Segue ou deixa de seguir um canal | [Canais](/docs/api/canais/) |
 | `list_labels` · `label_chat` · `get_business_profile` | Etiquetas e suas conversas; etiquetar um chat; perfil comercial | [Etiquetas e Business](/docs/api/business/) |
-| `update_business_profile` | Edita o perfil comercial (descrição, endereço, localização, e-mail, sites, categorias, horário). Visível para todos os clientes: só quando o usuário pedir, com os valores dele; 5 por minuto | [Editar perfil comercial](/docs/api/business/editar-perfil-comercial/) |
+| `update_business_profile` | Edita o perfil comercial (descrição, endereço, localização, e-mail, sites, categorias, horário); `clear` remove campos. Visível para todos os clientes: só quando o usuário pedir, com os valores dele; 5 por minuto | [Editar perfil comercial](/docs/api/business/editar-perfil-comercial/) |
+| `get_catalog` · `get_product` | Catálogo do WhatsApp Business (o próprio ou de outra empresa) e um produto; cache de 5 minutos | [Catálogo e pedidos](/docs/api/catalogo/) |
+| `send_product` | Envia o cartão de um produto do catálogo pela fila de envio. Só quando o usuário pedir, para quem ele indicar, com um `product_id` de `get_catalog` | [Tipos de mensagem](/docs/api/mensagens/tipos/) |
+| `get_order` | Itens e total de um pedido recebido (do evento `order.received`); aceitar ou recusar é no app | [Detalhes de um pedido](/docs/api/catalogo/detalhes-de-um-pedido/) |
 | `get_attendant` · `get_attendant_agent` | Leitura do atendente IA embutido (provedor e modelo, sem chaves) e de um agente | [Atendente IA](/docs/api/atendente-ia/) |
 
 ## O que não existe por MCP (de propósito)

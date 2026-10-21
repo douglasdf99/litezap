@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/douglasdf99/litezap/internal/catalog"
 	"github.com/douglasdf99/litezap/internal/settings"
 	"gopkg.in/yaml.v3"
 )
@@ -60,6 +61,15 @@ type Config struct {
 
 	// Platform and partners (marco 11): IP allowlists and the hosted pairing page.
 	Platform `yaml:",inline"`
+
+	// WhatsAppCatalog is the public catalog GraphQL transport (marco 12): the app token
+	// and the persisted query ids of WA Web, which Meta rotates. Empty values take the
+	// defaults of the 2026-10-21 snapshot; update them here, without a release, when the
+	// API answers upstream_changed.
+	WhatsAppCatalog catalog.Config `yaml:"whatsapp_catalog"`
+	// BusinessLocationClear is the default encoding of "remove the map pin" while it is
+	// validated on real devices: empty_elements (default) | empty_content | empty_address.
+	BusinessLocationClear string `yaml:"business_location_clear"`
 }
 
 func Default() Config {
@@ -154,6 +164,17 @@ func LoadWith(path string, base Config) (Config, error) {
 	}
 	if err := cfg.InstanceDefaults.Validate(); err != nil {
 		return cfg, fmt.Errorf("instance_defaults: %w", err)
+	}
+	if v := strings.TrimSpace(os.Getenv("LITEZAP_BUSINESS_LOCATION_CLEAR")); v != "" {
+		cfg.BusinessLocationClear = v
+	}
+	switch cfg.BusinessLocationClear {
+	case "", "empty_elements", "empty_content", "empty_address":
+	default:
+		return cfg, errors.New("business_location_clear must be empty_elements, empty_content or empty_address")
+	}
+	if err := cfg.WhatsAppCatalog.Validate(); err != nil {
+		return cfg, err
 	}
 	abs, err := filepath.Abs(cfg.DataDir)
 	if err != nil {

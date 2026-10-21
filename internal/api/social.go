@@ -37,6 +37,14 @@ type SocialService interface {
 
 	BusinessProfile(ctx context.Context, instanceID string) (service.BusinessAccountView, error)
 	UpdateBusinessProfile(ctx context.Context, instanceID string, p service.BusinessProfilePatch) (service.BusinessAccountView, error)
+
+	// Marco 12: catalog reads and orders.
+	Catalog(ctx context.Context, instanceID, jid string, limit int, cursor string) (service.CatalogView, error)
+	CatalogProduct(ctx context.Context, instanceID, jid, productID string) (service.CatalogProductView, error)
+	CatalogCollections(ctx context.Context, instanceID, jid string) (service.CollectionsView, error)
+	CatalogProductImage(ctx context.Context, instanceID, jid, productID string) ([]byte, string, error)
+	Orders(ctx context.Context, instanceID string, limit int) ([]service.OrderView, error)
+	Order(ctx context.Context, instanceID, orderID string) (service.OrderDetailsView, error)
 }
 
 // socialRoutes mounts the marco 10 routes inside /instances/{id}.
@@ -74,6 +82,94 @@ func (s *server) socialRoutes(r chi.Router) {
 	r.Get("/business/profile", s.businessProfile)
 	// A write: admin or instance token (scoped API keys never reach PATCH routes).
 	r.Patch("/business/profile", s.patchBusinessProfile)
+
+	// Marco 12: catalog reads (any business's public catalog; default the own number) and
+	// the orders received. Creating or editing products is not offered (see the docs).
+	r.Get("/catalog", s.getCatalog)
+	r.Get("/catalog/collections", s.catalogCollections)
+	r.Get("/catalog/products/{product_id}", s.catalogProduct)
+	r.Get("/catalog/products/{product_id}/image", s.catalogProductImage)
+	r.Get("/orders", s.listOrders)
+	r.Get("/orders/{order_id}", s.getOrder)
+}
+
+func (s *server) getCatalog(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit := 0
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			s.writeErr(w, apierr.Validation("limit must be a number"))
+			return
+		}
+		limit = n
+	}
+	v, err := s.opt.Social.Catalog(r.Context(), chi.URLParam(r, "id"), q.Get("jid"), limit, q.Get("cursor"))
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+func (s *server) catalogCollections(w http.ResponseWriter, r *http.Request) {
+	v, err := s.opt.Social.CatalogCollections(r.Context(), chi.URLParam(r, "id"), r.URL.Query().Get("jid"))
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+func (s *server) catalogProduct(w http.ResponseWriter, r *http.Request) {
+	v, err := s.opt.Social.CatalogProduct(r.Context(), chi.URLParam(r, "id"), r.URL.Query().Get("jid"), chi.URLParam(r, "product_id"))
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+func (s *server) catalogProductImage(w http.ResponseWriter, r *http.Request) {
+	b, mime, err := s.opt.Social.CatalogProductImage(r.Context(), chi.URLParam(r, "id"), r.URL.Query().Get("jid"), chi.URLParam(r, "product_id"))
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", mime)
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "sandbox; default-src 'none'")
+	h.Set("Cache-Control", "private, max-age=300")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(b)
+}
+
+func (s *server) listOrders(w http.ResponseWriter, r *http.Request) {
+	limit := 0
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			s.writeErr(w, apierr.Validation("limit must be a number"))
+			return
+		}
+		limit = n
+	}
+	list, err := s.opt.Social.Orders(r.Context(), chi.URLParam(r, "id"), limit)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"orders": list})
+}
+
+func (s *server) getOrder(w http.ResponseWriter, r *http.Request) {
+	v, err := s.opt.Social.Order(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "order_id"))
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
 }
 
 // waitParam reads ?wait=true&timeout=30s.

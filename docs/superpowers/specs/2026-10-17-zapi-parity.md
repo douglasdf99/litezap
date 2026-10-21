@@ -98,8 +98,8 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 | MSG-27 | Botão OTP (copiar código) e botão PIX | 2 páginas | Manual — `InteractiveMessage` com native flow (incerto) | Falta | M | Instável; PIX é específico do Brasil | Exp |
 | MSG-28 | Carrossel | Enviar carrossel | Manual — `InteractiveMessage` carrossel (incerto) | Falta | L | Instável | Exp |
 | MSG-29 | Receber respostas de botões/listas | Responder botão / ação / lista | Sim — chegam em `events.Message` (`ButtonsResponseMessage`, `ListResponseMessage`, `InteractiveResponseMessage`) | Pronto — tipo `button_reply` no log e evento `message.button_reply` (botão, lista, template, interativa) | S | Útil mesmo sem enviar botões (clientes de outras ferramentas respondem) | M7 |
-| MSG-30 | Produto e catálogo como mensagem | Enviar produto / catálogo | Manual — `ProductMessage` (exige catálogo existente na conta business) | Falta (adiado no M10; depende de catálogo) | M | Sem API de catálogo no whatsmeow (BUS-1); só reencaminhar produto existente (incerto) | M10 |
-| MSG-31 | Pedido + atualizar status/pagamento do pedido | 3 páginas | Parcial — `OrderMessage` (proto) e `GetOrderDetails` (business.go) só leitura | Falta | L | Fluxo de pagamentos do WhatsApp Business no Brasil; incerto | Avaliar |
+| MSG-30 | Produto e catálogo como mensagem | Enviar produto / catálogo | Manual — `ProductMessage` (waE2E); `mediatype="product"` automático em send.go | Pronto, aguardando validação no aparelho — `type: "product"` em `POST /messages` (produto lido do catálogo por GraphQL, primeira foto reenviada como imagem cifrada com miniatura, `businessOwnerJID`), pela fila; catálogo inteiro como link `wa.me/c/<número>` (`catalog_link`); MCP `send_product` (M12) | M | Como o cartão aparece no celular ainda não foi visto; `CatalogSnapshot` e lista de produtos (`ListMessage`) não são enviados (renderização incerta em aparelhos vinculados) | M12 |
+| MSG-31 | Pedido + atualizar status/pagamento do pedido | 3 páginas | Parcial — `OrderMessage` (proto) e `GetOrderDetails` (business.go) só leitura | Parcial — pedido recebido vira mensagem `order` e evento `order.received` (token guardado só no servidor); `GET /orders` e `GET /orders/{order_id}` (`GetOrderDetails` pelo socket, GraphQL `xwa_checkout_get_order_info` como alternativa); MCP `get_order`; atualizar status ou pagamento: falta (M12) | L | Se o IQ de pedido ainda responde não foi verificado; pagamentos do WhatsApp Business no Brasil fora do escopo | M12 |
 | MSG-32 | Convite de admin de canal | Enviar convite de admin de canal | Manual — `NewsletterAdminInviteMessage` (waE2E) | Falta | M | Aceitar/revogar não têm função (CHN-11) | Avaliar |
 | MSG-33 | Conversar com a Meta AI | Meta AI | Parcial — `types.MetaAIJID`, `GetBotListV2` (user.go); envio comum ao JID do bot (incerto) | Falta | M | Valor baixo para atendimento | Avaliar |
 
@@ -228,13 +228,13 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 
 | ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
 |---|---|---|---|---|---|---|---|
-| BUS-1 | Produtos: criar/editar, listar (várias versões), obter, apagar | 7 páginas | Não — não há API de catálogo (só `GetOrderDetails`, business.go) | Fora (por ora) | L | Exigiria engenharia reversa do protocolo de catálogo | Avaliar |
-| BUS-2 | Coleções: criar, listar, editar, apagar, produtos da coleção | 7 páginas | Não | Fora (por ora) | L | | Avaliar |
-| BUS-3 | Configuração do catálogo | Config do catálogo | Não | Fora (por ora) | — | | Avaliar |
+| BUS-1 | Produtos: criar/editar, listar (várias versões), obter, apagar | 7 páginas | Não — sem API de catálogo no whatsmeow; os IQs `w:biz:catalog` do Baileys não respondem mais; o WhatsApp Web lê por GraphQL público (`graph.whatsapp.com/graphql/catalog`) e escreve por `graph.facebook.com` com token de conta de anúncios | Parcial — listar e obter prontos, aguardando validação no aparelho (`GET /catalog`, `GET /catalog/products/{id}`, foto pelo LiteZap; pela proxy da instância, cache de 5 min, token e `doc_id` na config); criar, editar e apagar: fora por ora (fluxo de token de anúncios, risco de bloqueio) (M12) | L | Leitura depende de token e `doc_id` do WhatsApp Web, que mudam (`upstream_changed`); o endpoint público pode omitir ocultos e em análise | M12 (escrita: avaliar) |
+| BUS-2 | Coleções: criar, listar, editar, apagar, produtos da coleção | 7 páginas | Não — leitura por GraphQL público; escrita só por `graph.facebook.com` (token de anúncios) | Parcial — listar coleções com os primeiros produtos (`GET /catalog/collections`, filtro por coleção no painel), aguardando validação no aparelho; criar, editar e apagar: fora por ora (M12) | L | Coleções novas levam até 24h na revisão | M12 (escrita: avaliar) |
+| BUS-3 | Configuração do catálogo | Config do catálogo | Não — carrinho por `graph.facebook.com` (token de anúncios); IQ `commerce_settings` antigo talvez ainda responda | Falta — só leitura do catálogo; ligar/desligar carrinho e visibilidade não são oferecidos (M12) | — | Mesmo risco das escritas do catálogo | Avaliar |
 | BUS-4 | Etiquetas: listar, cores, criar, editar, apagar | 5 páginas | Parcial — `appstate.BuildLabelEdit` (criar/editar/apagar); lista vem dos eventos `LabelEdit` do app state; cores são índices fixos | Pronto — `GET`/`POST /labels`, `PATCH`/`DELETE /labels/{id}` (só Business: `409 business_account_required`) (M10) | M | Só contas Business; guardar etiquetas no store a partir do sync | M10 |
 | BUS-5 | Atribuir / remover etiqueta de chat | 2 páginas | Sim — `appstate.BuildLabelChat` (+ `BuildLabelMessage`) | Pronto — `PUT`/`DELETE /labels/{id}/chats/{jid}` e `/messages/{msg_id}`, evento `label.updated` (M10) | S | Evento `label.updated` | M10 |
 | BUS-6 | Notas no chat | Notas | Não (incerto) | Fora | — | | — |
-| BUS-7 | Perfil comercial: descrição, e-mail, endereço, sites, horário, categorias (editar) | 7 páginas | Não — só leitura; IQ `w:biz` set (`business_profile v=3 mutation_type=delta`, como o Baileys) montado no worker | Pronto, aguardando validação no aparelho — `PATCH /business/profile` (descrição, endereço, localização, e-mail, até 2 sites, até 3 categorias por id, horário por dia), evento `business.profile_updated`, ferramenta MCP `update_business_profile`, seção "Perfil da empresa" no painel (M12) | L | Localização, categorias e remover sites seguem o formato de leitura (não estão no Baileys); busca de categorias não implementada (IQ desconhecido) | M12 |
+| BUS-7 | Perfil comercial: descrição, e-mail, endereço, sites, horário, categorias (editar) | 7 páginas | Não — só leitura; IQ `w:biz` set (`business_profile v=3 mutation_type=delta`, como o Baileys e o WhatsApp Web) montado no worker | Pronto; validado num número Business em 2026-10-21 para descrição, endereço, localização e horário (e apagar descrição e endereço com `""`); `clear` para remover campos (localização e horário aguardam validação: o WhatsApp Web não remove o pin) — `PATCH /business/profile` (descrição, endereço, localização, e-mail, até 2 sites, até 3 categorias por id, horário por dia), evento `business.profile_updated`, ferramenta MCP `update_business_profile`, seção "Perfil da empresa" no painel (M12) | L | Localização, categorias e remover sites seguem o formato de leitura (não estão no Baileys); busca de categorias não implementada (IQ desconhecido) | M12 |
 | BUS-8 | Ler perfil comercial | Dados da conta business | Sim — `GetBusinessProfile` (user.go); o parser do whatsmeow ignora descrição, sites e localização, então o worker lê o mesmo IQ com parser próprio (M12) | Pronto, aguardando validação no aparelho dos campos novos — `GET /business/profile` (própria conta, agora com `description`, `websites`, `location`, `category_list` e `business_hours`); de contatos em `GET /contacts/{jid}/profile` (M9/M10) | S | | M10/M12 |
 
 ### 2.16 Perfil da conta (Z-API: dentro de Instance)
@@ -281,7 +281,7 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 
 ## 3. Contagens
 
-Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-API; as ~250 páginas de referência viram 159 linhas). Atualizada em 2026-10-19 com o código do `main` (marcos 1 a 11 e atendente IA).
+Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-API; as ~250 páginas de referência viram 159 linhas). Atualizada em 2026-10-19 com o código do `main` (marcos 1 a 11 e atendente IA). As linhas LiteZap foram recontadas em 2026-10-21 com o script do Anexo A, depois do M12 (MSG-30, MSG-31, BUS-1…3 e BUS-7).
 
 | | Linhas |
 |---|---|
@@ -292,10 +292,10 @@ Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-AP
 | — whatsmeow `Parcial` | 10 |
 | — whatsmeow `Não` | 21 |
 | Recursos só da camada LiteZap (`N/A`) | 27 |
-| **LiteZap `Pronto`** | **115** |
-| LiteZap `Parcial` | 3 |
-| LiteZap `Falta` | 23 |
-| LiteZap `Fora` | 18 |
+| **LiteZap `Pronto`** (inclui "Pronto, aguardando validação") | **117** |
+| LiteZap `Parcial` | 6 |
+| LiteZap `Falta` | 22 |
+| LiteZap `Fora` | 14 |
 
 Viáveis com whatsmeow (`Sim` + `Manual` + `Parcial`): **111 de 132** recursos de protocolo. Os 21 inviáveis hoje: INS-11 (extensão, produto próprio da Z-API), MOB-1…4 (registro como aparelho principal), CON-8 (denúncia), CAL-1/2 (chamadas de voz e SIP), COM-8 (desativar comunidade), CHN-2/5/7/9/10/11 (administração avançada de canais), BRD-1 (listas de transmissão), BUS-1/2/3/6/7 (catálogo, coleções, notas, perfil comercial editável).
 

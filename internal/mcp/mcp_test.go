@@ -13,6 +13,8 @@ import (
 
 	"github.com/douglasdf99/litezap/internal/api"
 	"github.com/douglasdf99/litezap/internal/attendant"
+	"github.com/douglasdf99/litezap/internal/catalog"
+	"github.com/douglasdf99/litezap/internal/catalog/catalogtest"
 	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/ingest"
 	"github.com/douglasdf99/litezap/internal/lookup"
@@ -42,6 +44,7 @@ type env struct {
 	acct *service.Account
 	soc  *service.Social
 	att  *attendant.Admin
+	cat  *catalogtest.Fake
 }
 
 func newEnv(t *testing.T, tweak func(*settings.Settings)) *env {
@@ -78,6 +81,9 @@ func newEnv(t *testing.T, tweak func(*settings.Settings)) *env {
 	msg := &service.Messaging{Store: st, Manager: mgr, Queues: q, Fetcher: &media.Fetcher{AllowPrivate: true},
 		Signer:  media.NewSigner([]byte("0123456789abcdef0123456789abcdef"), "http://example.invalid"),
 		DataDir: dir, Defaults: defaults, Resolver: resolver, SignedURLs: true}
+	cat := catalogtest.New() // marco 12: a fake catalog GraphQL endpoint
+	msg.Catalog = &service.CatalogReader{Client: cat.Client(), Store: st, Defaults: defaults,
+		HTTP: func(p string) (catalog.Doer, error) { return cat.Doer(p), nil }}
 	grp := &service.Groups{Store: st, Workers: mgr, Resolver: resolver, Defaults: defaults}
 	acct := &service.Account{Messaging: msg, Events: bus}
 	soc := &service.Social{Store: st, Workers: mgr, Messaging: msg, Events: bus}
@@ -88,7 +94,7 @@ func newEnv(t *testing.T, tweak func(*settings.Settings)) *env {
 			Attendant: att})}, log)
 	srv := httptest.NewServer(h)
 	t.Cleanup(func() { bus.CloseSubscribers(); srv.Close() })
-	return &env{t: t, sp: sp, svc: svc, msg: msg, bus: bus, srv: srv, grp: grp, acct: acct, soc: soc, att: att}
+	return &env{t: t, sp: sp, svc: svc, msg: msg, bus: bus, srv: srv, grp: grp, acct: acct, soc: soc, att: att, cat: cat}
 }
 
 func (e *env) create(name string) (id, token string) {

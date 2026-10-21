@@ -29,6 +29,7 @@ const (
 	Social_LabelAction_FullMethodName        = "/worker.v1.Social/LabelAction"
 	Social_GetBusinessProfile_FullMethodName = "/worker.v1.Social/GetBusinessProfile"
 	Social_SetBusinessProfile_FullMethodName = "/worker.v1.Social/SetBusinessProfile"
+	Social_GetOrder_FullMethodName           = "/worker.v1.Social/GetOrder"
 )
 
 // SocialClient is the client API for Social service.
@@ -63,6 +64,10 @@ type SocialClient interface {
 	// "business_account_required"; WhatsApp refused a value (400/406): InvalidArgument
 	// "validation_failed" with the server code in the message.
 	SetBusinessProfile(ctx context.Context, in *SetBusinessProfileRequest, opts ...grpc.CallOption) (*BusinessProfileInfo, error)
+	// GetOrder reads an order the account received (marco 12: catalog phase 1) with
+	// whatsmeow's GetOrderDetails (fb:thrift_iq <order op="get">). The supervisor keeps the
+	// order token and falls back to the public catalog GraphQL when this fails.
+	GetOrder(ctx context.Context, in *GetOrderRequest, opts ...grpc.CallOption) (*OrderDetails, error)
 }
 
 type socialClient struct {
@@ -173,6 +178,16 @@ func (c *socialClient) SetBusinessProfile(ctx context.Context, in *SetBusinessPr
 	return out, nil
 }
 
+func (c *socialClient) GetOrder(ctx context.Context, in *GetOrderRequest, opts ...grpc.CallOption) (*OrderDetails, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OrderDetails)
+	err := c.cc.Invoke(ctx, Social_GetOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SocialServer is the server API for Social service.
 // All implementations must embed UnimplementedSocialServer
 // for forward compatibility.
@@ -205,6 +220,10 @@ type SocialServer interface {
 	// "business_account_required"; WhatsApp refused a value (400/406): InvalidArgument
 	// "validation_failed" with the server code in the message.
 	SetBusinessProfile(context.Context, *SetBusinessProfileRequest) (*BusinessProfileInfo, error)
+	// GetOrder reads an order the account received (marco 12: catalog phase 1) with
+	// whatsmeow's GetOrderDetails (fb:thrift_iq <order op="get">). The supervisor keeps the
+	// order token and falls back to the public catalog GraphQL when this fails.
+	GetOrder(context.Context, *GetOrderRequest) (*OrderDetails, error)
 	mustEmbedUnimplementedSocialServer()
 }
 
@@ -244,6 +263,9 @@ func (UnimplementedSocialServer) GetBusinessProfile(context.Context, *GetBusines
 }
 func (UnimplementedSocialServer) SetBusinessProfile(context.Context, *SetBusinessProfileRequest) (*BusinessProfileInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetBusinessProfile not implemented")
+}
+func (UnimplementedSocialServer) GetOrder(context.Context, *GetOrderRequest) (*OrderDetails, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetOrder not implemented")
 }
 func (UnimplementedSocialServer) mustEmbedUnimplementedSocialServer() {}
 func (UnimplementedSocialServer) testEmbeddedByValue()                {}
@@ -446,6 +468,24 @@ func _Social_SetBusinessProfile_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Social_GetOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetOrderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SocialServer).GetOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Social_GetOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SocialServer).GetOrder(ctx, req.(*GetOrderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Social_ServiceDesc is the grpc.ServiceDesc for Social service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -492,6 +532,10 @@ var Social_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetBusinessProfile",
 			Handler:    _Social_SetBusinessProfile_Handler,
+		},
+		{
+			MethodName: "GetOrder",
+			Handler:    _Social_GetOrder_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -163,6 +163,10 @@ export function attendantPanel(ctx) {
       kbBody.appendChild(tr);
     };
     (a.knowledge || []).forEach(addKB);
+    // Marco 12: the product list may come from the WhatsApp catalog (Business accounts).
+    const kbSource = h('select', null, h('option', { value: 'manual' }, 'Produtos digitados aqui'),
+      h('option', { value: 'catalog' }, 'Catálogo do WhatsApp (nome, preço, descrição e disponibilidade)'));
+    kbSource.value = a.knowledge_source || 'manual';
     const voice = h('select', null, h('option', { value: 'off' }, 'Sempre texto'), h('option', { value: 'when_audio' }, 'Voz quando o cliente mandar áudio'), h('option', { value: 'always' }, 'Sempre voz'));
     voice.value = a.voice_reply || 'off';
     const callFollow = h('input', { type: 'checkbox', checked: !!a.call_followup });
@@ -179,7 +183,7 @@ export function attendantPanel(ctx) {
     const profile = () => ({
       name: name.value.trim(), mode: mode.value, objective: objective.value.trim(), steps: lines(steps.value), tone: tone.value.trim(),
       handoff_criteria: lines(criteria.value), actions: actionBoxes.filter((cb) => cb.checked).map((cb) => cb.dataset.action),
-      business: business.value.trim(), knowledge: [...kbBody.children].map((tr) => tr.read()),
+      business: business.value.trim(), knowledge: [...kbBody.children].map((tr) => tr.read()), knowledge_source: kbSource.value,
       voice_reply: voice.value, call_followup: callFollow.checked, call_hint: callHint.value.trim(),
       max_reply_chars: Number(maxChars.value), hide_contact_name: hideName.checked,
     });
@@ -205,6 +209,7 @@ export function attendantPanel(ctx) {
     h('fieldset', null, h('legend', null, 'Ações permitidas'), actionBoxes.map((cb) => h('label', { class: 'check' }, cb, ' ', ACTION_LABEL[cb.dataset.action]))),
     field('Contexto do negócio', business, 'Informação confiável que o agente usa. Nunca coloque senhas ou chaves aqui.'),
     h('fieldset', null, h('legend', null, 'Base de conhecimento (perguntas, catálogo com preço, horários, políticas)'),
+      field('Lista de produtos', kbSource, 'Com "Catálogo do WhatsApp", os produtos do catálogo do número (atualizados a cada 10 minutos) substituem os itens do tipo produto abaixo. Produtos ocultos ou em análise não entram.'),
       h('table', { class: 'table small' }, h('thead', null, h('tr', null, h('th', null, 'Tipo'), h('th', null, 'Título'), h('th', null, 'Conteúdo'), h('th', null, 'Preço'), h('th', null, ''))), kbBody),
       h('button', { class: 'btn small', type: 'button', onclick: () => addKB() }, 'Adicionar item')),
     h('fieldset', null, h('legend', null, 'Voz, ligações e privacidade'),

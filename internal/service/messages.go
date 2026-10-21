@@ -43,6 +43,9 @@ type Messaging struct {
 	MediaRetention time.Duration
 	// Resolver caches and rate-limits phone lookups (check-numbers).
 	Resolver *lookup.Resolver
+	// Catalog reads WhatsApp catalogs (marco 12): type product sends and the catalog
+	// routes. nil: not available.
+	Catalog *CatalogReader
 	// SignedURLs enables ?signed=1; off when the API is exposed without a public_url
 	// (the URLs would point at an address third parties cannot use).
 	SignedURLs bool
@@ -198,6 +201,12 @@ type SendInput struct {
 	// ["all"] in a group.
 	Mentions    []string          `json:"mentions,omitempty"`
 	LinkPreview *LinkPreviewInput `json:"link_preview,omitempty"`
+	// Type product (marco 12): a product of a WhatsApp catalog (catalog_owner: a phone
+	// number; default the instance's own), with an optional caption (body) and footer.
+	ProductID    string `json:"product_id,omitempty"`
+	CatalogOwner string `json:"catalog_owner,omitempty"`
+	Body         string `json:"body,omitempty"`
+	Footer       string `json:"footer,omitempty"`
 	// DelayMS waits before sending and TypingMS shows "typing..." for that long (0-15000).
 	// They never shorten the anti-ban pacing.
 	DelayMS         int    `json:"delay_ms,omitempty"`
@@ -290,6 +299,9 @@ func outboundView(o store.Outbound, logged *store.Message) MessageView {
 	}
 	if p.Mime != "" {
 		kind := v.Type
+		if kind == "product" {
+			kind = "image" // the product's image
+		}
 		if kind == "gif" || kind == "ptv" {
 			kind = "video"
 		}
@@ -476,6 +488,9 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 	if err := s.common(ctx, instanceID, chat, in, &p); err != nil {
 		return p, err
 	}
+	if in.Type != "product" && (in.ProductID != "" || in.CatalogOwner != "" || in.Body != "" || in.Footer != "") {
+		return p, apierr.Validation("product_id, catalog_owner, body and footer only apply to type product")
+	}
 	p.StatusStyle = in.statusStyle
 	if q := in.statusQuote; q != nil {
 		p.Quote = q
@@ -503,8 +518,10 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 		}
 	case "image", "video", "audio", "document", "sticker", "gif", "ptv":
 		err = s.composeMedia(ctx, instanceID, id, in, &p)
+	case "product":
+		err = s.composeProduct(ctx, instanceID, id, in, &p)
 	default:
-		return p, apierr.Validation("type must be text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, edit, revoke, pin or forward")
+		return p, apierr.Validation("type must be text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, edit, revoke, pin, forward or product")
 	}
 	return p, err
 }

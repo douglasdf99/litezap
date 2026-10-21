@@ -436,6 +436,10 @@ func content(m *waE2E.Message) (typ, text string, media *workerv1.Media, reactio
 		return "reaction", x.GetText(), nil, x.GetKey().GetID(), true
 	case buttonReply(m) != nil:
 		return "button_reply", buttonReply(m).Title, nil, "", true
+	case m.GetProductMessage() != nil:
+		return "product", productText(m), nil, "", true
+	case m.GetOrderMessage() != nil:
+		return "order", orderText(m), nil, "", true
 	case m.GetProtocolMessage() != nil, m.GetSenderKeyDistributionMessage() != nil,
 		m.GetPollUpdateMessage() != nil, m.GetPinInChatMessage() != nil, m.GetKeepInChatMessage() != nil,
 		m.GetSecretEncryptedMessage() != nil:
@@ -478,6 +482,10 @@ func contextOf(m *waE2E.Message) *waE2E.ContextInfo {
 		return m.GetTemplateButtonReplyMessage().GetContextInfo()
 	case m.GetInteractiveResponseMessage() != nil:
 		return m.GetInteractiveResponseMessage().GetContextInfo()
+	case m.GetProductMessage() != nil:
+		return m.GetProductMessage().GetContextInfo()
+	case m.GetOrderMessage() != nil:
+		return m.GetOrderMessage().GetContextInfo()
 	}
 	return nil
 }
@@ -525,6 +533,7 @@ func details(m *waE2E.Message, out *workerv1.Message) {
 		}
 	}
 	out.ButtonReply = buttonReply(m)
+	out.Product, out.Order = productOf(m), orderOf(m)
 	if p := pollCreation(m); p != nil {
 		poll := &workerv1.Poll{Name: p.GetName(), Selectable: p.GetSelectableOptionsCount()}
 		for _, o := range p.GetOptions() {

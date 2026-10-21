@@ -58,8 +58,12 @@ type Profile struct {
 	Actions         []string         `json:"actions"`
 	Business        string           `json:"business"`
 	Knowledge       []KnowledgeEntry `json:"knowledge"`
-	Language        string           `json:"language"`
-	Currency        string           `json:"currency"`
+	// KnowledgeSource is where the product list comes from: manual (default, the product
+	// entries above) or catalog (the instance's WhatsApp Business catalog: name, price,
+	// description and availability, refreshed every 10 minutes; marco 12).
+	KnowledgeSource string `json:"knowledge_source"`
+	Language        string `json:"language"`
+	Currency        string `json:"currency"`
 	// VoiceReply: off (default) | when_audio | always (needs a speech model).
 	VoiceReply string `json:"voice_reply"`
 	// CallFollowUp writes to a caller after an automatic call rejection.
@@ -205,6 +209,9 @@ func (p *Profile) normalize() {
 		}
 		k.Title, k.Content = strings.TrimSpace(k.Title), strings.TrimSpace(k.Content)
 	}
+	if p.KnowledgeSource = strings.ToLower(strings.TrimSpace(p.KnowledgeSource)); p.KnowledgeSource == "" {
+		p.KnowledgeSource = KnowledgeManual
+	}
 	if p.Language = strings.TrimSpace(p.Language); p.Language == "" {
 		p.Language = "pt-BR"
 	}
@@ -252,6 +259,8 @@ func (p *Profile) Validate() error {
 		return fmt.Errorf("at most %d knowledge entries", maxKnowledge)
 	case tooLong(p.CallHint, maxCallHintLen):
 		return fmt.Errorf("call_hint is limited to %d characters", maxCallHintLen)
+	case p.KnowledgeSource != KnowledgeManual && p.KnowledgeSource != KnowledgeCatalog:
+		return errors.New("knowledge_source must be manual or catalog")
 	case !slices.Contains([]string{VoiceOff, VoiceWhenAudio, VoiceAlways}, p.VoiceReply):
 		return errors.New("voice_reply must be off, when_audio or always")
 	case p.MaxReplyChars < 50 || p.MaxReplyChars > hardReplyMax:
