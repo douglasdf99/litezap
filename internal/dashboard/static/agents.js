@@ -6,6 +6,7 @@ import * as api from './api.js';
 import {
   h, mount, toast, errView, field, fmtTime, phoneOf, confirmDanger, icon, dialog, emptyState, skeleton,
 } from './ui.js';
+import { subscriptionCard, runtimeField, runtimeBadge } from './subscription.js';
 
 const MODE = {
   aprovacao: ['Aprovação', 'tone-warn', 'Cada envio vira um rascunho que você aprova.'],
@@ -183,7 +184,7 @@ function listPage(ctx, base) {
       h('div', { class: 'ag-card-top' },
         h('a', { class: 'ag-name', href }, a.name),
         h('label', { class: 'check', title: a.enabled ? 'Ligado' : 'Pausado' }, toggle)),
-      h('div', { class: 'row' }, modeBadge(a.mode), a.enabled ? null : h('span', { class: 'badge' }, 'pausado')),
+      h('div', { class: 'row' }, modeBadge(a.mode), runtimeBadge(a), a.enabled ? null : h('span', { class: 'badge' }, 'pausado')),
       h('p', { class: 'small muted' }, triggerText(a.trigger)),
       h('p', { class: 'small' }, `${a.today.runs} execução(ões) hoje · ${usd(a.today.cost_usd)}`),
       h('div', { class: 'ag-card-foot' }, h('a', { class: 'btn small ghost', href }, 'Abrir'), runBtn, h('span', { class: 'grow' }), del));
@@ -208,6 +209,7 @@ function listPage(ctx, base) {
   load();
   const elx = h('div', { class: 'stack' },
     setup,
+    subscriptionCard(ctx, base),
     h('div', { class: 'row' }, h('h2', { class: 'grow ag-h' }, 'Seus agentes'),
       h('button', { class: 'btn primary', type: 'button', onclick: () => openEditor(ctx, base, null, load) }, icon('plus', 16), 'Novo agente')),
     grid,
@@ -281,7 +283,7 @@ const STEPS = ['Modelo', 'Instruções', 'Permissões', 'Modo e gatilho'];
 function openEditor(ctx, base, agent, onSaved) {
   const editing = !!agent;
   const draft = editing
-    ? JSON.parse(JSON.stringify({ name: agent.name, instructions: agent.instructions, mode: agent.mode, tools: agent.tools, trigger: agent.trigger, limits: agent.limits }))
+    ? JSON.parse(JSON.stringify({ name: agent.name, instructions: agent.instructions, mode: agent.mode, tools: agent.tools, trigger: agent.trigger, limits: agent.limits, runtime: agent.runtime || 'provider' }))
     : JSON.parse(JSON.stringify(TEMPLATES[0].agent));
   draft.trigger = Object.assign({ type: 'message', groups: false, keywords: [], chats: [], labels: [] }, draft.trigger || {});
   draft.limits = Object.assign({ max_steps: 8, max_recipients: 3, max_sends: 5, max_writes: 10, max_group_changes: 3, daily_runs: 200 }, draft.limits || {});
@@ -403,14 +405,16 @@ function openEditor(ctx, base, agent, onSaved) {
     const sync = () => { filters.hidden = type.value !== 'message'; };
     type.addEventListener('change', sync);
     sync();
+    const runtime = runtimeField(ctx, base, draft, editing ? agent.runtime : 'provider');
     mount(body,
+      runtime.el,
       h('fieldset', null, h('legend', null, 'Modo'), h('div', { class: 'ag-perms' }, radios)),
       h('fieldset', null, h('legend', null, 'Gatilho'), field('Quando roda', type), filters));
     return () => {
       const m = radios.map((l) => l.querySelector('input')).find((r) => r.checked);
       draft.mode = m ? m.value : 'aprovacao';
       draft.trigger = { type: type.value, groups: groups.checked, keywords: listOf(keywords.value), chats: listOf(chats.value), labels: listOf(labels.value) };
-      return true;
+      return runtime.collect();
     };
   }
 

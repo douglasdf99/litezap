@@ -24,6 +24,7 @@ type AgentsService interface {
 	Drafts(ctx context.Context, instanceID, status string, limit int) ([]agents.DraftView, error)
 	Decide(ctx context.Context, instanceID, draftID string, approve bool, decidedBy string) (agents.DraftView, error)
 	Simulate(ctx context.Context, instanceID string, in agents.SimulateInput) (agents.RunView, error)
+	Runtimes(ctx context.Context, instanceID string, refresh bool) (agents.RuntimesView, error)
 }
 
 var _ AgentsService = (*agents.Runner)(nil)
@@ -41,6 +42,7 @@ func (s *server) agentsRoutes(r chi.Router) {
 	r.Post("/agents/drafts/{draft_id}/approve", s.decideAgentDraft(true))
 	r.Post("/agents/drafts/{draft_id}/reject", s.decideAgentDraft(false))
 	r.Get("/agents/runs/{run_id}", s.getAgentRun)
+	r.Get("/agents/runtimes", s.agentRuntimes)
 	r.Get("/agents/{agent_id}", s.getAgent)
 	r.Put("/agents/{agent_id}", s.updateAgent)
 	r.Delete("/agents/{agent_id}", s.deleteAgent)
@@ -192,6 +194,17 @@ func (s *server) simulateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, err := s.opt.Agents.Simulate(r.Context(), chi.URLParam(r, "id"), in)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+// agentRuntimes reports who can run agents here: the provider, the local Codex CLI
+// (?refresh=1 detects it again) and how to use a Claude subscription (Claude Code plugin).
+func (s *server) agentRuntimes(w http.ResponseWriter, r *http.Request) {
+	v, err := s.opt.Agents.Runtimes(r.Context(), chi.URLParam(r, "id"), r.URL.Query().Get("refresh") == "1")
 	if err != nil {
 		s.writeErr(w, err)
 		return

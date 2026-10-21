@@ -135,7 +135,8 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		}}
 	// LiteZap agents (spec 2026-10-20): the hook's "agents" target, a tool-use loop over
 	// the MCP tool table (set below, once the services exist) with the attendant's provider.
-	agentsRunner := &agents.Runner{Store: st, Sessions: agents.FromAttendant(att), Log: log}
+	agentsRunner := &agents.Runner{Store: st, Sessions: agents.FromAttendant(att), Log: log,
+		Codex: agents.NewCodexCLI(log), Location: att.Location}
 	// Agent hook (spec 4.3): another bus sink; its send path is set once Messaging exists.
 	agent := agenthook.New(st, agenthook.Options{AllowPrivate: cfg.WebhookAllowPrivateURLs, Log: log,
 		Held: cl.sending.Held, Builtin: att, Agents: agentsRunner})
