@@ -5,6 +5,36 @@ description: O que mudou em cada marco do LiteZap.
 
 As versões seguem os marcos do motor. Mudanças que quebram compatibilidade são marcadas com **Quebra**.
 
+## Cardápio (catálogo do LiteZap)
+
+**Novo**
+
+- [Cardápio](/docs/guias/cardapio/): o catálogo próprio do LiteZap, guardado no LiteZap por instância e **nunca
+  escrito na Meta** (sem conta de anúncios nem conta Business). Categorias, itens com preço em centavos, foto
+  (upload ou link, reduzida para JPEG de até 1080 px), esgotado, SKU, tags e grupos de opções com acréscimos.
+  Até 500 itens e 50 categorias.
+- API [Cardápio](/docs/api/cardapio/): `GET /menu`, `/menu/text`, criar, alterar, apagar e reordenar categorias,
+  itens e opções, `PUT /menu/items/{id}/available` e a foto do item.
+- Importações: planilha CSV com pré-visualização (`dry_run`) e preços brasileiros ("45,90", "R$ 1.234,50"),
+  **Copiar do catálogo do WhatsApp** (só leitura, com as fotos) e **Montar com IA** com o provedor do Atendente IA
+  (inclusive Ollama), sempre com revisão antes de salvar.
+- Envios pela fila: tipos `menu_item` (foto e legenda) e `menu` em `POST /messages`,
+  [`POST /menu/send`](/docs/api/cardapio/enviar-o-cardapio/) (divide cardápios longos, idempotente por
+  `client_message_id`) e `POST /menu/items/{id}/send`.
+- Atendente IA: `knowledge_source: "menu"`, sugerido para agentes novos quando há cardápio; o `agent.order_draft`
+  recalcula os preços pelo cardápio somando as opções escolhidas (itens ganham `options`).
+- Agentes e MCP: `get_menu` e `get_menu_item` (grupo `ler`), `send_menu` (`responder_no_chat`) e
+  `send_menu_item` (`midia`).
+- Painel: aba **Cardápio** com categorias, cartões com foto, preço e esgotado, reordenar arrastando, editor com
+  opções e prévia, importações e **Enviar cardápio para…**.
+
+**Segurança**
+
+- Textos do cardápio chegam ao atendente como dados neutralizados, num bloco próprio fora das informações da
+  empresa. O texto do "Montar com IA" vai ao modelo entre marcadores aleatórios e a resposta é validada campo a
+  campo; nada é salvo sem confirmação. Fotos por link seguem as regras de `media.url`.
+- Cada mensagem de `send_menu` conta no limite de envios do agente. Chaves de API `read` só leem o cardápio.
+
 ## Catálogo e pedidos, fase 1 (M12b)
 
 **Novo**
