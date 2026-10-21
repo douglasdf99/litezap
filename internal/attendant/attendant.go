@@ -471,6 +471,7 @@ const messageTask = `Write your answer to the customer's new message as the JSON
 // run calls the model and turns its answer into a safe result.
 func (a *Attendant) run(ctx context.Context, in runInput) (runResult, error) {
 	in.profile = a.withCatalog(ctx, in.instanceID, in.profile)
+	in.profile = a.withMenu(ctx, in.instanceID, in.profile)
 	p, s := in.profile, in.settings
 	canary := newCanary()
 	task := messageTask
@@ -634,6 +635,9 @@ func (a *Attendant) buildEvents(in runInput, e modelEvent) []agenthook.AgentEven
 			return nil
 		}
 		items, total, allCatalog := priceOrder(p, e.Items)
+		if len(p.menu) > 0 { // the Cardápio prices items and their options
+			items, total, allCatalog = priceMenuOrder(p.menu, e.Items)
+		}
 		if len(items) == 0 {
 			return nil
 		}

@@ -560,6 +560,7 @@ func (t *tools) register(s *sdk.Server) {
 	t.registerAccount(s)   // marco 9 (account.go)
 	t.registerSocial(s)    // marco 10 (social.go)
 	t.registerCatalog(s)   // marco 12 (catalog.go)
+	t.registerMenu(s)      // Cardápio, LiteZap's own catalog (menu.go)
 	t.registerAttendant(s) // built-in attendant, read-only (attendant.go)
 }
 

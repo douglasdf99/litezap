@@ -220,12 +220,12 @@ func (e *executor) run(ctx context.Context, call attendant.ToolCall, st *Step) (
 	}
 	switch {
 	case e.dryRun:
-		e.count(call.Name, chat)
+		e.count(call.Name, chat, args)
 		st.Outcome = OutcomeDryRun
 		return string(mustJSON(map[string]any{"executed": false, "dry_run": true, "would": map[string]any{"tool": call.Name, "args": args},
 			"note": "Simulation: nothing was sent or changed. Continue as if it had worked."})), false
 	case e.mode == ModeSuggest:
-		e.count(call.Name, chat)
+		e.count(call.Name, chat, args)
 		st.Outcome = OutcomeNote
 		e.actions = append(e.actions, call.Name+":note")
 		return string(mustJSON(map[string]any{"executed": false, "note": "This agent only suggests: the action was recorded " +
@@ -237,7 +237,7 @@ func (e *executor) run(ctx context.Context, call attendant.ToolCall, st *Step) (
 			st.Outcome = OutcomeError
 			return toolError("could not save the draft: internal error")
 		}
-		e.count(call.Name, chat)
+		e.count(call.Name, chat, args)
 		st.Outcome, st.DraftID = OutcomeDraft, d.ID
 		e.drafts++
 		e.actions = append(e.actions, call.Name+":draft")
@@ -256,7 +256,7 @@ func (e *executor) run(ctx context.Context, call attendant.ToolCall, st *Step) (
 		args["wait"] = false
 		args["client_message_id"] = "agent:" + e.runID + ":" + strconv.Itoa(e.n)
 	}
-	e.count(call.Name, chat) // counted even if it fails: a retry loop must still hit the caps
+	e.count(call.Name, chat, args) // counted even if it fails: a retry loop must still hit the caps
 	out, err := def.Call(ctx, mustJSON(args))
 	if err != nil {
 		st.Outcome = OutcomeError
@@ -274,11 +274,12 @@ func (e *executor) run(ctx context.Context, call attendant.ToolCall, st *Step) (
 	return string(out), false
 }
 
-// count records an accepted write in the run's caps.
-func (e *executor) count(tool, chat string) {
+// count records an accepted write in the run's caps (send_menu counts the messages it
+// may send: its max_messages, set by checkWrite).
+func (e *executor) count(tool, chat string, args map[string]any) {
 	e.writes++
 	if sendTools[tool] {
-		e.sends++
+		e.sends += sendWeight(tool, args)
 		e.recipients[chat] = true
 	}
 	if groupChangeTools[tool] {
@@ -302,6 +303,15 @@ func (e *executor) checkWrite(tool string, args map[string]any) (string, error) 
 		}
 	}
 	l := e.agent.Limits
+	if tool == "send_menu" {
+		// A long menu is several messages: it may send at most the sends left in this
+		// run (3 by default), and the menu is refused when it needs more.
+		n := 3
+		if f, ok := args["max_messages"].(float64); ok && f >= 1 {
+			n = int(f)
+		}
+		args["max_messages"] = min(n, 10, max(l.MaxSends-e.sends, 1))
+	}
 	switch {
 	case e.writes >= l.MaxWrites:
 		return "", fmt.Errorf("at most %d write actions per run", l.MaxWrites)
@@ -313,6 +323,20 @@ func (e *executor) checkWrite(tool string, args map[string]any) (string, error) 
 		return "", fmt.Errorf("at most %d group changes per run", l.MaxGroupChanges)
 	}
 	return chat, nil
+}
+
+// sendWeight is how many sends a send tool call counts for.
+func sendWeight(tool string, args map[string]any) int {
+	if tool == "send_menu" {
+		switch n := args["max_messages"].(type) {
+		case int:
+			return max(n, 1)
+		case float64:
+			return max(int(n), 1)
+		}
+		return 3
+	}
+	return 1
 }
 
 // checkMentions refuses mentioning everyone, whatever its spelling, and malformed lists.

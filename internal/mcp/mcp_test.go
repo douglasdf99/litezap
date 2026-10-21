@@ -45,6 +45,7 @@ type env struct {
 	soc  *service.Social
 	att  *attendant.Admin
 	cat  *catalogtest.Fake
+	menu *service.Menu
 }
 
 func newEnv(t *testing.T, tweak func(*settings.Settings)) *env {
@@ -89,12 +90,13 @@ func newEnv(t *testing.T, tweak func(*settings.Settings)) *env {
 	soc := &service.Social{Store: st, Workers: mgr, Messaging: msg, Events: bus}
 	vault, _ := attendant.NewVault([]byte("attendant-key-0123456789abcdef01"))
 	att := &attendant.Admin{A: &attendant.Attendant{Store: st, Vault: vault}}
-	h := api.New(svc, msg, api.Options{AdminToken: admin, Events: bus, Groups: grp, Account: acct, Social: soc, Attendant: att,
+	mn := &service.Menu{Store: st, DataDir: dir, Fetcher: msg.Fetcher, Catalog: msg.Catalog, Sender: msg}
+	h := api.New(svc, msg, api.Options{AdminToken: admin, Events: bus, Groups: grp, Account: acct, Social: soc, Attendant: att, Menu: mn,
 		MCP: NewHTTPHandler(HTTPDeps{Instances: svc, Messaging: msg, Events: bus, Groups: grp, Logger: log, Account: acct, Social: soc,
-			Attendant: att})}, log)
+			Attendant: att, Menu: mn})}, log)
 	srv := httptest.NewServer(h)
 	t.Cleanup(func() { bus.CloseSubscribers(); srv.Close() })
-	return &env{t: t, sp: sp, svc: svc, msg: msg, bus: bus, srv: srv, grp: grp, acct: acct, soc: soc, att: att, cat: cat}
+	return &env{t: t, sp: sp, svc: svc, msg: msg, bus: bus, srv: srv, grp: grp, acct: acct, soc: soc, att: att, cat: cat, menu: mn}
 }
 
 func (e *env) create(name string) (id, token string) {
@@ -183,7 +185,7 @@ func (e *env) client(m mode, token string) *sdk.ClientSession {
 				sc.InstanceID = id
 			}
 			b = &Local{Instances: e.svc, Messaging: e.msg, Events: e.bus, Groups: e.grp, Caller: sc, Account: e.acct, Social: e.soc,
-				Attendant: e.att}
+				Attendant: e.att, Menu: e.menu}
 		}
 		st, ct := sdk.NewInMemoryTransports()
 		ss, err := NewServer(b, Options{}).Connect(ctx, st, nil)
