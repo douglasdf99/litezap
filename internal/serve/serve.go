@@ -22,6 +22,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/dashboard"
 	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/ingest"
+	"github.com/douglasdf99/litezap/internal/localai"
 	"github.com/douglasdf99/litezap/internal/lookup"
 	"github.com/douglasdf99/litezap/internal/manager"
 	"github.com/douglasdf99/litezap/internal/mcp"
@@ -254,6 +255,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		// MCP streamable HTTP at /mcp, behind the same tokens (spec 3.1, 6.1).
 		MCP:        mcp.NewHTTPHandler(mcpDeps),
 		Agents:     agentsRunner,
+		LocalAI:    localai.New(), // loopback Ollama only (free local AI)
 		AdminToken: cfg.AdminToken,
 		ProtectOps: !loopback,
 		Ready:      cl.health.Ready, // fails once draining (E12)

@@ -1,9 +1,14 @@
 ---
 title: Agentes
-description: Agentes LiteZap — o Claude gerenciando o seu WhatsApp com as ferramentas do LiteZap, com permissões, modo de aprovação, gatilhos e limites de custo.
+description: Agentes LiteZap — uma IA (grátis no seu computador, grátis na nuvem ou o Claude) gerenciando o seu WhatsApp com as ferramentas do LiteZap, com permissões, modo de aprovação, gatilhos e limites de custo.
 ---
 
-Um **agente LiteZap** é o Claude operando o seu WhatsApp sozinho, 24 horas, dentro das regras que você define. Ele
+:::tip[Funciona de graça]
+Não tem cartão de crédito? Os agentes funcionam com IA **grátis**: no seu computador com o Ollama (`qwen2.5:7b`) ou
+na nuvem com o plano grátis do Google Gemini ou da Groq. Veja [IA grátis](/docs/guias/ia-gratis/).
+:::
+
+Um **agente LiteZap** é uma IA operando o seu WhatsApp sozinha, 24 horas, dentro das regras que você define. Ele
 faz muito mais do que responder: lê conversas, responde, etiqueta, manda mídia e mexe em grupos, sempre só com as
 permissões que você deu.
 
@@ -34,9 +39,12 @@ de forma interativa.
 
 ## Antes de começar
 
-1. **Provedor de IA (admin).** Configure o provedor e a chave na aba **Atendente IA** da instância (bloco "Atendente
-   LiteZap") ou com `PUT /v1/instances/{id}/attendant`. O padrão é o Claude (`claude-sonnet-5-5`). Servidores
-   OpenAI-compatíveis funcionam se o modelo suportar *function calling*.
+1. **Escolher a IA (admin).** Na aba **Agentes** (ou em **Atendente IA**), em **Qual IA usar?**, escolha uma opção
+   grátis — **no meu computador** (Ollama, recomendado), **Google Gemini grátis** ou **Groq grátis** — ou o Claude
+   pago. Pela API: `PUT /v1/instances/{id}/attendant` com `{"preset":"ollama"}` (veja [IA grátis](/docs/guias/ia-gratis/)).
+   Qualquer servidor OpenAI-compatível funciona se o modelo suportar *function calling*. Com modelos locais pequenos,
+   o LiteZap usa instruções mais curtas em português e dá **uma** nova chance quando o modelo manda uma chamada de
+   ferramenta inválida; na segunda, a execução termina como `failed` (`invalid_tool_call`) sem executar nada.
 2. **Ligar as mensagens novas.** Na aba **Agentes**, ative "Agentes respondem a mensagens novas". Isso coloca o hook
    de agente da instância com `target: "agents"`:
 

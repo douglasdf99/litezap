@@ -1763,6 +1763,98 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/InstanceNotFound" }
+  /v1/ai/presets:
+    get:
+      tags: [Atendente IA]
+      operationId: listAIPresets
+      x-litezap-milestone: A2
+      summary: Provedores de IA grátis
+      x-litezap-scope: admin
+      description: |
+        Os presets grátis (`ollama`, `gemini_free`, `groq_free`): servidor OpenAI-compatível, modelo padrão,
+        alternativas, se precisa de chave (grátis) e onde pegá-la, e expectativas honestas de qualidade,
+        velocidade e privacidade. Use o `id` em `preset` no `PUT /v1/instances/{id}/attendant`.
+      responses:
+        "200":
+          description: Lista de presets.
+          content:
+            application/json:
+              schema: { type: object, properties: { presets: { type: array, items: { $ref: "#/components/schemas/AIProviderPreset" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/ai/local:
+    get:
+      tags: [Atendente IA]
+      operationId: getLocalAI
+      x-litezap-milestone: A2
+      summary: Ollama neste computador
+      x-litezap-scope: admin
+      description: |
+        Verifica o Ollama em `127.0.0.1:11434` (endereço fixo, nunca vem da requisição): se responde, a
+        versão, os modelos instalados (`/api/tags`), a memória do computador e o modelo recomendado para ela
+        (`qwen2.5:7b` com 8 GB de RAM ou mais, `llama3.2:3b` abaixo disso). O LiteZap não instala o Ollama:
+        `download_url` leva à página oficial.
+      responses:
+        "200":
+          description: Estado do Ollama local.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalAIStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/ai/local/pull:
+    get:
+      tags: [Atendente IA]
+      operationId: getLocalAIPull
+      x-litezap-milestone: A2
+      summary: Progresso do download do modelo
+      x-litezap-scope: admin
+      description: Progresso do download em andamento (ou do último); consulte a cada 1 a 2 segundos.
+      responses:
+        "200":
+          description: Progresso (`pull` é null quando nenhum download foi feito).
+          content:
+            application/json:
+              schema: { type: object, properties: { pull: { $ref: "#/components/schemas/LocalAIPull" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Atendente IA]
+      operationId: startLocalAIPull
+      x-litezap-milestone: A2
+      summary: Baixar um modelo no Ollama
+      x-litezap-scope: admin
+      description: |
+        Começa `ollama pull` pela API HTTP do Ollama local (`POST /api/pull`, em streaming) e volta na hora;
+        acompanhe por `GET /v1/ai/local/pull`. Um download por vez. `model` é um nome da biblioteca do
+        Ollama (`qwen2.5:7b`, `llama3.2:3b`); URLs e registros de terceiros são recusados.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [model], properties: { model: { type: string, example: "qwen2.5:7b" } } }
+      responses:
+        "202":
+          description: Download iniciado.
+          content:
+            application/json:
+              schema: { type: object, properties: { pull: { $ref: "#/components/schemas/LocalAIPull" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: "Já há um download em andamento (`pull_running`)." }
+        "503": { description: "O Ollama não está rodando neste computador (`ollama_unreachable`)." }
+    delete:
+      tags: [Atendente IA]
+      operationId: cancelLocalAIPull
+      x-litezap-milestone: A2
+      summary: Cancelar o download do modelo
+      x-litezap-scope: admin
+      description: Interrompe o download em andamento (o Ollama retoma de onde parou num novo pedido).
+      responses:
+        "204": { description: Cancelado (ou nada em andamento). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /v1/instances/{id}/attendant:
     parameters: [{ $ref: "#/components/parameters/InstanceID" }]
     get:
@@ -1787,10 +1879,11 @@ paths:
       x-litezap-milestone: M5b
       summary: Configurar provedor do atendente
       x-litezap-scope: admin
-      x-litezap-notes: "Cada mensagem atendida é uma chamada paga ao provedor: mantenha daily_call_cap."
+      x-litezap-notes: "Com Anthropic ou OpenAI cada mensagem atendida é uma chamada paga; os presets grátis (ollama, gemini_free, groq_free) custam 0. Mantenha daily_call_cap."
       description: |
-        Só o token admin. Atualização parcial: `provider` (`anthropic` | `openai`, qualquer servidor
-        OpenAI-compatível), `model` (padrão `claude-sonnet-5-5`), `base_url`, `api_key` (cifrada em
+        Só o token admin. Atualização parcial: `preset` (`ollama`, `gemini_free`, `groq_free`: preenche
+        `provider` openai, `base_url` e `model` do provedor grátis; veja `GET /v1/ai/presets`), `provider`
+        (`anthropic` | `openai`, qualquer servidor OpenAI-compatível; o id de um preset também é aceito), `model` (padrão `claude-sonnet-5-5`), `base_url`, `api_key` (cifrada em
         repouso com `data/attendant_key`; `""` remove), `daily_call_cap` (padrão 300 chamadas/dia, inclui
         transcrição e voz), `max_tokens`, `vision`, `audio` (servidor OpenAI-compatível de
         `/audio/transcriptions` e `/audio/speech`) e preços para o log de custo.
@@ -1801,7 +1894,10 @@ paths:
             schema: { $ref: "#/components/schemas/AttendantSettingsPatch" }
             examples:
               anthropic: { summary: Claude (padrão), value: { provider: anthropic, api_key: "sk-ant-...", daily_call_cap: 300 } }
-              local: { summary: Servidor local (Ollama), value: { provider: openai, base_url: "http://127.0.0.1:11434/v1", model: "llama3.1" } }
+              ollama: { summary: Grátis no computador (Ollama), value: { preset: ollama } }
+              gemini: { summary: Grátis na nuvem (Google Gemini), value: { preset: gemini_free, api_key: "AIza..." } }
+              groq: { summary: Groq grátis, value: { preset: groq_free, api_key: "gsk_..." } }
+              local: { summary: Outro servidor OpenAI-compatível, value: { provider: openai, base_url: "http://127.0.0.1:1234/v1", model: "qwen2.5-7b-instruct" } }
       responses:
         "200":
           description: Configuração salva (sem as chaves).
@@ -4855,11 +4951,65 @@ components:
         transcription_model: { type: string, description: "Ex.: whisper-1; vazio desliga a transcrição." }
         speech_model: { type: string, description: "Ex.: gpt-4o-mini-tts; vazio desliga a voz." }
         voice: { type: string }
+    AIProviderPreset:
+      type: object
+      properties:
+        id: { type: string, enum: [ollama, gemini_free, groq_free] }
+        label: { type: string }
+        provider: { type: string, enum: [openai] }
+        base_url: { type: string }
+        model: { type: string }
+        models: { type: array, items: { type: string } }
+        needs_key: { type: boolean }
+        key_url: { type: string }
+        local: { type: boolean }
+        free: { type: boolean }
+        quality: { type: string }
+        speed: { type: string }
+        privacy: { type: string }
+    LocalAIPull:
+      type: object
+      nullable: true
+      properties:
+        model: { type: string }
+        status: { type: string, description: "Última linha de status do Ollama (pulling manifest, verifying..., success)." }
+        total_bytes: { type: integer }
+        completed_bytes: { type: integer }
+        percent: { type: number }
+        done: { type: boolean }
+        success: { type: boolean }
+        error: { type: string }
+        started_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    LocalAIStatus:
+      type: object
+      properties:
+        reachable: { type: boolean }
+        version: { type: string }
+        error: { type: string }
+        base_url: { type: string, example: "http://127.0.0.1:11434/v1" }
+        models: { type: array, items: { type: object, properties: { name: { type: string }, size_bytes: { type: integer }, parameter_size: { type: string }, family: { type: string } } } }
+        ram_bytes: { type: integer, description: "Memória do computador (0 = desconhecida)." }
+        recommended: { $ref: "#/components/schemas/LocalAIModelOption" }
+        options: { type: array, items: { $ref: "#/components/schemas/LocalAIModelOption" } }
+        recommended_installed: { type: boolean }
+        download_url: { type: string }
+        pull: { $ref: "#/components/schemas/LocalAIPull" }
+    LocalAIModelOption:
+      type: object
+      properties:
+        model: { type: string }
+        size_bytes: { type: integer }
+        size_label: { type: string, example: "4,7 GB" }
+        min_ram_bytes: { type: integer }
+        note: { type: string }
     AttendantSettings:
       type: object
       properties:
         configured: { type: boolean }
         provider: { type: string, enum: [anthropic, openai] }
+        preset: { type: string, enum: ["", ollama, gemini_free, groq_free] }
+        free: { type: boolean, description: "A configuração não custa nada (preset grátis ou servidor local): o painel mostra Grátis." }
         model: { type: string, example: claude-sonnet-5-5 }
         base_url: { type: string }
         max_tokens: { type: integer }
@@ -4882,7 +5032,8 @@ components:
       type: object
       additionalProperties: false
       properties:
-        provider: { type: string, enum: [anthropic, openai] }
+        provider: { type: string, enum: [anthropic, openai, ollama, gemini_free, groq_free] }
+        preset: { type: string, enum: ["", ollama, gemini_free, groq_free], description: "Preset grátis; \"\" volta ao provedor personalizado." }
         model: { type: string }
         base_url: { type: string }
         max_tokens: { type: integer, minimum: 64, maximum: 8192 }

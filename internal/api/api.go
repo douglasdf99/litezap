@@ -84,6 +84,9 @@ type Options struct {
 	Attendant AttendantService
 	// Agents, when set, serves the LiteZap agents routes (spec 2026-10-20).
 	Agents AgentsService
+	// LocalAI, when set, serves /v1/ai/local: the loopback Ollama (detection, model
+	// downloads). /v1/ai/presets is served when LocalAI or Attendant is set.
+	LocalAI LocalAIService
 	// Account, when set, serves chats, contacts, profile and privacy routes (marco 9).
 	Account AccountService
 	// Groups, when set, serves the group and community routes (marco 8).
@@ -163,6 +166,7 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 		r.With(s.requireAdmin).Get("/instances", s.listInstances)
 		s.operatorRoutes(r)
 		s.platformRoutes(r)
+		s.aiRoutes(r)
 		if opt.Webhooks != nil {
 			r.Route("/webhooks", s.webhookRoutes)
 		}

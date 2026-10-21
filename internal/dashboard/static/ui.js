@@ -28,10 +28,14 @@ function append(el, children) {
   }
 }
 
-// safeHref allows only in-app hash routes, blob: URLs we created and the public docs.
+// External pages the free-AI setup links to (exact URLs, nothing built from data).
+const EXTERNAL = new Set(['https://ollama.com/download', 'https://aistudio.google.com/apikey', 'https://console.groq.com/keys']);
+
+// safeHref allows only in-app hash routes, blob: URLs we created, the public docs and the
+// few external setup pages above.
 function safeHref(v) {
   const s = String(v);
-  return /^(#|blob:|https:\/\/litezap\.com\/)/.test(s) ? s : '#';
+  return /^(#|blob:|https:\/\/litezap\.com\/)/.test(s) || EXTERNAL.has(s) ? s : '#';
 }
 
 export function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }

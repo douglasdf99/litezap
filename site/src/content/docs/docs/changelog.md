@@ -5,6 +5,22 @@ description: O que mudou em cada marco do LiteZap.
 
 As versões seguem os marcos do motor. Mudanças que quebram compatibilidade são marcadas com **Quebra**.
 
+## IA grátis (A2)
+
+**Novo**
+
+- [IA grátis](/docs/guias/ia-gratis/): o Atendente IA e os Agentes funcionam sem pagar e sem cartão. Presets
+  `ollama` (no seu computador, `qwen2.5:7b` ou `llama3.2:3b`), `gemini_free` (Google Gemini) e `groq_free` (Groq),
+  com o campo `preset` em `PUT /v1/instances/{id}/attendant`; o custo dessas opções aparece como **Grátis**
+  (`free: true`).
+- `GET /v1/ai/local` verifica o Ollama local (versão, modelos, memória e modelo recomendado) e `POST /v1/ai/local/pull`
+  baixa um modelo com progresso (`GET /v1/ai/local/pull`). Só o Ollama em `127.0.0.1:11434`; só o admin.
+- Painel: **Qual IA usar?** no Atendente IA e na aba Agentes, com instalação guiada do Ollama, download do modelo com
+  barra de progresso e expectativas honestas de qualidade, velocidade e privacidade.
+- Modelos locais pequenos: instruções mais curtas em português com a lista de ferramentas, chamadas de ferramenta mal
+  formatadas são corrigidas ou recusadas sem executar nada, com uma nova chance para o modelo; na segunda, a execução
+  termina com `invalid_tool_call`.
+
 ## Agentes LiteZap (A1)
 
 **Novo**

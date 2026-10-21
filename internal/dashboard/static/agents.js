@@ -6,6 +6,7 @@ import * as api from './api.js';
 import {
   h, mount, toast, errView, field, fmtTime, phoneOf, confirmDanger, icon, dialog, emptyState, skeleton,
 } from './ui.js';
+import { freeAIChooser, costLabel } from './freeai.js';
 
 const MODE = {
   aprovacao: ['Aprovação', 'tone-warn', 'Cada envio vira um rascunho que você aprova.'],
@@ -120,6 +121,7 @@ export function agentsPanel(ctx, rest = []) {
 
 function listPage(ctx, base) {
   const setup = h('div', { class: 'card ag-setup' }, skeleton(1, 'skel-line'));
+  let chooser = null;
   const grid = h('div', { class: 'ag-grid' }, skeleton(2));
   const drafts = draftsPanel(ctx, base);
   let agents = [];
@@ -148,18 +150,26 @@ function listPage(ctx, base) {
         toast(want ? 'Agentes ligados para mensagens novas' : 'Agentes não respondem mais a mensagens novas');
       } catch (e) { toast(e, 'error'); toggle.checked = !want; } finally { toggle.disabled = false; }
     });
+    if (chooser) { chooser.cleanup(); chooser = null; }
+    if (!ready) {
+      chooser = freeAIChooser({
+        base: `${ctx.base}/attendant`, current: att, onSaved: () => loadSetup(),
+        paid: () => h('p', { class: 'small' }, 'O Claude é pago por uso e exige chave de API com cartão. ',
+          h('a', { href: ctx.href('agent') }, 'Configurar no Atendente IA'), '.'),
+      });
+    }
     mount(setup,
       h('div', { class: 'ag-setup-row' },
         h('div', { class: 'grow' },
           h('h2', null, 'Agentes LiteZap'),
-          h('p', { class: 'small muted' }, 'Agentes com o Claude que leem, respondem e organizam o seu WhatsApp usando as ferramentas do LiteZap, dentro das permissões que você der. Todo envio passa pela fila anti-ban; quando você responde pelo celular, eles param naquela conversa.')),
+          h('p', { class: 'small muted' }, 'Agentes de IA que leem, respondem e organizam o seu WhatsApp usando as ferramentas do LiteZap, dentro das permissões que você der. Funcionam de graça (no seu computador ou na nuvem) ou com o Claude. Todo envio passa pela fila anti-ban; quando você responde pelo celular, eles param naquela conversa.')),
         h('label', { class: 'check ag-switch-label' }, toggle, h('span', null, 'Responder a mensagens novas'))),
       ready
-        ? h('p', { class: 'small muted ag-ok' }, icon('check', 14), h('span', null, `Provedor: ${att.provider} · ${att.model}. Hoje: ${(att.today && att.today.calls) || 0} chamadas de ${att.daily_call_cap || '∞'} · ${usd(att.today && att.today.cost_usd)}.`))
-        : h('div', { class: 'ag-notice' }, icon('alert', 16),
-          h('span', null, 'Falta configurar o provedor de IA (Anthropic ou OpenAI-compatível) e a chave de API. '),
-          h('a', { href: ctx.href('agent') }, 'Configurar no Atendente IA'),
-          h('span', null, ' (só o token admin altera).')));
+        ? h('p', { class: 'small muted ag-ok' }, icon('check', 14), h('span', null, `Provedor: ${att.preset || att.provider} · ${att.model}. Hoje: ${(att.today && att.today.calls) || 0} chamadas de ${att.daily_call_cap || '∞'} · ${att.free ? costLabel(att) : usd(att.today && att.today.cost_usd)}.`))
+        : h('div', null,
+          h('div', { class: 'ag-notice' }, icon('alert', 16),
+            h('span', null, 'Falta escolher a IA que os agentes usam. Há opções grátis, sem cartão (só o token admin altera):')),
+          chooser.el));
   };
 
   const card = (a) => {
@@ -219,7 +229,7 @@ function listPage(ctx, base) {
       if (type.startsWith('agent.draft.')) drafts.load();
       if (type === 'agent.run.completed') { clearTimeout(timer); timer = setTimeout(load, 600); }
     },
-    cleanup() { clearTimeout(timer); },
+    cleanup() { clearTimeout(timer); if (chooser) chooser.cleanup(); },
   };
 }
 

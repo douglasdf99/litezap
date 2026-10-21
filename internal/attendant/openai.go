@@ -18,6 +18,7 @@ import (
 type openAIChat struct {
 	base, key, model string
 	client           *http.Client
+	noUser           bool // the server rejects the "user" field (Gemini)
 }
 
 func (c *openAIChat) SupportsImage(mime string) bool {
@@ -69,7 +70,7 @@ func (c *openAIChat) Chat(ctx context.Context, req ChatRequest) (ChatResponse, e
 		// json_object is the widest supported structured mode; the schema is in the prompt.
 		body["response_format"] = map[string]string{"type": "json_object"}
 	}
-	if req.User != "" {
+	if req.User != "" && !c.noUser {
 		body["user"] = req.User
 	}
 	raw, status, err := c.post(ctx, "/chat/completions", body)

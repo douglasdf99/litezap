@@ -74,6 +74,7 @@ func TestStaticAssetsAndHeaders(t *testing.T) {
 		"/app/social.js":           "labelsPanel",
 		"/app/aiclients.js":        "aiClientsView",
 		"/app/wizard.js":           "openWizard",
+		"/app/freeai.js":           "freeAIChooser",
 		"/app/brand/logo-full.png": "PNG",
 	} {
 		rec := get(t, h, path)

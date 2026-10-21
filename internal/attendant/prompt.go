@@ -281,3 +281,15 @@ func clip(s string, n int) string {
 	r := []rune(s)
 	return strings.TrimSpace(string(r[:n-1])) + "…"
 }
+
+// localJSONHint closes the prompt of a small local model (Ollama): a direct reminder, in
+// Portuguese, of the one thing it most often gets wrong.
+const localJSONHint = "\n# Lembrete (modelo local)\nResponda SOMENTE com o objeto JSON acima, sem texto antes ou depois e sem ```. Escreva o campo reply em português, curto e simpático.\n"
+
+// systemPromptFor is the system prompt for this provider configuration.
+func systemPromptFor(p Profile, s Settings, canary string) string {
+	if s.LocalModel() {
+		return systemPrompt(p, canary) + localJSONHint
+	}
+	return systemPrompt(p, canary)
+}

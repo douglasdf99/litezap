@@ -2,6 +2,7 @@
 // provider (admin), agent profiles ("treinamento") and the conversation simulator.
 import * as api from './api.js';
 import { h, mount, toast, errMsg, errView, field, confirmDanger } from './ui.js';
+import { freeAIChooser, costLabel } from './freeai.js';
 
 const MODE_LABEL = { vendedor: 'Vendedor', pedido: 'Facilitador de pedido', sdr: 'SDR / agendamento', suporte: 'Suporte', custom: 'Personalizado' };
 const ACTION_LABEL = {
@@ -21,13 +22,16 @@ export function attendantPanel(ctx) {
   let presets = {};
   let agents = [];
   let alive = true;
+  let chooser = null;
 
   // ---------- provider (admin) ----------
-  const renderProvider = (s) => {
-    const provider = h('select', null, h('option', { value: 'anthropic' }, 'Anthropic (Claude)'), h('option', { value: 'openai' }, 'OpenAI-compatível (OpenAI, Ollama, LM Studio…)'));
-    provider.value = s.provider;
-    const model = h('input', { class: 'mono', value: s.model, placeholder: 'claude-sonnet-5-5' });
-    const baseURL = h('input', { type: 'url', class: 'mono', value: s.base_url || '', placeholder: 'https://api.openai.com/v1 ou http://127.0.0.1:11434/v1' });
+  // The paid / advanced form (Anthropic, or any OpenAI-compatible server), plus the caps
+  // and audio settings that apply to every provider.
+  const paidForm = (s) => {
+    const provider = h('select', null, h('option', { value: 'anthropic' }, 'Anthropic (Claude)'), h('option', { value: 'openai' }, 'OpenAI-compatível (OpenAI, LM Studio, outro servidor…)'));
+    provider.value = s.preset ? 'anthropic' : s.provider;
+    const model = h('input', { class: 'mono', value: s.preset ? '' : s.model, placeholder: 'claude-sonnet-5-5' });
+    const baseURL = h('input', { type: 'url', class: 'mono', value: s.preset ? '' : (s.base_url || ''), placeholder: 'https://api.openai.com/v1 ou http://127.0.0.1:11434/v1' });
     const key = h('input', { type: 'password', class: 'mono', autocomplete: 'off', placeholder: s.api_key_set ? 'definida (deixe vazio para manter)' : 'chave da API' });
     const cap = h('input', { type: 'number', min: 0, max: 1000000, value: s.daily_call_cap });
     const maxTok = h('input', { type: 'number', min: 64, max: 8192, value: s.max_tokens });
@@ -39,15 +43,11 @@ export function attendantPanel(ctx) {
     const aVoice = h('input', { class: 'mono', value: a.voice || '', placeholder: 'alloy' });
     const aKey = h('input', { type: 'password', class: 'mono', autocomplete: 'off', placeholder: s.audio_api_key_set ? 'definida (deixe vazio para manter)' : 'chave do servidor de áudio (opcional)' });
     const save = h('button', { class: 'btn primary', type: 'submit' }, 'Salvar provedor');
-    const status = s.ready
-      ? h('span', { class: 'badge d-delivered' }, 'pronto')
-      : h('span', { class: 'badge d-failed' }, s.not_ready || 'não configurado');
-    const t = s.today || {};
-    const form = h('form', {
+    return h('form', {
       onsubmit: async (ev) => {
         ev.preventDefault();
         const p = {
-          provider: provider.value, model: model.value.trim(), base_url: baseURL.value.trim(),
+          provider: provider.value, preset: '', model: model.value.trim(), base_url: baseURL.value.trim(),
           daily_call_cap: Number(cap.value), max_tokens: Number(maxTok.value), vision: vision.checked,
           audio: { base_url: aBase.value.trim(), transcription_model: aTrans.value.trim(), speech_model: aSpeech.value.trim(), voice: aVoice.value.trim() },
         };
@@ -57,12 +57,7 @@ export function attendantPanel(ctx) {
         try { renderProvider(await api.put(base, p)); toast('Provedor salvo'); } catch (e) { toast(e, 'error'); save.disabled = false; }
       },
     },
-    h('div', { class: 'row' }, h('h2', null, 'Atendente LiteZap (embutido)'), status),
-    h('p', { class: 'small muted' },
-      'O atendente roda dentro do LiteZap: você não precisa hospedar um agente. Para ele responder, escolha ',
-      '"Atendente LiteZap" como destino acima. As respostas passam pela mesma fila (ritmo, janela, rampa), pausa por humano e proteção contra loop. ',
-      `Hoje: ${t.calls || 0} chamadas ao provedor de ${s.daily_call_cap || '∞'} · custo estimado US$ ${(t.cost_usd || 0).toFixed(4)}.`),
-    h('fieldset', null, h('legend', null, 'Provedor de IA (só o admin altera)'),
+    h('fieldset', null, h('legend', null, 'Provedor pago ou personalizado (só o admin altera)'),
       h('div', { class: 'grid3' }, field('Provedor', provider), field('Modelo', model, 'Padrão Anthropic: claude-sonnet-5-5.'),
         field('Base URL', baseURL, 'Só para OpenAI-compatível.')),
       field('Chave da API', key, 'Guardada cifrada no servidor; nunca é exibida de volta. Uso em produção exige chave de API (a assinatura do Claude só vale para testes locais com seu próprio agente).'),
@@ -74,7 +69,24 @@ export function attendantPanel(ctx) {
       h('div', { class: 'grid3' }, field('Base URL do áudio', aBase), field('Modelo de transcrição', aTrans), field('Modelo de voz', aSpeech), field('Voz', aVoice)),
       field('Chave do áudio', aKey)),
     h('div', { class: 'row end' }, save));
-    mount(providerBox, form);
+  };
+
+  const renderProvider = (s) => {
+    const status = s.ready
+      ? h('span', { class: 'badge d-delivered' }, 'pronto')
+      : h('span', { class: 'badge d-failed' }, s.not_ready || 'não configurado');
+    const t = s.today || {};
+    if (chooser) chooser.cleanup();
+    chooser = freeAIChooser({ base, current: s, onSaved: (v) => { if (alive) renderProvider(v); }, paid: () => paidForm(s) });
+    mount(providerBox,
+      h('div', { class: 'row' }, h('h2', null, 'Atendente LiteZap (embutido)'), status),
+      h('p', { class: 'small muted' },
+        'O atendente roda dentro do LiteZap: você não precisa hospedar um agente. Para ele responder, escolha ',
+        '"Atendente LiteZap" como destino acima. As respostas passam pela mesma fila (ritmo, janela, rampa), pausa por humano e proteção contra loop. ',
+        s.configured ? `Em uso: ${s.model}. ` : '',
+        `Hoje: ${t.calls || 0} chamadas de ${s.daily_call_cap || '∞'} · custo: ${costLabel(s, t.cost_usd)}.`),
+      h('h3', null, 'Qual IA usar? (só o admin altera)'),
+      chooser.el);
   };
 
   const loadProvider = async () => {
@@ -233,7 +245,7 @@ export function attendantPanel(ctx) {
           h('p', null, h('strong', null, 'Resposta: '), r.reply ? h('span', { class: 'prewrap' }, r.reply) : h('em', null, '(ficaria em silêncio)'), r.voice ? ' · seria enviada como áudio' : ''),
           r.handoff ? h('p', { class: 'warn' }, `Passaria para humano: ${r.handoff_note || ''}`) : null,
           (r.events || []).length ? h('pre', { class: 'json' }, JSON.stringify(r.events, null, 2)) : null,
-          h('p', { class: 'small muted' }, `${r.model} · ${r.usage.input_tokens} tokens de entrada, ${r.usage.output_tokens} de saída · US$ ${r.usage.cost_usd.toFixed(5)} · nada foi enviado no WhatsApp`));
+          h('p', { class: 'small muted' }, `${r.model} · ${r.usage.input_tokens} tokens de entrada, ${r.usage.output_tokens} de saída · ${r.usage.cost_usd ? `US$ ${r.usage.cost_usd.toFixed(5)}` : 'sem custo'} · nada foi enviado no WhatsApp`));
       } catch (e) { mount(out, h('p', { class: 'error' }, errView(e))); } finally { run.disabled = false; }
     };
     mount(simBox,
@@ -248,5 +260,5 @@ export function attendantPanel(ctx) {
   loadProvider();
   loadAgents();
   const el = h('div', { class: 'attendant' }, providerBox, agentsBox, editorBox, simBox);
-  return { el, cleanup() { alive = false; } };
+  return { el, cleanup() { alive = false; if (chooser) chooser.cleanup(); } };
 }

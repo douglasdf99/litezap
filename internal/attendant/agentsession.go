@@ -110,3 +110,7 @@ func Describe(typ, text string, md *events.Media) string { return describe(typ, 
 
 // Clip shortens s to n runes.
 func Clip(s string, n int) string { return clip(s, n) }
+
+// LocalModel reports a small local model (Ollama or another loopback server): agents use
+// a shorter prompt for it.
+func (s *AgentSession) LocalModel() bool { return s.settings.LocalModel() }

@@ -100,7 +100,7 @@ func DefaultFactory(s Settings, sec Secrets) (Backends, error) {
 		}
 		b.Chat = newAnthropic(s, sec.APIKey)
 	case ProviderOpenAI:
-		b.Chat = &openAIChat{base: s.BaseURL, key: sec.APIKey, model: s.Model, client: httpClient()}
+		b.Chat = &openAIChat{base: s.BaseURL, key: sec.APIKey, model: s.Model, client: httpClient(), noUser: !s.sendsUser()}
 	default:
 		return b, errors.New("unknown provider")
 	}

@@ -20,15 +20,18 @@ const maxAgents = 20
 
 // SettingsView is the settings as the API shows them: keys never come back.
 type SettingsView struct {
-	Configured     bool      `json:"configured"`
-	Settings                 // embedded fields
-	APIKeySet      bool      `json:"api_key_set"`
-	AudioAPIKeySet bool      `json:"audio_api_key_set"`
-	Ready          bool      `json:"ready"`
-	NotReady       string    `json:"not_ready,omitempty"`
-	Transcription  bool      `json:"transcription"`
-	Speech         bool      `json:"speech"`
-	Today          UsageView `json:"today"`
+	Configured     bool   `json:"configured"`
+	Settings              // embedded fields
+	APIKeySet      bool   `json:"api_key_set"`
+	AudioAPIKeySet bool   `json:"audio_api_key_set"`
+	Ready          bool   `json:"ready"`
+	NotReady       string `json:"not_ready,omitempty"`
+	Transcription  bool   `json:"transcription"`
+	Speech         bool   `json:"speech"`
+	// Free: this configuration costs nothing (free preset or local server); the UI shows
+	// "Grátis" instead of a cost.
+	Free  bool      `json:"free"`
+	Today UsageView `json:"today"`
 }
 
 // UsageView is one day of usage.
@@ -89,7 +92,7 @@ func usageView(u store.AttendantUsage) UsageView {
 func (ad *Admin) view(ctx context.Context, id string, s Settings, sec Secrets, configured bool) SettingsView {
 	v := SettingsView{Configured: configured, Settings: s, APIKeySet: sec.APIKey != "", AudioAPIKeySet: sec.AudioAPIKey != "",
 		Transcription: s.Audio.TranscriptionModel != "" && s.audioBaseURL() != "",
-		Speech:        s.Audio.SpeechModel != "" && s.audioBaseURL() != ""}
+		Speech:        s.Audio.SpeechModel != "" && s.audioBaseURL() != "", Free: s.Free()}
 	v.NotReady = s.ready(sec)
 	if !configured {
 		v.NotReady = "not configured"
@@ -125,12 +128,45 @@ func (ad *Admin) PutSettings(ctx context.Context, id string, p SettingsPatch) (S
 	if err != nil {
 		return SettingsView{}, err
 	}
+	if p.Provider != nil {
+		// "provider": "ollama" is a shortcut for the preset of the same name.
+		if pre, ok := presetByID(strings.TrimSpace(*p.Provider)); ok && p.Preset == nil {
+			id, prov := pre.ID, pre.Provider
+			p.Preset, p.Provider = &id, &prov
+		} else if p.Preset == nil && strings.TrimSpace(*p.Provider) != ProviderOpenAI {
+			none := ""
+			p.Preset = &none // anthropic (or a typo) is not a preset
+		}
+	}
 	s, sec := p.apply(cur, sec)
 	if p.Provider != nil && *p.Provider != cur.Provider && p.Model == nil {
 		// A new provider does not keep the old provider's model.
 		s.Model = ""
 		if s.Provider == ProviderAnthropic {
 			s.Model = DefaultModel
+		}
+	}
+	if s.Provider != cur.Provider || s.Preset != cur.Preset {
+		// Another provider (or free preset) never inherits the old server or key: a Gemini
+		// key must not go to Anthropic, nor Claude calls to Google's URL.
+		if p.BaseURL == nil {
+			s.BaseURL = ""
+		}
+		if p.APIKey == nil {
+			sec.APIKey = ""
+		}
+	}
+	if pre, ok := presetByID(s.Preset); ok && p.Preset != nil && s.Provider != pre.Provider && p.Provider != nil {
+		return SettingsView{}, apierr.Validation("a preset uses the openai provider")
+	}
+	if pre, ok := presetByID(s.Preset); ok && p.Preset != nil {
+		// A preset fills what the patch left out: provider, server and default model.
+		s.Provider = pre.Provider
+		if p.BaseURL == nil {
+			s.BaseURL = pre.BaseURL
+		}
+		if p.Model == nil && (s.Preset != cur.Preset || s.Model == "") {
+			s.Model = pre.Model
 		}
 	}
 	if err := s.Validate(sec); err != nil {
@@ -154,6 +190,9 @@ func (ad *Admin) save(ctx context.Context, id string, s Settings, sec Secrets) e
 	}
 	return ad.A.Store.PutAttendantSettings(ctx, id, store.AttendantSettings{SettingsJSON: string(js), SecretsEnc: enc})
 }
+
+// ProviderPresets returns the free provider presets (ollama, gemini_free, groq_free).
+func (ad *Admin) ProviderPresets() []ProviderPreset { return ProviderPresets() }
 
 // Presets returns the editable presets of each mode.
 func (ad *Admin) Presets() map[string]Profile {

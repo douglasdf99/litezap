@@ -20,7 +20,11 @@ const DefaultModel = "claude-sonnet-5-5"
 // Settings is an instance's attendant configuration, set by the admin (no secrets).
 type Settings struct {
 	Provider string `json:"provider"`
-	Model    string `json:"model"`
+	// Preset is the free provider preset this configuration came from (ollama,
+	// gemini_free, groq_free; "" = none). It only names defaults over the openai
+	// provider: the UI shows it and usage reports free calls.
+	Preset string `json:"preset"`
+	Model  string `json:"model"`
 	// BaseURL of an OpenAI-compatible server (e.g. https://api.openai.com/v1 or
 	// http://127.0.0.1:11434/v1); ignored for anthropic.
 	BaseURL string `json:"base_url"`
@@ -72,6 +76,7 @@ func DefaultSettings() Settings {
 // SettingsPatch changes some fields (nil = keep). A key set to "" removes it.
 type SettingsPatch struct {
 	Provider           *string        `json:"provider"`
+	Preset             *string        `json:"preset"`
 	Model              *string        `json:"model"`
 	BaseURL            *string        `json:"base_url"`
 	MaxTokens          *int           `json:"max_tokens"`
@@ -93,6 +98,7 @@ func (p SettingsPatch) apply(s Settings, sec Secrets) (Settings, Secrets) {
 		}
 	}
 	str(&s.Provider, p.Provider)
+	str(&s.Preset, p.Preset)
 	str(&s.Model, p.Model)
 	str(&s.BaseURL, p.BaseURL)
 	if p.MaxTokens != nil {
@@ -140,7 +146,12 @@ func (s *Settings) Validate(sec Secrets) error {
 	if s.Model == "" && s.Provider == ProviderAnthropic {
 		s.Model = DefaultModel
 	}
+	if _, ok := presetByID(s.Preset); s.Preset != "" && !ok {
+		return errors.New(`preset must be empty, "ollama", "gemini_free" or "groq_free"`)
+	}
 	switch {
+	case s.Preset != "" && s.Provider != ProviderOpenAI:
+		return errors.New("a preset uses the openai provider")
 	case s.Provider != ProviderAnthropic && s.Provider != ProviderOpenAI:
 		return errors.New(`provider must be "anthropic" or "openai" (any OpenAI-compatible server)`)
 	case s.Model == "" || len(s.Model) > 200:
@@ -198,6 +209,9 @@ func (s Settings) ready(sec Secrets) string {
 	if s.Provider == ProviderAnthropic && sec.APIKey == "" {
 		return "no Anthropic API key configured"
 	}
+	if p, ok := presetByID(s.Preset); ok && p.NeedsKey && sec.APIKey == "" && sameBase(s.BaseURL, p.BaseURL) {
+		return "no API key configured: get a free one at " + p.KeyURL
+	}
 	return ""
 }
 
@@ -215,6 +229,9 @@ var builtinPrices = map[string][2]float64{
 // costMicros estimates a call's cost in millionths of USD.
 func (s Settings) costMicros(model string, in, out int64) int64 {
 	pi, po := s.PriceInputPerMTok, s.PriceOutputPerMTok
+	if s.Free() {
+		return 0
+	}
 	if pi == 0 && po == 0 {
 		if p, ok := builtinPrices[model]; ok {
 			pi, po = p[0], p[1]

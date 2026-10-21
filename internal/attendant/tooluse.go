@@ -27,6 +27,10 @@ type ToolCall struct {
 	ID    string
 	Name  string
 	Input json.RawMessage
+	// Malformed: the model's arguments were not a JSON object (small local models do
+	// that); Input is then {} and Raw holds what the model wrote.
+	Malformed bool
+	Raw       string
 }
 
 // ToolResult answers a ToolCall.
@@ -262,7 +266,7 @@ func (c *openAIChat) ChatTools(ctx context.Context, req ToolChatRequest) (ToolCh
 	if len(tools) > 0 {
 		body["tools"] = tools
 	}
-	if req.User != "" {
+	if req.User != "" && !c.noUser {
 		body["user"] = req.User
 	}
 	raw, status, err := c.post(ctx, "/chat/completions", body)
@@ -279,9 +283,9 @@ func (c *openAIChat) ChatTools(ctx context.Context, req ToolChatRequest) (ToolCh
 		Model   string `json:"model"`
 		Choices []struct {
 			Message struct {
-				Content   string     `json:"content"`
-				Refusal   string     `json:"refusal"`
-				ToolCalls []toolCall `json:"tool_calls"`
+				Content   string         `json:"content"`
+				Refusal   string         `json:"refusal"`
+				ToolCalls []respToolCall `json:"tool_calls"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -301,15 +305,21 @@ func (c *openAIChat) ChatTools(ctx context.Context, req ToolChatRequest) (ToolCh
 	}
 	turn := ToolTurn{Role: "assistant", Text: strings.TrimSpace(ch.Message.Content)}
 	for i, tc := range ch.Message.ToolCalls {
-		args := json.RawMessage(tc.Function.Arguments)
-		if !json.Valid(args) {
-			args = json.RawMessage(`{}`)
-		}
 		id := tc.ID
 		if id == "" {
 			id = fmt.Sprintf("call_%d", i)
 		}
-		turn.Calls = append(turn.Calls, ToolCall{ID: id, Name: tc.Function.Name, Input: args})
+		turn.Calls = append(turn.Calls, newToolCall(id, tc.Function.Name, tc.Function.Arguments))
+	}
+	if len(turn.Calls) == 0 && len(req.Tools) > 0 {
+		// Small local models sometimes write the call as text instead of tool_calls.
+		offered := map[string]bool{}
+		for _, ts := range req.Tools {
+			offered[ts.Name] = true
+		}
+		if calls, rest, ok := textToolCalls(turn.Text, offered); ok {
+			turn.Calls, turn.Text = calls, rest
+		}
 	}
 	r.Turn = turn
 	switch {
@@ -321,4 +331,134 @@ func (c *openAIChat) ChatTools(ctx context.Context, req ToolChatRequest) (ToolCh
 		r.StopReason = "end_turn"
 	}
 	return r, nil
+}
+
+// respToolCall is a tool call as servers answer it: arguments are a JSON string per the
+// OpenAI API, but some compatible servers send the object itself.
+type respToolCall struct {
+	ID       string `json:"id"`
+	Function struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	} `json:"function"`
+}
+
+// newToolCall normalizes a call's arguments (string or object, fenced, with text around
+// it); arguments that are not a JSON object mark the call malformed.
+func newToolCall(id, name string, raw json.RawMessage) ToolCall {
+	text := strings.TrimSpace(string(raw))
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		text = strings.TrimSpace(s)
+	}
+	call := ToolCall{ID: id, Name: strings.TrimSpace(name), Input: json.RawMessage(`{}`)}
+	if obj, ok := jsonObject(text); ok {
+		call.Input = obj
+		return call
+	}
+	call.Malformed, call.Raw = true, clip(text, 2000)
+	return call
+}
+
+// jsonObject extracts a JSON object from text: as is, inside a code fence, or between
+// the first { and the last }. Empty text and null are an empty object.
+func jsonObject(text string) (json.RawMessage, bool) {
+	t := strings.TrimSpace(text)
+	if t == "" || t == "null" {
+		return json.RawMessage(`{}`), true
+	}
+	if strings.HasPrefix(t, "```") {
+		t = strings.TrimPrefix(t, "```")
+		t = strings.TrimPrefix(t, "json")
+		t = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(t), "```"))
+	}
+	try := func(c string) (json.RawMessage, bool) {
+		var m map[string]any
+		if json.Unmarshal([]byte(c), &m) != nil || m == nil {
+			return nil, false
+		}
+		return json.RawMessage(c), true
+	}
+	if obj, ok := try(t); ok {
+		return obj, true
+	}
+	if i, j := strings.Index(t, "{"), strings.LastIndex(t, "}"); i >= 0 && j > i {
+		return try(t[i : j+1])
+	}
+	return nil, false
+}
+
+// textToolCalls finds tool calls a model wrote as text: <tool_call>{...}</tool_call>
+// blocks (Qwen, Hermes) or a whole answer that is {"name": ..., "arguments"|"parameters":
+// {...}} (Llama), alone or in a list. Only offered tools count; rest is the other text.
+func textToolCalls(text string, offered map[string]bool) ([]ToolCall, string, bool) {
+	type textCall struct {
+		Name       string          `json:"name"`
+		Arguments  json.RawMessage `json:"arguments"`
+		Parameters json.RawMessage `json:"parameters"`
+	}
+	conv := func(i int, c textCall) (ToolCall, bool) {
+		if !offered[strings.TrimSpace(c.Name)] {
+			return ToolCall{}, false
+		}
+		args := c.Arguments
+		if len(args) == 0 {
+			args = c.Parameters
+		}
+		return newToolCall(fmt.Sprintf("call_t%d", i), c.Name, args), true
+	}
+	var calls []ToolCall
+	if strings.Contains(text, "<tool_call>") {
+		rest := text
+		for {
+			i := strings.Index(rest, "<tool_call>")
+			if i < 0 {
+				break
+			}
+			j := strings.Index(rest[i:], "</tool_call>")
+			end := len(rest)
+			body := rest[i+len("<tool_call>"):]
+			if j >= 0 {
+				end = i + j + len("</tool_call>")
+				body = rest[i+len("<tool_call>") : i+j]
+			}
+			var c textCall
+			if obj, ok := jsonObject(body); ok && json.Unmarshal(obj, &c) == nil {
+				if call, ok := conv(len(calls), c); ok {
+					calls = append(calls, call)
+				}
+			}
+			rest = rest[:i] + rest[end:]
+		}
+		if len(calls) > 0 {
+			return calls, strings.TrimSpace(rest), true
+		}
+		return nil, text, false
+	}
+	t := strings.TrimSpace(text)
+	if strings.HasPrefix(t, "```") {
+		t = strings.TrimPrefix(t, "```")
+		t = strings.TrimPrefix(t, "json")
+		t = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(t), "```"))
+	}
+	var list []textCall
+	if strings.HasPrefix(t, "[") {
+		if json.Unmarshal([]byte(t), &list) != nil {
+			return nil, text, false
+		}
+	} else {
+		var c textCall
+		if !strings.HasPrefix(t, "{") || json.Unmarshal([]byte(t), &c) != nil {
+			return nil, text, false
+		}
+		list = []textCall{c}
+	}
+	for _, c := range list {
+		call, ok := conv(len(calls), c)
+		if !ok {
+			return nil, text, false
+		}
+		calls = append(calls, call)
+	}
+	return calls, "", len(calls) > 0
 }

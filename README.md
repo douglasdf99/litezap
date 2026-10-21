@@ -579,11 +579,20 @@ Regras:
 
 Com `target: "builtin"` o atendente roda **dentro do motor** — nada para hospedar — e herda todo o maquinário acima (fila, pausa por humano, loop guard, um chat por vez, grupos desligados). Você escolhe o provedor, cria agentes treinados com o contexto do negócio e liga.
 
+**IA grátis, sem cartão:** o atendente e os agentes funcionam com o Ollama no seu computador (`{"preset":"ollama"}`,
+modelo `qwen2.5:7b`, ou `llama3.2:3b` em máquinas fracas) ou com o plano grátis do Google Gemini (`gemini_free`) ou da
+Groq (`groq_free`). No painel, aba **Atendente IA** > **Qual IA usar?**: o LiteZap verifica o Ollama
+(`GET /v1/ai/local`), baixa o modelo com barra de progresso (`POST /v1/ai/local/pull`) e salva com um clique. Guia:
+[IA grátis](https://litezap.com/docs/guias/ia-gratis/).
+
 ```bash
-# provedor (só admin): Claude (padrão claude-sonnet-5-5) ou qualquer servidor OpenAI-compatível
+# grátis: Ollama no mesmo computador (sem chave) ou Gemini/Groq com a chave grátis
+curl -s -X PUT $LZ/v1/instances/$ID/attendant -H "Authorization: Bearer $ADMIN" -d '{"preset":"ollama"}'
+# -d '{"preset":"gemini_free","api_key":"AIza..."}'   ou   -d '{"preset":"groq_free","api_key":"gsk_..."}'
+# pago (só admin): Claude (padrão claude-sonnet-5-5) ou qualquer servidor OpenAI-compatível
 curl -s -X PUT $LZ/v1/instances/$ID/attendant -H "Authorization: Bearer $ADMIN" \
   -d '{"provider":"anthropic","api_key":"sk-ant-...","daily_call_cap":300}'
-# -d '{"provider":"openai","base_url":"http://127.0.0.1:11434/v1","model":"llama3.1"}'   (Ollama, LM Studio, OpenAI...)
+# -d '{"provider":"openai","base_url":"http://127.0.0.1:1234/v1","model":"qwen2.5-7b-instruct"}'   (LM Studio, vLLM, OpenAI...)
 # áudio opcional (OpenAI-compatível): "audio":{"base_url":"https://api.openai.com/v1","transcription_model":"whisper-1","speech_model":"gpt-4o-mini-tts","voice":"alloy"},"audio_api_key":"sk-..."
 
 # agente: modo vendedor | pedido | sdr | suporte | custom (o roteiro não enviado vem do modo)

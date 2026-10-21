@@ -4,7 +4,8 @@ description: O Atendente LiteZap embutido — agentes treinados com o contexto d
 ---
 
 O LiteZap tem um **atendente de IA embutido**: ele roda dentro do motor, então você não precisa hospedar um agente.
-Você escolhe o provedor (Claude ou qualquer servidor OpenAI-compatível), cria um ou mais **agentes** com o contexto
+Você escolhe a IA — **grátis** no seu computador (Ollama) ou na nuvem (Google Gemini, Groq), ou paga (Claude e
+qualquer servidor OpenAI-compatível) —, cria um ou mais **agentes** com o contexto
 do seu negócio e liga o atendimento. Se preferir o seu próprio agente, o [hook de agente](/docs/mcp/hook-de-agente/)
 continua funcionando com a sua URL.
 
@@ -12,18 +13,35 @@ Em qualquer dos dois, as respostas saem pela **mesma fila** de qualquer envio (r
 operador), uma conversa por vez, com **pausa automática quando um humano responde pelo celular**, proteção contra
 dois robôs conversando e grupos desligados por padrão.
 
-## 1. Configurar o provedor (admin)
+## 1. Escolher a IA (admin)
 
-No painel, aba **Atendente IA** da instância, bloco "Atendente LiteZap", ou pela API com o token admin:
+No painel, aba **Atendente IA** da instância, bloco "Atendente LiteZap", em **Qual IA usar?**:
+
+- **Grátis no meu computador (recomendado)**: o LiteZap verifica o [Ollama](https://ollama.com/download), mostra o
+  modelo indicado para a memória do computador (`qwen2.5:7b`, ou `llama3.2:3b` em máquinas fracas), baixa o modelo
+  com barra de progresso e salva com um clique. As conversas não saem do computador.
+- **Grátis na nuvem (Google Gemini)** ou **Groq grátis**: cole a chave grátis (sem cartão). No plano grátis do
+  Gemini, o Google pode usar as conversas para melhorar os modelos.
+- **Pago (Anthropic Claude)**: a melhor qualidade, cobrada por uso.
+
+O passo a passo, os limites e os prós e contras estão em [IA grátis](/docs/guias/ia-gratis/). Pela API, com o token
+admin:
 
 ```bash
-# Claude (padrão: claude-sonnet-5-5)
+# Grátis: Ollama no mesmo computador (sem chave)
+curl -s -X PUT $LZ/v1/instances/$ID/attendant -H "Authorization: Bearer $ADMIN" -d '{"preset":"ollama"}'
+
+# Grátis: Google Gemini (gemini_free) ou Groq (groq_free), com a chave grátis
+curl -s -X PUT $LZ/v1/instances/$ID/attendant -H "Authorization: Bearer $ADMIN" \
+  -d '{"preset":"gemini_free","api_key":"AIza..."}'
+
+# Claude (pago; padrão: claude-sonnet-5-5)
 curl -s -X PUT $LZ/v1/instances/$ID/attendant -H "Authorization: Bearer $ADMIN" \
   -d '{"provider":"anthropic","api_key":"sk-ant-...","daily_call_cap":300}'
 
-# ou um servidor OpenAI-compatível (OpenAI, Ollama, LM Studio, vLLM...)
+# ou outro servidor OpenAI-compatível (OpenAI, LM Studio, vLLM...)
 curl -s -X PUT $LZ/v1/instances/$ID/attendant -H "Authorization: Bearer $ADMIN" \
-  -d '{"provider":"openai","base_url":"http://127.0.0.1:11434/v1","model":"llama3.1"}'
+  -d '{"provider":"openai","base_url":"http://127.0.0.1:1234/v1","model":"qwen2.5-7b-instruct"}'
 ```
 
 - A chave é **cifrada em repouso** (AES-256-GCM com o arquivo `data/attendant_key`, permissão 0600) e **nunca volta**

@@ -40,6 +40,8 @@ type Session interface {
 	Leaks(text, canary string) bool
 	Location(ctx context.Context) *time.Location
 	Model() string
+	// LocalModel: a small local model (Ollama); the run uses the shorter prompt.
+	LocalModel() bool
 }
 
 var _ Session = (*attendant.AgentSession)(nil)
@@ -208,10 +210,15 @@ func (r *Runner) run(ctx context.Context, in RunInput) (RunResult, error) {
 	canary := attendant.NewCanary()
 	ex := &executor{r: r, instanceID: in.InstanceID, agent: a, mode: a.Mode, runID: run.ID, trigger: trigger,
 		dryRun: in.DryRun, guard: in.Guard, defs: byName, canary: canary, leaks: sess.Leaks, recipients: map[string]bool{}}
-	req := attendant.ToolChatRequest{System: systemPrompt(a, a.Mode, in.DryRun, canary), Tools: specs,
+	system := systemPrompt(a, a.Mode, in.DryRun, canary)
+	if sess.LocalModel() {
+		system = localSystemPrompt(a, a.Mode, in.DryRun, canary, specs)
+	}
+	req := attendant.ToolChatRequest{System: system, Tools: specs,
 		Turns: []attendant.ToolTurn{{Role: "user", Text: userTurn(in, now, sess.Location(ctx))}}}
 	delim := attendant.NewDelimiter()
 	run.Status = StatusStepLimit
+	retried := false // the model already had its retry after an invalid turn
 	for step := 1; step <= a.Limits.MaxSteps; step++ {
 		if err := sess.Reserve(ctx, in.Chat, in.DryRun); err != nil {
 			run.Status, run.Error = StatusFailed, errText(err)
@@ -239,6 +246,25 @@ func (r *Runner) run(ctx context.Context, in RunInput) (RunResult, error) {
 			run.Status, run.Error = StatusFailed, "refused: the model declined to continue"
 			break
 		}
+		if problems, bad := invalidCalls(resp.Turn.Calls, specs); bad {
+			// Nothing of an invalid turn runs: one retry with the reason, then the run fails.
+			ex.logInvalid(step, resp.Turn.Calls, problems)
+			if retried {
+				first := ""
+				for _, p := range problems {
+					if p != "" {
+						first = p
+						break
+					}
+				}
+				run.Status, run.Error = StatusFailed, "invalid_tool_call: the model sent invalid tool calls twice in a row ("+clipText(first, 300)+")"
+				break
+			}
+			retried = true
+			req.Turns = append(req.Turns, sanitizeTurn(resp.Turn), retryTurn(resp.Turn.Calls, problems))
+			continue
+		}
+		retried = false
 		req.Turns = append(req.Turns, resp.Turn)
 		if len(resp.Turn.Calls) == 0 {
 			run.Output = resp.Turn.Text
@@ -298,7 +324,7 @@ func maskPhones(s string) string {
 func redactSteps(steps []Step) []Step {
 	out := make([]Step, len(steps))
 	for i, s := range steps {
-		if s.Outcome == OutcomeRefused || s.Outcome == OutcomeError {
+		if s.Outcome == OutcomeRefused || s.Outcome == OutcomeError || s.Outcome == OutcomeInvalid {
 			s.Result = maskPhones(s.Result)
 		} else {
 			s.Result = ""

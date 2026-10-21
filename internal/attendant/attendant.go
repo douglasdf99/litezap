@@ -479,7 +479,7 @@ func (a *Attendant) run(ctx context.Context, in runInput) (runResult, error) {
 	if err := a.reserve(ctx, &in); err != nil {
 		return runResult{}, err
 	}
-	resp, err := in.backs.Chat.Chat(ctx, ChatRequest{System: systemPrompt(p, canary), MaxTokens: s.MaxTokens,
+	resp, err := in.backs.Chat.Chat(ctx, ChatRequest{System: systemPromptFor(p, s, canary), MaxTokens: s.MaxTokens,
 		Messages: []ChatMessage{{Role: "user", Parts: parts}}, Schema: outputSchema,
 		User: a.Vault.Pseudonym(in.instanceID, in.chat)})
 	model := resp.Model

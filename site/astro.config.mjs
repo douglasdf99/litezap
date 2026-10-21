@@ -118,6 +118,7 @@ export default defineConfig({
 						'docs/guias/automacao',
 						'docs/guias/solucao-de-problemas',
 						'docs/guias/multi-instancia',
+						{ slug: 'docs/guias/ia-gratis', badge: { text: 'Novo', variant: 'success' } },
 						{ slug: 'docs/guias/atendimento-ia', badge: { text: 'Novo', variant: 'success' } },
 						{ slug: 'docs/guias/agentes', badge: { text: 'Novo', variant: 'success' } },
 						'docs/guias/grupos',
