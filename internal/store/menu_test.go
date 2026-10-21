@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/douglasdf99/litezap/internal/instance"
 )
 
 func TestMenuCRUD(t *testing.T) {
@@ -160,6 +163,79 @@ func TestMenuLimits(t *testing.T) {
 	list[0].Options = many
 	if _, err := st.UpdateMenuItem(ctx, "i1", list[0]); !errors.Is(err, ErrMenuLimit) {
 		t.Fatalf("options over limit = %v", err)
+	}
+}
+
+func TestMenuWASkuUniqueAndOptionTouch(t *testing.T) {
+	st := ordersStore(t)
+	ctx := context.Background()
+	// Concurrent catalog copies of the same products: each "wa:" sku exists once.
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := st.ImportMenu(ctx, "i1", false, []MenuImportItem{
+				{Category: "Catálogo", Item: MenuItem{Name: "A", SKU: "wa:1", Available: true}},
+				{Category: "Catálogo", Item: MenuItem{Name: "B", SKU: "wa:2", Available: true}},
+				{Item: MenuItem{Name: "Manual", SKU: "manual", Available: true}},
+			}); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	list, _ := st.ListMenuItems(ctx, "i1")
+	wa := 0
+	for _, it := range list {
+		if it.SKU == "wa:1" || it.SKU == "wa:2" {
+			wa++
+		}
+	}
+	if wa != 2 || len(list) != 6 { // other skus may repeat
+		t.Fatalf("wa items = %d, all = %d", wa, len(list))
+	}
+	res, err := st.ImportMenu(ctx, "i1", false, []MenuImportItem{{Item: MenuItem{Name: "A", SKU: "wa:1"}}, {Item: MenuItem{Name: "C", SKU: "wa:3"}}})
+	if err != nil || res.Skipped != 1 || res.ItemsCreated != 1 || res.ItemIDs[0] != "" || res.ItemIDs[1] == "" {
+		t.Fatalf("second copy = %+v, %v", res, err)
+	}
+	if _, err := st.CreateMenuItem(ctx, "i1", MenuItem{Name: "dup", SKU: "wa:1"}); !errors.Is(err, ErrMenuDuplicate) {
+		t.Fatalf("create duplicate = %v", err)
+	}
+	c, _ := st.MenuItemBySKU(ctx, "i1", "wa:3")
+	c.SKU = "wa:2"
+	if _, err := st.UpdateMenuItem(ctx, "i1", c); !errors.Is(err, ErrMenuDuplicate) {
+		t.Fatalf("update to a duplicate = %v", err)
+	}
+	// Another instance may have the same sku.
+	if err := st.CreateInstance(ctx, Instance{ID: "i2", Name: "i2", State: instance.Created, TokenHash: "h2"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateMenuItem(ctx, "i2", MenuItem{Name: "A", SKU: "wa:1"}); err != nil {
+		t.Fatalf("other instance = %v", err)
+	}
+	// Option changes bump the item's updated_at.
+	o, err := st.AddMenuOption(ctx, "i1", c.ID, MenuOption{Name: "T", Max: 1, Choices: []MenuChoice{{Name: "a"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := st.GetMenuItem(ctx, "i1", c.ID)
+	time.Sleep(2 * time.Millisecond)
+	o.Name = "T2"
+	if err := st.UpdateMenuOption(ctx, "i1", c.ID, o); err != nil {
+		t.Fatal(err)
+	}
+	mid, _ := st.GetMenuItem(ctx, "i1", c.ID)
+	time.Sleep(2 * time.Millisecond)
+	if err := st.DeleteMenuOption(ctx, "i1", c.ID, o.ID); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := st.GetMenuItem(ctx, "i1", c.ID)
+	if !mid.UpdatedAt.After(before.UpdatedAt) || !after.UpdatedAt.After(mid.UpdatedAt) {
+		t.Fatalf("updated_at %v %v %v", before.UpdatedAt, mid.UpdatedAt, after.UpdatedAt)
+	}
+	if err := st.DeleteMenuOption(ctx, "i1", c.ID, o.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete twice = %v", err)
 	}
 }
 

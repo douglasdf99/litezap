@@ -2,6 +2,7 @@ package menu
 
 import (
 	"bytes"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/png"
@@ -205,6 +206,38 @@ func TestFormatChunks(t *testing.T) {
 	cap := Caption(items[0])
 	if !strings.HasPrefix(cap, "*Calabresa* — R$ 45,90") || !strings.Contains(cap, "Tamanho") {
 		t.Fatal(cap)
+	}
+}
+
+// pngHeader is a PNG signature and IHDR of w×h (enough for DecodeConfig).
+func pngHeader(w, h uint32) []byte {
+	ihdr := []byte{'I', 'H', 'D', 'R', byte(w >> 24), byte(w >> 16), byte(w >> 8), byte(w), byte(h >> 24), byte(h >> 16), byte(h >> 8), byte(h), 8, 6, 0, 0, 0}
+	crc := crc32.ChecksumIEEE(ihdr)
+	out := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 13}
+	out = append(out, ihdr...)
+	return append(out, byte(crc>>24), byte(crc>>16), byte(crc>>8), byte(crc))
+}
+
+func TestImagePixelLimit(t *testing.T) {
+	// Refused from the header alone, before any decoding: over 10 MP, and dimensions
+	// whose product overflows 32 bits.
+	for _, d := range [][2]uint32{{4000, 3000}, {1 << 20, 1 << 20}, {100000, 101}} {
+		if _, err := NormalizeImage(pngHeader(d[0], d[1])); err != ErrImage {
+			t.Fatalf("%dx%d = %v", d[0], d[1], err)
+		}
+	}
+}
+
+func TestCleanLineInvisible(t *testing.T) {
+	if got := CleanLine("Pizza\u202e54,00\u200b \u2066grande\u2069\ufeff"); got != "Pizza54,00 grande" {
+		t.Fatalf("%q", got)
+	}
+	if got := CleanText("a\u200d\nb"); got != "a\nb" {
+		t.Fatalf("%q", got)
+	}
+	r := ParseCSV("nome;preco\nCaf\xe9;5\n")
+	if len(r.Errors) != 1 || !strings.Contains(r.Errors[0], "UTF-8") || len(r.Rows) != 0 {
+		t.Fatalf("latin-1 accepted: %+v", r)
 	}
 }
 

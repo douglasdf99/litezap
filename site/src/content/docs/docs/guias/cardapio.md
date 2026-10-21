@@ -39,8 +39,8 @@ No painel, abra a instância e a aba **Cardápio**. Com o cardápio vazio, ela m
    de salvar. Só as linhas válidas são salvas.
 2. **Copiar do catálogo do WhatsApp.** Lê os produtos do catálogo do próprio número (como `GET /catalog`) e copia
    nome, descrição, preço (o promocional, quando houver), disponibilidade e a primeira foto. Coleções viram
-   categorias. Produtos ocultos ou em análise ficam de fora; os já copiados são pulados (rodar de novo busca as
-   fotos que faltaram).
+   categorias. Produtos ocultos ou em análise ficam de fora; os já copiados são pulados, mesmo com duas cópias
+   ao mesmo tempo (rodar de novo busca as fotos que faltaram).
 3. **Montar com IA.** Cole o cardápio como texto livre — `pizza calabresa 45, marguerita 42, coca 2L 12` — e o
    provedor configurado no Atendente IA (qualquer um, inclusive o [Ollama gratuito](/docs/guias/ia-gratis/))
    organiza em itens. **Nada é salvo** até você revisar (dá para corrigir nome e preço e desmarcar linhas) e
@@ -77,7 +77,9 @@ atendente avisa que estão indisponíveis e o rascunho de pedido os aponta.
 ### Limites
 
 500 itens, 50 categorias, 10 grupos de opções por item e 20 escolhas por grupo, por instância. Fotos de até 8 MB
-e 16 megapixels (JPEG, PNG ou GIF).
+e 10 megapixels (JPEG, PNG ou GIF). A planilha deve estar em UTF-8 (no Excel: *Salvar como > CSV UTF-8*).
+O "Montar com IA" aceita até 5 pedidos por minuto e 100 por dia por instância; essa cota fica em memória e
+reiniciar o LiteZap a zera (os tetos diários do provedor, no Atendente IA, continuam valendo).
 
 ## Usar o cardápio
 

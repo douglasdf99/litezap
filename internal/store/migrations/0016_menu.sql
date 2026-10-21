@@ -28,6 +28,9 @@ CREATE TABLE menu_items (
   updated_at  TEXT NOT NULL
 );
 CREATE INDEX menu_items_inst ON menu_items (instance_id, category_id, position);
+-- Items copied from the WhatsApp catalog ("wa:<product id>") exist once per instance:
+-- concurrent or repeated copies skip what is already there.
+CREATE UNIQUE INDEX menu_items_wa_sku ON menu_items (instance_id, sku) WHERE sku LIKE 'wa:%';
 
 -- An option group of an item ("Tamanho", "Borda"): choices with price deltas, as JSON
 -- [{"name":"G","price_delta_cents":1000}].

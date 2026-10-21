@@ -4506,8 +4506,9 @@ paths:
       description: |
         Coloca na fila o texto do cardápio (ou de uma categoria), uma mensagem por bloco, com as pausas
         anti-ban de qualquer envio. `max_messages` (padrão e máximo 10) recusa um cardápio que precise de
-        mais mensagens: envie uma categoria. Com `client_message_id`, o bloco n usa `<id>:n` e repetir a
-        chamada não envia de novo. Chaves `send` podem usar.
+        mais mensagens: envie uma categoria. O bloco n usa `<client_message_id>:n`, e repetir a chamada com o
+        mesmo id não envia de novo; sem `client_message_id`, o LiteZap gera um e o devolve na resposta (use-o
+        para tentar de novo). Chaves `send` podem usar.
       requestBody:
         required: true
         content:
@@ -4530,7 +4531,7 @@ paths:
           description: Mensagens na fila, em ordem.
           content:
             application/json:
-              schema: { type: object, properties: { messages: { type: array, items: { $ref: "#/components/schemas/Message" } } } }
+              schema: { type: object, properties: { client_message_id: { type: string, description: "A chave usada (gerada se não veio)." }, messages: { type: array, items: { $ref: "#/components/schemas/Message" } } } }
         "400": { $ref: "#/components/responses/SendBadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -4768,7 +4769,7 @@ paths:
       summary: Trocar a foto de um item
       x-litezap-scope: instancia
       description: |
-        `url` (baixada com as regras de `media.url`) ou `base64`. JPEG, PNG ou GIF de até 8 MB e 16
+        `url` (baixada com as regras de `media.url`) ou `base64`. JPEG, PNG ou GIF de até 8 MB e 10
         megapixels; o LiteZap guarda um JPEG de até 1080 px no maior lado.
       requestBody:
         required: true
@@ -4977,7 +4978,8 @@ paths:
         linhas para revisão. **Nada é salvo**: confirme com `POST /menu/import/rows`. O texto vai ao modelo
         como dado entre marcadores aleatórios, e a resposta é validada campo a campo; itens cujo nome não
         aparece no texto vêm com um aviso. Conta no orçamento diário do simulador e no teto da instância
-        (até 5 por minuto e 100 por dia por instância). Sem provedor: `409 ai_not_configured`; resposta
+        (até 5 por minuto e 100 por dia por instância; essa cota fica em memória e reiniciar o LiteZap a
+        zera, mas os tetos do provedor continuam valendo). Sem provedor: `409 ai_not_configured`; resposta
         inútil: `422 ai_invalid_output`.
       requestBody:
         required: true

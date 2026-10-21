@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/douglasdf99/litezap/internal/store"
 )
@@ -87,6 +88,10 @@ func ParseCSV(data string) CSVResult {
 	res := CSVResult{Rows: []Row{}, Errors: []string{}}
 	if len(data) > MaxCSVBytes {
 		res.Errors = append(res.Errors, "arquivo maior que 1 MB")
+		return res
+	}
+	if !utf8.ValidString(data) {
+		res.Errors = append(res.Errors, "o arquivo n\u00e3o est\u00e1 em UTF-8: salve como CSV UTF-8 (no Excel: Salvar como > CSV UTF-8)")
 		return res
 	}
 	data = strings.TrimPrefix(data, "\ufeff")

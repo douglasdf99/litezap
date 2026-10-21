@@ -52,7 +52,28 @@ type Menu struct {
 
 	imgOnce  sync.Once
 	imgSlots chan struct{}
-	aiQuota  windowQuota
+	// aiQuota is in memory: a restart resets it (the provider caps still apply).
+	aiQuota windowQuota
+
+	lockMu sync.Mutex
+	locks  map[string]*sync.Mutex // per instance: catalog copies and replacing imports
+}
+
+// importLock serializes the imports of one instance that read the menu before writing
+// it (catalog copy) or empty it (replace).
+func (m *Menu) importLock(instanceID string) func() {
+	m.lockMu.Lock()
+	if m.locks == nil {
+		m.locks = map[string]*sync.Mutex{}
+	}
+	mu := m.locks[instanceID]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		m.locks[instanceID] = mu
+	}
+	m.lockMu.Unlock()
+	mu.Lock()
+	return mu.Unlock
 }
 
 // Per-instance quota of "Montar com IA" calls (each is a paid provider call).
@@ -72,7 +93,7 @@ func validMenuID(prefix, id string) bool {
 }
 
 func (m *Menu) acquireImage(ctx context.Context) (func(), error) {
-	m.imgOnce.Do(func() { m.imgSlots = make(chan struct{}, 2) })
+	m.imgOnce.Do(func() { m.imgSlots = make(chan struct{}, 1) }) // one decode at a time (memory)
 	select {
 	case m.imgSlots <- struct{}{}:
 		return func() { <-m.imgSlots }, nil
@@ -90,6 +111,8 @@ func menuErr(err error, what string) error {
 	case errors.Is(err, store.ErrMenuLimit):
 		return apierr.New(http.StatusConflict, "menu_limit", fmt.Sprintf("the menu is limited to %d items, %d categories, %d option groups per item and %d choices per group",
 			store.MaxMenuItems, store.MaxMenuCategories, store.MaxMenuOptions, store.MaxMenuChoices), false)
+	case errors.Is(err, store.ErrMenuDuplicate):
+		return apierr.New(http.StatusConflict, "conflict", `another item already has this "wa:" sku (a product copied from the WhatsApp catalog)`, false)
 	}
 	return err
 }
@@ -452,10 +475,36 @@ func (m *Menu) UpdateItem(ctx context.Context, instanceID, itemID string, in Men
 	}
 	if in.ImageURL != "" {
 		if _, err := m.SetImage(ctx, instanceID, itemID, MenuImageInput{URL: in.ImageURL}); err != nil {
-			return MenuItemView{}, err
+			// The other fields are saved; say which, and why the photo is not.
+			msg := "the image could not be saved: " + errMessage(err)
+			if f := in.fields(); len(f) > 0 {
+				msg = "item " + itemID + " saved (" + strings.Join(f, ", ") + ") but " + msg
+			}
+			v, _ := m.Item(ctx, instanceID, itemID)
+			return v, apierr.New(http.StatusUnprocessableEntity, "menu_image_failed", msg, false)
 		}
 	}
 	return m.Item(ctx, instanceID, itemID)
+}
+
+// fields names the fields an input sets (besides image_url).
+func (in MenuItemInput) fields() []string {
+	var out []string
+	add := func(set bool, name string) {
+		if set {
+			out = append(out, name)
+		}
+	}
+	add(in.CategoryID != nil, "category_id")
+	add(in.Name != nil, "name")
+	add(in.Description != nil, "description")
+	add(in.PriceCents != nil || len(in.Price) > 0, "price")
+	add(in.Currency != nil, "currency")
+	add(in.Available != nil, "available")
+	add(in.SKU != nil, "sku")
+	add(in.Tags != nil, "tags")
+	add(in.Options != nil, "options")
+	return out
 }
 
 // SetAvailable toggles "esgotado".
@@ -660,6 +709,53 @@ func (m *Menu) Image(ctx context.Context, instanceID, itemID string) ([]byte, er
 	return readMenuImage(m.DataDir, instanceID, it.ImageID)
 }
 
+// SweepImages removes photo files no item points at (left by a crash between writing a
+// photo and saving it, or by a failed removal) and the folders of deleted instances.
+// It runs at startup, before any request: nothing is writing photos then.
+func (m *Menu) SweepImages(ctx context.Context) (int, error) {
+	root := filepath.Join(m.DataDir, "menu")
+	dirs, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, d := range dirs {
+		if !d.IsDir() || strings.ContainsAny(d.Name(), `/\.`) {
+			continue
+		}
+		dir := filepath.Join(root, d.Name())
+		if _, err := m.Store.GetInstance(ctx, d.Name()); errors.Is(err, store.ErrNotFound) {
+			if os.RemoveAll(dir) == nil {
+				removed++
+			}
+			continue
+		} else if err != nil {
+			return removed, err
+		}
+		used, err := m.Store.MenuImageIDs(ctx, d.Name())
+		if err != nil {
+			return removed, err
+		}
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			id, ok := strings.CutSuffix(f.Name(), ".jpg")
+			if f.IsDir() || !ok || !validMenuID("mimg", id) || used[id] {
+				continue
+			}
+			if os.Remove(filepath.Join(dir, f.Name())) == nil {
+				removed++
+			}
+		}
+	}
+	return removed, nil
+}
+
 func readMenuImage(dataDir, instanceID, imageID string) ([]byte, error) {
 	if !validMenuID("mimg", imageID) {
 		return nil, notFound("image")
@@ -742,7 +838,10 @@ type SendMenuInput struct {
 
 // SendMenuResult lists the queued messages, in order.
 type SendMenuResult struct {
-	Messages []MessageView `json:"messages"`
+	// ClientMessageID is the idempotency key used (generated when the request had none):
+	// retry with it to never send the menu twice.
+	ClientMessageID string        `json:"client_message_id"`
+	Messages        []MessageView `json:"messages"`
 }
 
 // SendMenu queues the menu text (one message per chunk, through the send queue). A
@@ -763,6 +862,9 @@ func (m *Menu) SendMenu(ctx context.Context, instanceID string, in SendMenuInput
 	if len(in.ClientMessageID) > 120 {
 		return SendMenuResult{}, apierr.Validation("client_message_id is limited to 120 characters here")
 	}
+	if in.ClientMessageID == "" {
+		in.ClientMessageID = secure.NewID("menu_")
+	}
 	chunks, err := m.chunks(ctx, instanceID, MenuTextInput{CategoryID: in.CategoryID, IncludeUnavailable: in.IncludeUnavailable, Title: in.Title})
 	if err != nil {
 		return SendMenuResult{}, err
@@ -774,7 +876,7 @@ func (m *Menu) SendMenu(ctx context.Context, instanceID string, in SendMenuInput
 		return SendMenuResult{}, apierr.Validation(fmt.Sprintf("the menu needs %d messages and max_messages is %d: send one category (category_id) instead",
 			len(chunks), in.MaxMessages))
 	}
-	res := SendMenuResult{Messages: []MessageView{}}
+	res := SendMenuResult{ClientMessageID: in.ClientMessageID, Messages: []MessageView{}}
 	for i, text := range chunks {
 		si := SendInput{To: in.To, Type: "text", Text: text, ExpiresAfter: in.ExpiresAfter}
 		if i == 0 {

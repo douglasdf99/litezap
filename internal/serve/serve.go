@@ -256,6 +256,12 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	// Cardápio: LiteZap's own catalog (never written to Meta); sends take the guarded path.
 	menuSvc := &service.Menu{Store: st, DataDir: cfg.DataDir, Fetcher: msg.Fetcher, Catalog: msg.Catalog, Sender: guarded,
 		AI: menuAI(att)}
+	// Photo files no item points at (a crash mid-upload, a deleted instance): before serving.
+	if n, err := menuSvc.SweepImages(ctx); err != nil {
+		log.Warn("menu: photo sweep failed", "err", err)
+	} else if n > 0 {
+		log.Info("menu: removed orphan photos", "count", n)
+	}
 	mcpDeps := mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Groups: groups, Logger: log, Account: acct,
 		Social: social, Attendant: attAdmin, Menu: menuSvc, PublicHost: publicHost(cfg.PublicURL)}
 	// The agents call the same tools as MCP, in process, with the instance's own scope.
@@ -398,9 +404,14 @@ func workerEnv(st *store.Store, cfg config.Config) func(context.Context, string)
 
 // menuAI is "Montar com IA" over the attendant's configured provider; its call errors
 // become API errors (the provider's own message is not shown: it may carry details).
-func menuAI(att *attendant.Attendant) service.MenuAI {
+func menuAI(att *attendant.Attendant) service.MenuAI { return menuAIFrom(att.Extract) }
+
+func menuAIFrom(extract service.MenuAI) service.MenuAI {
 	return func(ctx context.Context, instanceID, system, user string, schema json.RawMessage) (string, error) {
-		out, err := att.Extract(ctx, instanceID, system, user, schema)
+		out, err := extract(ctx, instanceID, system, user, schema)
+		if err == nil {
+			return out, nil
+		}
 		var ce *agenthook.CallError
 		if errors.As(err, &ce) {
 			switch ce.Reason {
@@ -409,9 +420,9 @@ func menuAI(att *attendant.Attendant) service.MenuAI {
 			case "daily_cap":
 				return "", apierr.New(http.StatusTooManyRequests, "rate_limited", ce.Detail, true)
 			}
-			return "", apierr.New(http.StatusBadGateway, "ai_error", "the AI provider failed; try again", true)
 		}
-		return out, err
+		// Anything else (provider, store, timeout) is generic: its text may carry details.
+		return "", apierr.New(http.StatusBadGateway, "ai_error", "the AI provider failed; try again", true)
 	}
 }
 

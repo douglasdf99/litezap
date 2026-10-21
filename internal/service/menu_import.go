@@ -116,6 +116,33 @@ func (m *Menu) ImportRows(ctx context.Context, instanceID string, in MenuRowsInp
 	return m.commit(ctx, instanceID, v, in.MenuImportOptions, nil)
 }
 
+// importItems checks the item limit and imports. A replace holds the instance's import
+// lock (it empties the menu, so it must not interleave with a catalog copy).
+func (m *Menu) importItems(ctx context.Context, instanceID string, replace bool, items []store.MenuImportItem) (store.MenuImportResult, error) {
+	if replace {
+		defer m.importLock(instanceID)()
+	}
+	_, n, err := m.Store.MenuCounts(ctx, instanceID)
+	if err != nil {
+		return store.MenuImportResult{}, err
+	}
+	if replace {
+		n = 0
+	}
+	if n+len(items) > store.MaxMenuItems {
+		return store.MenuImportResult{}, apierr.New(http.StatusConflict, "menu_limit", fmt.Sprintf("the menu has %d items and this import adds %d: the limit is %d",
+			n, len(items), store.MaxMenuItems), false)
+	}
+	res, err := m.Store.ImportMenu(ctx, instanceID, replace, items)
+	if err != nil {
+		return res, menuErr(err, "menu")
+	}
+	for _, img := range res.RemovedImages {
+		m.removeImage(instanceID, img)
+	}
+	return res, nil
+}
+
 // commit saves the valid rows of v (all of them, unless skip_invalid), then fetches
 // their image_url photos. fill, when set, fetches extra photos after the import (the
 // catalog copy: products already in the menu without a photo).
@@ -140,31 +167,18 @@ func (m *Menu) commit(ctx context.Context, instanceID string, v MenuImportView, 
 		}
 		return v, apierr.Validation("no valid rows to save")
 	}
-	_, n, err := m.Store.MenuCounts(ctx, instanceID)
+	res, err := m.importItems(ctx, instanceID, opt.Replace, items)
 	if err != nil {
 		return v, err
 	}
-	if opt.Replace {
-		n = 0
-	}
-	if n+len(items) > store.MaxMenuItems {
-		return v, apierr.New(http.StatusConflict, "menu_limit", fmt.Sprintf("the menu has %d items and this import adds %d: the limit is %d",
-			n, len(items), store.MaxMenuItems), false)
-	}
-	res, err := m.Store.ImportMenu(ctx, instanceID, opt.Replace, items)
-	if err != nil {
-		return v, menuErr(err, "menu")
-	}
-	for _, img := range res.RemovedImages {
-		m.removeImage(instanceID, img)
-	}
 	v.CategoriesCreated, v.ItemsCreated = res.CategoriesCreated, res.ItemsCreated
+	v.Skipped += res.Skipped
 	// Photos: sequential, bounded per call and in time (each one is a download).
 	ictx, cancel := context.WithTimeout(ctx, importImageTime)
 	defer cancel()
 	for k, itemID := range res.ItemIDs {
 		r := v.Rows[rowOfItem[k]]
-		if r.ImageURL == "" && photo == nil {
+		if itemID == "" || (r.ImageURL == "" && photo == nil) { // skipped (already in the menu)
 			continue
 		}
 		if v.ImagesSaved+len(v.ImageErrors) >= maxImportImages || ictx.Err() != nil {
@@ -242,6 +256,12 @@ func (m *Menu) ImportCatalog(ctx context.Context, instanceID string, in MenuCata
 	r := m.Catalog
 	if r == nil || r.Client == nil {
 		return MenuImportView{}, apierr.New(http.StatusNotImplemented, "not_implemented", "the WhatsApp catalog is not available on this server", false)
+	}
+	// One copy at a time per instance: it reads which products are already in the menu
+	// before adding the rest (the unique "wa:" sku index is the last line of defense).
+	// Not while previewing: a dry run writes nothing.
+	if !in.DryRun {
+		defer m.importLock(instanceID)()
 	}
 	products, err := r.Products(ctx, instanceID, store.MaxMenuItems)
 	if err != nil {

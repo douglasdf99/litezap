@@ -26,6 +26,10 @@ const (
 // ErrMenuLimit means a menu limit was reached.
 var ErrMenuLimit = errors.New("menu limit reached")
 
+// ErrMenuDuplicate means the item's "wa:" sku (a product copied from the WhatsApp
+// catalog) is already in the menu.
+var ErrMenuDuplicate = errors.New("menu item already copied")
+
 type MenuCategory struct {
 	ID        string
 	Name      string
@@ -343,11 +347,16 @@ func createItem(ctx context.Context, tx *sql.Tx, instanceID string, it MenuItem)
 		it.Tags = []string{}
 	}
 	tags, _ := json.Marshal(it.Tags)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO menu_items (id, instance_id, category_id, name, description, price_cents, currency,
-		image_id, available, position, sku, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	ins, err := tx.ExecContext(ctx, `INSERT INTO menu_items (id, instance_id, category_id, name, description, price_cents, currency,
+		image_id, available, position, sku, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT DO NOTHING`,
 		it.ID, instanceID, it.CategoryID, it.Name, it.Description, it.PriceCents, it.Currency, it.ImageID, it.Available, pos,
-		it.SKU, string(tags), ts, ts); err != nil {
+		it.SKU, string(tags), ts, ts)
+	if err != nil {
 		return MenuItem{}, err
+	}
+	if n, _ := ins.RowsAffected(); n == 0 { // a "wa:" sku already in the menu
+		return MenuItem{}, ErrMenuDuplicate
 	}
 	if err := replaceOptions(ctx, tx, instanceID, it.ID, it.Options); err != nil {
 		return MenuItem{}, err
@@ -392,6 +401,9 @@ func (s *Store) UpdateMenuItem(ctx context.Context, instanceID string, it MenuIt
 		available = ?, position = ?, sku = ?, tags = ?, updated_at = ? WHERE instance_id = ? AND id = ?`,
 		it.CategoryID, it.Name, it.Description, it.PriceCents, it.Currency, it.Available, pos, it.SKU, string(tags), now(),
 		instanceID, it.ID); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return MenuItem{}, ErrMenuDuplicate
+		}
 		return MenuItem{}, err
 	}
 	if it.Options != nil {
@@ -606,13 +618,34 @@ func (s *Store) UpdateMenuOption(ctx context.Context, instanceID, itemID string,
 		o.Choices = []MenuChoice{}
 	}
 	choices, _ := json.Marshal(o.Choices)
-	return s.exec1(ctx, `UPDATE menu_options SET name = ?, min_select = ?, max_select = ?, required = ?, choices = ?
+	return s.optionChange(ctx, instanceID, itemID, `UPDATE menu_options SET name = ?, min_select = ?, max_select = ?, required = ?, choices = ?
 		WHERE instance_id = ? AND item_id = ? AND id = ?`, o.Name, o.Min, o.Max, o.Required, string(choices), instanceID, itemID, o.ID)
 }
 
 // DeleteMenuOption removes an option group.
 func (s *Store) DeleteMenuOption(ctx context.Context, instanceID, itemID, id string) error {
-	return s.exec1(ctx, `DELETE FROM menu_options WHERE instance_id = ? AND item_id = ? AND id = ?`, instanceID, itemID, id)
+	return s.optionChange(ctx, instanceID, itemID, `DELETE FROM menu_options WHERE instance_id = ? AND item_id = ? AND id = ?`,
+		instanceID, itemID, id)
+}
+
+// optionChange runs a statement on one option group and bumps its item's updated_at.
+func (s *Store) optionChange(ctx context.Context, instanceID, itemID, q string, args ...any) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if err := s.touchItem(ctx, tx, instanceID, itemID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ---- import ----
@@ -627,7 +660,9 @@ type MenuImportItem struct {
 type MenuImportResult struct {
 	CategoriesCreated int
 	ItemsCreated      int
-	ItemIDs           []string // created items, in input order
+	// Skipped are items whose "wa:" sku was already in the menu.
+	Skipped int
+	ItemIDs []string // created items, in input order ("" for a skipped one)
 	// RemovedImages are the image ids of the items a replace removed.
 	RemovedImages []string
 }
@@ -688,6 +723,11 @@ func (s *Store) ImportMenu(ctx context.Context, instanceID string, replace bool,
 		it := in.Item
 		it.CategoryID = catID
 		created, err := createItem(ctx, tx, instanceID, it)
+		if errors.Is(err, ErrMenuDuplicate) { // copied already (or by a concurrent copy)
+			res.Skipped++
+			res.ItemIDs = append(res.ItemIDs, "")
+			continue
+		}
 		if err != nil {
 			return MenuImportResult{}, err
 		}

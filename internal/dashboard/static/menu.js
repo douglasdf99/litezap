@@ -186,7 +186,7 @@ function itemEditor(ctx, menu, images, item, onSaved) {
     h('div', { class: 'stack' },
       h('h3', null, 'Foto'), img, file, url,
       it.image_path ? h('button', { class: 'btn small ghost danger', type: 'button', onclick: () => { removePhoto = true; photoFile = null; img.classList.add('cat-img-missing'); } }, icon('trash', 14), 'Remover foto') : null,
-      h('p', { class: 'hint' }, 'JPEG, PNG ou GIF até 8 MB; o LiteZap reduz para 1080 px.'),
+      h('p', { class: 'hint' }, 'JPEG, PNG ou GIF até 8 MB e 10 megapixels; o LiteZap reduz para 1080 px.'),
       h('h3', null, 'Prévia no WhatsApp'), preview));
   form.addEventListener('input', refresh);
   form.addEventListener('click', () => setTimeout(refresh, 0));

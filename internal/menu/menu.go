@@ -64,9 +64,24 @@ type Row struct {
 	Warnings    []string `json:"warnings,omitempty"`
 }
 
-// CleanLine trims s and drops control characters and repeated spaces (one line).
+// invisible reports bidirectional controls and zero-width characters: they can make a
+// name look different from what it is (a reversed price, a hidden word).
+func invisible(r rune) bool {
+	switch {
+	case r >= 0x200B && r <= 0x200F, r >= 0x202A && r <= 0x202E, r >= 0x2060 && r <= 0x2064, r >= 0x2066 && r <= 0x2069,
+		r == 0xFEFF, r == 0x061C, r == 0x180E:
+		return true
+	}
+	return false
+}
+
+// CleanLine trims s and drops control, bidirectional and zero-width characters and
+// repeated spaces (one line).
 func CleanLine(s string) string {
 	s = strings.Map(func(r rune) rune {
+		if invisible(r) {
+			return -1
+		}
 		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
 			return ' '
 		}

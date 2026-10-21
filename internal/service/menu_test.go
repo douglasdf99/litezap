@@ -9,6 +9,8 @@ import (
 	"image"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -311,5 +313,105 @@ func TestMenuImportCatalog(t *testing.T) {
 	}
 	if _, n, _ := e.st.MenuCounts(ctx, "i1"); n != 2 {
 		t.Fatalf("items = %d", n)
+	}
+}
+
+// Concurrent catalog copies (and a replacing import between them) never duplicate items.
+func TestMenuImportCatalogConcurrent(t *testing.T) {
+	e := newSocialEnv(t)
+	f := withCatalog(t, e)
+	f.Catalogs[ownJID] = []catalogtest.Product{{ID: "101", Name: "Camiseta", Price: 59900, Currency: "BRL", NoImage: true},
+		{ID: "102", Name: "Caneca", Price: 25000, Currency: "BRL", NoImage: true}}
+	m := newMenu(e.msgEnv)
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if i == 3 {
+				if _, err := m.ImportCSV(ctx, "i1", MenuCSVInput{CSV: "nome\nNovo\n", MenuImportOptions: MenuImportOptions{Replace: true}}); err != nil {
+					t.Error(err)
+				}
+				return
+			}
+			if _, err := m.ImportCatalog(ctx, "i1", MenuCatalogInput{}); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	// The replace may have run last (emptying the copies): one more copy, then each
+	// product must be there exactly once.
+	if _, err := m.ImportCatalog(ctx, "i1", MenuCatalogInput{}); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := e.st.ListMenuItems(ctx, "i1")
+	seen := map[string]int{}
+	for _, it := range items {
+		seen[it.SKU]++
+	}
+	if seen["wa:101"] != 1 || seen["wa:102"] != 1 {
+		t.Fatalf("items %v", seen)
+	}
+}
+
+func TestMenuSendIDUpdatePhotoAndSweep(t *testing.T) {
+	e := newMsgEnv(t)
+	m := newMenu(e)
+	ctx := context.Background()
+	price := int64(1000)
+	it, err := m.CreateItem(ctx, "i1", MenuItemInput{Name: sptr("Suco"), PriceCents: &price})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// /menu/send without a client_message_id gets one, and returns it.
+	res, err := m.SendMenu(ctx, "i1", SendMenuInput{To: "5511988887777"}, 0)
+	if err != nil || !strings.HasPrefix(res.ClientMessageID, "menu_") || res.Messages[0].ClientMessageID != res.ClientMessageID+":1" {
+		t.Fatalf("send = %+v, %v", res, err)
+	}
+	again, err := m.SendMenu(ctx, "i1", SendMenuInput{To: "5511988887777", ClientMessageID: res.ClientMessageID}, 0)
+	if err != nil || again.Messages[0].ID != res.Messages[0].ID {
+		t.Fatalf("retry with the returned id = %+v, %v", again, err)
+	}
+	// A photo that fails after the fields were saved: 422 naming them.
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("not an image")) }))
+	defer bad.Close()
+	v, err := m.UpdateItem(ctx, "i1", it.ID, MenuItemInput{Name: sptr("Suco de laranja"), ImageURL: bad.URL + "/x.png"})
+	if apiCode(err) != "menu_image_failed" || !strings.Contains(err.Error(), "saved (name)") || v.Name != "Suco de laranja" {
+		t.Fatalf("update = %+v, %v", v, err)
+	}
+	if got, _ := m.Item(ctx, "i1", it.ID); got.Name != "Suco de laranja" {
+		t.Fatal("fields not saved")
+	}
+	// Sweep: orphan photos and folders of deleted instances go; used photos stay.
+	if _, err := m.SetImage(ctx, "i1", it.ID, MenuImageInput{Base64: base64.StdEncoding.EncodeToString(pngImage(t, 20, 20))}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(e.dir, "menu", "i1")
+	orphan := filepath.Join(dir, "mimg_0123456789abcdef.jpg")
+	other := filepath.Join(dir, "notes.txt")
+	gone := filepath.Join(e.dir, "menu", "inst_deleted")
+	for _, p := range []string{orphan, other, filepath.Join(gone, "mimg_0123456789abcdef.jpg")} {
+		os.MkdirAll(filepath.Dir(p), 0o700)
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := m.SweepImages(ctx)
+	if err != nil || n != 2 {
+		t.Fatalf("sweep = %d, %v", n, err)
+	}
+	if _, err := os.Stat(orphan); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("orphan kept")
+	}
+	if _, err := os.Stat(gone); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("deleted instance folder kept")
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatal("unrelated file removed")
+	}
+	if _, err := m.Image(ctx, "i1", it.ID); err != nil {
+		t.Fatalf("used photo removed: %v", err)
 	}
 }
