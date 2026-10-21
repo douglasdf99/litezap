@@ -64,6 +64,8 @@ type Profile struct {
 	// KnowledgeSource is where the product list comes from: manual (default, the product
 	// entries above) or catalog (the instance's WhatsApp Business catalog: name, price,
 	// description and availability, refreshed every 10 minutes; marco 12).
+	// "menu" is the Cardápio (LiteZap's own catalog): items, prices and options; the
+	// recommended source once the instance has a menu.
 	KnowledgeSource string `json:"knowledge_source"`
 	Language        string `json:"language"`
 	Currency        string `json:"currency"`
@@ -77,6 +79,9 @@ type Profile struct {
 	MaxReplyChars int `json:"max_reply_chars"`
 	// HideContactName keeps the contact's WhatsApp name away from the model.
 	HideContactName bool `json:"hide_contact_name"`
+
+	// menu is the Cardápio loaded for one answer (knowledge_source "menu"; never stored).
+	menu []menuEntry
 }
 
 // Limits.
@@ -262,8 +267,8 @@ func (p *Profile) Validate() error {
 		return fmt.Errorf("at most %d knowledge entries", maxKnowledge)
 	case tooLong(p.CallHint, maxCallHintLen):
 		return fmt.Errorf("call_hint is limited to %d characters", maxCallHintLen)
-	case p.KnowledgeSource != KnowledgeManual && p.KnowledgeSource != KnowledgeCatalog:
-		return errors.New("knowledge_source must be manual or catalog")
+	case p.KnowledgeSource != KnowledgeManual && p.KnowledgeSource != KnowledgeCatalog && p.KnowledgeSource != KnowledgeMenu:
+		return errors.New("knowledge_source must be manual, catalog or menu")
 	case !slices.Contains([]string{VoiceOff, VoiceWhenAudio, VoiceAlways}, p.VoiceReply):
 		return errors.New("voice_reply must be off, when_audio or always")
 	case p.MaxReplyChars < 50 || p.MaxReplyChars > hardReplyMax:

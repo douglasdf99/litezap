@@ -226,6 +226,17 @@ tags:
       por um fluxo não documentado, com risco para o número. Veja o guia
       [Catálogo e pedidos](/docs/guias/catalogo-e-pedidos/).
     x-concept: /docs/guias/catalogo-e-pedidos/
+  - name: Cardápio
+    description: O catálogo próprio do LiteZap — categorias, itens, opções, fotos, importações e envio.
+    x-slug: cardapio
+    x-intro: |
+      O Cardápio fica guardado no LiteZap, por instância, e **nunca** é escrito na Meta ou no WhatsApp: não
+      exige conta de anúncios nem conta Business. Preços em centavos (`price_cents`; também aceita `price`
+      como texto, "45,90" ou "R$ 1.234,50"). Limites: 500 itens, 50 categorias, 10 grupos de opções por
+      item e 20 escolhas por grupo (`409 menu_limit`). Chaves de API `read` leem (`GET`); chaves `send`
+      enviam (`/menu/send`, `/menu/items/{id}/send` e os tipos `menu_item` e `menu` de `POST /messages`).
+      Todo envio passa pela fila anti-ban. Veja o guia [Cardápio](/docs/guias/cardapio/).
+    x-concept: /docs/guias/cardapio/
   - name: Operação
     description: Saúde do processo, prontidão e identidade do token.
     x-slug: operacao
@@ -4443,6 +4454,590 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/CatalogNotFound" }
         "502": { $ref: "#/components/responses/UpstreamChanged" }
+  /v1/instances/{id}/menu:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Cardápio]
+      operationId: getMenu
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Ler o cardápio
+      x-litezap-scope: instancia
+      description: |
+        O cardápio inteiro, na ordem de exibição: categorias com seus itens e, por último, `uncategorized`
+        (itens sem categoria). `image_path` baixa a foto do item com o token. Chaves `read` podem ler.
+      responses:
+        "200":
+          description: O cardápio.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Menu" }
+              example: { categories: [{ id: mcat_1a2b3c4d5e6f7a8b, name: Pizzas, position: 0, items: [{ id: mitm_0a1b2c3d4e5f6a7b, category_id: mcat_1a2b3c4d5e6f7a8b, name: Calabresa, description: "Molho, calabresa e cebola", price_cents: 4590, price_text: "R$ 45,90", currency: BRL, available: true, position: 0, tags: [], options: [{ id: mopt_9a8b7c6d5e4f3a2b, name: Tamanho, min: 1, max: 1, required: true, choices: [{ name: P, price_delta_cents: 0 }, { name: G, price_delta_cents: 1000 }] }], image_path: "/v1/instances/inst_7f3a9c2e5b1d4086/menu/items/mitm_0a1b2c3d4e5f6a7b/image?v=5c1d2e3f4a5b6c7d" }] }], uncategorized: [], item_count: 1, limits: { max_items: 500, max_categories: 50, max_option_groups: 10, max_choices: 20 } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+  /v1/instances/{id}/menu/text:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Cardápio]
+      operationId: menuText
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Texto do cardápio
+      x-litezap-scope: instancia
+      description: |
+        O cardápio como as mensagens de WhatsApp que seriam enviadas: agrupado por categoria, com preços e
+        opções, dividido em blocos de até 3500 caracteres. Itens esgotados ficam de fora, a menos de
+        `include_unavailable=true`.
+      parameters:
+        - { name: category_id, in: query, description: "Só esta categoria.", schema: { type: string } }
+        - { name: include_unavailable, in: query, schema: { type: boolean, default: false } }
+        - { name: title, in: query, description: "Primeira linha (padrão \"Cardápio\", até 60 caracteres).", schema: { type: string } }
+      responses:
+        "200":
+          description: As mensagens.
+          content:
+            application/json:
+              schema: { type: object, properties: { chunks: { type: array, items: { type: string } } } }
+              example: { chunks: ["*Cardápio*\n\n*Pizzas*\n• Calabresa — R$ 45,90\n  Molho, calabresa e cebola\n  Tamanho: P · G (+R$ 10,00)"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/menu/send:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Cardápio]
+      operationId: sendMenu
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Enviar o cardápio
+      x-litezap-scope: instancia
+      description: |
+        Coloca na fila o texto do cardápio (ou de uma categoria), uma mensagem por bloco, com as pausas
+        anti-ban de qualquer envio. `max_messages` (padrão e máximo 10) recusa um cardápio que precise de
+        mais mensagens: envie uma categoria. O bloco n usa `<client_message_id>:n`, e repetir a chamada com o
+        mesmo id não envia de novo; sem `client_message_id`, o LiteZap gera um e o devolve na resposta (use-o
+        para tentar de novo). Chaves `send` podem usar.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string }
+                category_id: { type: string }
+                include_unavailable: { type: boolean }
+                title: { type: string, maxLength: 60 }
+                max_messages: { type: integer, minimum: 1, maximum: 10 }
+                reply_to: { type: string }
+                client_message_id: { type: string, maxLength: 120 }
+                expires_after: { type: string }
+            example: { to: "5511999999999", category_id: mcat_1a2b3c4d5e6f7a8b, client_message_id: cardapio-ana-1 }
+      responses:
+        "202":
+          description: Mensagens na fila, em ordem.
+          content:
+            application/json:
+              schema: { type: object, properties: { client_message_id: { type: string, description: "A chave usada (gerada se não veio)." }, messages: { type: array, items: { $ref: "#/components/schemas/Message" } } } }
+        "400": { $ref: "#/components/responses/SendBadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/instances/{id}/menu/categories:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Cardápio]
+      operationId: createMenuCategory
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Criar uma categoria
+      x-litezap-scope: instancia
+      description: Adiciona uma categoria no fim (até 50 por instância; nome com até 60 caracteres).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [name], properties: { name: { type: string, maxLength: 60 } } }
+            example: { name: Pizzas }
+      responses:
+        "201":
+          description: A categoria.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuCategory" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/MenuLimit" }
+  /v1/instances/{id}/menu/categories/order:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    put:
+      tags: [Cardápio]
+      operationId: reorderMenuCategories
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Reordenar as categorias
+      x-litezap-scope: instancia
+      description: Os ids na nova ordem. Devolve o cardápio.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [ids], properties: { ids: { type: array, items: { type: string } } } }
+      responses:
+        "200":
+          description: O cardápio na nova ordem.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Menu" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/menu/categories/{cat_id}:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: cat_id, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [Cardápio]
+      operationId: renameMenuCategory
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Renomear uma categoria
+      x-litezap-scope: instancia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [name], properties: { name: { type: string, maxLength: 60 } } }
+      responses:
+        "200":
+          description: A categoria.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuCategory" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Cardápio]
+      operationId: deleteMenuCategory
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Apagar uma categoria
+      x-litezap-scope: instancia
+      description: Os itens da categoria continuam no cardápio, sem categoria.
+      responses:
+        "204": { description: Apagada. }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/menu/items:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Cardápio]
+      operationId: createMenuItem
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Criar um item
+      x-litezap-scope: instancia
+      description: |
+        Adiciona um item no fim da categoria (até 500 itens). `image_url` baixa a foto com as regras de
+        `media.url` (sem endereços privados, até 8 MB) e a reduz para JPEG de até 1080 px.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MenuItemInput" }
+            example: { category_id: mcat_1a2b3c4d5e6f7a8b, name: Calabresa, price: "45,90", description: "Molho, calabresa e cebola", options: [{ name: Tamanho, required: true, choices: [{ name: P }, { name: G, price_delta_cents: 1000 }] }] }
+      responses:
+        "201":
+          description: O item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuItem" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/MenuLimit" }
+  /v1/instances/{id}/menu/items/order:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    put:
+      tags: [Cardápio]
+      operationId: reorderMenuItems
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Reordenar os itens
+      x-litezap-scope: instancia
+      description: |
+        Põe os itens listados, nessa ordem, em `category_id` (`""` = sem categoria). Itens de outra categoria
+        mudam para ela. Devolve o cardápio.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [category_id, ids], properties: { category_id: { type: string }, ids: { type: array, items: { type: string } } } }
+      responses:
+        "200":
+          description: O cardápio na nova ordem.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Menu" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/menu/items/{item_id}:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: item_id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Cardápio]
+      operationId: getMenuItem
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Ler um item
+      x-litezap-scope: instancia
+      responses:
+        "200":
+          description: O item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuItem" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Cardápio]
+      operationId: updateMenuItem
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Alterar um item
+      x-litezap-scope: instancia
+      description: Só os campos enviados mudam; `options`, quando enviado, substitui todos os grupos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MenuItemInput" }
+      responses:
+        "200":
+          description: O item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuItem" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Cardápio]
+      operationId: deleteMenuItem
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Apagar um item
+      x-litezap-scope: instancia
+      responses:
+        "204": { description: Apagado (com a foto). }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/menu/items/{item_id}/available:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: item_id, in: path, required: true, schema: { type: string } }
+    put:
+      tags: [Cardápio]
+      operationId: setMenuItemAvailable
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Marcar esgotado ou disponível
+      x-litezap-scope: instancia
+      description: Itens esgotados não são enviados nem oferecidos pelo atendente.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [available], properties: { available: { type: boolean } } }
+            example: { available: false }
+      responses:
+        "200":
+          description: O item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuItem" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/menu/items/{item_id}/image:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: item_id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Cardápio]
+      operationId: menuItemImage
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Baixar a foto de um item
+      x-litezap-scope: instancia
+      responses:
+        "200":
+          description: A foto (JPEG).
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Cardápio]
+      operationId: setMenuItemImage
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Trocar a foto de um item
+      x-litezap-scope: instancia
+      description: |
+        `url` (baixada com as regras de `media.url`) ou `base64`. JPEG, PNG ou GIF de até 8 MB e 10
+        megapixels; o LiteZap guarda um JPEG de até 1080 px no maior lado.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { url: { type: string }, base64: { type: string } } }
+      responses:
+        "200":
+          description: O item com o novo `image_path`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuItem" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { description: "`media_too_large`." }
+    delete:
+      tags: [Cardápio]
+      operationId: deleteMenuItemImage
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Remover a foto de um item
+      x-litezap-scope: instancia
+      responses:
+        "200":
+          description: O item sem foto.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuItem" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/menu/items/{item_id}/options:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: item_id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Cardápio]
+      operationId: addMenuOption
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Adicionar um grupo de opções
+      x-litezap-scope: instancia
+      description: Até 10 grupos por item e 20 escolhas por grupo. `required` implica `min >= 1`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MenuOption" }
+            example: { name: Borda, required: false, max: 1, choices: [{ name: Catupiry, price_delta_cents: 800 }] }
+      responses:
+        "201":
+          description: O grupo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuOption" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "409": { $ref: "#/components/responses/MenuLimit" }
+  /v1/instances/{id}/menu/items/{item_id}/options/{option_id}:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: item_id, in: path, required: true, schema: { type: string } }
+      - { name: option_id, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [Cardápio]
+      operationId: updateMenuOption
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Alterar um grupo de opções
+      x-litezap-scope: instancia
+      description: Substitui o nome, os limites e as escolhas do grupo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MenuOption" }
+      responses:
+        "200":
+          description: O grupo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuOption" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Cardápio]
+      operationId: deleteMenuOption
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Apagar um grupo de opções
+      x-litezap-scope: instancia
+      responses:
+        "204": { description: Apagado. }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/instances/{id}/menu/items/{item_id}/send:
+    parameters:
+      - { $ref: "#/components/parameters/InstanceID" }
+      - { name: item_id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Cardápio]
+      operationId: sendMenuItem
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Enviar um item
+      x-litezap-scope: instancia
+      description: |
+        O mesmo que `POST /messages` com `type: "menu_item"`: a foto com a legenda (nome, preço, descrição
+        e opções), ou o texto se o item não tiver foto, pela fila. Itens esgotados são recusados.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [to], properties: { to: { type: string }, caption: { type: string, maxLength: 1024 }, reply_to: { type: string }, client_message_id: { type: string }, expires_after: { type: string } } }
+            example: { to: "5511999999999", caption: "Olha a pizza do dia!" }
+      responses:
+        "202":
+          description: Na fila (200 se já enviada).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/SendBadRequest" }
+  /v1/instances/{id}/menu/import/csv:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Cardápio]
+      operationId: importMenuCSV
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Importar planilha (CSV)
+      x-litezap-scope: instancia
+      description: |
+        Uma planilha exportada como CSV (vírgula ou ponto e vírgula, até 1 MB). Colunas pelo cabeçalho, sem
+        diferenciar acentos ou maiúsculas: `categoria`, `nome` (obrigatória), `descricao`, `preco` ("45,90",
+        "R$ 1.234,50"), `disponivel` (sim, não, esgotado), `imagem_url` e as opcionais `opcoes`, `sku` e
+        `tags`. `opcoes`: grupos separados por `;`, cada um "Nome: escolha | escolha +preço", com
+        `(opcional)`, `(até N)` ou `(mín N)` no nome. `dry_run: true` devolve as linhas lidas e os erros
+        sem salvar. Para salvar com linhas inválidas, envie `skip_invalid: true` (senão `400`, com a prévia
+        em `preview`). `replace: true` esvazia o cardápio antes. Até 30 fotos por chamada (o resto em
+        `images_pending`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [csv]
+              properties:
+                csv: { type: string }
+                dry_run: { type: boolean }
+                replace: { type: boolean }
+                skip_invalid: { type: boolean }
+            example: { csv: "categoria;nome;preco;opcoes\nPizzas;Calabresa;45,90;\"Tamanho: P | G +10,00\"\n", dry_run: true }
+      responses:
+        "200":
+          description: A prévia (`dry_run`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuImport" }
+        "201":
+          description: O resultado da importação.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuImport" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "409": { $ref: "#/components/responses/MenuLimit" }
+  /v1/instances/{id}/menu/import/rows:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Cardápio]
+      operationId: importMenuRows
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Salvar linhas revisadas
+      x-litezap-scope: instancia
+      description: |
+        Salva itens já revisados (o passo de confirmação do "Montar com IA"). Cada linha é validada de novo
+        no servidor. Mesmas opções do CSV (`dry_run`, `replace`, `skip_invalid`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rows]
+              properties:
+                rows: { type: array, items: { $ref: "#/components/schemas/MenuRow" } }
+                dry_run: { type: boolean }
+                replace: { type: boolean }
+                skip_invalid: { type: boolean }
+      responses:
+        "201":
+          description: O resultado.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuImport" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "409": { $ref: "#/components/responses/MenuLimit" }
+  /v1/instances/{id}/menu/import/ai:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Cardápio]
+      operationId: buildMenuWithAI
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Montar com IA
+      x-litezap-scope: instancia
+      description: |
+        Envia um texto livre (até 12.000 caracteres: "pizza calabresa 45, marguerita 42, coca 2L 12") ao
+        provedor de IA configurado no Atendente IA (qualquer um, inclusive o Ollama gratuito) e devolve as
+        linhas para revisão. **Nada é salvo**: confirme com `POST /menu/import/rows`. O texto vai ao modelo
+        como dado entre marcadores aleatórios, e a resposta é validada campo a campo; itens cujo nome não
+        aparece no texto vêm com um aviso. Conta no orçamento diário do simulador e no teto da instância
+        (até 5 por minuto e 100 por dia por instância; essa cota fica em memória e reiniciar o LiteZap a
+        zera, mas os tetos do provedor continuam valendo). Sem provedor: `409 ai_not_configured`; resposta
+        inútil: `422 ai_invalid_output`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [text], properties: { text: { type: string, maxLength: 12000 } } }
+            example: { text: "pizza calabresa 45, marguerita 42, coca 2L 12" }
+      responses:
+        "200":
+          description: "As linhas para revisão (`dry_run: true`)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuImport" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "409": { description: "`ai_not_configured`." }
+        "422": { description: "`ai_invalid_output`." }
+        "429": { description: "`rate_limited`." }
+  /v1/instances/{id}/menu/import/whatsapp-catalog:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Cardápio]
+      operationId: importMenuCatalog
+      x-litezap-milestone: M12
+      x-zapi: (sem equivalente)
+      summary: Copiar do catálogo do WhatsApp
+      x-litezap-scope: instancia
+      description: |
+        Copia os produtos do catálogo do WhatsApp do próprio número (leitura, como `GET /catalog`: nada é
+        alterado no WhatsApp) para o Cardápio: nome, descrição, preço (o promocional, se houver),
+        disponibilidade e a primeira foto (pela CDN permitida e a proxy da instância). Coleções viram
+        categorias; o resto vai para "Catálogo do WhatsApp". Produtos ocultos ou em análise ficam de fora.
+        Os já copiados (`sku` `wa:<id>`) são pulados, e as fotos que faltam são buscadas de novo.
+        `dry_run: true` mostra o que seria copiado; `images: false` pula as fotos.
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { dry_run: { type: boolean }, images: { type: boolean, default: true } } }
+      responses:
+        "200":
+          description: A prévia.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuImport" }
+        "201":
+          description: O resultado.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuImport" }
+        "404": { $ref: "#/components/responses/CatalogNotFound" }
+        "502": { $ref: "#/components/responses/UpstreamChanged" }
 
 components:
   securitySchemes:
@@ -4795,7 +5390,9 @@ components:
       required: [to, type]
       properties:
         to: { type: string, description: "Número com DDI (10 a 15 dígitos) ou JID." }
-        type: { type: string, enum: [text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, edit, revoke, pin, forward, product] }
+        type: { type: string, enum: [text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, edit, revoke, pin, forward, product, menu_item, menu] }
+        menu_item_id: { type: string, description: "`menu_item`: id de um item do Cardápio (mitm_…). Vai como foto com legenda (nome, preço, descrição, opções) ou texto, se não tiver foto; `caption` opcional vira a primeira linha. Itens esgotados são recusados." }
+        menu_category_id: { type: string, description: "`menu`: só esta categoria do Cardápio. Sem ele, o cardápio todo como um texto; se precisar de mais de uma mensagem, use POST /menu/send." }
         text: { type: string, description: "Obrigatório em `text` (até 64KB)." }
         product_id: { type: string, description: "`product`: id numérico do produto (GET /catalog)." }
         catalog_owner: { type: string, description: "`product`: número da empresa dona do catálogo; padrão, o próprio número." }
@@ -5255,6 +5852,105 @@ components:
               name: { type: string }
               review_status: { type: string }
               products: { type: array, items: { $ref: "#/components/schemas/CatalogProduct" } }
+    MenuChoice:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 60 }
+        price_delta_cents: { type: integer, description: "Acréscimo (ou desconto, negativo) sobre o preço do item, em centavos." }
+    MenuOption:
+      type: object
+      required: [name, choices]
+      properties:
+        id: { type: string, readOnly: true }
+        name: { type: string, maxLength: 60, description: "Ex.: Tamanho, Borda." }
+        min: { type: integer, minimum: 0, description: "Escolhas mínimas (1 quando required)." }
+        max: { type: integer, minimum: 1, description: "Escolhas máximas (padrão 1; no máximo o número de escolhas)." }
+        required: { type: boolean }
+        choices: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/MenuChoice" } }
+    MenuItem:
+      type: object
+      properties:
+        id: { type: string }
+        category_id: { type: string, description: "\"\" quando sem categoria." }
+        name: { type: string }
+        description: { type: string }
+        price_cents: { type: integer }
+        price_text: { type: string, example: "R$ 45,90" }
+        currency: { type: string, example: BRL }
+        available: { type: boolean, description: "false = esgotado." }
+        position: { type: integer }
+        sku: { type: string }
+        tags: { type: array, items: { type: string } }
+        options: { type: array, items: { $ref: "#/components/schemas/MenuOption" } }
+        image_path: { type: string, description: "Baixa a foto (JPEG) com o token; vazio sem foto." }
+        updated_at: { type: string, format: date-time }
+    MenuItemInput:
+      type: object
+      description: Na criação, `name` é obrigatório; na alteração, só os campos enviados mudam.
+      properties:
+        category_id: { type: string }
+        name: { type: string, maxLength: 120 }
+        description: { type: string, maxLength: 1000 }
+        price_cents: { type: integer, minimum: 0, maximum: 100000000 }
+        price: { description: "Alternativa a price_cents: \"45,90\", \"R$ 1.234,50\" ou 45.9.", oneOf: [{ type: string }, { type: number }] }
+        currency: { type: string, default: BRL }
+        available: { type: boolean, default: true }
+        sku: { type: string, maxLength: 64 }
+        tags: { type: array, maxItems: 10, items: { type: string, maxLength: 30 } }
+        options: { type: array, maxItems: 10, items: { $ref: "#/components/schemas/MenuOption" } }
+        image_url: { type: string, description: "Baixa a foto (regras de media.url)." }
+    MenuCategory:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        position: { type: integer }
+        items: { type: array, items: { $ref: "#/components/schemas/MenuItem" } }
+    Menu:
+      type: object
+      properties:
+        categories: { type: array, items: { $ref: "#/components/schemas/MenuCategory" } }
+        uncategorized: { type: array, items: { $ref: "#/components/schemas/MenuItem" } }
+        item_count: { type: integer }
+        limits:
+          type: object
+          properties:
+            max_items: { type: integer }
+            max_categories: { type: integer }
+            max_option_groups: { type: integer }
+            max_choices: { type: integer }
+    MenuRow:
+      type: object
+      description: Um item a importar, como revisado.
+      properties:
+        line: { type: integer }
+        category: { type: string }
+        name: { type: string }
+        description: { type: string }
+        price_cents: { type: integer }
+        price_text: { type: string }
+        available: { type: boolean }
+        image_url: { type: string }
+        sku: { type: string }
+        tags: { type: array, items: { type: string } }
+        options: { type: array, items: { $ref: "#/components/schemas/MenuOption" } }
+        errors: { type: array, items: { type: string }, description: "Problemas que impedem salvar a linha." }
+        warnings: { type: array, items: { type: string }, description: "Avisos (ex.: nome que não está no texto da IA)." }
+    MenuImport:
+      type: object
+      properties:
+        dry_run: { type: boolean }
+        rows: { type: array, items: { $ref: "#/components/schemas/MenuRow" } }
+        errors: { type: array, items: { type: string } }
+        valid: { type: integer }
+        invalid: { type: integer }
+        skipped: { type: integer, description: "Já no cardápio (cópia do catálogo)." }
+        categories_created: { type: integer }
+        items_created: { type: integer }
+        images_saved: { type: integer }
+        image_errors: { type: array, items: { type: string } }
+        images_pending: { type: integer, description: "Fotos não buscadas nesta chamada: rode de novo." }
     Order:
       type: object
       properties:
@@ -5620,6 +6316,12 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Instance" }
+    MenuLimit:
+      description: "`menu_limit`: 500 itens, 50 categorias, 10 grupos de opções por item ou 20 escolhas por grupo."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: menu_limit, message: "the menu is limited to 500 items, 50 categories, 10 option groups per item and 20 choices per group", retryable: false } }
     ValidationFailed:
       description: "`validation_failed`: corpo ou campo inválido."
       content:

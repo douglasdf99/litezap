@@ -52,22 +52,25 @@ var RiskyGroups = []string{GroupReadOther, GroupOtherChats, GroupGroups}
 // tool the agent has. label_chat (etiquetas) may label any chat.
 var groupTools = map[string][]string{
 	GroupRead: {"get_instance_status", "list_chats", "get_messages", "get_message_status", "get_contact",
-		"list_groups", "get_group", "list_labels", "get_catalog", "get_product"},
+		"list_groups", "get_group", "list_labels", "get_catalog", "get_product", "get_menu", "get_menu_item"},
 	GroupReadOther: {"get_instance_status", "list_chats", "get_messages", "get_message_status", "get_contact",
-		"list_groups", "get_group", "list_labels", "list_contacts", "get_catalog", "get_product"},
-	GroupReply:      {"send_message", "send_reaction"},
-	GroupOtherChats: {"send_message", "send_reaction"},
+		"list_groups", "get_group", "list_labels", "list_contacts", "get_catalog", "get_product", "get_menu", "get_menu_item"},
+	// send_menu (the Cardápio as text) is a reply; each of its messages counts as a send.
+	GroupReply:      {"send_message", "send_reaction", "send_menu"},
+	GroupOtherChats: {"send_message", "send_reaction", "send_menu"},
 	GroupLabels:     {"label_chat"},
 	GroupGroups:     {"create_group", "update_group", "manage_group_participants", "get_group_invite_link"},
 	// send_product (marco 12) carries the product photo: it needs midia, and like every
 	// send it is limited to the trigger chat unless enviar_outros_chats.
-	GroupMedia: {"send_media", "send_product"},
+	// send_menu_item carries the item's photo, so it needs midia too.
+	GroupMedia: {"send_media", "send_product", "send_menu_item"},
 }
 
 // writeTools change something outside LiteZap: in aprovacao they become drafts, in
 // sugerir notes, in the simulator dry runs.
 // get_group_invite_link only reads, but the link lets anyone join: it is handled as a write.
-var writeTools = map[string]bool{"send_message": true, "send_reaction": true, "send_media": true, "send_product": true, "label_chat": true,
+var writeTools = map[string]bool{"send_message": true, "send_reaction": true, "send_media": true, "send_product": true,
+	"send_menu": true, "send_menu_item": true, "label_chat": true,
 	"create_group": true, "update_group": true, "manage_group_participants": true, "get_group_invite_link": true}
 
 // groupChangeTools change a group (they count in limits.max_group_changes).
@@ -78,7 +81,8 @@ var chatReadTools = map[string]string{"get_messages": "chat", "get_contact": "co
 
 // sendTools send a message to their "to" (restricted to the trigger chat unless
 // enviar_outros_chats).
-var sendTools = map[string]bool{"send_message": true, "send_reaction": true, "send_media": true, "send_product": true}
+var sendTools = map[string]bool{"send_message": true, "send_reaction": true, "send_media": true, "send_product": true,
+	"send_menu": true, "send_menu_item": true}
 
 // Trigger types.
 const (

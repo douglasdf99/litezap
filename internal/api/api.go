@@ -93,6 +93,8 @@ type Options struct {
 	Groups GroupService
 	// Social, when set, serves status, channel, label and business routes (marco 10).
 	Social SocialService
+	// Menu, when set, serves the Cardápio routes (LiteZap's own catalog).
+	Menu MenuService
 	// Platform, when set, authenticates instance tokens and API keys (with their IP
 	// allowlists) and serves instance metadata, filtered listing, bulk operations and API
 	// keys (marco 11).
@@ -207,6 +209,7 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 			r.Post("/presence/subscribe", s.subscribePresence)
 			s.accountRoutes(r)
 			s.socialRoutes(r)
+			s.menuRoutes(r)
 			if opt.Events != nil {
 				r.Get("/events", s.instanceEvents)
 			}

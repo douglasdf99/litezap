@@ -38,10 +38,10 @@ func TestToolList(t *testing.T) {
 	}
 	want := []string{"block_contact", "check_numbers", "create_group", "delete_message", "edit_message", "follow_channel",
 		"get_attendant", "get_attendant_agent", "get_business_profile", "get_catalog", "get_channel", "get_channel_messages", "get_contact",
-		"get_contact_about", "get_group", "get_group_invite_link", "get_instance_status", "get_message_status", "get_messages", "get_order",
+		"get_contact_about", "get_group", "get_group_invite_link", "get_instance_status", "get_menu", "get_menu_item", "get_message_status", "get_messages", "get_order",
 		"get_product", "get_profile_picture", "get_qr", "label_chat", "list_blocked", "list_channels", "list_chats", "list_contacts", "list_groups",
 		"list_instances", "list_labels", "list_status_updates",
-		"manage_group_participants", "mark_read", "send_contact", "send_location", "send_media", "send_message", "send_product", "send_reaction",
+		"manage_group_participants", "mark_read", "send_contact", "send_location", "send_media", "send_menu", "send_menu_item", "send_message", "send_product", "send_reaction",
 		"unblock_contact", "update_business_profile", "update_chat", "update_group", "wait_for_events"}
 	slices.Sort(names)
 	if !slices.Equal(names, want) {
