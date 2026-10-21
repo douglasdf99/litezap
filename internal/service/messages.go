@@ -207,6 +207,10 @@ type SendInput struct {
 	CatalogOwner string `json:"catalog_owner,omitempty"`
 	Body         string `json:"body,omitempty"`
 	Footer       string `json:"footer,omitempty"`
+	// Types menu_item and menu (the Cardápio, LiteZap's own catalog): an item (its photo
+	// with the caption, or a text) or the menu text, optionally one category.
+	MenuItemID     string `json:"menu_item_id,omitempty"`
+	MenuCategoryID string `json:"menu_category_id,omitempty"`
 	// DelayMS waits before sending and TypingMS shows "typing..." for that long (0-15000).
 	// They never shorten the anti-ban pacing.
 	DelayMS         int    `json:"delay_ms,omitempty"`
@@ -491,6 +495,9 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 	if in.Type != "product" && (in.ProductID != "" || in.CatalogOwner != "" || in.Body != "" || in.Footer != "") {
 		return p, apierr.Validation("product_id, catalog_owner, body and footer only apply to type product")
 	}
+	if (in.Type != "menu_item" && in.MenuItemID != "") || (in.Type != "menu" && in.MenuCategoryID != "") {
+		return p, apierr.Validation("menu_item_id only applies to type menu_item, and menu_category_id to type menu")
+	}
 	p.StatusStyle = in.statusStyle
 	if q := in.statusQuote; q != nil {
 		p.Quote = q
@@ -520,8 +527,12 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 		err = s.composeMedia(ctx, instanceID, id, in, &p)
 	case "product":
 		err = s.composeProduct(ctx, instanceID, id, in, &p)
+	case "menu_item":
+		err = s.composeMenuItem(ctx, instanceID, id, in, &p)
+	case "menu":
+		err = s.composeMenu(ctx, instanceID, in, &p)
 	default:
-		return p, apierr.Validation("type must be text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, edit, revoke, pin, forward or product")
+		return p, apierr.Validation("type must be text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, edit, revoke, pin, forward, product, menu_item or menu")
 	}
 	return p, err
 }
