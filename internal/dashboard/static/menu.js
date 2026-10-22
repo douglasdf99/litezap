@@ -1,10 +1,11 @@
 // "Cardápio" tab: LiteZap's own catalog (kept in LiteZap, never written to Meta or
 // WhatsApp). Categories on the side, item cards with photo, price and an esgotado switch,
 // an item editor with options, three import paths (spreadsheet, WhatsApp catalog copy,
-// "Montar com IA" with review before saving) and "Enviar cardápio para…". Every value
+// "Montar com IA": first with the user's own Claude/ChatGPT over MCP, then the Atendente
+// IA provider when one is ready; review before saving) and "Enviar cardápio para…". Every value
 // reaches the page as text (h() builds text nodes), photos load as blobs through the API.
 import * as api from './api.js';
-import { h, mount, toast, errMsg, errView, field, emptyState, dialog, confirmDanger, promptText, skeleton, icon } from './ui.js';
+import { h, mount, toast, errMsg, errView, field, emptyState, dialog, confirmDanger, promptText, skeleton, icon, copyButton } from './ui.js';
 
 // brl formats cents as R$.
 export function brl(cents) {
@@ -338,7 +339,49 @@ function catalogDialog(ctx, reload) {
   });
 }
 
-function aiDialog(ctx, reload) {
+// menuPrompt is the ready-made request for the user's own assistant (Claude or ChatGPT).
+export function menuPrompt(inst) {
+  let p = 'Monte o cardápio do LiteZap a partir deste texto: <cole aqui>. Use import_menu_rows com dry_run primeiro e me mostre antes de salvar.';
+  if (inst && inst.id) p += ` Use a instância "${inst.name || inst.id}" (${inst.id}).`;
+  return p;
+}
+
+// connectedClient reports whether an AI client (Claude Desktop/Code, Cursor) has LiteZap.
+export function connectedClient(clients) {
+  return (clients || []).some((c) => (c.extension_installed && !c.extension_disabled) || c.connected);
+}
+
+// subscriptionPath is "Montar com IA" with the user's own Claude or ChatGPT subscription:
+// LiteZap gives the tools (import_menu_rows with a preview), the assistant reads the text,
+// photo or spreadsheet. clients is null when this server cannot tell (not the tray app).
+function subscriptionPath(ctx, clients, reload, close) {
+  const prompt = menuPrompt(ctx.inst);
+  const linked = clients === null || connectedClient(clients);
+  const connect = clients === null
+    ? h('a', { href: 'https://litezap.com/docs/mcp/' }, 'Como conectar a IA')
+    : h('a', { href: '#/ia', onclick: () => close() }, 'Conectar a IA');
+  return h('section', { class: 'card pad stack' },
+    h('h3', null, icon('sparkles', 16), ' Monte com o seu Claude ou ChatGPT (assinatura)'),
+    h('p', { class: 'small muted' }, 'Sem chave de API e sem Ollama: a IA que você já assina lê o seu cardápio (texto, foto do cardápio impresso ou planilha) e usa as ferramentas do LiteZap. Ela mostra uma prévia e só salva depois que você confirmar.'),
+    linked ? null : h('p', { class: 'small' }, h('b', null, 'Nenhuma IA conectada ao LiteZap ainda. '), connect, '.'),
+    h('ol', { class: 'small stack' },
+      h('li', null, 'Abra o ', h('b', null, 'Claude Desktop'), ' (com a extensão LiteZap instalada) ou o ', h('b', null, 'Claude Code'),
+        ' (com o plugin LiteZap: use ', h('code', null, '/litezap:montar-cardapio'), '). No ', h('b', null, 'ChatGPT'),
+        ', use o conector MCP do LiteZap (precisa de um endereço HTTPS público; veja o guia).'),
+      h('li', null, 'Cole o pedido abaixo, trocando <cole aqui> pelo seu cardápio, ou anexe a foto ou o CSV.'),
+      h('li', null, 'Confira a prévia que a IA mostrar, confirme, e clique em "Atualizar" aqui para ver os itens.')),
+    h('div', { class: 'row ai-cmd' }, h('code', { class: 'prewrap' }, prompt), copyButton(prompt, 'Copiar pedido', 'btn small')),
+    h('p', { class: 'small' }, linked ? connect : null, linked ? ' · ' : null,
+      h('a', { href: 'https://litezap.com/docs/guias/cardapio/#montar-com-a-sua-assinatura-claudechatgpt' }, 'Guia com exemplos')),
+    h('div', null, h('button', { class: 'btn small', type: 'button', onclick: () => reload() }, icon('refresh', 14), 'Atualizar')));
+}
+
+async function aiDialog(ctx, reload) {
+  const [att, clients] = await Promise.all([
+    api.get(`${ctx.base}/attendant`).catch(() => null),
+    api.get('/app/api/ai-clients').then((r) => r.clients || []).catch(() => null),
+  ]);
+  const ready = !!(att && att.ready);
   const text = h('textarea', { rows: 6, maxlength: 12000, placeholder: 'Ex.: pizza calabresa 45, marguerita 42, coca 2L 12, suco de laranja 9 (esgotado)' });
   const out = h('div', { class: 'stack' });
   let review = null;
@@ -355,18 +398,24 @@ function aiDialog(ctx, reload) {
     } catch (e) {
       review = null;
       mount(out, h('p', { class: 'error' }, e.code === 'ai_not_configured'
-        ? 'Configure um provedor de IA na aba Atendente IA (há opções gratuitas, como o Ollama no computador).' : errView(e)));
+        ? 'O provedor do Atendente IA não está pronto. Use o seu Claude ou ChatGPT (acima).' : errView(e)));
     } finally { if (btn) btn.disabled = false; }
   };
   const buildBtn = h('button', { class: 'btn', type: 'button' }, icon('sparkles', 15), 'Montar itens');
   buildBtn.addEventListener('click', () => build(buildBtn));
-  sheet('Montar com IA', h('div', { class: 'stack' },
-    h('p', { class: 'small muted' }, 'Cole o cardápio como texto livre. A IA configurada no Atendente IA (qualquer provedor, inclusive o Ollama gratuito) organiza em itens para você revisar; nada é salvo sem a sua confirmação.'),
-    text, h('div', null, buildBtn), out), [
-    { label: 'Cancelar' },
+  let closeSheet = () => {};
+  const primary = subscriptionPath(ctx, clients, reload, () => closeSheet());
+  // With a ready Atendente IA provider, building here stays as the secondary path.
+  const inApp = ready ? h('details', { class: 'adv' },
+    h('summary', null, 'Ou monte aqui, com o provedor do Atendente IA'),
+    h('div', { class: 'stack' },
+      h('p', { class: 'small muted' }, 'Cole o cardápio como texto livre. O provedor configurado no Atendente IA organiza em itens para você revisar; nada é salvo sem a sua confirmação.'),
+      text, h('div', null, buildBtn), out)) : null;
+  const actions = ready ? [
+    { label: 'Fechar', onclick: () => { reload(); return true; } },
     {
       label: 'Salvar itens marcados', primary: true, onclick: async () => {
-        if (!review) { toast('Monte os itens primeiro', 'error'); return false; }
+        if (!review) { toast('Monte os itens aqui primeiro (ou feche, se usou o seu Claude/ChatGPT)', 'error'); return false; }
         const sel = review.selected();
         if (!sel.length) { toast('Marque ao menos um item', 'error'); return false; }
         if (sel.some((r) => Number.isNaN(r.price_cents))) { toast('Há um preço inválido', 'error'); return false; }
@@ -378,8 +427,8 @@ function aiDialog(ctx, reload) {
         } catch (e) { toast(e, 'error'); return false; }
       },
     },
-  ]);
-  text.focus();
+  ] : [{ label: 'Fechar', onclick: () => { reload(); return true; } }];
+  closeSheet = sheet('Montar com IA', h('div', { class: 'stack' }, primary, inApp), actions);
 }
 
 // ---------- send ----------
@@ -557,7 +606,7 @@ export function menuPanel(ctx) {
       h('button', { class: 'mn-path card', type: 'button', onclick: () => catalogDialog(ctx, reload) },
         icon('copy', 22), h('strong', null, 'Copiar do catálogo do WhatsApp'), h('span', { class: 'small muted' }, 'Um clique, com as fotos. Só leitura no WhatsApp.')),
       h('button', { class: 'mn-path card', type: 'button', onclick: () => aiDialog(ctx, reload) },
-        icon('sparkles', 22), h('strong', null, 'Montar com IA'), h('span', { class: 'small muted' }, '"pizza calabresa 45, coca 2L 12": você revisa antes de salvar.')),
+        icon('sparkles', 22), h('strong', null, 'Montar com IA'), h('span', { class: 'small muted' }, 'Com o seu Claude ou ChatGPT (assinatura): texto ou foto do cardápio, você revisa antes de salvar.')),
       h('button', { class: 'btn small', type: 'button', onclick: () => itemEditor(ctx, menu, images, null, reload) }, icon('plus', 14), 'Ou crie um item à mão')),
   });
 

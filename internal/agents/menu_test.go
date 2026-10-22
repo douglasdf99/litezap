@@ -3,7 +3,48 @@ package agents
 import (
 	"strings"
 	"testing"
+
+	"github.com/douglasdf99/litezap/internal/mcp"
+	"github.com/douglasdf99/litezap/internal/service"
 )
+
+// The menu editing tools are for the user's own assistant: they are flagged in the MCP
+// table, left out of the agents' table, and no permission group can grant them.
+func TestAgentsNeverGetMenuWriteTools(t *testing.T) {
+	write := []string{"create_menu_category", "update_menu_category", "delete_menu_category", "create_menu_item", "update_menu_item",
+		"delete_menu_item", "set_menu_item_available", "add_menu_option_group", "update_menu_option_group", "delete_menu_option_group",
+		"set_menu_item_image_url", "import_menu_rows", "reorder_menu"}
+	b := &mcp.Local{Caller: service.Scope{InstanceID: "inst_a"}}
+	flagged := map[string]bool{}
+	for _, d := range mcp.Catalog(b, nil) {
+		if d.AssistantOnly {
+			flagged[d.Name] = true
+		}
+	}
+	for _, name := range write {
+		if !flagged[name] {
+			t.Fatalf("%s is not flagged assistant-only (flagged: %v)", name, flagged)
+		}
+	}
+	for _, d := range mcp.AgentCatalog(b, nil) {
+		if flagged[d.Name] {
+			t.Fatalf("the agents' table has %s", d.Name)
+		}
+	}
+	for group, tools := range groupTools {
+		for _, name := range tools {
+			if flagged[name] {
+				t.Fatalf("group %s grants %s", group, name)
+			}
+		}
+	}
+	all := testAgent(ModeAutonomous, Groups...).allowedTools()
+	for name := range flagged {
+		if all[name] {
+			t.Fatalf("an agent with every group is allowed %s", name)
+		}
+	}
+}
 
 // The menu tools: reads in ler, send_menu in responder_no_chat, send_menu_item in midia;
 // each message of send_menu counts in max_sends.

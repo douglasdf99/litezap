@@ -169,6 +169,33 @@ WhatsApp vêm marcadas como destrutivas ou com aviso de risco, para o cliente pe
 | `get_order` | Itens e total de um pedido recebido (do evento `order.received`); aceitar ou recusar é no app | [Detalhes de um pedido](/docs/api/catalogo/detalhes-de-um-pedido/) |
 | `get_attendant` · `get_attendant_agent` | Leitura do atendente IA embutido (provedor e modelo, sem chaves) e de um agente | [Atendente IA](/docs/api/atendente-ia/) |
 
+## Montar o cardápio
+
+Ferramentas para a **sua** IA (Claude Desktop, Claude Code, ChatGPT) montar e editar o
+[Cardápio](/docs/guias/cardapio/#montar-com-a-sua-assinatura-claudechatgpt) a partir de um texto, da foto de um
+cardápio impresso ou de uma planilha: a IA lê o material, o LiteZap valida e salva com as mesmas regras e limites
+do painel (500 itens, 50 categorias, 10 grupos de opções por item, 20 escolhas por grupo). Os
+[agentes](/docs/guias/agentes/) do LiteZap **nunca** recebem estas ferramentas, seja qual for a permissão. Elas
+pedem o token da instância (ou o de administrador); chaves de API `lzk_` não usam o MCP.
+
+| Ferramenta | O que faz | REST equivalente |
+|---|---|---|
+| `import_menu_rows` | A principal: recebe as linhas (categoria, nome, descrição, preço como escrito, opções, esgotado). Com `dry_run: true` (o padrão) **não salva nada** e devolve as linhas lidas com erros e avisos (sem preço, já existe no cardápio, limite); com `dry_run: false` salva, criando as categorias que faltam. A descrição manda a IA sempre fazer a prévia, mostrá-la, salvar só depois da sua confirmação e nunca inventar preço. `replace: true` apaga o cardápio antes (destrutivo: só quando você pedir); `skip_invalid` salva só as válidas | [`POST /menu/import/rows`](/docs/api/cardapio/) |
+| `create_menu_item` | Um item: nome, descrição, preço (`"45,90"` ou `price_cents`), categoria pelo nome ou id (`create_category: true` cria se não existir), disponível, tags, opções e foto por link | `POST /menu/items` |
+| `update_menu_item` | Muda campos de um item (os ausentes ficam); `options` substitui todos os grupos | `PATCH /menu/items/{id}` |
+| `set_menu_item_available` | Disponível ou esgotado | `PUT /menu/items/{id}/available` |
+| `delete_menu_item` | Apaga um item e a foto (destrutivo: só quando você pedir) | `DELETE /menu/items/{id}` |
+| `create_menu_category` · `update_menu_category` | Cria ou renomeia uma categoria | `POST /menu/categories` · `PATCH /menu/categories/{id}` |
+| `delete_menu_category` | Apaga uma categoria; os itens ficam sem categoria (destrutivo) | `DELETE /menu/categories/{id}` |
+| `add_menu_option_group` · `update_menu_option_group` | Adiciona ou substitui um grupo de opções (ex.: Tamanho: P, G `+10,00`); o `option_id` vem de `get_menu_item` | `POST /menu/items/{id}/options` · `PATCH .../options/{option_id}` |
+| `delete_menu_option_group` | Apaga um grupo de opções (destrutivo) | `DELETE /menu/items/{id}/options/{option_id}` |
+| `set_menu_item_image_url` | Baixa a foto de um link público (as mesmas regras de `media.url`: sem endereços privados, até 8 MB) | `PUT /menu/items/{id}/image` |
+| `reorder_menu` | Ordem das categorias, ou dos itens de uma categoria | `PUT /menu/categories/order` · `PUT /menu/items/order` |
+
+Com o [plugin do Claude Code](/docs/mcp/claude-code-plugin/), `/litezap:montar-cardapio` faz o roteiro inteiro:
+lê o material, mostra a prévia em tabela, pergunta antes de salvar e oferece enviar o cardápio para quem você
+indicar.
+
 ## O que não existe por MCP (de propósito)
 
 Criar, apagar ou rotacionar instâncias, mudar settings, proxy ou `unsafe_pacing`, e gerenciar webhooks. Essas

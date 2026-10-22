@@ -168,7 +168,7 @@ func newEnv(t *testing.T) *env {
 		Groups: &service.Groups{Store: st, Workers: mgr, Resolver: resolver, Defaults: set}}
 	runner.Tools = func(id string) []ToolDef {
 		var out []ToolDef
-		for _, d := range mcp.Catalog(deps.Local(service.Scope{InstanceID: id}), log) {
+		for _, d := range mcp.AgentCatalog(deps.Local(service.Scope{InstanceID: id}), log) {
 			out = append(out, ToolDef{Name: d.Name, Description: d.Description, Schema: d.InputSchema, Call: d.Call})
 		}
 		return out

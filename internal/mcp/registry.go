@@ -23,6 +23,9 @@ type ToolDef struct {
 	// ReadOnly and Destructive mirror the MCP annotations.
 	ReadOnly    bool
 	Destructive bool
+	// AssistantOnly tools are for the user's own assistant (an MCP client): the LiteZap
+	// agents never get them (AgentCatalog leaves them out). The menu editing tools are.
+	AssistantOnly bool
 
 	schema func() (*jsonschema.Schema, *jsonschema.Resolved, error)
 	call   func(ctx context.Context, in json.RawMessage) (json.RawMessage, error)
@@ -50,6 +53,19 @@ func Catalog(b Backend, log *slog.Logger) []ToolDef {
 	t := &tools{b: b, log: log}
 	t.register(nil)
 	return t.defs
+}
+
+// AgentCatalog is the tool table the LiteZap agents run over: Catalog without the
+// AssistantOnly tools (an agent can never be given them, whatever its permissions).
+func AgentCatalog(b Backend, log *slog.Logger) []ToolDef {
+	all := Catalog(b, log)
+	out := make([]ToolDef, 0, len(all))
+	for _, d := range all {
+		if !d.AssistantOnly {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 func newToolDef[In, Out any](t *tools, tool *sdk.Tool, h func(context.Context, In) (*sdk.CallToolResult, Out, error)) ToolDef {

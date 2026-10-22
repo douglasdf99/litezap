@@ -16,8 +16,8 @@ import (
 )
 
 // MenuBackend is the optional Cardápio part of a Backend (LiteZap's own catalog): read
-// the menu and send it. Editing the menu is done in the dashboard or the REST API, not
-// by tools.
+// the menu and send it. Editing it is MenuWriter (menu_write.go): tools for the user's
+// own assistant only, never given to the agents.
 type MenuBackend interface {
 	GetMenu(ctx context.Context, id string) (service.MenuView, error)
 	GetMenuItem(ctx context.Context, id, itemID string) (service.MenuItemView, error)
@@ -29,6 +29,21 @@ type MenuService interface {
 	Get(ctx context.Context, instanceID string) (service.MenuView, error)
 	Item(ctx context.Context, instanceID, itemID string) (service.MenuItemView, error)
 	SendMenu(ctx context.Context, instanceID string, in service.SendMenuInput, wait time.Duration) (service.SendMenuResult, error)
+
+	CreateCategory(ctx context.Context, instanceID string, in service.MenuCategoryInput) (service.MenuCategoryView, error)
+	RenameCategory(ctx context.Context, instanceID, catID string, in service.MenuCategoryInput) (service.MenuCategoryView, error)
+	DeleteCategory(ctx context.Context, instanceID, catID string) error
+	ReorderCategories(ctx context.Context, instanceID string, in service.ReorderInput) error
+	ReorderItems(ctx context.Context, instanceID string, in service.ReorderInput) error
+	CreateItem(ctx context.Context, instanceID string, in service.MenuItemInput) (service.MenuItemView, error)
+	UpdateItem(ctx context.Context, instanceID, itemID string, in service.MenuItemInput) (service.MenuItemView, error)
+	DeleteItem(ctx context.Context, instanceID, itemID string) error
+	SetAvailable(ctx context.Context, instanceID, itemID string, available bool) (service.MenuItemView, error)
+	AddOption(ctx context.Context, instanceID, itemID string, in menu.Option) (menu.Option, error)
+	UpdateOption(ctx context.Context, instanceID, itemID, optID string, in menu.Option) (menu.Option, error)
+	DeleteOption(ctx context.Context, instanceID, itemID, optID string) error
+	SetImage(ctx context.Context, instanceID, itemID string, in service.MenuImageInput) (service.MenuItemView, error)
+	ImportRows(ctx context.Context, instanceID string, in service.MenuRowsInput) (service.MenuImportView, error)
 }
 
 var (
@@ -123,8 +138,8 @@ type menuOutput struct {
 
 func itemOut(v service.MenuItemView) menuItemOut {
 	o := menuItemOut{ID: v.ID, Name: v.Name, Description: v.Description, Price: v.PriceText, PriceCents: v.PriceCents,
-		Available: v.Available, HasPhoto: v.ImagePath != "", Options: v.Options}
-	for i := range o.Options {
+		Available: v.Available, HasPhoto: v.ImagePath != "", Options: append([]menu.Option(nil), v.Options...)}
+	for i := range o.Options { // a copy: v keeps the ids
 		o.Options[i].ID = ""
 	}
 	return o
@@ -229,7 +244,7 @@ func (t *tools) registerMenu(s *sdk.Server) {
 	add(t, s, &sdk.Tool{
 		Name:        "get_menu_item",
 		Title:       "Read one menu item",
-		Description: "Reads one item of this number's menu (Cardápio) by its id (from get_menu): name, description, price, availability, options and whether it has a photo. " + menuDataNote,
+		Description: "Reads one item of this number's menu (Cardápio) by its id (from get_menu): name, description, price, availability, options (with their ids) and whether it has a photo. " + menuDataNote,
 		InputSchema: schema[getMenuItemInput](map[string]func(*jsonschema.Schema){"instance_id": instID}),
 		Annotations: read,
 	}, func(ctx context.Context, in getMenuItemInput) (*sdk.CallToolResult, menuItemOut, error) {
@@ -241,7 +256,9 @@ func (t *tools) registerMenu(s *sdk.Server) {
 		if err != nil {
 			return nil, menuItemOut{}, err
 		}
-		return nil, itemOut(v), nil
+		o := itemOut(v)
+		o.Options = v.Options // with their ids (update_menu_option_group, delete_menu_option_group)
+		return nil, o, nil
 	})
 
 	add(t, s, &sdk.Tool{

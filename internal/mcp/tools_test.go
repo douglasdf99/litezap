@@ -42,7 +42,12 @@ func TestToolList(t *testing.T) {
 		"get_product", "get_profile_picture", "get_qr", "label_chat", "list_blocked", "list_channels", "list_chats", "list_contacts", "list_groups",
 		"list_instances", "list_labels", "list_status_updates",
 		"manage_group_participants", "mark_read", "send_contact", "send_location", "send_media", "send_menu", "send_menu_item", "send_message", "send_product", "send_reaction",
-		"unblock_contact", "update_business_profile", "update_chat", "update_group", "wait_for_events"}
+		"unblock_contact", "update_business_profile", "update_chat", "update_group", "wait_for_events",
+		// Building the Cardápio (the user's assistant only).
+		"add_menu_option_group", "create_menu_category", "create_menu_item", "delete_menu_category", "delete_menu_item",
+		"delete_menu_option_group", "import_menu_rows", "reorder_menu", "set_menu_item_available", "set_menu_item_image_url",
+		"update_menu_category", "update_menu_item", "update_menu_option_group"}
+	slices.Sort(want)
 	slices.Sort(names)
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v", names)

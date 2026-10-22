@@ -357,7 +357,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 // scale (<= 1) shrinks every phase to fit shutdown_timeout.
 // agentTools is the MCP tool table of one instance (its own scope), as the agents use it.
 func agentTools(d mcp.HTTPDeps, instanceID string, log *slog.Logger) []agents.ToolDef {
-	defs := mcp.Catalog(d.Local(service.Scope{InstanceID: instanceID}), log)
+	defs := mcp.AgentCatalog(d.Local(service.Scope{InstanceID: instanceID}), log) // never the assistant-only tools
 	out := make([]agents.ToolDef, 0, len(defs))
 	for _, t := range defs {
 		out = append(out, agents.ToolDef{Name: t.Name, Description: t.Description, Schema: t.InputSchema, Call: t.Call})

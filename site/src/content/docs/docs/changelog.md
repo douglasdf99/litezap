@@ -5,6 +5,26 @@ description: O que mudou em cada marco do LiteZap.
 
 As versões seguem os marcos do motor. Mudanças que quebram compatibilidade são marcadas com **Quebra**.
 
+## Cardápio com a sua assinatura (Claude/ChatGPT)
+
+**Novo**
+
+- [Montar o cardápio com a sua assinatura](/docs/guias/cardapio/#montar-com-a-sua-assinatura-claudechatgpt): o seu
+  Claude (Desktop ou Code) ou ChatGPT lê o texto, a foto do cardápio impresso ou a planilha e usa as ferramentas do
+  LiteZap; sem Ollama e sem chave de API.
+- MCP: [ferramentas para montar e editar o cardápio](/docs/mcp/ferramentas/#montar-o-cardápio) —
+  `import_menu_rows` (prévia com `dry_run`, o padrão, e salvar só depois da confirmação), `create_menu_item`,
+  `update_menu_item`, `delete_menu_item`, `set_menu_item_available`, `create_menu_category`,
+  `update_menu_category`, `delete_menu_category`, `add_menu_option_group`, `update_menu_option_group`,
+  `delete_menu_option_group`, `set_menu_item_image_url` e `reorder_menu`. As de apagar e o `replace` vêm marcadas
+  como destrutivas. Só para a IA do usuário: os agentes do LiteZap nunca as recebem.
+- `get_menu_item` mostra o id de cada grupo de opções.
+- `POST /menu/import/rows` aceita o preço como texto em `price` ("45,90"); um texto que não é preço vira erro da
+  linha e uma linha sem preço ganha um aviso.
+- Plugin do Claude Code: comando `/litezap:montar-cardapio`.
+- Painel: **Montar com IA** abre primeiro "Monte com o seu Claude ou ChatGPT (assinatura)", com os passos e um
+  pedido pronto para copiar; montar com o provedor do Atendente IA continua como segunda opção quando há um pronto.
+
 ## Cardápio (catálogo do LiteZap)
 
 **Novo**

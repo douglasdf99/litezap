@@ -49,19 +49,22 @@ type Option struct {
 
 // Row is an item to import (CSV, WhatsApp catalog or AI), as reviewed before saving.
 type Row struct {
-	Line        int      `json:"line,omitempty"`
-	Category    string   `json:"category"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	PriceCents  int64    `json:"price_cents"`
-	PriceText   string   `json:"price_text,omitempty"`
-	Available   bool     `json:"available"`
-	ImageURL    string   `json:"image_url,omitempty"`
-	SKU         string   `json:"sku,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
-	Options     []Option `json:"options"`
-	Errors      []string `json:"errors,omitempty"`
-	Warnings    []string `json:"warnings,omitempty"`
+	Line        int    `json:"line,omitempty"`
+	Category    string `json:"category"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	PriceCents  int64  `json:"price_cents"`
+	PriceText   string `json:"price_text,omitempty"`
+	// Price is an input only: the price as written ("45,90", "R$ 1.234,50"), read into
+	// price_cents by the rows import when given (never in an answer).
+	Price     string   `json:"price,omitempty"`
+	Available bool     `json:"available"`
+	ImageURL  string   `json:"image_url,omitempty"`
+	SKU       string   `json:"sku,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+	Options   []Option `json:"options"`
+	Errors    []string `json:"errors,omitempty"`
+	Warnings  []string `json:"warnings,omitempty"`
 }
 
 // invisible reports bidirectional controls and zero-width characters: they can make a

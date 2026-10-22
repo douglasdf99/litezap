@@ -28,6 +28,8 @@ var hints = map[string]string{
 	"shutting_down":          "The LiteZap server is restarting; try again in a moment.",
 	"server_unreachable":     "Start `litezap serve` (or fix LITEZAP_URL) and try again.",
 	"app_not_running":        "Ask the user to open the LiteZap app on this computer, then try again.",
+	"menu_limit":             "The menu is full (items, categories, option groups or choices). Tell the user; do not retry. They can remove items first.",
+	"menu_image_failed":      "The item was saved without the photo; tell the user, or try set_menu_item_image_url with another public URL.",
 }
 
 // sendHints replace hints for errors of send_message/send_media: there a timeout or a

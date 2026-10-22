@@ -104,9 +104,15 @@ func (m *Menu) ImportRows(ctx context.Context, instanceID string, in MenuRowsInp
 	rows := make([]menu.Row, 0, len(in.Rows))
 	for i, r := range in.Rows {
 		r.Line, r.Errors, r.Warnings = i+1, nil, nil
+		priceErr := rowPrice(&r)
 		menu.NormalizeRow(&r)
 		r.PriceText = menu.FormatPrice(r.PriceCents, "BRL")
 		r.Errors = menu.ValidateRow(r)
+		if priceErr != "" {
+			r.Errors = append(r.Errors, priceErr)
+		} else if r.PriceCents == 0 {
+			r.Warnings = append(r.Warnings, "sem preço (R$ 0,00): confirme o valor antes de salvar")
+		}
 		rows = append(rows, r)
 	}
 	v := newImportView(rows, nil, in.DryRun)
@@ -114,6 +120,25 @@ func (m *Menu) ImportRows(ctx context.Context, instanceID string, in MenuRowsInp
 		return v, nil
 	}
 	return m.commit(ctx, instanceID, v, in.MenuImportOptions, nil)
+}
+
+// rowPrice reads a row's price text (price) into price_cents and clears it; it returns
+// the row's price problem, if any.
+func rowPrice(r *menu.Row) string {
+	p := strings.TrimSpace(r.Price)
+	r.Price = ""
+	if p == "" {
+		return ""
+	}
+	cents, err := menu.ParsePrice(p)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("preço %q não reconhecido (use 45,90 ou R$ 1.234,50)", clipRunes(p, 40))
+	case r.PriceCents != 0 && r.PriceCents != cents:
+		return "price e price_cents diferem: envie só um"
+	}
+	r.PriceCents = cents
+	return ""
 }
 
 // importItems checks the item limit and imports. A replace holds the instance's import

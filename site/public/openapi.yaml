@@ -4950,7 +4950,10 @@ paths:
       x-litezap-scope: instancia
       description: |
         Salva itens já revisados (o passo de confirmação do "Montar com IA"). Cada linha é validada de novo
-        no servidor. Mesmas opções do CSV (`dry_run`, `replace`, `skip_invalid`).
+        no servidor. Mesmas opções do CSV (`dry_run`, `replace`, `skip_invalid`). O preço pode vir em
+        `price_cents` ou como texto em `price` ("45,90", "R$ 1.234,50"); um texto que não é preço vira erro
+        da linha, e uma linha sem preço recebe um aviso. É a rota da ferramenta MCP `import_menu_rows`
+        (montar o cardápio com o seu Claude ou ChatGPT): use `dry_run: true` para a prévia.
       requestBody:
         required: true
         content:
@@ -5929,14 +5932,15 @@ components:
         name: { type: string }
         description: { type: string }
         price_cents: { type: integer }
-        price_text: { type: string }
+        price_text: { type: string, description: "Saída: o preço formatado (R$ 45,90)." }
+        price: { type: string, description: "Só entrada: o preço como escrito (\"45,90\", \"R$ 1.234,50\"), lido para price_cents." }
         available: { type: boolean }
         image_url: { type: string }
         sku: { type: string }
         tags: { type: array, items: { type: string } }
         options: { type: array, items: { $ref: "#/components/schemas/MenuOption" } }
         errors: { type: array, items: { type: string }, description: "Problemas que impedem salvar a linha." }
-        warnings: { type: array, items: { type: string }, description: "Avisos (ex.: nome que não está no texto da IA)." }
+        warnings: { type: array, items: { type: string }, description: "Avisos (ex.: nome que não está no texto da IA, linha sem preço)." }
     MenuImport:
       type: object
       properties:
