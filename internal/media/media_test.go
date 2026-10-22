@@ -269,3 +269,20 @@ func TestSafeTransportBlocksLoopback(t *testing.T) {
 	}
 	resp.Body.Close()
 }
+
+// Hosts such as Wikimedia refuse Go's default User-Agent, so every download identifies LiteZap.
+func TestFetchSendsUserAgent(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Write([]byte("\xff\xd8\xff"))
+	}))
+	defer srv.Close()
+	if _, _, err := (&Fetcher{AllowPrivate: true}).Fetch(context.Background(), srv.URL, 100); err != nil {
+		t.Fatal(err)
+	}
+	if got != MediaUserAgent {
+		t.Fatalf("User-Agent = %q, want %q", got, MediaUserAgent)
+	}
+}

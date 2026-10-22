@@ -1139,6 +1139,9 @@ func (t *tools) importMenuRows(ctx context.Context, mb MenuBackend, mw MenuWrite
 	if v.ImagesPending > 0 {
 		saved.Note += fmt.Sprintf(" %d photos were not fetched in this call: set them with set_menu_item_image_url.", v.ImagesPending)
 	}
+	if len(v.ImageErrors) > 0 {
+		saved.Note += fmt.Sprintf(" WARNING: %d photo(s) could not be downloaded (see image_errors); the items were saved without them. Tell the user and retry with set_menu_item_image_url or another URL.", len(v.ImageErrors))
+	}
 	return nil, saved, nil
 }
 

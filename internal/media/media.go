@@ -177,6 +177,8 @@ func (f *Fetcher) get(ctx context.Context, rawURL string, header http.Header) (*
 		cancel()
 		return nil, nil, fmt.Errorf("%w: %v", ErrFetch, err)
 	}
+	// Many hosts (Wikimedia, CDNs) refuse Go's default User-Agent, so always identify LiteZap.
+	req.Header.Set("User-Agent", MediaUserAgent)
 	for k, v := range header {
 		req.Header[k] = v
 	}
@@ -195,6 +197,9 @@ func (f *Fetcher) get(ctx context.Context, rawURL string, header http.Header) (*
 	}
 	return resp, cancel, nil
 }
+
+// MediaUserAgent identifies LiteZap when it downloads media from a URL.
+const MediaUserAgent = "LiteZap/1.0 (+https://github.com/douglasdf99/litezap; media download)"
 
 // PageUserAgent identifies LiteZap when it reads a page for a link preview.
 const PageUserAgent = "Mozilla/5.0 (compatible; LiteZap link preview; +https://github.com/douglasdf99/litezap)"
