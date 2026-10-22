@@ -42,6 +42,36 @@ type MenuService interface {
 	ImportRows(ctx context.Context, instanceID string, in service.MenuRowsInput) (service.MenuImportView, error)
 	BuildWithAI(ctx context.Context, instanceID string, in service.MenuAIInput) (service.MenuImportView, error)
 	ImportCatalog(ctx context.Context, instanceID string, in service.MenuCatalogInput) (service.MenuImportView, error)
+
+	// WhatsApp-catalog parity (menu_catalog.go).
+	SetHidden(ctx context.Context, instanceID, itemID string, hidden bool) (service.MenuItemView, error)
+	Search(ctx context.Context, instanceID string, in service.MenuSearchInput) (service.MenuSearchView, error)
+	DuplicateItem(ctx context.Context, instanceID, itemID string, in service.MenuDuplicateInput) (service.MenuItemView, error)
+	Bulk(ctx context.Context, instanceID string, in service.MenuBulkInput) (service.MenuBulkView, error)
+	AddImage(ctx context.Context, instanceID, itemID string, in service.MenuImageInput) (service.MenuItemView, error)
+	RemoveImage(ctx context.Context, instanceID, itemID, imageID string) (service.MenuItemView, error)
+	ReorderImages(ctx context.Context, instanceID, itemID string, in service.ReorderInput) (service.MenuItemView, error)
+	SetMainImage(ctx context.Context, instanceID, itemID, imageID string) (service.MenuItemView, error)
+	ImageByID(ctx context.Context, instanceID, itemID, imageID string) ([]byte, error)
+	SendItemAlbum(ctx context.Context, instanceID, itemID string, in service.SendItemPhotosInput, wait time.Duration) (service.SendMenuResult, error)
+	ExportCSV(ctx context.Context, instanceID string) ([]byte, error)
+
+	ListCollections(ctx context.Context, instanceID string) ([]service.MenuCollectionView, error)
+	Collection(ctx context.Context, instanceID, id string) (service.MenuCollectionDetail, error)
+	CreateCollection(ctx context.Context, instanceID string, in service.MenuCollectionInput) (service.MenuCollectionDetail, error)
+	UpdateCollection(ctx context.Context, instanceID, id string, in service.MenuCollectionInput) (service.MenuCollectionDetail, error)
+	DeleteCollection(ctx context.Context, instanceID, id string) error
+	ReorderCollections(ctx context.Context, instanceID string, in service.ReorderInput) error
+	AddCollectionItems(ctx context.Context, instanceID, id string, in service.MenuItemIDsInput) (service.MenuCollectionDetail, error)
+	RemoveCollectionItems(ctx context.Context, instanceID, id string, in service.MenuItemIDsInput) (service.MenuCollectionDetail, error)
+	ReorderCollectionItems(ctx context.Context, instanceID, id string, in service.ReorderInput) (service.MenuCollectionDetail, error)
+	SendCollection(ctx context.Context, instanceID, id string, in service.SendCollectionInput, wait time.Duration) (service.SendMenuResult, error)
+
+	CreateOrderDraft(ctx context.Context, instanceID string, in service.OrderDraftInput) (service.OrderDraftView, error)
+	ListOrderDrafts(ctx context.Context, instanceID string, q service.OrderDraftQuery) (service.OrderDraftList, error)
+	OrderDraft(ctx context.Context, instanceID, id string) (service.OrderDraftView, error)
+	SetOrderStatus(ctx context.Context, instanceID, id string, in service.OrderStatusInput) (service.OrderDraftView, error)
+	SendOrderSummary(ctx context.Context, instanceID, id string, in service.SendOrderInput, wait time.Duration) (service.SendOrderResult, error)
 }
 
 // maxMenuImageBody fits an 8MB photo as base64 plus the JSON around it.
@@ -75,15 +105,35 @@ func (s *server) menuRoutes(r chi.Router) {
 	r.Post("/menu/import/rows", s.importMenuRows)
 	r.Post("/menu/import/ai", s.buildMenuWithAI)
 	r.Post("/menu/import/whatsapp-catalog", s.importMenuCatalog)
+	s.menuCatalogRoutes(r)
 }
 
 // getMenu is the whole menu. include_empty=false leaves out the categories without items
-// (default true: the management view lists them, to rename or delete them).
+// (default true: the management view lists them, to rename or delete them), and
+// include_hidden=false the hidden items (default true, flagged hidden).
 func (s *server) getMenu(w http.ResponseWriter, r *http.Request) {
 	v, err := s.opt.Menu.Get(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		s.writeErr(w, err)
 		return
+	}
+	if r.URL.Query().Get("include_hidden") == "false" {
+		visible := func(list []service.MenuItemView) []service.MenuItemView {
+			out := []service.MenuItemView{}
+			for _, it := range list {
+				if !it.Hidden {
+					out = append(out, it)
+				}
+			}
+			return out
+		}
+		v.ItemCount = 0
+		for i := range v.Categories {
+			v.Categories[i].Items = visible(v.Categories[i].Items)
+			v.ItemCount += len(v.Categories[i].Items)
+		}
+		v.Uncategorized = visible(v.Uncategorized)
+		v.ItemCount += len(v.Uncategorized)
 	}
 	if r.URL.Query().Get("include_empty") == "false" {
 		kept := v.Categories[:0]
@@ -100,7 +150,7 @@ func (s *server) getMenu(w http.ResponseWriter, r *http.Request) {
 func (s *server) menuText(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	v, err := s.opt.Menu.Text(r.Context(), chi.URLParam(r, "id"), service.MenuTextInput{CategoryID: q.Get("category_id"),
-		IncludeUnavailable: q.Get("include_unavailable") == "true", Title: q.Get("title")})
+		CollectionID: q.Get("collection_id"), IncludeUnavailable: q.Get("include_unavailable") == "true", Title: q.Get("title")})
 	if err != nil {
 		s.writeErr(w, err)
 		return
@@ -333,7 +383,8 @@ func (s *server) deleteMenuOption(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// sendMenuItem is POST /messages with type menu_item for this item.
+// sendMenuItem is POST /messages with type menu_item for this item; with album=true, its
+// photos one after the other (the main one with the caption).
 func (s *server) sendMenuItem(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		To              string `json:"to"`
@@ -341,9 +392,21 @@ func (s *server) sendMenuItem(w http.ResponseWriter, r *http.Request) {
 		ReplyTo         string `json:"reply_to,omitempty"`
 		ClientMessageID string `json:"client_message_id,omitempty"`
 		ExpiresAfter    string `json:"expires_after,omitempty"`
+		Album           bool   `json:"album,omitempty"`
+		MaxPhotos       int    `json:"max_photos,omitempty"`
 	}
 	if err := decode(w, r, &in); err != nil {
 		s.writeErr(w, err)
+		return
+	}
+	if in.Album {
+		v, err := s.opt.Menu.SendItemAlbum(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "item_id"), service.SendItemPhotosInput{To: in.To,
+			Caption: in.Caption, MaxPhotos: in.MaxPhotos, ReplyTo: in.ReplyTo, ClientMessageID: in.ClientMessageID, ExpiresAfter: in.ExpiresAfter}, 0)
+		if err != nil {
+			s.writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, v)
 		return
 	}
 	v, err := s.msg.Send(r.Context(), chi.URLParam(r, "id"), service.SendInput{To: in.To, Type: "menu_item",

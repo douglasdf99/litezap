@@ -89,9 +89,11 @@ var (
 		// marco 12 reads: catalog, collections, products and orders (no tokens)
 		`catalog|catalog/collections|catalog/products/[^/]+|catalog/products/[^/]+/image|orders|orders/[^/]+|` +
 		// Cardápio reads (LiteZap's own catalog)
-		`menu|menu/text|menu/items/[^/]+|menu/items/[^/]+/image))$`)
-	keySendPostRe = regexp.MustCompile(`^/v1/instances/[^/]+/(messages|menu/send|menu/items/[^/]+/send)$`)
-	keySendGetRe  = regexp.MustCompile(`^/v1/(me|instances/[^/]+/messages/[^/]+)$`)
+		`menu|menu/text|menu/items|menu/items/[^/]+|menu/items/[^/]+/image|menu/items/[^/]+/images/[^/]+|menu/export\.csv|` +
+		`menu/collections|menu/collections/[^/]+|menu/collections/[^/]+/text|menu/orders|menu/orders/[^/]+))$`)
+	keySendPostRe = regexp.MustCompile(`^/v1/instances/[^/]+/(messages|menu/send|menu/items/[^/]+/send|menu/collections/[^/]+/send|` +
+		`menu/orders/[^/]+/send)$`)
+	keySendGetRe = regexp.MustCompile(`^/v1/(me|instances/[^/]+/messages/[^/]+)$`)
 )
 
 // decodeRawPath drops RawPath when its escapes don't hide a "/", so chi routes on the
