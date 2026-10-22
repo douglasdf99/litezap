@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -86,7 +87,7 @@ const (
 	defaultMenuMsgs = 10
 )
 
-var menuIDRe = regexp.MustCompile(`^(mcat|mitm|mopt|mimg)_[0-9a-f]{16}$`)
+var menuIDRe = regexp.MustCompile(`^(mcat|mitm|mopt|mimg|mcol|odr)_[0-9a-f]{16}$`)
 
 func validMenuID(prefix, id string) bool {
 	return strings.HasPrefix(id, prefix+"_") && menuIDRe.MatchString(id)
@@ -109,10 +110,17 @@ func menuErr(err error, what string) error {
 	case errors.Is(err, store.ErrNotFound):
 		return notFound(what)
 	case errors.Is(err, store.ErrMenuLimit):
-		return apierr.New(http.StatusConflict, "menu_limit", fmt.Sprintf("the menu is limited to %d items, %d categories, %d option groups per item and %d choices per group",
-			store.MaxMenuItems, store.MaxMenuCategories, store.MaxMenuOptions, store.MaxMenuChoices), false)
+		return apierr.New(http.StatusConflict, "menu_limit", fmt.Sprintf("the menu is limited to %d items, %d categories, %d option groups per item, "+
+			"%d choices per group, %d photos per item, %d collections and %d items per collection",
+			store.MaxMenuItems, store.MaxMenuCategories, store.MaxMenuOptions, store.MaxMenuChoices, store.MaxMenuImages,
+			store.MaxMenuCollections, store.MaxCollectionItems), false)
 	case errors.Is(err, store.ErrMenuDuplicate):
 		return apierr.New(http.StatusConflict, "conflict", `another item already has this "wa:" sku (a product copied from the WhatsApp catalog)`, false)
+	case errors.Is(err, store.ErrMenuOrder):
+		return apierr.Validation("ids must list every current member exactly once, in the new order")
+	case errors.Is(err, store.ErrOrderStatus):
+		return apierr.New(http.StatusConflict, "conflict", "this status change is not allowed (a cancelled order is final; a confirmed one can only be cancelled; "+
+			"only a draft can change its items)", false)
 	}
 	return err
 }
@@ -138,9 +146,36 @@ type MenuItemView struct {
 	SKU         string        `json:"sku,omitempty"`
 	Tags        []string      `json:"tags"`
 	Options     []menu.Option `json:"options"`
-	// ImagePath downloads the item's photo (JPEG) with the instance token.
-	ImagePath string    `json:"image_path,omitempty"`
-	UpdatedAt time.Time `json:"updated_at"`
+	// SalePriceCents is the sale price (0: none) until SaleUntil (its last day, ""
+	// without end); OnSale says it applies today, EffectivePriceCents is the price the
+	// item is sold for today and PriceLabel how WhatsApp shows it ("~R$ 50,00~ *R$ 39,90*").
+	SalePriceCents      int64  `json:"sale_price_cents"`
+	SalePriceText       string `json:"sale_price_text,omitempty"`
+	SaleUntil           string `json:"sale_until,omitempty"`
+	OnSale              bool   `json:"on_sale"`
+	EffectivePriceCents int64  `json:"effective_price_cents"`
+	EffectivePriceText  string `json:"effective_price_text"`
+	PriceLabel          string `json:"price_label"`
+	LinkURL             string `json:"link_url,omitempty"`
+	// Hidden items are never shown to customers, the attendant or the agents
+	// (available=false is "esgotado": still listed, marked sold out).
+	Hidden bool `json:"hidden"`
+	// ImagePath downloads the item's main photo (JPEG) with the instance token; Images
+	// are all its photos, in order (the first is the main one).
+	ImagePath     string          `json:"image_path,omitempty"`
+	Images        []MenuImageView `json:"images"`
+	CollectionIDs []string        `json:"collection_ids"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
+// MenuImageView is one photo of an item.
+type MenuImageView struct {
+	ID       string `json:"id"`
+	Path     string `json:"path"`
+	Position int    `json:"position"`
+	Main     bool   `json:"main"`
+	// SourceURL is where it was downloaded from ("" for an upload).
+	SourceURL string `json:"source_url,omitempty"`
 }
 
 // MenuCategoryView is a category with its items.
@@ -153,30 +188,55 @@ type MenuCategoryView struct {
 
 // MenuLimits are the per-instance limits.
 type MenuLimits struct {
-	MaxItems      int `json:"max_items"`
-	MaxCategories int `json:"max_categories"`
-	MaxOptions    int `json:"max_option_groups"`
-	MaxChoices    int `json:"max_choices"`
+	MaxItems           int `json:"max_items"`
+	MaxCategories      int `json:"max_categories"`
+	MaxOptions         int `json:"max_option_groups"`
+	MaxChoices         int `json:"max_choices"`
+	MaxPhotos          int `json:"max_photos"`
+	MaxCollections     int `json:"max_collections"`
+	MaxCollectionItems int `json:"max_collection_items"`
 }
+
+var menuLimits = MenuLimits{MaxItems: store.MaxMenuItems, MaxCategories: store.MaxMenuCategories, MaxOptions: store.MaxMenuOptions,
+	MaxChoices: store.MaxMenuChoices, MaxPhotos: store.MaxMenuImages, MaxCollections: store.MaxMenuCollections,
+	MaxCollectionItems: store.MaxCollectionItems}
 
 // MenuView is the whole menu.
 type MenuView struct {
 	Categories []MenuCategoryView `json:"categories"`
 	// Uncategorized are the items without category (shown last, as "Outros").
 	Uncategorized []MenuItemView `json:"uncategorized"`
-	ItemCount     int            `json:"item_count"`
-	Limits        MenuLimits     `json:"limits"`
+	// Collections are the collections ("Promoções"), with their item ids in order.
+	Collections []MenuCollectionView `json:"collections"`
+	ItemCount   int                  `json:"item_count"`
+	Limits      MenuLimits           `json:"limits"`
+}
+
+func imagePath(instanceID, itemID, imageID string) string {
+	return "/v1/instances/" + instanceID + "/menu/items/" + itemID + "/images/" + imageID
 }
 
 func itemView(instanceID string, it store.MenuItem) MenuItemView {
+	today := menu.Today()
+	eff := menu.EffectivePrice(it, today)
 	v := MenuItemView{ID: it.ID, CategoryID: it.CategoryID, Name: it.Name, Description: it.Description, PriceCents: it.PriceCents,
 		PriceText: menu.FormatPrice(it.PriceCents, it.Currency), Currency: it.Currency, Available: it.Available, Position: it.Position,
-		SKU: it.SKU, Tags: it.Tags, Options: menu.FromStoreOptions(it.Options), UpdatedAt: it.UpdatedAt}
+		SKU: it.SKU, Tags: it.Tags, Options: menu.FromStoreOptions(it.Options), UpdatedAt: it.UpdatedAt,
+		SalePriceCents: it.SalePriceCents, SaleUntil: it.SaleUntil, OnSale: menu.OnSale(it, today), EffectivePriceCents: eff,
+		EffectivePriceText: menu.FormatPrice(eff, it.Currency), PriceLabel: menu.PriceLabel(it, today), LinkURL: it.LinkURL, Hidden: it.Hidden,
+		Images: []MenuImageView{}, CollectionIDs: append([]string{}, it.CollectionIDs...)}
+	if it.SalePriceCents > 0 {
+		v.SalePriceText = menu.FormatPrice(it.SalePriceCents, it.Currency)
+	}
 	if v.Tags == nil {
 		v.Tags = []string{}
 	}
 	if it.ImageID != "" {
 		v.ImagePath = "/v1/instances/" + instanceID + "/menu/items/" + it.ID + "/image?v=" + it.ImageID[len("mimg_"):]
+	}
+	for i, im := range it.Images {
+		v.Images = append(v.Images, MenuImageView{ID: im.ID, Path: imagePath(instanceID, it.ID, im.ID), Position: i, Main: i == 0,
+			SourceURL: im.SourceURL})
 	}
 	return v
 }
@@ -194,9 +254,15 @@ func (m *Menu) Get(ctx context.Context, instanceID string) (MenuView, error) {
 	if err != nil {
 		return MenuView{}, err
 	}
-	v := MenuView{Categories: []MenuCategoryView{}, Uncategorized: []MenuItemView{}, ItemCount: len(items),
-		Limits: MenuLimits{MaxItems: store.MaxMenuItems, MaxCategories: store.MaxMenuCategories, MaxOptions: store.MaxMenuOptions,
-			MaxChoices: store.MaxMenuChoices}}
+	colls, err := m.Store.ListMenuCollections(ctx, instanceID)
+	if err != nil {
+		return MenuView{}, err
+	}
+	v := MenuView{Categories: []MenuCategoryView{}, Uncategorized: []MenuItemView{}, Collections: []MenuCollectionView{}, ItemCount: len(items),
+		Limits: menuLimits}
+	for _, c := range colls {
+		v.Collections = append(v.Collections, collectionView(instanceID, c, items))
+	}
 	idx := map[string]int{}
 	for _, c := range cats {
 		idx[c.ID] = len(v.Categories)
@@ -341,8 +407,40 @@ type MenuItemInput struct {
 	SKU         *string         `json:"sku,omitempty"`
 	Tags        *[]string       `json:"tags,omitempty"`
 	Options     *[]menu.Option  `json:"options,omitempty"`
-	// ImageURL downloads the item's photo (http/https; resized server side).
-	ImageURL string `json:"image_url,omitempty"`
+	// SalePriceCents or SalePrice (text or reais, like price) set a sale price lower than
+	// the price; 0, "" or null removes it (and its end date). SaleUntil is the sale's
+	// last day ("2026-12-31" or "31/12/2026"; "" = no end).
+	SalePriceCents *int64          `json:"sale_price_cents,omitempty"`
+	SalePrice      json.RawMessage `json:"sale_price,omitempty"`
+	SaleUntil      *string         `json:"sale_until,omitempty"`
+	// LinkURL is a page about the item (http/https; "" clears it).
+	LinkURL *string `json:"link_url,omitempty"`
+	// Hidden keeps the item in the menu but out of every customer view.
+	Hidden *bool `json:"hidden,omitempty"`
+	// CollectionIDs replaces the collections the item is in.
+	CollectionIDs *[]string `json:"collection_ids,omitempty"`
+	// ImageURL downloads the item's photo (http/https; resized server side): it becomes
+	// the main photo. ImageURLs adds more photos after it, in order.
+	ImageURL  string   `json:"image_url,omitempty"`
+	ImageURLs []string `json:"image_urls,omitempty"`
+}
+
+// parseMoney reads a price given as text ("45,90") or a number of reais (45.9).
+func parseMoney(raw json.RawMessage) (int64, bool, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, false, nil
+	}
+	var f float64
+	var s string
+	switch {
+	case json.Unmarshal(raw, &f) == nil:
+		c, err := menu.PriceFromFloat(f)
+		return c, true, err
+	case json.Unmarshal(raw, &s) == nil:
+		c, err := menu.ParsePrice(s)
+		return c, true, err
+	}
+	return 0, true, menu.ErrPrice
 }
 
 // apply merges the input into a row and validates it.
@@ -371,20 +469,46 @@ func (in MenuItemInput) apply(r *menu.Row, currency *string) error {
 	if in.PriceCents != nil {
 		r.PriceCents = *in.PriceCents
 	}
-	if len(in.Price) > 0 && string(in.Price) != "null" {
-		var f float64
-		var s string
-		var err error
-		switch {
-		case json.Unmarshal(in.Price, &f) == nil:
-			r.PriceCents, err = menu.PriceFromFloat(f)
-		case json.Unmarshal(in.Price, &s) == nil:
-			r.PriceCents, err = menu.ParsePrice(s)
-		default:
-			err = menu.ErrPrice
+	if c, set, err := parseMoney(in.Price); err != nil {
+		return apierr.Validation(`price must be like "45,90" or "R$ 1.234,50" (or price_cents)`)
+	} else if set {
+		r.PriceCents = c
+	}
+	if in.SalePriceCents != nil && len(in.SalePrice) > 0 {
+		return apierr.Validation("send sale_price_cents or sale_price, not both")
+	}
+	saleSet := in.SalePriceCents != nil
+	if in.SalePriceCents != nil {
+		r.SalePriceCents = *in.SalePriceCents
+	}
+	if len(in.SalePrice) > 0 {
+		saleSet = true
+		var empty string
+		if string(in.SalePrice) == "null" || (json.Unmarshal(in.SalePrice, &empty) == nil && strings.TrimSpace(empty) == "") {
+			r.SalePriceCents = 0
+		} else if c, _, err := parseMoney(in.SalePrice); err != nil {
+			return apierr.Validation(`sale_price must be like "39,90" (or sale_price_cents)`)
+		} else {
+			r.SalePriceCents = c
 		}
-		if err != nil {
-			return apierr.Validation(`price must be like "45,90" or "R$ 1.234,50" (or price_cents)`)
+	}
+	if in.SaleUntil != nil {
+		r.SaleUntil = *in.SaleUntil
+	} else if saleSet && r.SalePriceCents == 0 {
+		r.SaleUntil = "" // removing the sale removes its end date
+	}
+	if in.LinkURL != nil {
+		r.LinkURL = *in.LinkURL
+	}
+	if in.Hidden != nil {
+		r.Hidden = *in.Hidden
+	}
+	if len(in.ImageURLs) > store.MaxMenuImages {
+		return apierr.Validation(fmt.Sprintf("image_urls lists at most %d photos", store.MaxMenuImages))
+	}
+	for _, u := range in.ImageURLs {
+		if len(u) > menu.MaxImageURLLen {
+			return apierr.Validation("an image_urls entry is too long")
 		}
 	}
 	if in.Currency != nil {
@@ -406,7 +530,48 @@ func (in MenuItemInput) apply(r *menu.Row, currency *string) error {
 
 func rowOf(it store.MenuItem) menu.Row {
 	return menu.Row{Name: it.Name, Description: it.Description, PriceCents: it.PriceCents, Available: it.Available, SKU: it.SKU,
-		Tags: it.Tags, Options: menu.FromStoreOptions(it.Options)}
+		Tags: it.Tags, Options: menu.FromStoreOptions(it.Options), SalePriceCents: it.SalePriceCents, SaleUntil: it.SaleUntil,
+		LinkURL: it.LinkURL, Hidden: it.Hidden}
+}
+
+// collectionIDs checks the ids of collection_ids.
+func collectionIDs(in *[]string) ([]string, error) {
+	if in == nil {
+		return nil, nil
+	}
+	out := []string{}
+	for _, id := range *in {
+		id = strings.TrimSpace(id)
+		if !validMenuID("mcol", id) {
+			return nil, apierr.Validation("collection_ids lists collection ids (mcol_…, from GET /menu/collections)")
+		}
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	if len(out) > store.MaxMenuCollections {
+		return nil, apierr.Validation(fmt.Sprintf("collection_ids lists at most %d collections", store.MaxMenuCollections))
+	}
+	return out, nil
+}
+
+// photosAfterSave downloads image_url (main photo) and image_urls (appended) after an
+// item was saved; it returns why a photo is missing.
+func (m *Menu) photosAfterSave(ctx context.Context, instanceID, itemID string, in MenuItemInput) error {
+	if in.ImageURL != "" {
+		if _, err := m.SetImage(ctx, instanceID, itemID, MenuImageInput{URL: in.ImageURL}); err != nil {
+			return err
+		}
+	}
+	for _, u := range in.ImageURLs {
+		if u = strings.TrimSpace(u); u == "" || u == in.ImageURL {
+			continue
+		}
+		if _, err := m.AddImage(ctx, instanceID, itemID, MenuImageInput{URL: u}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *Menu) CreateItem(ctx context.Context, instanceID string, in MenuItemInput) (MenuItemView, error) {
@@ -426,12 +591,17 @@ func (m *Menu) CreateItem(ctx context.Context, instanceID string, in MenuItemInp
 	if in.CategoryID != nil {
 		it.CategoryID = *in.CategoryID
 	}
+	cols, err := collectionIDs(in.CollectionIDs)
+	if err != nil {
+		return MenuItemView{}, err
+	}
+	it.CollectionIDs = cols
 	created, err := m.Store.CreateMenuItem(ctx, instanceID, it)
 	if err != nil {
-		return MenuItemView{}, menuErr(err, "menu category")
+		return MenuItemView{}, menuErr(err, "menu category or collection")
 	}
-	if in.ImageURL != "" {
-		if _, err := m.SetImage(ctx, instanceID, created.ID, MenuImageInput{URL: in.ImageURL}); err != nil {
+	if in.ImageURL != "" || len(in.ImageURLs) > 0 {
+		if err := m.photosAfterSave(ctx, instanceID, created.ID, in); err != nil {
 			// The item is saved; say why its photo is missing.
 			return itemView(instanceID, created), apierr.New(http.StatusUnprocessableEntity, "menu_image_failed",
 				"item created ("+created.ID+") but its image could not be saved: "+errMessage(err), false)
@@ -470,11 +640,14 @@ func (m *Menu) UpdateItem(ctx context.Context, instanceID, itemID string, in Men
 	if in.Options == nil {
 		it.Options = nil // keep the stored ones (their ids)
 	}
-	if _, err := m.Store.UpdateMenuItem(ctx, instanceID, it); err != nil {
-		return MenuItemView{}, menuErr(err, "menu item or category")
+	if it.CollectionIDs, err = collectionIDs(in.CollectionIDs); err != nil {
+		return MenuItemView{}, err
 	}
-	if in.ImageURL != "" {
-		if _, err := m.SetImage(ctx, instanceID, itemID, MenuImageInput{URL: in.ImageURL}); err != nil {
+	if _, err := m.Store.UpdateMenuItem(ctx, instanceID, it); err != nil {
+		return MenuItemView{}, menuErr(err, "menu item, category or collection")
+	}
+	if in.ImageURL != "" || len(in.ImageURLs) > 0 {
+		if err := m.photosAfterSave(ctx, instanceID, itemID, in); err != nil {
 			// The other fields are saved; say which, and why the photo is not.
 			msg := "the image could not be saved: " + errMessage(err)
 			if f := in.fields(); len(f) > 0 {
@@ -504,7 +677,23 @@ func (in MenuItemInput) fields() []string {
 	add(in.SKU != nil, "sku")
 	add(in.Tags != nil, "tags")
 	add(in.Options != nil, "options")
+	add(in.SalePriceCents != nil || len(in.SalePrice) > 0, "sale_price")
+	add(in.SaleUntil != nil, "sale_until")
+	add(in.LinkURL != nil, "link_url")
+	add(in.Hidden != nil, "hidden")
+	add(in.CollectionIDs != nil, "collection_ids")
 	return out
+}
+
+// SetHidden hides an item from customers, the attendant and the agents (or shows it).
+func (m *Menu) SetHidden(ctx context.Context, instanceID, itemID string, hidden bool) (MenuItemView, error) {
+	if _, err := m.instance(ctx, instanceID); err != nil {
+		return MenuItemView{}, err
+	}
+	if err := m.Store.SetMenuItemHidden(ctx, instanceID, itemID, hidden); err != nil {
+		return MenuItemView{}, menuErr(err, "menu item")
+	}
+	return m.Item(ctx, instanceID, itemID)
 }
 
 // SetAvailable toggles "esgotado".
@@ -522,11 +711,13 @@ func (m *Menu) DeleteItem(ctx context.Context, instanceID, itemID string) error 
 	if _, err := m.instance(ctx, instanceID); err != nil {
 		return err
 	}
-	img, err := m.Store.DeleteMenuItem(ctx, instanceID, itemID)
+	imgs, err := m.Store.DeleteMenuItem(ctx, instanceID, itemID)
 	if err != nil {
 		return menuErr(err, "menu item")
 	}
-	m.removeImage(instanceID, img)
+	for _, img := range imgs {
+		m.removeImage(instanceID, img)
+	}
 	return nil
 }
 
@@ -581,10 +772,12 @@ func (m *Menu) DeleteOption(ctx context.Context, instanceID, itemID, optID strin
 
 // ---- images ----
 
-// MenuImageInput is a photo to set: url (downloaded with the media rules) or base64.
+// MenuImageInput is a photo to set or add: url (downloaded with the media rules) or
+// base64. Main makes an added photo the main one (POST .../images).
 type MenuImageInput struct {
 	URL    string `json:"url,omitempty"`
 	Base64 string `json:"base64,omitempty"`
+	Main   bool   `json:"main,omitempty"`
 }
 
 func (m *Menu) imageDir(instanceID string) string {
@@ -647,26 +840,47 @@ func (m *Menu) normalize(ctx context.Context, data []byte) ([]byte, error) {
 	return out, nil
 }
 
-// storeImage writes a normalized photo and points the item at it.
-func (m *Menu) storeImage(ctx context.Context, instanceID, itemID string, jpg []byte) error {
+// How storeImage saves a photo.
+const (
+	photoReplaceMain = iota // the single-photo API: replaces the main photo
+	photoAppend             // after the item's photos
+	photoMain               // first, the others after it
+)
+
+// writeImageFile writes a normalized photo under a new id.
+func (m *Menu) writeImageFile(instanceID string, jpg []byte) (string, error) {
 	if err := os.MkdirAll(m.imageDir(instanceID), 0o700); err != nil {
-		return err
+		return "", err
 	}
 	imageID := secure.NewID("mimg_")
 	file, _ := m.imageFile(instanceID, imageID)
-	if err := os.WriteFile(file, jpg, 0o600); err != nil {
+	return imageID, os.WriteFile(file, jpg, 0o600)
+}
+
+// storeImage writes a normalized photo and adds it to the item (see the photo* modes).
+func (m *Menu) storeImage(ctx context.Context, instanceID, itemID string, jpg []byte, sourceURL string, mode int) error {
+	imageID, err := m.writeImageFile(instanceID, jpg)
+	if err != nil {
 		return err
 	}
-	prev, err := m.Store.SetMenuItemImage(ctx, instanceID, itemID, imageID)
-	if err != nil {
-		_ = os.Remove(file)
+	if mode == photoReplaceMain {
+		prev, err := m.Store.SetMenuItemImage(ctx, instanceID, itemID, imageID, sourceURL)
+		if err != nil {
+			m.removeImage(instanceID, imageID)
+			return menuErr(err, "menu item")
+		}
+		m.removeImage(instanceID, prev)
+		return nil
+	}
+	if err := m.Store.AddMenuItemImage(ctx, instanceID, itemID, imageID, sourceURL, mode == photoMain); err != nil {
+		m.removeImage(instanceID, imageID)
 		return menuErr(err, "menu item")
 	}
-	m.removeImage(instanceID, prev)
 	return nil
 }
 
-// SetImage sets an item's photo.
+// SetImage sets an item's main photo (it replaces the current main photo; the other
+// photos stay).
 func (m *Menu) SetImage(ctx context.Context, instanceID, itemID string, in MenuImageInput) (MenuItemView, error) {
 	if _, err := m.instance(ctx, instanceID); err != nil {
 		return MenuItemView{}, err
@@ -678,18 +892,84 @@ func (m *Menu) SetImage(ctx context.Context, instanceID, itemID string, in MenuI
 	if err != nil {
 		return MenuItemView{}, err
 	}
-	if err := m.storeImage(ctx, instanceID, itemID, jpg); err != nil {
+	if err := m.storeImage(ctx, instanceID, itemID, jpg, strings.TrimSpace(in.URL), photoReplaceMain); err != nil {
 		return MenuItemView{}, err
 	}
 	return m.Item(ctx, instanceID, itemID)
 }
 
-// DeleteImage removes an item's photo.
+// AddImage adds a photo after the item's others (or first, with main), up to
+// store.MaxMenuImages photos.
+func (m *Menu) AddImage(ctx context.Context, instanceID, itemID string, in MenuImageInput) (MenuItemView, error) {
+	if _, err := m.instance(ctx, instanceID); err != nil {
+		return MenuItemView{}, err
+	}
+	it, err := m.Store.GetMenuItem(ctx, instanceID, itemID)
+	if err != nil {
+		return MenuItemView{}, menuErr(err, "menu item")
+	}
+	if len(it.Images) >= store.MaxMenuImages { // before downloading anything
+		return MenuItemView{}, menuErr(store.ErrMenuLimit, "")
+	}
+	jpg, err := m.fetchImage(ctx, in)
+	if err != nil {
+		return MenuItemView{}, err
+	}
+	mode := photoAppend
+	if in.Main {
+		mode = photoMain
+	}
+	if err := m.storeImage(ctx, instanceID, itemID, jpg, strings.TrimSpace(in.URL), mode); err != nil {
+		return MenuItemView{}, err
+	}
+	return m.Item(ctx, instanceID, itemID)
+}
+
+// RemoveImage removes one photo of an item (the next one becomes the main photo when it
+// was the main one).
+func (m *Menu) RemoveImage(ctx context.Context, instanceID, itemID, imageID string) (MenuItemView, error) {
+	if _, err := m.instance(ctx, instanceID); err != nil {
+		return MenuItemView{}, err
+	}
+	if err := m.Store.RemoveMenuItemImage(ctx, instanceID, itemID, imageID); err != nil {
+		return MenuItemView{}, menuErr(err, "photo of this item")
+	}
+	m.removeImage(instanceID, imageID)
+	return m.Item(ctx, instanceID, itemID)
+}
+
+// ReorderImages sets the order of an item's photos (ids lists all of them; the first
+// becomes the main photo).
+func (m *Menu) ReorderImages(ctx context.Context, instanceID, itemID string, in ReorderInput) (MenuItemView, error) {
+	if _, err := m.instance(ctx, instanceID); err != nil {
+		return MenuItemView{}, err
+	}
+	if err := checkIDs(in.IDs, store.MaxMenuImages); err != nil {
+		return MenuItemView{}, err
+	}
+	if err := m.Store.ReorderMenuItemImages(ctx, instanceID, itemID, in.IDs); err != nil {
+		return MenuItemView{}, menuErr(err, "menu item")
+	}
+	return m.Item(ctx, instanceID, itemID)
+}
+
+// SetMainImage makes one photo the item's main photo.
+func (m *Menu) SetMainImage(ctx context.Context, instanceID, itemID, imageID string) (MenuItemView, error) {
+	if _, err := m.instance(ctx, instanceID); err != nil {
+		return MenuItemView{}, err
+	}
+	if err := m.Store.SetMenuItemMainImage(ctx, instanceID, itemID, imageID); err != nil {
+		return MenuItemView{}, menuErr(err, "photo of this item")
+	}
+	return m.Item(ctx, instanceID, itemID)
+}
+
+// DeleteImage removes an item's main photo (the next one becomes the main photo).
 func (m *Menu) DeleteImage(ctx context.Context, instanceID, itemID string) (MenuItemView, error) {
 	if _, err := m.instance(ctx, instanceID); err != nil {
 		return MenuItemView{}, err
 	}
-	prev, err := m.Store.SetMenuItemImage(ctx, instanceID, itemID, "")
+	prev, err := m.Store.SetMenuItemImage(ctx, instanceID, itemID, "", "")
 	if err != nil {
 		return MenuItemView{}, menuErr(err, "menu item")
 	}
@@ -697,7 +977,7 @@ func (m *Menu) DeleteImage(ctx context.Context, instanceID, itemID string) (Menu
 	return m.Item(ctx, instanceID, itemID)
 }
 
-// Image returns an item's photo (JPEG).
+// Image returns an item's main photo (JPEG).
 func (m *Menu) Image(ctx context.Context, instanceID, itemID string) ([]byte, error) {
 	if _, err := m.instance(ctx, instanceID); err != nil {
 		return nil, err
@@ -707,6 +987,23 @@ func (m *Menu) Image(ctx context.Context, instanceID, itemID string) ([]byte, er
 		return nil, menuErr(err, "menu item")
 	}
 	return readMenuImage(m.DataDir, instanceID, it.ImageID)
+}
+
+// ImageByID returns one photo of an item (JPEG).
+func (m *Menu) ImageByID(ctx context.Context, instanceID, itemID, imageID string) ([]byte, error) {
+	if _, err := m.instance(ctx, instanceID); err != nil {
+		return nil, err
+	}
+	it, err := m.Store.GetMenuItem(ctx, instanceID, itemID)
+	if err != nil {
+		return nil, menuErr(err, "menu item")
+	}
+	for _, im := range it.Images {
+		if im.ID == imageID {
+			return readMenuImage(m.DataDir, instanceID, imageID)
+		}
+	}
+	return nil, notFound("photo of this item")
 }
 
 // SweepImages removes photo files no item points at (left by a crash between writing a
@@ -769,9 +1066,11 @@ func readMenuImage(dataDir, instanceID, imageID string) ([]byte, error) {
 
 // ---- text ----
 
-// MenuTextInput chooses what the menu text shows.
+// MenuTextInput chooses what the menu text shows: the whole menu, one category or one
+// collection. Hidden items are never in it.
 type MenuTextInput struct {
 	CategoryID         string `json:"category_id,omitempty"`
+	CollectionID       string `json:"collection_id,omitempty"`
 	IncludeUnavailable bool   `json:"include_unavailable,omitempty"`
 	Title              string `json:"title,omitempty"`
 }
@@ -782,6 +1081,24 @@ type MenuTextView struct {
 }
 
 func (m *Menu) chunks(ctx context.Context, instanceID string, in MenuTextInput) ([]string, error) {
+	title := menu.CleanLine(in.Title)
+	if utf8.RuneCountInString(title) > 60 {
+		return nil, apierr.Validation("title is limited to 60 characters")
+	}
+	if in.CollectionID != "" {
+		if in.CategoryID != "" {
+			return nil, apierr.Validation("send category_id or collection_id, not both")
+		}
+		c, err := m.Store.GetMenuCollection(ctx, instanceID, in.CollectionID)
+		if err != nil {
+			return nil, menuErr(err, "menu collection")
+		}
+		items, err := m.Store.ListMenuItems(ctx, instanceID)
+		if err != nil {
+			return nil, err
+		}
+		return menu.FormatCollection(c, items, menu.CollectionOptions{Title: title, IncludeUnavailable: in.IncludeUnavailable}), nil
+	}
 	cats, err := m.Store.ListMenuCategories(ctx, instanceID)
 	if err != nil {
 		return nil, err
@@ -798,10 +1115,6 @@ func (m *Menu) chunks(ctx context.Context, instanceID string, in MenuTextInput) 
 	items, err := m.Store.ListMenuItems(ctx, instanceID)
 	if err != nil {
 		return nil, err
-	}
-	title := menu.CleanLine(in.Title)
-	if utf8.RuneCountInString(title) > 60 {
-		return nil, apierr.Validation("title is limited to 60 characters")
 	}
 	return menu.Format(cats, items, menu.FormatOptions{Title: title, CategoryID: in.CategoryID, IncludeUnavailable: in.IncludeUnavailable}), nil
 }

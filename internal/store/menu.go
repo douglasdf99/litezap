@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,6 +22,10 @@ const (
 	MaxMenuItems      = 500
 	MaxMenuOptions    = 10 // option groups per item
 	MaxMenuChoices    = 20 // choices per option group
+	MaxMenuImages     = 10 // photos per item
+	// MaxMenuCollections and MaxCollectionItems bound the collections ("Promoções").
+	MaxMenuCollections = 50
+	MaxCollectionItems = 100
 )
 
 // ErrMenuLimit means a menu limit was reached.
@@ -61,14 +66,36 @@ type MenuItem struct {
 	Description string
 	PriceCents  int64
 	Currency    string
-	ImageID     string
-	Available   bool
-	Position    int
-	SKU         string
-	Tags        []string
-	Options     []MenuOption
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// ImageID is the main photo (the first of Images); "" when the item has none.
+	ImageID   string
+	Available bool
+	Position  int
+	SKU       string
+	Tags      []string
+	Options   []MenuOption
+	// SalePriceCents is the sale price (0: none), lower than PriceCents; SaleUntil is
+	// its last day (YYYY-MM-DD, "" = no end).
+	SalePriceCents int64
+	SaleUntil      string
+	LinkURL        string
+	// Hidden items are never shown to customers, the attendant or the agents.
+	Hidden bool
+	// SourceRef marks a copy ("wa:<product id>"): an item is copied once.
+	SourceRef string
+	// Images are the photos in order (the first is the main one); CollectionIDs the
+	// collections the item is in.
+	Images        []MenuImage
+	CollectionIDs []string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+// MenuImage is one photo of an item.
+type MenuImage struct {
+	ID        string
+	ItemID    string
+	Position  int
+	SourceURL string
 }
 
 type queryer interface {
@@ -202,13 +229,13 @@ func (s *Store) ReorderMenuCategories(ctx context.Context, instanceID string, id
 // ---- items ----
 
 const itemCols = `id, category_id, name, description, price_cents, currency, image_id, available, position, sku, tags,
-	created_at, updated_at`
+	sale_price_cents, sale_until, link_url, hidden, source_ref, created_at, updated_at`
 
 func scanItem(sc interface{ Scan(...any) error }) (MenuItem, error) {
 	var it MenuItem
 	var tags, ca, ua string
 	err := sc.Scan(&it.ID, &it.CategoryID, &it.Name, &it.Description, &it.PriceCents, &it.Currency, &it.ImageID, &it.Available,
-		&it.Position, &it.SKU, &tags, &ca, &ua)
+		&it.Position, &it.SKU, &tags, &it.SalePriceCents, &it.SaleUntil, &it.LinkURL, &it.Hidden, &it.SourceRef, &ca, &ua)
 	_ = json.Unmarshal([]byte(tags), &it.Tags)
 	if it.Tags == nil {
 		it.Tags = []string{}
@@ -245,13 +272,32 @@ func (s *Store) ListMenuItems(ctx context.Context, instanceID string) ([]MenuIte
 	if err != nil {
 		return nil, err
 	}
+	imgs, err := listImages(ctx, s.db, instanceID, "")
+	if err != nil {
+		return nil, err
+	}
+	cols, err := listMemberships(ctx, s.db, instanceID, "")
+	if err != nil {
+		return nil, err
+	}
 	for i := range out {
-		out[i].Options = opts[out[i].ID]
-		if out[i].Options == nil {
-			out[i].Options = []MenuOption{}
-		}
+		attach(&out[i], opts, imgs, cols)
 	}
 	return out, nil
+}
+
+// attach sets an item's options, photos and collections (never nil).
+func attach(it *MenuItem, opts map[string][]MenuOption, imgs map[string][]MenuImage, cols map[string][]string) {
+	it.Options, it.Images, it.CollectionIDs = opts[it.ID], imgs[it.ID], cols[it.ID]
+	if it.Options == nil {
+		it.Options = []MenuOption{}
+	}
+	if it.Images == nil {
+		it.Images = []MenuImage{}
+	}
+	if it.CollectionIDs == nil {
+		it.CollectionIDs = []string{}
+	}
 }
 
 func prefixed(p, cols string) string {
@@ -279,10 +325,15 @@ func getItem(ctx context.Context, q queryer, instanceID, id string) (MenuItem, e
 	if err != nil {
 		return MenuItem{}, err
 	}
-	it.Options = opts[id]
-	if it.Options == nil {
-		it.Options = []MenuOption{}
+	imgs, err := listImages(ctx, q, instanceID, id)
+	if err != nil {
+		return MenuItem{}, err
 	}
+	cols, err := listMemberships(ctx, q, instanceID, id)
+	if err != nil {
+		return MenuItem{}, err
+	}
+	attach(&it, opts, imgs, cols)
 	return it, nil
 }
 
@@ -347,25 +398,33 @@ func createItem(ctx context.Context, tx *sql.Tx, instanceID string, it MenuItem)
 		it.Tags = []string{}
 	}
 	tags, _ := json.Marshal(it.Tags)
+	// The photos are added afterwards (AddMenuItemImage): a new item starts without one.
+	it.ImageID = ""
 	ins, err := tx.ExecContext(ctx, `INSERT INTO menu_items (id, instance_id, category_id, name, description, price_cents, currency,
-		image_id, available, position, sku, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT DO NOTHING`,
+		image_id, available, position, sku, tags, sale_price_cents, sale_until, link_url, hidden, source_ref, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
 		it.ID, instanceID, it.CategoryID, it.Name, it.Description, it.PriceCents, it.Currency, it.ImageID, it.Available, pos,
-		it.SKU, string(tags), ts, ts)
+		it.SKU, string(tags), it.SalePriceCents, it.SaleUntil, it.LinkURL, it.Hidden, it.SourceRef, ts, ts)
 	if err != nil {
 		return MenuItem{}, err
 	}
-	if n, _ := ins.RowsAffected(); n == 0 { // a "wa:" sku already in the menu
+	if n, _ := ins.RowsAffected(); n == 0 { // a "wa:" sku or source_ref already in the menu
 		return MenuItem{}, ErrMenuDuplicate
 	}
 	if err := replaceOptions(ctx, tx, instanceID, it.ID, it.Options); err != nil {
 		return MenuItem{}, err
 	}
+	for _, cid := range it.CollectionIDs {
+		if err := addToCollection(ctx, tx, instanceID, cid, []string{it.ID}); err != nil {
+			return MenuItem{}, err
+		}
+	}
 	return it, nil
 }
 
-// UpdateMenuItem replaces an item's fields (not its image or position); options are
-// replaced when it.Options is not nil. Moving to another category puts it at the end.
+// UpdateMenuItem replaces an item's fields (not its photos, position or source_ref);
+// options are replaced when it.Options is not nil, and the collections when
+// it.CollectionIDs is not nil. Moving to another category puts it at the end.
 func (s *Store) UpdateMenuItem(ctx context.Context, instanceID string, it MenuItem) (MenuItem, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -398,9 +457,10 @@ func (s *Store) UpdateMenuItem(ctx context.Context, instanceID string, it MenuIt
 	}
 	tags, _ := json.Marshal(it.Tags)
 	if _, err := tx.ExecContext(ctx, `UPDATE menu_items SET category_id = ?, name = ?, description = ?, price_cents = ?, currency = ?,
-		available = ?, position = ?, sku = ?, tags = ?, updated_at = ? WHERE instance_id = ? AND id = ?`,
-		it.CategoryID, it.Name, it.Description, it.PriceCents, it.Currency, it.Available, pos, it.SKU, string(tags), now(),
-		instanceID, it.ID); err != nil {
+		available = ?, position = ?, sku = ?, tags = ?, sale_price_cents = ?, sale_until = ?, link_url = ?, hidden = ?, updated_at = ?
+		WHERE instance_id = ? AND id = ?`,
+		it.CategoryID, it.Name, it.Description, it.PriceCents, it.Currency, it.Available, pos, it.SKU, string(tags),
+		it.SalePriceCents, it.SaleUntil, it.LinkURL, it.Hidden, now(), instanceID, it.ID); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return MenuItem{}, ErrMenuDuplicate
 		}
@@ -411,60 +471,27 @@ func (s *Store) UpdateMenuItem(ctx context.Context, instanceID string, it MenuIt
 			return MenuItem{}, err
 		}
 	}
+	if it.CollectionIDs != nil {
+		if err := setItemCollections(ctx, tx, instanceID, it.ID, cur.CollectionIDs, it.CollectionIDs); err != nil {
+			return MenuItem{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return MenuItem{}, err
 	}
 	return s.GetMenuItem(ctx, instanceID, it.ID)
 }
 
+// SetMenuItemHidden hides an item from customers, the attendant and the agents.
+func (s *Store) SetMenuItemHidden(ctx context.Context, instanceID, id string, hidden bool) error {
+	return s.exec1(ctx, `UPDATE menu_items SET hidden = ?, updated_at = ? WHERE instance_id = ? AND id = ?`,
+		hidden, now(), instanceID, id)
+}
+
 // SetMenuItemAvailable toggles "esgotado".
 func (s *Store) SetMenuItemAvailable(ctx context.Context, instanceID, id string, available bool) error {
 	return s.exec1(ctx, `UPDATE menu_items SET available = ?, updated_at = ? WHERE instance_id = ? AND id = ?`,
 		available, now(), instanceID, id)
-}
-
-// SetMenuItemImage sets (or, with "", clears) an item's image and returns the previous
-// image id, so the caller can remove its file.
-func (s *Store) SetMenuItemImage(ctx context.Context, instanceID, id, imageID string) (string, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
-	var prev string
-	err = tx.QueryRowContext(ctx, `SELECT image_id FROM menu_items WHERE instance_id = ? AND id = ?`, instanceID, id).Scan(&prev)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
-	}
-	if err != nil {
-		return "", err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE menu_items SET image_id = ?, updated_at = ? WHERE instance_id = ? AND id = ?`,
-		imageID, now(), instanceID, id); err != nil {
-		return "", err
-	}
-	return prev, tx.Commit()
-}
-
-// DeleteMenuItem removes an item (and its options) and returns its image id.
-func (s *Store) DeleteMenuItem(ctx context.Context, instanceID, id string) (string, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
-	var img string
-	err = tx.QueryRowContext(ctx, `SELECT image_id FROM menu_items WHERE instance_id = ? AND id = ?`, instanceID, id).Scan(&img)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
-	}
-	if err != nil {
-		return "", err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM menu_items WHERE instance_id = ? AND id = ?`, instanceID, id); err != nil {
-		return "", err
-	}
-	return img, tx.Commit()
 }
 
 // ReorderMenuItems puts the listed items in categoryID ("" = no category), in that order.
@@ -494,24 +521,6 @@ func (s *Store) ReorderMenuItems(ctx context.Context, instanceID, categoryID str
 		}
 	}
 	return tx.Commit()
-}
-
-// MenuImageIDs lists the image ids in use (to remove orphaned files).
-func (s *Store) MenuImageIDs(ctx context.Context, instanceID string) (map[string]bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT image_id FROM menu_items WHERE instance_id = ? AND image_id != ''`, instanceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]bool{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out[id] = true
-	}
-	return out, rows.Err()
 }
 
 // ---- options ----
@@ -650,16 +659,18 @@ func (s *Store) optionChange(ctx context.Context, instanceID, itemID, q string, 
 
 // ---- import ----
 
-// MenuImportItem is an item to import, with its category by name.
+// MenuImportItem is an item to import, with its category and collections by name.
 type MenuImportItem struct {
-	Category string
-	Item     MenuItem
+	Category    string
+	Collections []string
+	Item        MenuItem
 }
 
 // MenuImportResult counts what an import created.
 type MenuImportResult struct {
-	CategoriesCreated int
-	ItemsCreated      int
+	CategoriesCreated  int
+	CollectionsCreated int
+	ItemsCreated       int
 	// Skipped are items whose "wa:" sku was already in the menu.
 	Skipped int
 	ItemIDs []string // created items, in input order ("" for a skipped one)
@@ -678,20 +689,15 @@ func (s *Store) ImportMenu(ctx context.Context, instanceID string, replace bool,
 	}
 	defer tx.Rollback()
 	if replace {
-		rows, err := tx.QueryContext(ctx, `SELECT image_id FROM menu_items WHERE instance_id = ? AND image_id != ''`, instanceID)
+		used, err := imageIDs(ctx, tx, instanceID)
 		if err != nil {
 			return res, err
 		}
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return res, err
-			}
+		for id := range used {
 			res.RemovedImages = append(res.RemovedImages, id)
 		}
-		rows.Close()
-		for _, q := range []string{`DELETE FROM menu_items WHERE instance_id = ?`, `DELETE FROM menu_categories WHERE instance_id = ?`} {
+		for _, q := range []string{`DELETE FROM menu_items WHERE instance_id = ?`, `DELETE FROM menu_categories WHERE instance_id = ?`,
+			`DELETE FROM menu_collections WHERE instance_id = ?`} {
 			if _, err := tx.ExecContext(ctx, q, instanceID); err != nil {
 				return res, err
 			}
@@ -704,6 +710,16 @@ func (s *Store) ImportMenu(ctx context.Context, instanceID string, replace bool,
 	byName := map[string]string{}
 	for _, c := range cats {
 		byName[strings.ToLower(strings.TrimSpace(c.Name))] = c.ID
+	}
+	colls, err := listCollections(ctx, tx, instanceID)
+	if err != nil {
+		return res, err
+	}
+	collByName := map[string]string{}
+	for _, c := range colls {
+		if _, ok := collByName[strings.ToLower(strings.TrimSpace(c.Name))]; !ok {
+			collByName[strings.ToLower(strings.TrimSpace(c.Name))] = c.ID
+		}
 	}
 	for _, in := range items {
 		catID := ""
@@ -722,6 +738,25 @@ func (s *Store) ImportMenu(ctx context.Context, instanceID string, replace bool,
 		}
 		it := in.Item
 		it.CategoryID = catID
+		it.CollectionIDs = nil
+		for _, name := range in.Collections {
+			key := strings.ToLower(strings.TrimSpace(name))
+			if key == "" {
+				continue
+			}
+			id, ok := collByName[key]
+			if !ok {
+				c, err := createCollection(ctx, tx, instanceID, MenuCollection{Name: strings.TrimSpace(name), Active: true})
+				if err != nil {
+					return MenuImportResult{}, err
+				}
+				id, collByName[key] = c.ID, c.ID
+				res.CollectionsCreated++
+			}
+			if !slices.Contains(it.CollectionIDs, id) {
+				it.CollectionIDs = append(it.CollectionIDs, id)
+			}
+		}
 		created, err := createItem(ctx, tx, instanceID, it)
 		if errors.Is(err, ErrMenuDuplicate) { // copied already (or by a concurrent copy)
 			res.Skipped++
@@ -735,6 +770,21 @@ func (s *Store) ImportMenu(ctx context.Context, instanceID string, replace bool,
 		res.ItemIDs = append(res.ItemIDs, created.ID)
 	}
 	return res, tx.Commit()
+}
+
+// MenuItemBySource finds an item by its source_ref ("wa:<product id>"; ErrNotFound
+// when none).
+func (s *Store) MenuItemBySource(ctx context.Context, instanceID, ref string) (MenuItem, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM menu_items WHERE instance_id = ? AND source_ref = ? LIMIT 1`,
+		instanceID, ref).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MenuItem{}, ErrNotFound
+	}
+	if err != nil {
+		return MenuItem{}, err
+	}
+	return s.GetMenuItem(ctx, instanceID, id)
 }
 
 // MenuItemBySKU finds an item by its SKU (ErrNotFound when none).

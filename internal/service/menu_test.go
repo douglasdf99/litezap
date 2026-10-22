@@ -299,7 +299,7 @@ func TestMenuImportCatalog(t *testing.T) {
 	ctx := context.Background()
 	prev, err := m.ImportCatalog(ctx, "i1", MenuCatalogInput{DryRun: true})
 	if err != nil || len(prev.Rows) != 2 || prev.Rows[0].Category != "Roupas" || prev.Rows[1].Category != "Catálogo do WhatsApp" ||
-		prev.Rows[0].PriceCents != 5990 || prev.Rows[0].SKU != "wa:101" {
+		prev.Rows[0].PriceCents != 5990 || strings.Join(prev.Rows[0].Collections, ",") != "Roupas" {
 		t.Fatalf("preview = %+v, %v", prev, err)
 	}
 	res, err := m.ImportCatalog(ctx, "i1", MenuCatalogInput{})
@@ -349,7 +349,7 @@ func TestMenuImportCatalogConcurrent(t *testing.T) {
 	items, _ := e.st.ListMenuItems(ctx, "i1")
 	seen := map[string]int{}
 	for _, it := range items {
-		seen[it.SKU]++
+		seen[it.SourceRef]++
 	}
 	if seen["wa:101"] != 1 || seen["wa:102"] != 1 {
 		t.Fatalf("items %v", seen)

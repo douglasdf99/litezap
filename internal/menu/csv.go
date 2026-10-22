@@ -25,8 +25,15 @@ var csvAliases = map[string]string{
 	"disponivel": "disponivel", "available": "disponivel", "ativo": "disponivel", "estoque": "disponivel",
 	"imagem_url": "imagem_url", "imagem": "imagem_url", "image_url": "imagem_url", "foto": "imagem_url", "image": "imagem_url", "url_imagem": "imagem_url",
 	"opcoes": "opcoes", "options": "opcoes", "opcionais": "opcoes",
-	"sku": "sku", "codigo": "sku", "code": "sku",
-	"tags": "tags",
+	"sku": "sku", "codigo": "sku", "code": "sku", "retailer_id": "sku",
+	"tags":              "tags",
+	"preco_promocional": "preco_promocional", "promocao": "preco_promocional", "preco_promo": "preco_promocional",
+	"sale_price": "preco_promocional", "preco_de_promocao": "preco_promocional",
+	"promocao_ate": "promocao_ate", "promo_ate": "promocao_ate", "sale_until": "promocao_ate", "validade_promocao": "promocao_ate",
+	"link": "link", "link_url": "link", "url": "link", "site": "link",
+	"colecoes": "colecoes", "colecao": "colecoes", "collections": "colecoes", "collection": "colecoes",
+	"fotos": "fotos", "imagens": "fotos", "images": "fotos", "image_urls": "fotos",
+	"oculto": "oculto", "hidden": "oculto", "escondido": "oculto", "ocultar": "oculto",
 }
 
 // headerKey normalizes a header: no accents, lowercase, spaces and dashes as "_".
@@ -83,7 +90,10 @@ func (r CSVResult) Valid() []Row {
 
 // ParseCSV reads a spreadsheet exported as CSV (comma or semicolon separated, as Excel
 // in Portuguese writes it). Columns: categoria, nome, descricao, preco, disponivel,
-// imagem_url and the optional opcoes, sku and tags; only nome is required.
+// imagem_url and the optional opcoes, sku, tags, preco_promocional, promocao_ate, link,
+// colecoes (names separated by |), fotos (photo URLs separated by |) and oculto; only
+// nome is required. A cell that ExportCSV escaped against formula injection ('=...)
+// is read back without the quote.
 func ParseCSV(data string) CSVResult {
 	res := CSVResult{Rows: []Row{}, Errors: []string{}}
 	if len(data) > MaxCSVBytes {
@@ -128,7 +138,7 @@ func ParseCSV(data string) CSVResult {
 	}
 	get := func(rec []string, k string) string {
 		if i, ok := cols[k]; ok && i < len(rec) {
-			return strings.TrimSpace(rec[i])
+			return unescapeCell(strings.TrimSpace(rec[i]))
 		}
 		return ""
 	}
@@ -174,6 +184,29 @@ func ParseCSV(data string) CSVResult {
 		} else {
 			row.AddError("disponivel", "disponivel deve ser sim, não ou esgotado")
 		}
+		if p := get(rec, "preco_promocional"); p != "" {
+			cents, err := ParsePrice(p)
+			if err != nil {
+				row.AddError("preco_promocional", PriceError("preco_promocional", p))
+			}
+			row.SalePriceCents = cents
+		}
+		row.SaleUntil = get(rec, "promocao_ate")
+		row.LinkURL = get(rec, "link")
+		if c := get(rec, "colecoes"); c != "" {
+			row.Collections = strings.Split(c, "|")
+		}
+		if f := get(rec, "fotos"); f != "" {
+			row.ImageURLs = strings.FieldsFunc(f, func(r rune) bool { return r == '|' || r == ' ' || r == '\n' })
+		}
+		if o := get(rec, "oculto"); o != "" {
+			switch h, ok := ParseBool(o); {
+			case !ok:
+				row.AddError("oculto", "oculto deve ser sim ou não")
+			default:
+				row.Hidden = h
+			}
+		}
 		if o := get(rec, "opcoes"); o != "" {
 			opts, err := ParseOptions(o)
 			if err != nil {
@@ -183,6 +216,9 @@ func ParseCSV(data string) CSVResult {
 		}
 		NormalizeRow(&row)
 		row.PriceText = FormatPrice(row.PriceCents, "BRL")
+		if row.SalePriceCents > 0 {
+			row.SalePriceText = FormatPrice(row.SalePriceCents, "BRL")
+		}
 		row.Check()
 		res.Rows = append(res.Rows, row)
 	}
@@ -285,4 +321,127 @@ func ParseOptions(s string) ([]Option, error) {
 		out = append(out, o)
 	}
 	return out, nil
+}
+
+// ---- export ----
+
+// ExportColumns are the columns of ExportCSV, in order (ParseCSV reads them back).
+var ExportColumns = []string{"categoria", "nome", "descricao", "preco", "preco_promocional", "promocao_ate", "disponivel", "oculto",
+	"sku", "link", "tags", "colecoes", "opcoes", "fotos"}
+
+// formulaStart are the first characters a spreadsheet may read as a formula.
+const formulaStart = "=+-@\t\r"
+
+// EscapeCell protects a cell against formula injection: a value starting with = + - @
+// (or a tab or carriage return) gets a leading quote, so Excel and Google Sheets show it
+// as text instead of running it.
+func EscapeCell(s string) string {
+	if s != "" && strings.ContainsRune(formulaStart, rune(s[0])) {
+		return "'" + s
+	}
+	return s
+}
+
+// unescapeCell undoes EscapeCell.
+func unescapeCell(s string) string {
+	if len(s) > 1 && s[0] == '\'' && strings.ContainsRune(formulaStart, rune(s[1])) {
+		return s[1:]
+	}
+	return s
+}
+
+// CentsText renders cents for a spreadsheet: "1234,50" ("" for zero).
+func CentsText(c int64) string {
+	if c == 0 {
+		return ""
+	}
+	neg := ""
+	if c < 0 {
+		neg, c = "-", -c
+	}
+	return neg + strconv.FormatInt(c/100, 10) + "," + fmt.Sprintf("%02d", c%100)
+}
+
+// OptionsCell renders option groups in the "opcoes" format ParseOptions reads:
+// "Tamanho: P | M +5,00; Borda (opcional): Catupiry +8,00".
+func OptionsCell(opts []store.MenuOption) string {
+	groups := make([]string, 0, len(opts))
+	for _, o := range opts {
+		var mods []string
+		if !o.Required {
+			mods = append(mods, "opcional")
+		} else if o.Min > 1 {
+			mods = append(mods, "mín "+itoa(o.Min))
+		}
+		if o.Max > 1 {
+			mods = append(mods, "até "+itoa(o.Max))
+		}
+		name := o.Name
+		if len(mods) > 0 {
+			name += " (" + strings.Join(mods, ", ") + ")"
+		}
+		choices := make([]string, 0, len(o.Choices))
+		for _, c := range o.Choices {
+			ch := c.Name
+			switch {
+			case c.PriceDeltaCents > 0:
+				ch += " +" + CentsText(c.PriceDeltaCents)
+			case c.PriceDeltaCents < 0:
+				ch += " " + CentsText(c.PriceDeltaCents)
+			case ch != "" && ch[len(ch)-1] >= '0' && ch[len(ch)-1] <= '9':
+				ch += " +0" // "Lata 350" would read back as "Lata" +R$ 350,00
+			}
+			choices = append(choices, ch)
+		}
+		groups = append(groups, name+": "+strings.Join(choices, " | "))
+	}
+	return strings.Join(groups, "; ")
+}
+
+// ExportCSV renders the menu as a spreadsheet (semicolon separated, UTF-8 with BOM, as
+// Excel in Portuguese opens it) that ParseCSV imports back. photoURL gives a photo's
+// address ("" leaves it out: an upload has none). Every cell is escaped against formula
+// injection.
+func ExportCSV(cats []store.MenuCategory, items []store.MenuItem, colls []store.MenuCollection, photoURL func(store.MenuImage) string) []byte {
+	catName := map[string]string{}
+	for _, c := range cats {
+		catName[c.ID] = c.Name
+	}
+	collName := map[string]string{}
+	for _, c := range colls {
+		collName[c.ID] = c.Name
+	}
+	var b strings.Builder
+	b.WriteString("\ufeff")
+	w := csv.NewWriter(&b)
+	w.Comma = ';'
+	_ = w.Write(ExportColumns)
+	yes := func(v bool) string {
+		if v {
+			return "sim"
+		}
+		return "não"
+	}
+	for _, it := range items {
+		var cs, photos []string
+		for _, id := range it.CollectionIDs {
+			if n := collName[id]; n != "" {
+				cs = append(cs, n)
+			}
+		}
+		for _, im := range it.Images {
+			if u := photoURL(im); u != "" {
+				photos = append(photos, u)
+			}
+		}
+		rec := []string{catName[it.CategoryID], it.Name, it.Description, CentsText(it.PriceCents), CentsText(it.SalePriceCents), it.SaleUntil,
+			yes(it.Available), yes(it.Hidden), it.SKU, it.LinkURL, strings.Join(it.Tags, ", "), strings.Join(cs, "|"), OptionsCell(it.Options),
+			strings.Join(photos, "|")}
+		for i := range rec {
+			rec[i] = EscapeCell(rec[i])
+		}
+		_ = w.Write(rec)
+	}
+	w.Flush()
+	return []byte(b.String())
 }

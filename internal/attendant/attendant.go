@@ -22,6 +22,7 @@ import (
 
 	"github.com/douglasdf99/litezap/internal/agenthook"
 	"github.com/douglasdf99/litezap/internal/events"
+	"github.com/douglasdf99/litezap/internal/menu"
 	"github.com/douglasdf99/litezap/internal/service"
 	"github.com/douglasdf99/litezap/internal/store"
 )
@@ -615,6 +616,7 @@ func (a *Attendant) buildEvents(in runInput, e modelEvent) []agenthook.AgentEven
 	base := map[string]any{"agent_id": in.agentID, "agent_name": p.Name, "mode": p.Mode}
 	str := func(s string, n int) string { return clip(strings.TrimSpace(s), n) }
 	var typ string
+	var order menu.OrderResult // the Cardápio's priced order (order_draft)
 	data := base
 	switch e.Type {
 	case "lead":
@@ -635,8 +637,8 @@ func (a *Attendant) buildEvents(in runInput, e modelEvent) []agenthook.AgentEven
 			return nil
 		}
 		items, total, allCatalog := priceOrder(p, e.Items)
-		if len(p.menu) > 0 { // the Cardápio prices items and their options
-			items, total, allCatalog = priceMenuOrder(p.menu, e.Items)
+		if len(p.menuItems) > 0 { // the Cardápio prices items and their options
+			items, total, allCatalog, order = priceMenuOrder(p.menuItems, e.Items)
 		}
 		if len(items) == 0 {
 			return nil
@@ -654,6 +656,12 @@ func (a *Attendant) buildEvents(in runInput, e modelEvent) []agenthook.AgentEven
 	key, hash := eventKey(in.instanceID, in.chat, typ, data)
 	if a.duplicate(key, hash) {
 		return nil
+	}
+	if len(order.Lines) > 0 { // stored as the chat's order draft (Cardápio > Pedidos montados)
+		if id := a.saveOrderDraft(in.instanceID, in.chat, order, menu.OrderInfo{CustomerName: str(e.CustomerName, 200),
+			Address: str(e.Address, 500), Notes: str(e.Notes, 1000)}); id != "" {
+			data["order_draft_id"] = id
+		}
 	}
 	// Marked only once the hook published it: a reply discarded (human took over, send
 	// refused) leaves the event free to be emitted on the next answer.

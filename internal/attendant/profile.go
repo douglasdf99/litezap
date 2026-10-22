@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/douglasdf99/litezap/internal/store"
 )
 
 // Modes (presets). "custom" starts empty.
@@ -82,6 +84,8 @@ type Profile struct {
 
 	// menu is the Cardápio loaded for one answer (knowledge_source "menu"; never stored).
 	menu []menuEntry
+	// menuItems are the visible menu items, for the order engine.
+	menuItems []store.MenuItem
 }
 
 // Limits.

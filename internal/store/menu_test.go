@@ -81,10 +81,10 @@ func TestMenuCRUD(t *testing.T) {
 	if err := st.SetMenuItemAvailable(ctx, "i1", mar.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if prev, err := st.SetMenuItemImage(ctx, "i1", mar.ID, "mimg_1"); err != nil || prev != "" {
+	if prev, err := st.SetMenuItemImage(ctx, "i1", mar.ID, "mimg_1", ""); err != nil || prev != "" {
 		t.Fatal(prev, err)
 	}
-	if prev, _ := st.SetMenuItemImage(ctx, "i1", mar.ID, "mimg_2"); prev != "mimg_1" {
+	if prev, _ := st.SetMenuItemImage(ctx, "i1", mar.ID, "mimg_2", ""); prev != "mimg_1" {
 		t.Fatalf("prev = %s", prev)
 	}
 	// Option groups.
@@ -110,7 +110,7 @@ func TestMenuCRUD(t *testing.T) {
 		t.Fatal("item kept its deleted category")
 	}
 	img, err := st.DeleteMenuItem(ctx, "i1", mar.ID)
-	if err != nil || img != "mimg_2" {
+	if err != nil || len(img) != 1 || img[0] != "mimg_2" {
 		t.Fatal(img, err)
 	}
 	if _, err := st.GetMenuItem(ctx, "i1", mar.ID); !errors.Is(err, ErrNotFound) {
@@ -242,8 +242,10 @@ func TestMenuWASkuUniqueAndOptionTouch(t *testing.T) {
 func TestImportMenu(t *testing.T) {
 	st := ordersStore(t)
 	ctx := context.Background()
-	old, _ := st.CreateMenuItem(ctx, "i1", MenuItem{Name: "Antigo", ImageID: "mimg_old", Available: true})
-	_ = old
+	old, _ := st.CreateMenuItem(ctx, "i1", MenuItem{Name: "Antigo", Available: true})
+	if err := st.AddMenuItemImage(ctx, "i1", old.ID, "mimg_old", "", false); err != nil {
+		t.Fatal(err)
+	}
 	pizzas, _ := st.CreateMenuCategory(ctx, "i1", "Pizzas")
 	res, err := st.ImportMenu(ctx, "i1", false, []MenuImportItem{
 		{Category: "pizzas", Item: MenuItem{Name: "Calabresa", PriceCents: 4500, Available: true}},

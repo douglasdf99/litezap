@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -23,16 +24,17 @@ type MenuImportView struct {
 	// Errors lists every problem: of the input as a whole (FileErrors) and one entry per
 	// error of an invalid row ("linha 3: preço inválido 'abc' ..."); ErrorDetails are the
 	// row errors with their line and field.
-	Errors            []string       `json:"errors"`
-	FileErrors        []string       `json:"file_errors"`
-	ErrorDetails      []menu.Problem `json:"error_details"`
-	Valid             int            `json:"valid"`
-	Invalid           int            `json:"invalid"`
-	Skipped           int            `json:"skipped,omitempty"` // already in the menu (catalog copy)
-	CategoriesCreated int            `json:"categories_created"`
-	ItemsCreated      int            `json:"items_created"`
-	ImagesSaved       int            `json:"images_saved"`
-	ImageErrors       []string       `json:"image_errors"`
+	Errors             []string       `json:"errors"`
+	FileErrors         []string       `json:"file_errors"`
+	ErrorDetails       []menu.Problem `json:"error_details"`
+	Valid              int            `json:"valid"`
+	Invalid            int            `json:"invalid"`
+	Skipped            int            `json:"skipped,omitempty"` // already in the menu (catalog copy)
+	CategoriesCreated  int            `json:"categories_created"`
+	CollectionsCreated int            `json:"collections_created"`
+	ItemsCreated       int            `json:"items_created"`
+	ImagesSaved        int            `json:"images_saved"`
+	ImageErrors        []string       `json:"image_errors"`
 	// ImagesPending are photos not fetched in this call (limit per call): run it again.
 	ImagesPending int `json:"images_pending,omitempty"`
 }
@@ -113,10 +115,18 @@ func (m *Menu) ImportRows(ctx context.Context, instanceID string, in MenuRowsInp
 	for i, r := range in.Rows {
 		r.Line, r.Errors, r.Problems, r.Error, r.Warnings = i+1, nil, nil, "", nil
 		priceErr := rowPrice(&r)
+		saleErr := rowSalePrice(&r)
 		menu.NormalizeRow(&r)
 		r.PriceText = menu.FormatPrice(r.PriceCents, "BRL")
+		r.SalePriceText = ""
+		if r.SalePriceCents > 0 {
+			r.SalePriceText = menu.FormatPrice(r.SalePriceCents, "BRL")
+		}
 		if priceErr != "" {
 			r.AddError("preco", priceErr)
+		}
+		if saleErr != "" {
+			r.AddError("preco_promocional", saleErr)
 		}
 		r.Check()
 		if priceErr == "" && r.PriceCents == 0 {
@@ -150,6 +160,24 @@ func rowPrice(r *menu.Row) string {
 	return ""
 }
 
+// rowSalePrice reads a row's sale price text (sale_price) like rowPrice.
+func rowSalePrice(r *menu.Row) string {
+	p := strings.TrimSpace(r.SalePrice)
+	r.SalePrice = ""
+	if p == "" {
+		return ""
+	}
+	cents, err := menu.ParsePrice(p)
+	switch {
+	case err != nil:
+		return menu.PriceError("preco_promocional", p)
+	case r.SalePriceCents != 0 && r.SalePriceCents != cents:
+		return "sale_price e sale_price_cents diferem: envie só um"
+	}
+	r.SalePriceCents = cents
+	return ""
+}
+
 // importItems checks the item limit and imports. A replace holds the instance's import
 // lock (it empties the menu, so it must not interleave with a catalog copy).
 func (m *Menu) importItems(ctx context.Context, instanceID string, replace bool, items []store.MenuImportItem) (store.MenuImportResult, error) {
@@ -177,11 +205,18 @@ func (m *Menu) importItems(ctx context.Context, instanceID string, replace bool,
 	return res, nil
 }
 
+// commitExtra is what the catalog copy adds to a commit: each row's source_ref, a
+// photo fetcher (the product's photos; it returns how many it saved and why the others
+// are missing) and, filled by commit, the item created for each row.
+type commitExtra struct {
+	refs    []string
+	photo   func(ctx context.Context, row int, itemID string, budget int) (int, []string)
+	itemIDs map[int]string
+}
+
 // commit saves the valid rows of v (all of them, unless skip_invalid), then fetches
-// their image_url photos. fill, when set, fetches extra photos after the import (the
-// catalog copy: products already in the menu without a photo).
-func (m *Menu) commit(ctx context.Context, instanceID string, v MenuImportView, opt MenuImportOptions,
-	photo func(ctx context.Context, row int, itemID string) error) (MenuImportView, error) {
+// their photos (image_urls, in order; x.photo instead for the catalog copy).
+func (m *Menu) commit(ctx context.Context, instanceID string, v MenuImportView, opt MenuImportOptions, x *commitExtra) (MenuImportView, error) {
 	if v.Invalid > 0 && !opt.SkipInvalid {
 		return v, apierr.Validation(fmt.Sprintf("%d rows have errors: fix them or send skip_invalid", v.Invalid))
 	}
@@ -192,11 +227,14 @@ func (m *Menu) commit(ctx context.Context, instanceID string, v MenuImportView, 
 			continue
 		}
 		it := menu.RowToItem(r)
-		items = append(items, store.MenuImportItem{Category: r.Category, Item: it})
+		if x != nil && i < len(x.refs) {
+			it.SourceRef = x.refs[i]
+		}
+		items = append(items, store.MenuImportItem{Category: r.Category, Collections: r.Collections, Item: it})
 		rowOfItem = append(rowOfItem, i)
 	}
 	if len(items) == 0 {
-		if photo != nil { // nothing new, but missing photos may still be fetched
+		if x != nil { // nothing new, but missing photos may still be fetched
 			return v, nil
 		}
 		return v, apierr.Validation("no valid rows to save")
@@ -205,39 +243,58 @@ func (m *Menu) commit(ctx context.Context, instanceID string, v MenuImportView, 
 	if err != nil {
 		return v, err
 	}
-	v.CategoriesCreated, v.ItemsCreated = res.CategoriesCreated, res.ItemsCreated
+	v.CategoriesCreated += res.CategoriesCreated
+	v.CollectionsCreated += res.CollectionsCreated
+	v.ItemsCreated += res.ItemsCreated
 	v.Skipped += res.Skipped
 	// Photos: sequential, bounded per call and in time (each one is a download).
 	ictx, cancel := context.WithTimeout(ctx, importImageTime)
 	defer cancel()
 	for k, itemID := range res.ItemIDs {
 		r := v.Rows[rowOfItem[k]]
-		if itemID == "" || (r.ImageURL == "" && photo == nil) { // skipped (already in the menu)
+		if itemID == "" { // skipped (already in the menu)
 			continue
 		}
-		if v.ImagesSaved+len(v.ImageErrors) >= maxImportImages || ictx.Err() != nil {
-			v.ImagesPending++
-			continue
-		}
-		var err error
-		if photo != nil {
-			err = photo(ictx, rowOfItem[k], itemID)
-		} else {
-			var jpg []byte
-			if jpg, err = m.fetchImage(ictx, MenuImageInput{URL: r.ImageURL}); err == nil {
-				err = m.storeImage(ictx, instanceID, itemID, jpg)
+		if x != nil {
+			if x.itemIDs != nil {
+				x.itemIDs[rowOfItem[k]] = itemID
 			}
+			if x.photo == nil {
+				continue
+			}
+			budget := maxImportImages - v.ImagesSaved - len(v.ImageErrors)
+			saved, errs := x.photo(ictx, rowOfItem[k], itemID, budget)
+			v.ImagesSaved += saved
+			for _, e := range errs {
+				if e == errPending {
+					v.ImagesPending++
+					continue
+				}
+				v.ImageErrors = append(v.ImageErrors, fmt.Sprintf("%s: %s", r.Name, e))
+			}
+			continue
 		}
-		switch {
-		case err == errNoPhoto:
-		case err != nil:
-			v.ImageErrors = append(v.ImageErrors, fmt.Sprintf("%s: %s", r.Name, errMessage(err)))
-		default:
+		for _, u := range r.ImageURLs {
+			if v.ImagesSaved+len(v.ImageErrors) >= maxImportImages || ictx.Err() != nil {
+				v.ImagesPending++
+				continue
+			}
+			jpg, err := m.fetchImage(ictx, MenuImageInput{URL: u})
+			if err == nil {
+				err = m.storeImage(ictx, instanceID, itemID, jpg, u, photoAppend)
+			}
+			if err != nil {
+				v.ImageErrors = append(v.ImageErrors, fmt.Sprintf("%s: %s", r.Name, errMessage(err)))
+				continue
+			}
 			v.ImagesSaved++
 		}
 	}
 	return v, nil
 }
+
+// errPending marks a photo left for the next call (the per-call download limit).
+const errPending = "\x00pending"
 
 var errNoPhoto = apierr.New(http.StatusNotFound, "not_found", "no photo", false)
 
@@ -279,9 +336,12 @@ type MenuCatalogInput struct {
 const catalogCategory = "Catálogo do WhatsApp"
 
 // ImportCatalog copies the instance's own WhatsApp catalog into the menu (read only:
-// nothing is written to WhatsApp). Products already copied (sku "wa:<id>") are skipped;
-// their missing photos are fetched again. Hidden products and products still in review
-// are left out. Photos come through the catalog's allowlisted image download.
+// nothing is written to WhatsApp): name, description, price and sale price,
+// availability, link, retailer_id as the sku, all the photos (up to
+// store.MaxMenuImages) and the catalog's collections as LiteZap collections. Products
+// already copied (source "wa:<id>") are skipped; their missing photos are fetched again
+// and they join the collections they are in. Hidden products and products still in
+// review are left out. Photos come through the catalog's allowlisted image download.
 func (m *Menu) ImportCatalog(ctx context.Context, instanceID string, in MenuCatalogInput) (MenuImportView, error) {
 	inst, err := m.instance(ctx, instanceID)
 	if err != nil {
@@ -292,7 +352,7 @@ func (m *Menu) ImportCatalog(ctx context.Context, instanceID string, in MenuCata
 		return MenuImportView{}, apierr.New(http.StatusNotImplemented, "not_implemented", "the WhatsApp catalog is not available on this server", false)
 	}
 	// One copy at a time per instance: it reads which products are already in the menu
-	// before adding the rest (the unique "wa:" sku index is the last line of defense).
+	// before adding the rest (the unique source index is the last line of defense).
 	// Not while previewing: a dry run writes nothing.
 	if !in.DryRun {
 		defer m.importLock(instanceID)()
@@ -301,45 +361,60 @@ func (m *Menu) ImportCatalog(ctx context.Context, instanceID string, in MenuCata
 	if err != nil {
 		return MenuImportView{}, err
 	}
-	coll := map[string]string{}
+	type waColl struct{ id, name string }
+	var colls []waColl
+	inColl := map[string][]string{} // product id -> collection names
 	if cv, err := r.Collections(ctx, instanceID, ""); err == nil {
 		for _, c := range cv.Collections {
+			name := clipRunes(menu.CleanLine(c.Name), menu.MaxCollectionLen)
+			if name == "" || (c.ReviewStatus != "" && c.ReviewStatus != "approved") {
+				continue
+			}
+			colls = append(colls, waColl{id: c.ID, name: name})
 			for _, p := range c.Products {
-				if _, ok := coll[p.ID]; !ok && strings.TrimSpace(c.Name) != "" {
-					coll[p.ID] = c.Name
+				if !containsStr(inColl[p.ID], name) {
+					inColl[p.ID] = append(inColl[p.ID], name)
 				}
 			}
 		}
 	}
 	var rows []menu.Row
 	var prods []catalog.Product
-	var missingPhotos []store.MenuItem
-	var missingProds []catalog.Product
+	var known []store.MenuItem
+	var knownProds []catalog.Product
 	skipped := 0
 	for _, p := range products {
 		if p.Hidden || (p.ReviewStatus != "" && p.ReviewStatus != "approved") || strings.TrimSpace(p.Name) == "" {
 			continue
 		}
-		sku := "wa:" + p.ID
-		if it, err := m.Store.MenuItemBySKU(ctx, instanceID, sku); err == nil {
+		ref := "wa:" + p.ID
+		if it, err := m.Store.MenuItemBySource(ctx, instanceID, ref); err == nil {
 			skipped++
-			if it.ImageID == "" && len(p.Images) > 0 {
-				missingPhotos, missingProds = append(missingPhotos, it), append(missingProds, p)
-			}
+			known, knownProds = append(known, it), append(knownProds, p)
 			continue
 		}
 		cents := (p.PriceAmount1000 + 5) / 10
+		sale := int64(0)
 		if p.SaleAmount1000 > 0 && p.SaleAmount1000 < p.PriceAmount1000 {
-			cents = (p.SaleAmount1000 + 5) / 10
+			sale = (p.SaleAmount1000 + 5) / 10
 		}
-		cat := coll[p.ID]
-		if cat == "" {
-			cat = catalogCategory
+		cat := catalogCategory
+		if names := inColl[p.ID]; len(names) > 0 {
+			cat = names[0]
+		}
+		link := ""
+		if u := strings.TrimSpace(p.URL); menu.ValidLinkURL(u) {
+			link = u
 		}
 		row := menu.Row{Line: len(rows) + 1, Category: clipRunes(cat, menu.MaxCategoryLen), Name: clipRunes(p.Name, menu.MaxNameLen),
-			Description: clipRunes(p.Description, menu.MaxDescriptionLen), PriceCents: cents, Available: p.Availability != "out_of_stock", SKU: sku}
+			Description: clipRunes(p.Description, menu.MaxDescriptionLen), PriceCents: cents, SalePriceCents: sale,
+			Available: p.Availability != "out_of_stock", SKU: clipRunes(menu.CleanLine(p.RetailerID), menu.MaxSKULen), LinkURL: link,
+			Collections: inColl[p.ID]}
 		menu.NormalizeRow(&row)
 		row.PriceText = menu.FormatPrice(row.PriceCents, "BRL")
+		if row.SalePriceCents > 0 {
+			row.SalePriceText = menu.FormatPrice(row.SalePriceCents, "BRL")
+		}
 		row.Check()
 		rows = append(rows, row)
 		prods = append(prods, p)
@@ -349,49 +424,114 @@ func (m *Menu) ImportCatalog(ctx context.Context, instanceID string, in MenuCata
 	if in.DryRun {
 		return v, nil
 	}
+	// The catalog's collections become LiteZap collections (by source, so a second copy
+	// finds them even when renamed here).
+	collID := map[string]string{}
+	for _, c := range colls {
+		ref := "wa:" + c.id
+		if cur, err := m.Store.MenuCollectionBySource(ctx, instanceID, ref); err == nil {
+			collID[c.name] = cur.ID
+			continue
+		}
+		created, err := m.Store.CreateMenuCollection(ctx, instanceID, store.MenuCollection{Name: c.name, Active: true, SourceRef: ref})
+		switch {
+		case errors.Is(err, store.ErrMenuLimit):
+			v.Errors = append(v.Errors, fmt.Sprintf("coleção %q não copiada: o cardápio tem no máximo %d coleções", c.name, store.MaxMenuCollections))
+			continue
+		case err != nil:
+			return v, menuErr(err, "menu collection")
+		}
+		collID[c.name] = created.ID
+		v.CollectionsCreated++
+	}
+	for i := range rows { // rows join the copied collections by id, not by name
+		rows[i].Collections = nil
+	}
+	v.Rows = rows
 	images := in.Images == nil || *in.Images
-	var photo func(ctx context.Context, row int, itemID string) error
+	x := &commitExtra{itemIDs: map[int]string{}}
+	for _, p := range prods {
+		x.refs = append(x.refs, "wa:"+p.ID)
+	}
 	if images {
-		photo = func(ctx context.Context, row int, itemID string) error {
-			return m.catalogPhoto(ctx, instanceID, inst, prods[row], itemID)
+		x.photo = func(ctx context.Context, row int, itemID string, budget int) (int, []string) {
+			return m.catalogPhotos(ctx, instanceID, inst, prods[row], itemID, 0, budget)
 		}
 	}
+	itemOf := map[string]string{} // product id -> item id
 	if len(rows) > 0 {
-		v, err = m.commit(ctx, instanceID, v, MenuImportOptions{SkipInvalid: true}, photo)
+		v, err = m.commit(ctx, instanceID, v, MenuImportOptions{SkipInvalid: true}, x)
 		if err != nil {
 			return v, err
 		}
+		for row, id := range x.itemIDs {
+			itemOf[prods[row].ID] = id
+		}
+	}
+	for i, it := range known {
+		itemOf[knownProds[i].ID] = it.ID
+	}
+	for _, p := range products { // in the catalog's order
+		item, ok := itemOf[p.ID]
+		if !ok {
+			continue
+		}
+		for _, n := range inColl[p.ID] {
+			if cid := collID[n]; cid != "" {
+				if err := m.Store.AddMenuCollectionItems(ctx, instanceID, cid, []string{item}); errors.Is(err, store.ErrMenuLimit) {
+					v.Errors = append(v.Errors, fmt.Sprintf("coleção %q cheia (%d itens): %q ficou de fora", n, store.MaxCollectionItems, p.Name))
+				} else if err != nil {
+					return v, menuErr(err, "menu collection")
+				}
+			}
+		}
 	}
 	if images {
-		for i, it := range missingPhotos {
-			if v.ImagesSaved+len(v.ImageErrors) >= maxImportImages || ctx.Err() != nil {
-				v.ImagesPending++
+		for i, it := range known {
+			if len(it.Images) >= len(knownProds[i].Images) || len(it.Images) >= store.MaxMenuImages {
 				continue
 			}
-			if err := m.catalogPhoto(ctx, instanceID, inst, missingProds[i], it.ID); err != nil && err != errNoPhoto {
-				v.ImageErrors = append(v.ImageErrors, fmt.Sprintf("%s: %s", it.Name, errMessage(err)))
-			} else if err == nil {
-				v.ImagesSaved++
+			budget := maxImportImages - v.ImagesSaved - len(v.ImageErrors)
+			saved, errs := m.catalogPhotos(ctx, instanceID, inst, knownProds[i], it.ID, len(it.Images), budget)
+			v.ImagesSaved += saved
+			for _, e := range errs {
+				if e == errPending {
+					v.ImagesPending++
+				} else {
+					v.ImageErrors = append(v.ImageErrors, fmt.Sprintf("%s: %s", it.Name, e))
+				}
 			}
 		}
 	}
 	return v, nil
 }
 
-// catalogPhoto copies a product's first photo into a menu item.
-func (m *Menu) catalogPhoto(ctx context.Context, instanceID string, inst store.Instance, p catalog.Product, itemID string) error {
-	if len(p.Images) == 0 {
-		return errNoPhoto
+// catalogPhotos copies a product's photos from index from on (the ones the item does
+// not have yet) into a menu item, at most budget downloads; the rest are errPending.
+func (m *Menu) catalogPhotos(ctx context.Context, instanceID string, inst store.Instance, p catalog.Product, itemID string,
+	from, budget int) (int, []string) {
+	saved := 0
+	var errs []string
+	for i := from; i < len(p.Images) && i < store.MaxMenuImages; i++ {
+		if saved+len(errs) >= budget || ctx.Err() != nil {
+			errs = append(errs, errPending)
+			continue
+		}
+		data, _, err := m.Catalog.imageAt(ctx, instanceID, inst, p, i)
+		var jpg []byte
+		if err == nil {
+			jpg, err = m.normalize(ctx, data)
+		}
+		if err == nil {
+			err = m.storeImage(ctx, instanceID, itemID, jpg, "", photoAppend)
+		}
+		if err != nil {
+			errs = append(errs, errMessage(err))
+			continue
+		}
+		saved++
 	}
-	data, _, err := m.Catalog.image(ctx, instanceID, inst, p)
-	if err != nil {
-		return err
-	}
-	jpg, err := m.normalize(ctx, data)
-	if err != nil {
-		return err
-	}
-	return m.storeImage(ctx, instanceID, itemID, jpg)
+	return saved, errs
 }
 
 func clipRunes(s string, n int) string {

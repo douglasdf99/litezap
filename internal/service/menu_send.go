@@ -20,9 +20,10 @@ import (
 
 const maxMenuIntro = 1024
 
-// composeMenuItem sends an item: its photo with the caption (name, price, description,
-// options), or the caption as a text when it has no photo. caption, when set, comes
-// first (an intro line).
+// composeMenuItem sends an item: its photo (the main one, or menu_image_id) with the
+// caption (name, price, description, options; menu_caption "short" or "none" for
+// less), or the caption as a text when it has no photo. caption, when set, comes first
+// (an intro line). Hidden and sold-out items are refused.
 func (s *Messaging) composeMenuItem(ctx context.Context, instanceID, id string, in SendInput, p *queue.Payload) error {
 	if !validMenuID("mitm", in.MenuItemID) {
 		return apierr.Validation("menu_item_id is required: the id of a menu item (GET /menu)")
@@ -33,6 +34,14 @@ func (s *Messaging) composeMenuItem(ctx context.Context, instanceID, id string, 
 	if len(in.Caption) > maxMenuIntro {
 		return apierr.Validation("caption is limited to 1024 bytes for menu_item")
 	}
+	switch in.MenuCaption {
+	case "", "full", "short", "none":
+	default:
+		return apierr.Validation(`menu_caption is "full" (default), "short" or "none"`)
+	}
+	if in.MenuImageID != "" && !validMenuID("mimg", in.MenuImageID) {
+		return apierr.Validation("menu_image_id is the id of a photo of the item (mimg_…)")
+	}
 	it, err := s.Store.GetMenuItem(ctx, instanceID, in.MenuItemID)
 	if errors.Is(err, store.ErrNotFound) {
 		return apierr.Validation("menu_item_id is not an item of this instance's menu")
@@ -40,19 +49,47 @@ func (s *Messaging) composeMenuItem(ctx context.Context, instanceID, id string, 
 	if err != nil {
 		return err
 	}
+	if it.Hidden {
+		return apierr.Validation("this menu item is hidden (oculto): show it again before sending it")
+	}
 	if !it.Available {
 		return apierr.Validation("this menu item is marked esgotado (unavailable): mark it available before sending it")
 	}
-	text := menu.Caption(it)
-	if intro := strings.TrimSpace(in.Caption); intro != "" {
-		text = intro + "\n\n" + text
+	photo := it.ImageID
+	if in.MenuImageID != "" {
+		photo = ""
+		for _, im := range it.Images {
+			if im.ID == in.MenuImageID {
+				photo = im.ID
+			}
+		}
+		if photo == "" {
+			return apierr.Validation("menu_image_id is not a photo of this item")
+		}
 	}
-	if it.ImageID == "" {
+	var text string
+	switch in.MenuCaption {
+	case "short":
+		text = menu.ShortCaption(it, menu.Today())
+	case "none":
+	default:
+		text = menu.Caption(it)
+	}
+	if intro := strings.TrimSpace(in.Caption); intro != "" {
+		text = strings.TrimSpace(intro + "\n\n" + text)
+	}
+	if photo == "" {
+		if text == "" {
+			return apierr.Validation("this item has no photo: send it with a caption")
+		}
 		p.Type, p.Text = "text", text
 		return nil
 	}
-	data, err := readMenuImage(s.DataDir, instanceID, it.ImageID)
+	data, err := readMenuImage(s.DataDir, instanceID, photo)
 	if err != nil {
+		if text == "" || in.MenuImageID != "" {
+			return apierr.Validation("the photo file of this item is missing")
+		}
 		p.Type, p.Text = "text", text // the photo file is gone: still send the item
 		return nil
 	}

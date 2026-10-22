@@ -27,6 +27,9 @@ const (
 	MaxOptionNameLen  = 60
 	MaxChoiceNameLen  = 60
 	MaxImageURLLen    = 2048
+	MaxLinkURLLen     = 2048
+	MaxCollectionLen  = 60
+	MaxCollectionDesc = 500
 	// MaxPriceCents is R$ 1.000.000,00; a choice delta is at most that, either sign.
 	MaxPriceCents = 100_000_000
 )
@@ -57,13 +60,27 @@ type Row struct {
 	PriceText   string `json:"price_text,omitempty"`
 	// Price is an input only: the price as written ("45,90", "R$ 1.234,50"), read into
 	// price_cents by the rows import when given (never in an answer).
-	Price     string   `json:"price,omitempty"`
-	Available bool     `json:"available"`
+	Price     string `json:"price,omitempty"`
+	Available bool   `json:"available"`
+	// ImageURL is the first photo (kept for older clients); ImageURLs are all of them,
+	// in order (the first is the main photo), up to store.MaxMenuImages.
 	ImageURL  string   `json:"image_url,omitempty"`
+	ImageURLs []string `json:"image_urls,omitempty"`
 	SKU       string   `json:"sku,omitempty"`
 	Tags      []string `json:"tags,omitempty"`
 	Options   []Option `json:"options"`
-	Errors    []string `json:"errors,omitempty"`
+	// SalePriceCents is a sale price lower than the price (0: none); SalePrice is an
+	// input only, as written ("39,90"); SaleUntil is the sale's last day (YYYY-MM-DD).
+	SalePriceCents int64  `json:"sale_price_cents,omitempty"`
+	SalePrice      string `json:"sale_price,omitempty"`
+	SalePriceText  string `json:"sale_price_text,omitempty"`
+	SaleUntil      string `json:"sale_until,omitempty"`
+	LinkURL        string `json:"link_url,omitempty"`
+	// Hidden items are kept in the menu but never shown to customers.
+	Hidden bool `json:"hidden,omitempty"`
+	// Collections are collection names ("Promoções"), created when missing.
+	Collections []string `json:"collections,omitempty"`
+	Errors      []string `json:"errors,omitempty"`
 	// Error joins Errors (one clear reason per invalid row); Problems are the same errors
 	// with the field each one is about.
 	Error    string    `json:"error,omitempty"`
@@ -233,11 +250,37 @@ func ValidateOptions(opts []Option) error {
 }
 
 // NormalizeRow cleans a row in place (names on one line, tags lowercased, options
-// normalized).
+// normalized, photos merged into ImageURLs, the sale date as YYYY-MM-DD when readable).
 func NormalizeRow(r *Row) {
 	r.Category, r.Name, r.SKU = CleanLine(r.Category), CleanLine(r.Name), CleanLine(r.SKU)
 	r.Description = CleanText(r.Description)
 	r.ImageURL = strings.TrimSpace(r.ImageURL)
+	r.LinkURL = strings.TrimSpace(r.LinkURL)
+	if d, err := ParseDate(r.SaleUntil); err == nil {
+		r.SaleUntil = d
+	} else {
+		r.SaleUntil = strings.TrimSpace(r.SaleUntil)
+	}
+	urls := []string{}
+	for _, u := range append([]string{r.ImageURL}, r.ImageURLs...) {
+		if u = strings.TrimSpace(u); u != "" && !contains(urls, u) {
+			urls = append(urls, u)
+		}
+	}
+	r.ImageURLs, r.ImageURL = urls, ""
+	if len(urls) > 0 {
+		r.ImageURL = urls[0]
+	}
+	cols := []string{}
+	seen := map[string]bool{}
+	for _, c := range r.Collections {
+		c = CleanLine(c)
+		if k := strings.ToLower(c); c != "" && !seen[k] {
+			seen[k] = true
+			cols = append(cols, c)
+		}
+	}
+	r.Collections = cols
 	tags := []string{}
 	for _, t := range r.Tags {
 		if t = strings.ToLower(CleanLine(t)); t != "" && !contains(tags, t) {
@@ -297,13 +340,59 @@ func ValidateRowProblems(r Row) []Problem {
 			break
 		}
 	}
-	if r.ImageURL != "" && !validImageURL(r.ImageURL) {
-		add("imagem_url", "imagem_url deve ser um endereço http(s) completo")
+	if len(r.ImageURLs) > store.MaxMenuImages {
+		add("fotos", fmt.Sprintf("no máximo %d fotos por item", store.MaxMenuImages))
+	}
+	for _, u := range r.ImageURLs {
+		if !validImageURL(u) {
+			add("fotos", "cada foto deve ser um endereço http(s) completo")
+			break
+		}
 	}
 	if err := ValidateOptions(r.Options); err != nil {
 		add("opcoes", err.Error())
 	}
+	for _, p := range SaleProblems(r.PriceCents, r.SalePriceCents, r.SaleUntil) {
+		add(p.Field, p.Message)
+	}
+	if r.LinkURL != "" && !ValidLinkURL(r.LinkURL) {
+		add("link", "link deve ser um endereço http(s) completo")
+	}
+	if len(r.Collections) > store.MaxMenuCollections {
+		add("colecoes", fmt.Sprintf("no máximo %d coleções", store.MaxMenuCollections))
+	}
+	for _, c := range r.Collections {
+		if tooLong(c, MaxCollectionLen) {
+			add("colecoes", fmt.Sprintf("cada coleção tem no máximo %d caracteres", MaxCollectionLen))
+			break
+		}
+	}
 	return ps
+}
+
+// SaleProblems checks a sale price against the price and its end date.
+func SaleProblems(price, sale int64, until string) []Problem {
+	var ps []Problem
+	switch {
+	case sale < 0 || sale > MaxPriceCents:
+		ps = append(ps, Problem{Field: "preco_promocional", Message: "preço promocional deve ficar entre R$ 0,00 e R$ 1.000.000,00"})
+	case sale > 0 && sale >= price:
+		ps = append(ps, Problem{Field: "preco_promocional", Message: fmt.Sprintf("preço promocional (%s) deve ser menor que o preço (%s)",
+			FormatPrice(sale, "BRL"), FormatPrice(price, "BRL"))})
+	}
+	if until != "" {
+		if _, err := ParseDate(until); err != nil {
+			ps = append(ps, Problem{Field: "promocao_ate", Message: "promocao_ate deve ser uma data como 2026-12-31 ou 31/12/2026"})
+		} else if sale == 0 {
+			ps = append(ps, Problem{Field: "promocao_ate", Message: "promocao_ate precisa de um preço promocional"})
+		}
+	}
+	return ps
+}
+
+// ValidLinkURL reports a complete http(s) address without spaces.
+func ValidLinkURL(s string) bool {
+	return len(s) <= MaxLinkURLLen && validImageURL(s)
 }
 
 func validImageURL(s string) bool {
@@ -461,7 +550,8 @@ func FormatDelta(cents int64, currency string) string {
 // RowToItem converts a validated row into a store item (no category, image or id).
 func RowToItem(r Row) store.MenuItem {
 	return store.MenuItem{Name: r.Name, Description: r.Description, PriceCents: r.PriceCents, Currency: "BRL",
-		Available: r.Available, SKU: r.SKU, Tags: r.Tags, Options: ToStoreOptions(r.Options)}
+		Available: r.Available, SKU: r.SKU, Tags: r.Tags, Options: ToStoreOptions(r.Options),
+		SalePriceCents: r.SalePriceCents, SaleUntil: r.SaleUntil, LinkURL: r.LinkURL, Hidden: r.Hidden}
 }
 
 // ToStoreOptions converts option groups to their stored form.

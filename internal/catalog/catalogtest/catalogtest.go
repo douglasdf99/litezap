@@ -25,6 +25,11 @@ type Product struct {
 	Hidden                          bool
 	Status                          string // APPROVED (default), PENDING...
 	NoImage                         bool
+	// Photos is the number of photos (default 1; NoImage: none).
+	Photos     int
+	RetailerID string
+	URL        string
+	SalePrice  int64 // thousandths (0: no sale)
 }
 
 // Fake answers catalog reads by business JID.
@@ -69,13 +74,22 @@ func (f *Fake) wire(p Product) map[string]any {
 		hidden = "ISHIDDEN_TRUE"
 	}
 	images := []any{}
-	if !p.NoImage {
-		images = append(images, map[string]any{"id": "1", "original_image_url": "https://mmg.whatsapp.net/v/t45/" + p.ID + ".jpg?oh=x",
-			"request_image_url": "https://mmg.whatsapp.net/r/" + p.ID + ".jpg"})
+	n := max(p.Photos, 1)
+	for i := 0; i < n && !p.NoImage; i++ {
+		suffix := ""
+		if i > 0 {
+			suffix = fmt.Sprint("-", i)
+		}
+		images = append(images, map[string]any{"id": fmt.Sprint(i + 1), "original_image_url": "https://mmg.whatsapp.net/v/t45/" + p.ID + suffix + ".jpg?oh=x",
+			"request_image_url": "https://mmg.whatsapp.net/r/" + p.ID + suffix + ".jpg"})
 	}
-	return map[string]any{"id": p.ID, "name": p.Name, "description": p.Description, "price": fmt.Sprint(p.Price),
+	w := map[string]any{"id": p.ID, "name": p.Name, "description": p.Description, "price": fmt.Sprint(p.Price),
 		"currency": p.Currency, "is_hidden": hidden, "availability": "IN_STOCK", "status_info": map[string]any{"status": st},
-		"media": map[string]any{"images": images, "videos": []any{}}}
+		"media": map[string]any{"images": images, "videos": []any{}}, "retailer_id": p.RetailerID, "url": p.URL}
+	if p.SalePrice > 0 {
+		w["sale_price"] = map[string]any{"price": fmt.Sprint(p.SalePrice)}
+	}
+	return w
 }
 
 // Doer routes requests to the fake (GraphQL and CDN images), as a proxied client would.

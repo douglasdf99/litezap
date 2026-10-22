@@ -452,10 +452,19 @@ func (r *CatalogReader) ProductImage(ctx context.Context, instanceID, jidRaw, pr
 }
 
 func (r *CatalogReader) image(ctx context.Context, instanceID string, in store.Instance, p catalog.Product) ([]byte, string, error) {
-	if len(p.Images) == 0 {
+	return r.imageAt(ctx, instanceID, in, p, 0)
+}
+
+// imageAt downloads the product's photo number i (0 is the first), with the same
+// allowlist, quota and cache as image.
+func (r *CatalogReader) imageAt(ctx context.Context, instanceID string, in store.Instance, p catalog.Product, i int) ([]byte, string, error) {
+	if i < 0 || i >= len(p.Images) {
 		return nil, "", apierr.New(http.StatusNotFound, "not_found", "this product has no image", false)
 	}
 	key := instanceID + "\x00" + p.ID
+	if i > 0 {
+		key += "\x00" + strconv.Itoa(i)
+	}
 	if img, ok := r.images.get(key, r.now()); ok {
 		return img.data, img.mime, nil
 	}
@@ -470,7 +479,7 @@ func (r *CatalogReader) image(ctx context.Context, instanceID string, in store.I
 		if !r.quota.take("image\x00"+instanceID, r.now(), imageQuota...) {
 			return nil, socialLimited("catalog image")
 		}
-		b, mime, err := catalog.FetchImage(c, d, p.Images[0])
+		b, mime, err := catalog.FetchImage(c, d, p.Images[i])
 		if err != nil {
 			return nil, catalogErr(err, "image")
 		}

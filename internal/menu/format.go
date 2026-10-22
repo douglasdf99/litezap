@@ -48,12 +48,16 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// Caption is an item's WhatsApp text (the caption under its photo).
-func Caption(it store.MenuItem) string {
+// Caption is an item's WhatsApp text (the caption under its photo), with today's price.
+func Caption(it store.MenuItem) string { return CaptionAt(it, Today()) }
+
+// CaptionAt is Caption on day today: name, price (a sale struck through: "~R$ 50,00~
+// *R$ 39,90*"), sold out, description, options and the item's link.
+func CaptionAt(it store.MenuItem, today string) string {
 	var b strings.Builder
 	b.WriteString("*" + it.Name + "*")
-	if it.PriceCents > 0 {
-		b.WriteString(" — " + FormatPrice(it.PriceCents, it.Currency))
+	if p := PriceLabel(it, today); p != "" {
+		b.WriteString(" — " + p)
 	}
 	if !it.Available {
 		b.WriteString(" (esgotado)")
@@ -64,15 +68,30 @@ func Caption(it store.MenuItem) string {
 	for _, o := range it.Options {
 		b.WriteString("\n" + OptionsLine(o, it.Currency))
 	}
+	if it.LinkURL != "" {
+		b.WriteString("\n" + it.LinkURL)
+	}
 	return b.String()
 }
 
+// ShortCaption is the one line under a photo of a collection: name and price.
+func ShortCaption(it store.MenuItem, today string) string {
+	s := "*" + it.Name + "*"
+	if p := PriceLabel(it, today); p != "" {
+		s += " — " + p
+	}
+	if !it.Available {
+		s += " (esgotado)"
+	}
+	return s
+}
+
 // itemLines renders one item of the menu text.
-func itemLines(it store.MenuItem) string {
+func itemLines(it store.MenuItem, today string) string {
 	var b strings.Builder
 	b.WriteString("• " + it.Name)
-	if it.PriceCents > 0 {
-		b.WriteString(" — " + FormatPrice(it.PriceCents, it.Currency))
+	if p := PriceLabel(it, today); p != "" {
+		b.WriteString(" — " + p)
 	}
 	if !it.Available {
 		b.WriteString(" (esgotado)")
@@ -93,23 +112,38 @@ type FormatOptions struct {
 	CategoryID string
 	// IncludeUnavailable also lists the items marked esgotado.
 	IncludeUnavailable bool
+	// Today is the day sale prices are checked against (default Today()).
+	Today string
+}
+
+// listed reports whether an item belongs in a text for customers: never a hidden item,
+// and a sold-out one only when asked.
+func listed(it store.MenuItem, includeUnavailable bool) bool {
+	return !it.Hidden && (it.Available || includeUnavailable)
+}
+
+type block struct {
+	head  string
+	intro string
+	items []string
 }
 
 // Format renders the menu as WhatsApp text, grouped by category, split into chunks of
-// at most ChunkRunes. It returns no chunks when nothing is listed.
+// at most ChunkRunes. Hidden items are never listed. It returns no chunks when nothing
+// is listed.
 func Format(cats []store.MenuCategory, items []store.MenuItem, opt FormatOptions) []string {
 	title := opt.Title
 	if title == "" {
 		title = "Cardápio"
 	}
-	type block struct {
-		head  string
-		items []string
+	today := opt.Today
+	if today == "" {
+		today = Today()
 	}
 	var blocks []block
 	byCat := map[string][]store.MenuItem{}
 	for _, it := range items {
-		if !it.Available && !opt.IncludeUnavailable {
+		if !listed(it, opt.IncludeUnavailable) {
 			continue
 		}
 		byCat[it.CategoryID] = append(byCat[it.CategoryID], it)
@@ -130,10 +164,61 @@ func Format(cats []store.MenuCategory, items []store.MenuItem, opt FormatOptions
 			bl.head = "" // a menu without categories needs no "Outros" heading
 		}
 		for _, it := range list {
-			bl.items = append(bl.items, itemLines(it))
+			bl.items = append(bl.items, itemLines(it, today))
 		}
 		blocks = append(blocks, bl)
 	}
+	return chunk(title, blocks)
+}
+
+// CollectionOptions choose what a collection text shows.
+type CollectionOptions struct {
+	Title              string // default: the collection's name
+	IncludeUnavailable bool
+	Today              string
+}
+
+// FormatCollection renders a collection (its items in order, never hidden ones) as
+// WhatsApp text, split like Format. items is the menu; the collection lists its ids.
+func FormatCollection(c store.MenuCollection, items []store.MenuItem, opt CollectionOptions) []string {
+	today := opt.Today
+	if today == "" {
+		today = Today()
+	}
+	title := CleanLine(opt.Title)
+	if title == "" {
+		title = c.Name
+	}
+	bl := block{intro: CleanText(c.Description)}
+	for _, it := range CollectionItems(c, items) {
+		if listed(it, opt.IncludeUnavailable) {
+			bl.items = append(bl.items, itemLines(it, today))
+		}
+	}
+	if len(bl.items) == 0 {
+		return nil
+	}
+	return chunk(title, []block{bl})
+}
+
+// CollectionItems returns the collection's items, in its order.
+func CollectionItems(c store.MenuCollection, items []store.MenuItem) []store.MenuItem {
+	byID := map[string]store.MenuItem{}
+	for _, it := range items {
+		byID[it.ID] = it
+	}
+	out := make([]store.MenuItem, 0, len(c.ItemIDs))
+	for _, id := range c.ItemIDs {
+		if it, ok := byID[id]; ok {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// chunk joins a title and blocks into messages of at most ChunkRunes, splitting at
+// item boundaries (a block split in two repeats its heading with "(cont.)").
+func chunk(title string, blocks []block) []string {
 	if len(blocks) == 0 {
 		return nil
 	}
@@ -149,6 +234,9 @@ func Format(cats []store.MenuCategory, items []store.MenuItem, opt FormatOptions
 	cur.WriteString("*" + title + "*")
 	for _, bl := range blocks {
 		head := bl.head
+		if bl.intro != "" {
+			cur.WriteString("\n" + clipRunes(bl.intro, 500))
+		}
 		for i, line := range bl.items {
 			add := ""
 			if i == 0 {
