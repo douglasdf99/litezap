@@ -303,14 +303,36 @@ func (e *executor) checkWrite(tool string, args map[string]any) (string, error) 
 		}
 	}
 	l := e.agent.Limits
-	if tool == "send_menu" {
-		// A long menu is several messages: it may send at most the sends left in this
-		// run (3 by default), and the menu is refused when it needs more.
+	left := max(l.MaxSends-e.sends, 1)
+	switch tool {
+	case "send_menu", "send_collection":
+		// A long menu or collection is several messages: it may send at most the sends
+		// left in this run (3 by default), and it is refused when it needs more.
 		n := 3
 		if f, ok := args["max_messages"].(float64); ok && f >= 1 {
 			n = int(f)
 		}
-		args["max_messages"] = min(n, 10, max(l.MaxSends-e.sends, 1))
+		args["max_messages"] = min(n, 10, left)
+		if tool == "send_collection" {
+			// Its photos are more messages, within the sends left, and need midia.
+			photos := 0
+			if f, ok := args["photos"].(float64); ok && f > 0 {
+				photos = int(f)
+			}
+			if !e.agent.has(GroupMedia) {
+				photos = 0
+			}
+			args["photos"] = min(photos, 10, max(left-args["max_messages"].(int), 0))
+		}
+	case "send_menu_item":
+		if album, _ := args["album"].(bool); album {
+			// An album is one message per photo, within the sends left.
+			n := 10
+			if f, ok := args["max_photos"].(float64); ok && f >= 1 {
+				n = int(f)
+			}
+			args["max_photos"] = min(n, 10, left)
+		}
 	}
 	switch {
 	case e.writes >= l.MaxWrites:
@@ -325,16 +347,28 @@ func (e *executor) checkWrite(tool string, args map[string]any) (string, error) 
 	return chat, nil
 }
 
-// sendWeight is how many sends a send tool call counts for.
+// sendWeight is how many sends a send tool call counts for: the messages a menu or a
+// collection may use (its max_messages, plus a collection's photos) and the photos of an
+// album.
 func sendWeight(tool string, args map[string]any) int {
-	if tool == "send_menu" {
-		switch n := args["max_messages"].(type) {
+	num := func(k string, def int) int {
+		switch n := args[k].(type) {
 		case int:
-			return max(n, 1)
+			return n
 		case float64:
-			return max(int(n), 1)
+			return int(n)
 		}
-		return 3
+		return def
+	}
+	switch tool {
+	case "send_menu":
+		return max(num("max_messages", 3), 1)
+	case "send_collection":
+		return max(num("max_messages", 3), 1) + max(num("photos", 0), 0)
+	case "send_menu_item":
+		if album, _ := args["album"].(bool); album {
+			return max(num("max_photos", 10), 1)
+		}
 	}
 	return 1
 }

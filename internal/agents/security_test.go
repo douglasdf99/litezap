@@ -20,7 +20,8 @@ type fakeTools struct{ calls []string }
 func (f *fakeTools) defs() map[string]ToolDef {
 	out := map[string]ToolDef{}
 	for _, name := range []string{"send_message", "send_reaction", "get_messages", "get_message_status", "get_contact",
-		"get_group", "list_chats", "update_group", "get_group_invite_link", "label_chat", "send_menu", "send_menu_item", "get_menu"} {
+		"get_group", "list_chats", "update_group", "get_group_invite_link", "label_chat", "send_menu", "send_menu_item", "get_menu",
+		"send_collection", "send_order_summary", "search_menu", "get_collection"} {
 		out[name] = ToolDef{Name: name,
 			Schema: func() (*jsonschema.Schema, error) { return &jsonschema.Schema{Type: "object"}, nil },
 			Call: func(_ context.Context, args json.RawMessage) (json.RawMessage, error) {

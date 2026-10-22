@@ -244,7 +244,8 @@ func TestMenuWriteToolAnnotations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	destructive := map[string]bool{"delete_menu_item": true, "delete_menu_category": true, "delete_menu_option_group": true, "import_menu_rows": true}
+	destructive := map[string]bool{"delete_menu_item": true, "delete_menu_category": true, "delete_menu_option_group": true, "import_menu_rows": true,
+		"bulk_update_menu_items": true, "delete_menu_collection": true, "remove_menu_item_photo": true}
 	seen := 0
 	for _, tool := range listed.Tools {
 		want, ok := destructive[tool.Name]
@@ -287,7 +288,7 @@ func TestMenuWriteToolAnnotations(t *testing.T) {
 			n++
 		}
 	}
-	if n != 13 || len(agent) != len(all)-n {
+	if n != 30 || len(agent) != len(all)-n {
 		t.Fatalf("assistant-only = %d, agents %d of %d", n, len(agent), len(all))
 	}
 	for _, d := range agent {

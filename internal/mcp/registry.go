@@ -46,19 +46,23 @@ func (d ToolDef) Call(ctx context.Context, args json.RawMessage) (json.RawMessag
 
 // Catalog returns the tool table over b without creating an MCP server: the same tools,
 // schemas and handlers that NewServer serves.
-func Catalog(b Backend, log *slog.Logger) []ToolDef {
+func Catalog(b Backend, log *slog.Logger) []ToolDef { return toolTable(b, log, false) }
+
+func toolTable(b Backend, log *slog.Logger, agent bool) []ToolDef {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	t := &tools{b: b, log: log}
+	t := &tools{b: b, log: log, agent: agent}
 	t.register(nil)
 	return t.defs
 }
 
 // AgentCatalog is the tool table the LiteZap agents run over: Catalog without the
-// AssistantOnly tools (an agent can never be given them, whatever its permissions).
+// AssistantOnly tools (an agent can never be given them, whatever its permissions),
+// and with the menu tools in agent mode (hidden items and inactive collections never
+// appear in them).
 func AgentCatalog(b Backend, log *slog.Logger) []ToolDef {
-	all := Catalog(b, log)
+	all := toolTable(b, log, true)
 	out := make([]ToolDef, 0, len(all))
 	for _, d := range all {
 		if !d.AssistantOnly {

@@ -380,8 +380,16 @@ type createMenuItemInput struct {
 	CreateCategory bool           `json:"create_category,omitempty" jsonschema:"Create the category named in category when it does not exist yet (default false: an unknown name is an error)."`
 	Available      *bool          `json:"available,omitempty" jsonschema:"false marks it sold out (esgotado). Default true."`
 	Tags           []string       `json:"tags,omitempty" jsonschema:"Short tags, e.g. vegano, sem gluten (up to 10)."`
-	ImageURL       string         `json:"image_url,omitempty" jsonschema:"Optional public http(s) URL of a photo, downloaded and resized by LiteZap."`
+	ImageURL       string         `json:"image_url,omitempty" jsonschema:"Optional public http(s) URL of a photo, downloaded and resized by LiteZap (the main photo)."`
+	ImageURLs      []string       `json:"image_urls,omitempty" jsonschema:"More photo URLs, added after the main one (up to 10 photos in all). Only URLs the user gave you."`
 	Options        []menuOptionIn `json:"options,omitempty" jsonschema:"Option groups (up to 10), e.g. Tamanho: P, M, G +10,00."`
+	SKU            string         `json:"sku,omitempty" jsonschema:"The business's own code for the item (up to 64 characters)."`
+	SalePrice      string         `json:"sale_price,omitempty" jsonschema:"Sale price as the user wrote it (\"39,90\"); it must be lower than price. Customers see ~R$ 50,00~ *R$ 39,90*."`
+	SaleUntil      string         `json:"sale_until,omitempty" jsonschema:"Last day of the sale: 2026-12-31 or 31/12/2026 (omit: no end)."`
+	LinkURL        string         `json:"link_url,omitempty" jsonschema:"A page about the item (http/https), sent under its caption."`
+	Hidden         bool           `json:"hidden,omitempty" jsonschema:"true keeps it in the menu but never shows it to customers, the attendant or the agents."`
+	Collections    []string       `json:"collections,omitempty" jsonschema:"Collections to put it in, by name or id (e.g. Promoções). An unknown name is an error unless create_collections=true."`
+	CreateColls    bool           `json:"create_collections,omitempty" jsonschema:"Create the collections named in collections that do not exist yet."`
 }
 
 type updateMenuItemInput struct {
@@ -397,6 +405,13 @@ type updateMenuItemInput struct {
 	Available      *bool           `json:"available,omitempty" jsonschema:"false marks it sold out (esgotado)."`
 	Tags           *[]string       `json:"tags,omitempty" jsonschema:"Replace the tags."`
 	Options        *[]menuOptionIn `json:"options,omitempty" jsonschema:"Replace ALL option groups of the item (prefer add_menu_option_group / update_menu_option_group for one group)."`
+	SKU            *string         `json:"sku,omitempty" jsonschema:"New sku (\"\" clears it)."`
+	SalePrice      *string         `json:"sale_price,omitempty" jsonschema:"New sale price as written (\"39,90\"), lower than the price; \"\" removes the sale. Only a price the user gave."`
+	SaleUntil      *string         `json:"sale_until,omitempty" jsonschema:"Last day of the sale (2026-12-31 or 31/12/2026; \"\" = no end)."`
+	LinkURL        *string         `json:"link_url,omitempty" jsonschema:"New link (http/https; \"\" clears it)."`
+	Hidden         *bool           `json:"hidden,omitempty" jsonschema:"true hides it from customers, the attendant and the agents; false shows it again."`
+	Collections    *[]string       `json:"collections,omitempty" jsonschema:"Replace the collections it is in, by name or id ([] takes it out of all)."`
+	CreateColls    bool            `json:"create_collections,omitempty" jsonschema:"Create the collections named in collections that do not exist yet."`
 }
 
 type menuItemRefInput struct {
@@ -459,7 +474,14 @@ type importRowIn struct {
 	Available   *bool          `json:"available,omitempty" jsonschema:"false when the text marks it sold out (esgotado). Default true."`
 	Tags        []string       `json:"tags,omitempty" jsonschema:"Short tags (up to 10)."`
 	ImageURL    string         `json:"image_url,omitempty" jsonschema:"Optional public http(s) photo URL that appears in the user's data. Never make one up."`
+	ImageURLs   []string       `json:"image_urls,omitempty" jsonschema:"More photo URLs from the user's data (up to 10 photos in all, the first is the main one)."`
 	Options     []menuOptionIn `json:"options,omitempty" jsonschema:"Option groups, e.g. Tamanho: P, M (+5,00), G (+10,00)."`
+	SKU         string         `json:"sku,omitempty" jsonschema:"The business's code for the item, when the data has one."`
+	SalePrice   string         `json:"sale_price,omitempty" jsonschema:"Sale price exactly as written (\"39,90\"), lower than price. Never invent one."`
+	SaleUntil   string         `json:"sale_until,omitempty" jsonschema:"Last day of the sale (2026-12-31 or 31/12/2026)."`
+	LinkURL     string         `json:"link_url,omitempty" jsonschema:"A link about the item (http/https) from the user's data."`
+	Hidden      *bool          `json:"hidden,omitempty" jsonschema:"true: kept in the menu but never shown to customers."`
+	Collections []string       `json:"collections,omitempty" jsonschema:"Collection names (e.g. Promoções); created when missing."`
 }
 
 type importMenuRowsInput struct {
@@ -480,7 +502,14 @@ type importRowOut struct {
 	Available   bool          `json:"available"`
 	Tags        []string      `json:"tags,omitempty"`
 	ImageURL    string        `json:"image_url,omitempty"`
+	ImageURLs   []string      `json:"image_urls,omitempty"`
 	Options     []menu.Option `json:"options,omitempty"`
+	SKU         string        `json:"sku,omitempty"`
+	SalePrice   string        `json:"sale_price,omitempty"`
+	SaleUntil   string        `json:"sale_until,omitempty"`
+	LinkURL     string        `json:"link_url,omitempty"`
+	Hidden      bool          `json:"hidden,omitempty"`
+	Collections []string      `json:"collections,omitempty"`
 	// Error is the reason the row cannot be saved ("" when it can); Errors and Problems
 	// list each error (Problems with its field).
 	Error    string         `json:"error,omitempty"`
@@ -497,17 +526,18 @@ type importMenuRowsOutput struct {
 	Errors       []string       `json:"errors"`
 	ErrorDetails []menu.Problem `json:"error_details"`
 	// limit is the menu limit error (not serialized).
-	limit             string
-	Valid             int      `json:"valid"`
-	Invalid           int      `json:"invalid"`
-	ItemsInMenu       int      `json:"items_in_menu"`
-	MaxItems          int      `json:"max_items"`
-	CategoriesCreated int      `json:"categories_created"`
-	ItemsCreated      int      `json:"items_created"`
-	ImagesSaved       int      `json:"images_saved"`
-	ImageErrors       []string `json:"image_errors,omitempty"`
-	ImagesPending     int      `json:"images_pending,omitempty"`
-	Note              string   `json:"note"`
+	limit              string
+	Valid              int      `json:"valid"`
+	Invalid            int      `json:"invalid"`
+	ItemsInMenu        int      `json:"items_in_menu"`
+	MaxItems           int      `json:"max_items"`
+	CategoriesCreated  int      `json:"categories_created"`
+	CollectionsCreated int      `json:"collections_created"`
+	ItemsCreated       int      `json:"items_created"`
+	ImagesSaved        int      `json:"images_saved"`
+	ImageErrors        []string `json:"image_errors,omitempty"`
+	ImagesPending      int      `json:"images_pending,omitempty"`
+	Note               string   `json:"note"`
 }
 
 type menuOptionOut struct {
@@ -533,7 +563,7 @@ type menuItemFull struct {
 }
 
 func itemFull(v service.MenuItemView) menuItemFull {
-	o := itemOut(v)
+	o := withPhotos(itemOut(v), v)
 	o.Options = v.Options // with their ids, for the option tools
 	return menuItemFull{menuItemOut: o, CategoryID: v.CategoryID}
 }
@@ -577,6 +607,66 @@ func (t *tools) resolveCategory(ctx context.Context, mb MenuBackend, mw MenuWrit
 	return c.ID, nil
 }
 
+// resolveCollections turns collection names or ids into ids, creating the named ones
+// that are missing when asked.
+func (t *tools) resolveCollections(ctx context.Context, id string, refs []string, create bool) ([]string, error) {
+	out := []string{}
+	if len(refs) == 0 {
+		return out, nil
+	}
+	cb, ok := t.b.(MenuCatalogBackend)
+	if !ok {
+		return nil, apierr.New(http.StatusNotImplemented, "not_implemented", "collections are not available on this server", false)
+	}
+	list, err := cb.ListMenuCollections(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for _, ref := range refs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		found := ""
+		for _, c := range list {
+			if c.ID == ref || normName(c.Name) == normName(ref) {
+				found = c.ID
+				break
+			}
+		}
+		if found == "" {
+			if !create || strings.HasPrefix(ref, "mcol_") {
+				names := []string{}
+				for _, c := range list {
+					names = append(names, c.Name)
+				}
+				return nil, apierr.Validation(fmt.Sprintf("collection %q does not exist (existing: %s); pass create_collections=true to create it",
+					menu.CleanLine(ref), strings.Join(names, ", ")))
+			}
+			name := ref
+			d, err := cb.CreateMenuCollection(ctx, id, service.MenuCollectionInput{Name: &name})
+			if err != nil {
+				return nil, err
+			}
+			list = append(list, d.MenuCollectionView)
+			found = d.ID
+		}
+		if !containsString(out, found) {
+			out = append(out, found)
+		}
+	}
+	return out, nil
+}
+
+func containsString(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
 const (
 	menuEditNote = "Saved in LiteZap's own menu (Cardápio), never in WhatsApp/Meta. Customers only see it when it is sent (send_menu) " +
 		"or when the attendant answers from it."
@@ -604,8 +694,9 @@ func (t *tools) registerMenuWrite(s *sdk.Server) {
 		Title: "Build the menu from rows (preview first)",
 		Description: "The main tool to build this number's menu (Cardápio) from what the user gives you: pasted text, a photo of a printed menu " +
 			"(read it yourself), a spreadsheet or CSV. Steps: 1) turn the user's material into rows (category, name, description, price exactly as written, " +
-			"options such as Tamanho or Borda, sold-out items with available=false); 2) ALWAYS call this tool first with dry_run=true (the default): nothing is saved, " +
-			"it returns the parsed rows with errors and warnings; 3) show that preview to the user as a table (category, item, price, options) and point out " +
+			"options such as Tamanho or Borda, sold-out items with available=false, and when the data has them: sale price, its last day, sku, link, photo URLs, " +
+			"collections such as Promoções, hidden items); 2) ALWAYS call this tool first with dry_run=true (the default): nothing is saved, " +
+			"it returns the parsed rows with errors (each with its line and field) and warnings; 3) show that preview to the user as a table (category, item, price, options) and point out " +
 			"errors, warnings and anything you were unsure about; 4) only after the user confirms, call it again with the same rows and dry_run=false. " +
 			"Never invent prices, items or photo URLs: leave a missing price empty and ask the user. Saving adds to the menu (items already there are " +
 			"flagged in the preview: saving again duplicates them); replace=true empties the menu first and is destructive: only when the user asks to replace it. " +
@@ -682,7 +773,8 @@ func (t *tools) registerMenuWrite(s *sdk.Server) {
 		Name:  "create_menu_item",
 		Title: "Add one menu item",
 		Description: "Adds one item to this number's menu (Cardápio): name, description, price (as the user wrote it, \"45,90\", or price_cents), " +
-			"category by name (create_category=true creates it when missing) or by id, availability, tags and option groups. For several items use " +
+			"category by name (create_category=true creates it when missing) or by id, availability, tags, option groups, sku, sale price (lower than the price) " +
+			"with its last day, link, hidden flag, collections and photos (image_url, image_urls). For several items use " +
 			"import_menu_rows (preview first). Never invent a price: ask the user. " + fmt.Sprintf("Up to %d items per menu. ", store.MaxMenuItems) + menuEditNote,
 		InputSchema: schema[createMenuItemInput](map[string]func(*jsonschema.Schema){
 			"instance_id": instID, "available": boolDefault(true), "create_category": boolDefault(false),
@@ -693,9 +785,31 @@ func (t *tools) registerMenuWrite(s *sdk.Server) {
 		if err != nil {
 			return nil, menuItemFull{}, err
 		}
-		si := service.MenuItemInput{Name: &in.Name, Available: in.Available, ImageURL: strings.TrimSpace(in.ImageURL)}
+		si := service.MenuItemInput{Name: &in.Name, Available: in.Available, ImageURL: strings.TrimSpace(in.ImageURL), ImageURLs: in.ImageURLs}
 		if in.Description != "" {
 			si.Description = &in.Description
+		}
+		if in.SKU != "" {
+			si.SKU = &in.SKU
+		}
+		if in.SalePrice != "" {
+			si.SalePrice = priceJSON(in.SalePrice)
+		}
+		if in.SaleUntil != "" {
+			si.SaleUntil = &in.SaleUntil
+		}
+		if in.LinkURL != "" {
+			si.LinkURL = &in.LinkURL
+		}
+		if in.Hidden {
+			si.Hidden = &in.Hidden
+		}
+		if len(in.Collections) > 0 {
+			cols, err := t.resolveCollections(ctx, id, in.Collections, in.CreateColls)
+			if err != nil {
+				return nil, menuItemFull{}, err
+			}
+			si.CollectionIDs = &cols
 		}
 		if in.Price != "" && in.PriceCents != 0 {
 			return nil, menuItemFull{}, apierr.Validation("send price or price_cents, not both")
@@ -741,7 +855,8 @@ func (t *tools) registerMenuWrite(s *sdk.Server) {
 		Name:  "update_menu_item",
 		Title: "Edit a menu item",
 		Description: "Changes fields of one item of this number's menu (Cardápio); fields left out stay as they are. Get item_id from get_menu. " +
-			"options replaces all of the item's option groups. Only change what the user asked for, and never invent a price. " + menuEditNote,
+			"options replaces all of the item's option groups. sale_price sets a sale (lower than the price; \"\" removes it), hidden=true hides the item from " +
+			"customers (available=false is sold out, still listed), collections replaces the collections it is in. Only change what the user asked for, and never invent a price. " + menuEditNote,
 		InputSchema: schema[updateMenuItemInput](map[string]func(*jsonschema.Schema){"instance_id": instID, "create_category": boolDefault(false)}),
 		Annotations: idem,
 	}, func(ctx context.Context, in updateMenuItemInput) (*sdk.CallToolResult, menuItemFull, error) {
@@ -749,12 +864,23 @@ func (t *tools) registerMenuWrite(s *sdk.Server) {
 		if err != nil {
 			return nil, menuItemFull{}, err
 		}
-		si := service.MenuItemInput{Name: in.Name, Description: in.Description, PriceCents: in.PriceCents, Available: in.Available, Tags: in.Tags}
+		si := service.MenuItemInput{Name: in.Name, Description: in.Description, PriceCents: in.PriceCents, Available: in.Available, Tags: in.Tags,
+			SKU: in.SKU, SaleUntil: in.SaleUntil, LinkURL: in.LinkURL, Hidden: in.Hidden}
 		if in.Price != nil {
 			if in.PriceCents != nil {
 				return nil, menuItemFull{}, apierr.Validation("send price or price_cents, not both")
 			}
 			si.Price = priceJSON(*in.Price)
+		}
+		if in.SalePrice != nil {
+			si.SalePrice = priceJSON(*in.SalePrice)
+		}
+		if in.Collections != nil {
+			cols, err := t.resolveCollections(ctx, id, *in.Collections, in.CreateColls)
+			if err != nil {
+				return nil, menuItemFull{}, err
+			}
+			si.CollectionIDs = &cols
 		}
 		if in.Options != nil {
 			opts, err := optionsOf(*in.Options)
@@ -971,7 +1097,9 @@ func (t *tools) importMenuRows(ctx context.Context, mb MenuBackend, mw MenuWrite
 			return nil, importMenuRowsOutput{}, apierr.Validation(fmt.Sprintf("row %d (%s): %s", i+1, menu.CleanLine(r.Name), errText(err)))
 		}
 		row := menu.Row{Category: r.Category, Name: r.Name, Description: r.Description, Price: r.Price, PriceCents: r.PriceCents,
-			Available: r.Available == nil || *r.Available, Tags: r.Tags, ImageURL: r.ImageURL, Options: opts}
+			Available: r.Available == nil || *r.Available, Tags: r.Tags, ImageURL: r.ImageURL, ImageURLs: r.ImageURLs, Options: opts,
+			SKU: r.SKU, SalePrice: r.SalePrice, SaleUntil: r.SaleUntil, LinkURL: r.LinkURL, Hidden: r.Hidden != nil && *r.Hidden,
+			Collections: r.Collections}
 		rows = append(rows, row)
 	}
 	cur, err := mb.GetMenu(ctx, id)
@@ -1037,7 +1165,7 @@ func importOut(v service.MenuImportView, cur service.MenuView, replace bool) imp
 	out := importMenuRowsOutput{DryRun: v.DryRun, Rows: make([]importRowOut, 0, len(v.Rows)), Errors: append([]string{}, v.Errors...),
 		ErrorDetails: append([]menu.Problem{}, v.ErrorDetails...), Valid: v.Valid, Invalid: v.Invalid, ItemsInMenu: cur.ItemCount, MaxItems: store.MaxMenuItems,
 		CategoriesCreated: v.CategoriesCreated, ItemsCreated: v.ItemsCreated, ImagesSaved: v.ImagesSaved, ImageErrors: v.ImageErrors,
-		ImagesPending: v.ImagesPending}
+		ImagesPending: v.ImagesPending, CollectionsCreated: v.CollectionsCreated}
 	if replace {
 		out.ItemsInMenu = 0
 	}
@@ -1048,8 +1176,9 @@ func importOut(v service.MenuImportView, cur service.MenuView, replace bool) imp
 	}
 	for _, r := range v.Rows {
 		o := importRowOut{Line: r.Line, Category: r.Category, Name: r.Name, Description: r.Description, Price: r.PriceText,
-			PriceCents: r.PriceCents, Available: r.Available, Tags: r.Tags, ImageURL: r.ImageURL, Error: r.Error, Errors: r.Errors,
-			Problems: r.Problems, Warnings: r.Warnings}
+			PriceCents: r.PriceCents, Available: r.Available, Tags: r.Tags, ImageURL: r.ImageURL, ImageURLs: r.ImageURLs, Error: r.Error, Errors: r.Errors,
+			Problems: r.Problems, Warnings: r.Warnings, SKU: r.SKU, SalePrice: r.SalePriceText, SaleUntil: r.SaleUntil, LinkURL: r.LinkURL,
+			Hidden: r.Hidden, Collections: r.Collections}
 		if len(r.Options) > 0 {
 			o.Options = r.Options
 		}
