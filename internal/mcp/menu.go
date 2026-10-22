@@ -121,13 +121,17 @@ type menuItemOut struct {
 	PriceCents  int64         `json:"price_cents"`
 	Available   bool          `json:"available"`
 	HasPhoto    bool          `json:"has_photo"`
+	Tags        []string      `json:"tags"`
 	Options     []menu.Option `json:"options,omitempty"`
 }
 
 type menuCategoryOut struct {
-	ID    string        `json:"id"`
-	Name  string        `json:"name"`
-	Items []menuItemOut `json:"items"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// ItemCount is the number of items of the category in the menu (0: an empty
+	// category, listed only with include_empty).
+	ItemCount int           `json:"item_count"`
+	Items     []menuItemOut `json:"items"`
 }
 
 type menuOutput struct {
@@ -138,7 +142,7 @@ type menuOutput struct {
 
 func itemOut(v service.MenuItemView) menuItemOut {
 	o := menuItemOut{ID: v.ID, Name: v.Name, Description: v.Description, Price: v.PriceText, PriceCents: v.PriceCents,
-		Available: v.Available, HasPhoto: v.ImagePath != "", Options: append([]menu.Option(nil), v.Options...)}
+		Available: v.Available, HasPhoto: v.ImagePath != "", Tags: append([]string{}, v.Tags...), Options: append([]menu.Option(nil), v.Options...)}
 	for i := range o.Options { // a copy: v keeps the ids
 		o.Options[i].ID = ""
 	}
@@ -152,6 +156,7 @@ type getMenuInput struct {
 	InstanceID         string `json:"instance_id,omitempty" jsonschema:"Instance whose menu to read"`
 	CategoryID         string `json:"category_id,omitempty" jsonschema:"Only this category (id from a previous get_menu)."`
 	IncludeUnavailable *bool  `json:"include_unavailable,omitempty" jsonschema:"Also list sold-out items (default true)."`
+	IncludeEmpty       bool   `json:"include_empty,omitempty" jsonschema:"Also list categories without items (default false), with item_count 0: to find and clean up empty categories by name."`
 }
 
 type getMenuItemInput struct {
@@ -200,9 +205,10 @@ func (t *tools) registerMenu(s *sdk.Server) {
 		Name:  "get_menu",
 		Title: "Read the menu (Cardápio)",
 		Description: "Reads this number's menu (Cardápio), LiteZap's own catalog: categories, items with id, name, description, price (price_cents and text in R$), " +
-			"availability (available=false means esgotado) and options (groups like \"Tamanho\" with choices and price differences). " +
+			"availability (available=false means esgotado), tags and options (groups like \"Tamanho\" with choices and price differences). " +
+			"Empty categories are left out unless include_empty=true (use it to find and delete empty categories by name). " +
 			"It is not the WhatsApp catalog (get_catalog). " + menuDataNote,
-		InputSchema: schema[getMenuInput](map[string]func(*jsonschema.Schema){"instance_id": instID, "include_unavailable": boolDefault(true)}),
+		InputSchema: schema[getMenuInput](map[string]func(*jsonschema.Schema){"instance_id": instID, "include_unavailable": boolDefault(true), "include_empty": boolDefault(false)}),
 		Annotations: read,
 	}, func(ctx context.Context, in getMenuInput) (*sdk.CallToolResult, menuOutput, error) {
 		id, err := t.instance(ctx, in.InstanceID)
@@ -226,7 +232,8 @@ func (t *tools) registerMenu(s *sdk.Server) {
 				}
 				c.Items = append(c.Items, itemOut(it))
 			}
-			if len(c.Items) > 0 {
+			c.ItemCount = len(items)
+			if len(c.Items) > 0 || (in.IncludeEmpty && cid != "" && len(items) == 0) {
 				out.Categories = append(out.Categories, c)
 				out.ItemCount += len(c.Items)
 			}

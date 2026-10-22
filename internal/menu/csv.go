@@ -165,25 +165,25 @@ func ParseCSV(data string) CSVResult {
 		if p := get(rec, "preco"); p != "" {
 			cents, err := ParsePrice(p)
 			if err != nil {
-				row.Errors = append(row.Errors, fmt.Sprintf("preço %q não reconhecido (use 45,90 ou R$ 1.234,50)", clipRunes(p, 30)))
+				row.AddError("preco", PriceError("preco", p))
 			}
 			row.PriceCents = cents
 		}
 		if a, ok := ParseBool(get(rec, "disponivel")); ok {
 			row.Available = a
 		} else {
-			row.Errors = append(row.Errors, "disponivel deve ser sim, não ou esgotado")
+			row.AddError("disponivel", "disponivel deve ser sim, não ou esgotado")
 		}
 		if o := get(rec, "opcoes"); o != "" {
 			opts, err := ParseOptions(o)
 			if err != nil {
-				row.Errors = append(row.Errors, err.Error())
+				row.AddError("opcoes", err.Error())
 			}
 			row.Options = opts
 		}
 		NormalizeRow(&row)
 		row.PriceText = FormatPrice(row.PriceCents, "BRL")
-		row.Errors = append(row.Errors, ValidateRow(row)...)
+		row.Check()
 		res.Rows = append(res.Rows, row)
 	}
 	if len(res.Rows) == 0 && len(res.Errors) == 0 {

@@ -157,7 +157,8 @@ func ParseAI(output, source string) ([]Row, error) {
 		}
 		NormalizeRow(&row)
 		row.PriceText = FormatPrice(row.PriceCents, "BRL")
-		row.Errors = append(errs, ValidateRow(row)...)
+		row.Errors = errs
+		row.Check()
 		if row.Name != "" && !inSource(src, row.Name) {
 			row.Warnings = append(row.Warnings, "este nome não aparece no texto: confira antes de salvar")
 		}

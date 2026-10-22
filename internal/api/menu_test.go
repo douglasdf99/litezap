@@ -52,6 +52,13 @@ func TestMenuRoutes(t *testing.T) {
 		t.Fatalf("item = %d %v", code, out)
 	}
 	item := out["id"].(string)
+	// The management view lists empty categories; include_empty=false leaves them out.
+	if code, out := e.do("GET", base+"/menu", tok, ""); code != 200 || len(out["categories"].([]any)) != 2 {
+		t.Fatalf("menu with an empty category = %d %v", code, out)
+	}
+	if code, out := e.do("GET", base+"/menu?include_empty=false", tok, ""); code != 200 || len(out["categories"].([]any)) != 1 {
+		t.Fatalf("include_empty=false = %d %v", code, out)
+	}
 	if code, out := e.do("POST", base+"/menu/items", tok, `{"name":"x","price":"caro"}`); code != 400 || errCode(out) != "validation_failed" {
 		t.Fatalf("bad price = %d %v", code, out)
 	}

@@ -481,24 +481,33 @@ type importRowOut struct {
 	Tags        []string      `json:"tags,omitempty"`
 	ImageURL    string        `json:"image_url,omitempty"`
 	Options     []menu.Option `json:"options,omitempty"`
-	Errors      []string      `json:"errors,omitempty"`
-	Warnings    []string      `json:"warnings,omitempty"`
+	// Error is the reason the row cannot be saved ("" when it can); Errors and Problems
+	// list each error (Problems with its field).
+	Error    string         `json:"error,omitempty"`
+	Errors   []string       `json:"errors,omitempty"`
+	Problems []menu.Problem `json:"problems,omitempty"`
+	Warnings []string       `json:"warnings,omitempty"`
 }
 
 type importMenuRowsOutput struct {
-	DryRun            bool           `json:"dry_run"`
-	Rows              []importRowOut `json:"rows"`
-	Errors            []string       `json:"errors"`
-	Valid             int            `json:"valid"`
-	Invalid           int            `json:"invalid"`
-	ItemsInMenu       int            `json:"items_in_menu"`
-	MaxItems          int            `json:"max_items"`
-	CategoriesCreated int            `json:"categories_created"`
-	ItemsCreated      int            `json:"items_created"`
-	ImagesSaved       int            `json:"images_saved"`
-	ImageErrors       []string       `json:"image_errors,omitempty"`
-	ImagesPending     int            `json:"images_pending,omitempty"`
-	Note              string         `json:"note"`
+	DryRun bool           `json:"dry_run"`
+	Rows   []importRowOut `json:"rows"`
+	// Errors lists every reason a save would be refused: one entry per error of an
+	// invalid row ("linha 3: preço inválido 'abc' ...") and the menu limit.
+	Errors       []string       `json:"errors"`
+	ErrorDetails []menu.Problem `json:"error_details"`
+	// limit is the menu limit error (not serialized).
+	limit             string
+	Valid             int      `json:"valid"`
+	Invalid           int      `json:"invalid"`
+	ItemsInMenu       int      `json:"items_in_menu"`
+	MaxItems          int      `json:"max_items"`
+	CategoriesCreated int      `json:"categories_created"`
+	ItemsCreated      int      `json:"items_created"`
+	ImagesSaved       int      `json:"images_saved"`
+	ImageErrors       []string `json:"image_errors,omitempty"`
+	ImagesPending     int      `json:"images_pending,omitempty"`
+	Note              string   `json:"note"`
 }
 
 type menuOptionOut struct {
@@ -519,15 +528,14 @@ type menuReordered struct {
 // menuItemFull is an item as the editing tools return it (with its ids).
 type menuItemFull struct {
 	menuItemOut
-	CategoryID string   `json:"category_id"`
-	Tags       []string `json:"tags,omitempty"`
-	Note       string   `json:"note,omitempty"`
+	CategoryID string `json:"category_id"`
+	Note       string `json:"note,omitempty"`
 }
 
 func itemFull(v service.MenuItemView) menuItemFull {
 	o := itemOut(v)
 	o.Options = v.Options // with their ids, for the option tools
-	return menuItemFull{menuItemOut: o, CategoryID: v.CategoryID, Tags: v.Tags}
+	return menuItemFull{menuItemOut: o, CategoryID: v.CategoryID}
 }
 
 // priceJSON turns a price text into the API's "price" field.
@@ -989,8 +997,8 @@ func (t *tools) importMenuRows(ctx context.Context, mb MenuBackend, mw MenuWrite
 		return nil, importMenuRowsOutput{}, apierr.Validation(fmt.Sprintf("nothing saved: %d rows have errors (%s). Fix them with the user, "+
 			"or send skip_invalid=true to save only the valid rows", out.Invalid, problems(out.Rows)))
 	}
-	if len(out.Errors) > 0 {
-		return nil, importMenuRowsOutput{}, apierr.New(http.StatusConflict, "menu_limit", "nothing saved: "+strings.Join(out.Errors, "; "), false)
+	if out.limit != "" {
+		return nil, importMenuRowsOutput{}, apierr.New(http.StatusConflict, "menu_limit", "nothing saved: "+out.limit, false)
 	}
 	v, err := mw.ImportMenuRows(ctx, id, service.MenuRowsInput{Rows: rows, MenuImportOptions: service.MenuImportOptions{Replace: in.Replace, SkipInvalid: in.SkipInvalid}})
 	if err != nil {
@@ -1027,19 +1035,21 @@ func importOut(v service.MenuImportView, cur service.MenuView, replace bool) imp
 		}
 	}
 	out := importMenuRowsOutput{DryRun: v.DryRun, Rows: make([]importRowOut, 0, len(v.Rows)), Errors: append([]string{}, v.Errors...),
-		Valid: v.Valid, Invalid: v.Invalid, ItemsInMenu: cur.ItemCount, MaxItems: store.MaxMenuItems,
+		ErrorDetails: append([]menu.Problem{}, v.ErrorDetails...), Valid: v.Valid, Invalid: v.Invalid, ItemsInMenu: cur.ItemCount, MaxItems: store.MaxMenuItems,
 		CategoriesCreated: v.CategoriesCreated, ItemsCreated: v.ItemsCreated, ImagesSaved: v.ImagesSaved, ImageErrors: v.ImageErrors,
 		ImagesPending: v.ImagesPending}
 	if replace {
 		out.ItemsInMenu = 0
 	}
 	if out.ItemsInMenu+v.Valid > store.MaxMenuItems {
-		out.Errors = append(out.Errors, fmt.Sprintf("the menu has %d items and these rows add %d: the limit is %d items",
-			out.ItemsInMenu, v.Valid, store.MaxMenuItems))
+		out.limit = fmt.Sprintf("the menu has %d items and these rows add %d: the limit is %d items",
+			out.ItemsInMenu, v.Valid, store.MaxMenuItems)
+		out.Errors = append(out.Errors, out.limit)
 	}
 	for _, r := range v.Rows {
 		o := importRowOut{Line: r.Line, Category: r.Category, Name: r.Name, Description: r.Description, Price: r.PriceText,
-			PriceCents: r.PriceCents, Available: r.Available, Tags: r.Tags, ImageURL: r.ImageURL, Errors: r.Errors, Warnings: r.Warnings}
+			PriceCents: r.PriceCents, Available: r.Available, Tags: r.Tags, ImageURL: r.ImageURL, Error: r.Error, Errors: r.Errors,
+			Problems: r.Problems, Warnings: r.Warnings}
 		if len(r.Options) > 0 {
 			o.Options = r.Options
 		}

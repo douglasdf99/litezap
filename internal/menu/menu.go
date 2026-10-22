@@ -64,7 +64,62 @@ type Row struct {
 	Tags      []string `json:"tags,omitempty"`
 	Options   []Option `json:"options"`
 	Errors    []string `json:"errors,omitempty"`
-	Warnings  []string `json:"warnings,omitempty"`
+	// Error joins Errors (one clear reason per invalid row); Problems are the same errors
+	// with the field each one is about.
+	Error    string    `json:"error,omitempty"`
+	Problems []Problem `json:"problems,omitempty"`
+	Warnings []string  `json:"warnings,omitempty"`
+}
+
+// Problem is one error of an imported row: its line, the field ("preco", "nome", ...;
+// "" when it is about the whole row) and the reason, in Portuguese.
+type Problem struct {
+	Line    int    `json:"line"`
+	Field   string `json:"field"`
+	Message string `json:"message"`
+}
+
+// AddError records an error of the row about field.
+func (r *Row) AddError(field, msg string) {
+	r.Errors = append(r.Errors, msg)
+	r.Problems = append(r.Problems, Problem{Line: r.Line, Field: field, Message: msg})
+}
+
+// Check validates a normalized row, adding its problems, and fills Error.
+func (r *Row) Check() {
+	for _, p := range ValidateRowProblems(*r) {
+		r.AddError(p.Field, p.Message)
+	}
+	r.Finish()
+}
+
+// Finish fills Error and gives every error a Problem (errors added without a field get
+// field ""), with the row's line.
+func (r *Row) Finish() {
+	have := map[string]int{}
+	for _, p := range r.Problems {
+		have[p.Message]++
+	}
+	for _, e := range r.Errors {
+		if have[e] > 0 {
+			have[e]--
+			continue
+		}
+		r.Problems = append(r.Problems, Problem{Field: "", Message: e})
+	}
+	for i := range r.Problems {
+		r.Problems[i].Line = r.Line
+	}
+	r.Error = strings.Join(r.Errors, "; ")
+}
+
+// PriceError is the message of a price that could not be read.
+func PriceError(field, text string) string {
+	label := "preço"
+	if field == "preco_promocional" {
+		label = "preço promocional"
+	}
+	return fmt.Sprintf("%s inválido '%s' (use 45,90 ou R$ 1.234,50)", label, clipRunes(strings.TrimSpace(text), 40))
 }
 
 // invisible reports bidirectional controls and zero-width characters: they can make a
@@ -207,38 +262,48 @@ func contains(list []string, s string) bool {
 
 // ValidateRow returns the problems of a normalized row (nil when it can be saved).
 func ValidateRow(r Row) []string {
-	var errs []string
+	var out []string
+	for _, p := range ValidateRowProblems(r) {
+		out = append(out, p.Message)
+	}
+	return out
+}
+
+// ValidateRowProblems returns the problems of a normalized row with their fields.
+func ValidateRowProblems(r Row) []Problem {
+	var ps []Problem
+	add := func(field, msg string) { ps = append(ps, Problem{Line: r.Line, Field: field, Message: msg}) }
 	if r.Name == "" || tooLong(r.Name, MaxNameLen) {
-		errs = append(errs, fmt.Sprintf("nome é obrigatório (até %d caracteres)", MaxNameLen))
+		add("nome", fmt.Sprintf("nome é obrigatório (até %d caracteres)", MaxNameLen))
 	}
 	if tooLong(r.Description, MaxDescriptionLen) {
-		errs = append(errs, fmt.Sprintf("descrição tem no máximo %d caracteres", MaxDescriptionLen))
+		add("descricao", fmt.Sprintf("descrição tem no máximo %d caracteres", MaxDescriptionLen))
 	}
 	if tooLong(r.Category, MaxCategoryLen) {
-		errs = append(errs, fmt.Sprintf("categoria tem no máximo %d caracteres", MaxCategoryLen))
+		add("categoria", fmt.Sprintf("categoria tem no máximo %d caracteres", MaxCategoryLen))
 	}
 	if r.PriceCents < 0 || r.PriceCents > MaxPriceCents {
-		errs = append(errs, "preço deve ficar entre R$ 0,00 e R$ 1.000.000,00")
+		add("preco", "preço deve ficar entre R$ 0,00 e R$ 1.000.000,00")
 	}
 	if tooLong(r.SKU, MaxSKULen) {
-		errs = append(errs, fmt.Sprintf("sku tem no máximo %d caracteres", MaxSKULen))
+		add("sku", fmt.Sprintf("sku tem no máximo %d caracteres", MaxSKULen))
 	}
 	if len(r.Tags) > MaxTags {
-		errs = append(errs, fmt.Sprintf("no máximo %d tags", MaxTags))
+		add("tags", fmt.Sprintf("no máximo %d tags", MaxTags))
 	}
 	for _, t := range r.Tags {
 		if tooLong(t, MaxTagLen) {
-			errs = append(errs, fmt.Sprintf("cada tag tem no máximo %d caracteres", MaxTagLen))
+			add("tags", fmt.Sprintf("cada tag tem no máximo %d caracteres", MaxTagLen))
 			break
 		}
 	}
 	if r.ImageURL != "" && !validImageURL(r.ImageURL) {
-		errs = append(errs, "imagem_url deve ser um endereço http(s) completo")
+		add("imagem_url", "imagem_url deve ser um endereço http(s) completo")
 	}
 	if err := ValidateOptions(r.Options); err != nil {
-		errs = append(errs, err.Error())
+		add("opcoes", err.Error())
 	}
-	return errs
+	return ps
 }
 
 func validImageURL(s string) bool {

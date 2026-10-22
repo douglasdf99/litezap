@@ -20,15 +20,19 @@ import (
 type MenuImportView struct {
 	DryRun bool       `json:"dry_run"`
 	Rows   []menu.Row `json:"rows"`
-	// Errors are problems of the input as a whole (the rows carry their own).
-	Errors            []string `json:"errors"`
-	Valid             int      `json:"valid"`
-	Invalid           int      `json:"invalid"`
-	Skipped           int      `json:"skipped,omitempty"` // already in the menu (catalog copy)
-	CategoriesCreated int      `json:"categories_created"`
-	ItemsCreated      int      `json:"items_created"`
-	ImagesSaved       int      `json:"images_saved"`
-	ImageErrors       []string `json:"image_errors"`
+	// Errors lists every problem: of the input as a whole (FileErrors) and one entry per
+	// error of an invalid row ("linha 3: preço inválido 'abc' ..."); ErrorDetails are the
+	// row errors with their line and field.
+	Errors            []string       `json:"errors"`
+	FileErrors        []string       `json:"file_errors"`
+	ErrorDetails      []menu.Problem `json:"error_details"`
+	Valid             int            `json:"valid"`
+	Invalid           int            `json:"invalid"`
+	Skipped           int            `json:"skipped,omitempty"` // already in the menu (catalog copy)
+	CategoriesCreated int            `json:"categories_created"`
+	ItemsCreated      int            `json:"items_created"`
+	ImagesSaved       int            `json:"images_saved"`
+	ImageErrors       []string       `json:"image_errors"`
 	// ImagesPending are photos not fetched in this call (limit per call): run it again.
 	ImagesPending int `json:"images_pending,omitempty"`
 }
@@ -60,18 +64,22 @@ type MenuAIInput struct {
 }
 
 func newImportView(rows []menu.Row, errs []string, dry bool) MenuImportView {
-	v := MenuImportView{DryRun: dry, Rows: rows, Errors: errs, ImageErrors: []string{}}
+	v := MenuImportView{DryRun: dry, Rows: rows, Errors: append([]string{}, errs...), FileErrors: append([]string{}, errs...),
+		ErrorDetails: []menu.Problem{}, ImageErrors: []string{}}
 	if v.Rows == nil {
 		v.Rows = []menu.Row{}
 	}
-	if v.Errors == nil {
-		v.Errors = []string{}
-	}
-	for _, r := range rows {
+	for i := range v.Rows {
+		r := &v.Rows[i]
+		r.Finish()
 		if len(r.Errors) == 0 {
 			v.Valid++
-		} else {
-			v.Invalid++
+			continue
+		}
+		v.Invalid++
+		for _, p := range r.Problems {
+			v.Errors = append(v.Errors, fmt.Sprintf("linha %d: %s", p.Line, p.Message))
+			v.ErrorDetails = append(v.ErrorDetails, p)
 		}
 	}
 	return v
@@ -103,14 +111,15 @@ func (m *Menu) ImportRows(ctx context.Context, instanceID string, in MenuRowsInp
 	}
 	rows := make([]menu.Row, 0, len(in.Rows))
 	for i, r := range in.Rows {
-		r.Line, r.Errors, r.Warnings = i+1, nil, nil
+		r.Line, r.Errors, r.Problems, r.Error, r.Warnings = i+1, nil, nil, "", nil
 		priceErr := rowPrice(&r)
 		menu.NormalizeRow(&r)
 		r.PriceText = menu.FormatPrice(r.PriceCents, "BRL")
-		r.Errors = menu.ValidateRow(r)
 		if priceErr != "" {
-			r.Errors = append(r.Errors, priceErr)
-		} else if r.PriceCents == 0 {
+			r.AddError("preco", priceErr)
+		}
+		r.Check()
+		if priceErr == "" && r.PriceCents == 0 {
 			r.Warnings = append(r.Warnings, "sem preço (R$ 0,00): confirme o valor antes de salvar")
 		}
 		rows = append(rows, r)
@@ -133,7 +142,7 @@ func rowPrice(r *menu.Row) string {
 	cents, err := menu.ParsePrice(p)
 	switch {
 	case err != nil:
-		return fmt.Sprintf("preço %q não reconhecido (use 45,90 ou R$ 1.234,50)", clipRunes(p, 40))
+		return menu.PriceError("preco", p)
 	case r.PriceCents != 0 && r.PriceCents != cents:
 		return "price e price_cents diferem: envie só um"
 	}
@@ -331,7 +340,7 @@ func (m *Menu) ImportCatalog(ctx context.Context, instanceID string, in MenuCata
 			Description: clipRunes(p.Description, menu.MaxDescriptionLen), PriceCents: cents, Available: p.Availability != "out_of_stock", SKU: sku}
 		menu.NormalizeRow(&row)
 		row.PriceText = menu.FormatPrice(row.PriceCents, "BRL")
-		row.Errors = menu.ValidateRow(row)
+		row.Check()
 		rows = append(rows, row)
 		prods = append(prods, p)
 	}

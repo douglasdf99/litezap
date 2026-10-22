@@ -285,7 +285,7 @@ function csvDialog(ctx, reload) {
       preview = await api.post(`${ctx.base}/menu/import/csv`, { csv: text.value, dry_run: true });
     } catch (e) { mount(out, h('p', { class: 'error' }, errView(e))); return; }
     mount(out, h('p', null, h('strong', null, summary(preview))),
-      preview.errors.length ? h('div', { class: 'error' }, preview.errors.join('; ')) : null,
+      (preview.file_errors || []).length ? h('div', { class: 'error' }, preview.file_errors.join('; ')) : null,
       rowsTable(preview.rows).table);
   };
   sheet('Importar planilha (CSV)', h('div', { class: 'stack' },

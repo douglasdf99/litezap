@@ -42,8 +42,14 @@ func TestImportMenuRowsTool(t *testing.T) {
 				pv.Rows[1].Available || pv.Rows[1].PriceCents != 4200 {
 				t.Fatalf("parsed rows = %+v", pv.Rows)
 			}
-			if len(pv.Rows[2].Errors) == 0 || !strings.Contains(pv.Rows[2].Errors[0], "não reconhecido") {
+			if len(pv.Rows[2].Errors) == 0 || !strings.Contains(pv.Rows[2].Errors[0], "preço inválido 'doze'") ||
+				!strings.Contains(pv.Rows[2].Error, "preço inválido 'doze'") {
 				t.Fatalf("bad price row = %+v", pv.Rows[2])
+			}
+			// Every invalid row has its reason in the top-level errors, with line and field.
+			if len(pv.Errors) != 1 || !strings.HasPrefix(pv.Errors[0], "linha 3: preço inválido 'doze'") ||
+				len(pv.ErrorDetails) != 1 || pv.ErrorDetails[0].Line != 3 || pv.ErrorDetails[0].Field != "preco" {
+				t.Fatalf("top-level errors = %v %+v", pv.Errors, pv.ErrorDetails)
 			}
 			if len(pv.Rows[3].Warnings) == 0 || !strings.Contains(pv.Rows[3].Warnings[0], "sem preço") {
 				t.Fatalf("missing price row = %+v", pv.Rows[3])

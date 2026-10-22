@@ -77,11 +77,22 @@ func (s *server) menuRoutes(r chi.Router) {
 	r.Post("/menu/import/whatsapp-catalog", s.importMenuCatalog)
 }
 
+// getMenu is the whole menu. include_empty=false leaves out the categories without items
+// (default true: the management view lists them, to rename or delete them).
 func (s *server) getMenu(w http.ResponseWriter, r *http.Request) {
 	v, err := s.opt.Menu.Get(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		s.writeErr(w, err)
 		return
+	}
+	if r.URL.Query().Get("include_empty") == "false" {
+		kept := v.Categories[:0]
+		for _, c := range v.Categories {
+			if len(c.Items) > 0 {
+				kept = append(kept, c)
+			}
+		}
+		v.Categories = kept
 	}
 	writeJSON(w, 200, v)
 }
