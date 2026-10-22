@@ -946,7 +946,7 @@ func (t *tools) registerMenuCatalog(s *sdk.Server) {
 		}
 		out := searchMenuOutput{Items: []menuItemOut{}, Total: v.Total, Offset: v.Offset, Note: menuDataNote}
 		for _, it := range v.Items {
-			out.Items = append(out.Items, itemOut(it))
+			out.Items = append(out.Items, t.itemOut(it))
 		}
 		if v.Total > v.Offset+len(v.Items) {
 			out.Note = fmt.Sprintf("%d more items: call again with offset=%d. ", v.Total-v.Offset-len(v.Items), v.Offset+len(v.Items)) + out.Note
@@ -975,11 +975,29 @@ func (t *tools) registerMenuCatalog(s *sdk.Server) {
 				return nil, getCollectionOutput{}, err
 			}
 			out := getCollectionOutput{Collections: []collectionOut{}, Note: menuDataNote}
+			hidden := map[string]bool{}
+			if t.agent { // agents never count hidden items
+				yes := true
+				if hv, err := cb.SearchMenu(ctx, id, service.MenuSearchInput{Hidden: &yes, Limit: store.MaxMenuItems}); err == nil {
+					for _, it := range hv.Items {
+						hidden[it.ID] = true
+					}
+				}
+			}
 			for _, c := range list {
 				if t.agent && !c.Active {
 					continue
 				}
-				out.Collections = append(out.Collections, collOut(c))
+				co := collOut(c)
+				if t.agent {
+					co.ItemCount = 0
+					for _, it := range c.ItemIDs {
+						if !hidden[it] {
+							co.ItemCount++
+						}
+					}
+				}
+				out.Collections = append(out.Collections, co)
 			}
 			if len(out.Collections) == 0 {
 				out.Note = "The menu has no collections. " + out.Note
@@ -1000,7 +1018,7 @@ func (t *tools) registerMenuCatalog(s *sdk.Server) {
 			if t.agent && it.Hidden {
 				continue
 			}
-			co.Items = append(co.Items, itemOut(it))
+			co.Items = append(co.Items, t.itemOut(it))
 		}
 		co.ItemCount = len(co.Items)
 		return nil, getCollectionOutput{Collection: &co, Note: menuDataNote}, nil
@@ -1082,6 +1100,9 @@ func (t *tools) registerMenuCatalog(s *sdk.Server) {
 			d, err := cb.GetOrderDraft(ctx, id, orderID)
 			if err != nil {
 				return nil, sendOrderSummaryOutput{}, err
+			}
+			if t.agent && d.Chat == "" { // an agent only sends drafts built for a chat
+				return nil, sendOrderSummaryOutput{}, apierr.Validation("this order draft has no chat: send items to build one for this chat")
 			}
 			if d.Chat != "" && to != "" {
 				j, err := service.ChatJID(to)

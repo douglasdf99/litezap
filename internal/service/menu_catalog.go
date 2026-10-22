@@ -872,10 +872,29 @@ func (m *Menu) Bulk(ctx context.Context, instanceID string, in MenuBulkInput) (M
 			}
 		}
 	default:
+		// Each action changes only its own field, on the item as it is inside the
+		// transaction: an edit made since the preview (hiding an item, say) is kept.
 		err = m.Store.UpdateMenuItems(ctx, instanceID, ids, func(it *store.MenuItem) error {
-			p := planned[it.ID]
-			it.Available, it.Hidden, it.CategoryID, it.PriceCents, it.SalePriceCents, it.SaleUntil =
-				p.Available, p.Hidden, p.CategoryID, p.PriceCents, p.SalePriceCents, p.SaleUntil
+			switch in.Action {
+			case BulkSetAvailable:
+				it.Available = *in.Available
+			case BulkSetHidden:
+				it.Hidden = *in.Hidden
+			case BulkMoveCategory:
+				it.CategoryID = *in.CategoryID
+			case BulkClearSale:
+				it.SalePriceCents, it.SaleUntil = 0, ""
+			case BulkAdjustPrice:
+				price := adjusted(it.PriceCents, in.Percent, in.AmountCents)
+				sale := it.SalePriceCents
+				if sale > 0 {
+					sale = adjusted(sale, in.Percent, in.AmountCents)
+				}
+				if price < 0 || price > menu.MaxPriceCents || (it.SalePriceCents > 0 && (sale <= 0 || sale >= price)) {
+					return apierr.Validation(fmt.Sprintf("nothing saved: %s changed since the preview and cannot take this adjustment", it.Name))
+				}
+				it.PriceCents, it.SalePriceCents = price, sale
+			}
 			return nil
 		})
 	}
@@ -905,5 +924,10 @@ func (m *Menu) ExportCSV(ctx context.Context, instanceID string) ([]byte, error)
 	if err != nil {
 		return nil, err
 	}
-	return menu.ExportCSV(cats, items, colls, func(im store.MenuImage) string { return im.SourceURL }), nil
+	return menu.ExportCSV(cats, items, colls, func(im store.MenuImage) string {
+		if strings.HasPrefix(im.SourceURL, "http://") || strings.HasPrefix(im.SourceURL, "https://") {
+			return im.SourceURL
+		}
+		return "" // an upload or a WhatsApp catalog photo (its CDN link expires): no address to export
+	}), nil
 }

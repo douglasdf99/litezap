@@ -304,6 +304,25 @@ func TestMenuToolsHideHiddenFromAgents(t *testing.T) {
 	if _, err := run("get_menu_item", map[string]any{"item_id": hidden.ID}); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("get_menu_item of a hidden item = %v", err)
 	}
+	// Counts and ids do not give hidden items or inactive collections away either.
+	out, _ := run("get_menu", nil)
+	var mv menuOutput
+	_ = json.Unmarshal([]byte(out), &mv)
+	if len(mv.Collections) != 1 || mv.Collections[0].ItemCount != 2 || mv.Categories[0].ItemCount != 2 || strings.Contains(out, inactive.ID) {
+		t.Fatalf("agent menu counts = %s", out)
+	}
+	out, _ = run("get_collection", nil)
+	if !strings.Contains(out, `"item_count":2`) || strings.Contains(out, "Rascunho") {
+		t.Fatalf("agent collection list = %s", out)
+	}
+	// An agent never sends a draft that has no chat (it would go to the trigger chat).
+	d, err := e.menu.CreateOrderDraft(ctx, id, service.OrderDraftInput{Items: []menu.OrderLineInput{{ItemID: col.Items[2].ID, Quantity: 1}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run("send_order_summary", map[string]any{"to": "5511977776666", "order_id": d.ID}); err == nil || !strings.Contains(err.Error(), "no chat") {
+		t.Fatalf("agent sent a chatless draft: %v", err)
+	}
 	if _, err := run("get_collection", map[string]any{"collection_id": inactive.ID}); err == nil {
 		t.Fatal("an agent read an inactive collection")
 	}
@@ -313,8 +332,8 @@ func TestMenuToolsHideHiddenFromAgents(t *testing.T) {
 		all[d.Name] = d
 	}
 	raw, _ := json.Marshal(map[string]any{"hidden": true})
-	out, err := all["search_menu"].Call(ctx, raw)
-	if err != nil || !strings.Contains(string(out), "Secreta") {
-		t.Fatalf("assistant search hidden = %s %v", out, err)
+	sr, err := all["search_menu"].Call(ctx, raw)
+	if err != nil || !strings.Contains(string(sr), "Secreta") {
+		t.Fatalf("assistant search hidden = %s %v", sr, err)
 	}
 }

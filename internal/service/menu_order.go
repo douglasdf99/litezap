@@ -261,6 +261,22 @@ func (m *Menu) SendOrderSummary(ctx context.Context, instanceID, id string, in S
 	case !d.Valid:
 		return SendOrderResult{}, apierr.Validation("this order draft has problems (items out of the menu, sold out or missing options): build a new one")
 	}
+	// The summary goes out only while it still matches the menu: an item hidden, sold
+	// out, removed or repriced since the draft was built makes it stale.
+	items, err := m.Store.ListMenuItems(ctx, instanceID)
+	if err != nil {
+		return SendOrderResult{}, err
+	}
+	stored := menu.FromDraft(d)
+	now := menu.PriceOrder(items, menu.Inputs(stored.Lines), menu.Today())
+	switch {
+	case !now.Valid:
+		return SendOrderResult{}, apierr.Validation("the menu changed since this order was built (" + strings.Join(now.Problems, "; ") +
+			"): build the order again")
+	case now.TotalCents != stored.TotalCents:
+		return SendOrderResult{}, apierr.Validation(fmt.Sprintf("the prices changed since this order was built (total was %s, now %s): build the order again",
+			menu.FormatPrice(stored.TotalCents, stored.Currency), menu.FormatPrice(now.TotalCents, now.Currency)))
+	}
 	to := strings.TrimSpace(in.To)
 	if to == "" {
 		to = d.Chat

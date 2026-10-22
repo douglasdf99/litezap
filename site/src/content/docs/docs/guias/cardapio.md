@@ -251,7 +251,8 @@ Cliente: Ana
 ```
 
 `POST /menu/orders/{id}/send` (ou `send_order_summary`) põe o resumo na fila para o chat do pedido e marca
-`sent`; depois, `PATCH` com `confirmed` ou `cancelled` (cancelado é final; confirmado só pode ser cancelado). A
+`sent` — só se o pedido ainda bate com o cardápio: se um item ficou oculto ou esgotado, ou um preço mudou (a
+promoção acabou, por exemplo), o envio é recusado e é preciso montar o pedido de novo; depois, `PATCH` com `confirmed` ou `cancelled` (cancelado é final; confirmado só pode ser cancelado). A
 aba **Pedidos montados** lista todos com status e origem, e tem enviar, confirmar e cancelar. O LiteZap guarda os
 1000 pedidos mais recentes por instância.
 

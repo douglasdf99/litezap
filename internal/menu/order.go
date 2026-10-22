@@ -164,6 +164,23 @@ func DraftRow(r OrderResult, chat, source string, info OrderInfo) store.OrderDra
 		Currency: r.Currency, Valid: r.Valid, Source: source}
 }
 
+// Inputs turns priced lines back into the cart that produced them (to price it again
+// against the current menu).
+func Inputs(lines []OrderLine) []OrderLineInput {
+	out := make([]OrderLineInput, 0, len(lines))
+	for _, l := range lines {
+		in := OrderLineInput{ItemID: l.ItemID, Name: l.Name, Quantity: l.Quantity, Notes: l.Notes}
+		if !l.InMenu {
+			in.FallbackUnitCents = l.UnitPriceCents
+		}
+		for _, o := range l.Options {
+			in.Options = append(in.Options, o.Group+": "+o.Choice)
+		}
+		out = append(out, in)
+	}
+	return out
+}
+
 // FromDraft recounts a stored draft's lines.
 func FromDraft(d store.OrderDraftRow) OrderResult {
 	var lines []OrderLine

@@ -9,6 +9,7 @@ import (
 
 	"github.com/douglasdf99/litezap/internal/agenthook"
 	"github.com/douglasdf99/litezap/internal/menu"
+	"github.com/douglasdf99/litezap/internal/secure"
 	"github.com/douglasdf99/litezap/internal/store"
 )
 
@@ -233,29 +234,47 @@ func priceMenuOrder(items []store.MenuItem, raw []orderItem) ([]map[string]any, 
 	return out, roundMoney(total), all, r
 }
 
-// saveOrderDraft stores the chat's order as an order draft (source "attendant"), the
-// same drafts create_order_draft makes: the open draft of the chat (status draft, last
-// 24h) is updated when the customer changes the order. It returns the draft id ("" when
-// it could not be saved: the event still goes out).
-func (a *Attendant) saveOrderDraft(instanceID, chat string, r menu.OrderResult, info menu.OrderInfo) string {
+// plannedDraft is the chat's order draft to write once its event is published: the
+// open draft of the chat (status draft, last 24h) to update, or a new one.
+type plannedDraft struct {
+	row    store.OrderDraftRow
+	update bool
+}
+
+// planOrderDraft prepares the chat's order as an order draft (source "attendant"), the
+// same drafts create_order_draft makes, with its id decided now (nil without a chat).
+func (a *Attendant) planOrderDraft(instanceID, chat string, r menu.OrderResult, info menu.OrderInfo) *plannedDraft {
 	if a.Store == nil || chat == "" || len(r.Lines) == 0 {
-		return ""
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	row := menu.DraftRow(r, chat, "attendant", info)
+	p := &plannedDraft{row: menu.DraftRow(r, chat, "attendant", info)}
 	if cur, err := a.Store.OpenOrderDraft(ctx, instanceID, chat, "attendant", a.now().Add(-24*time.Hour)); err == nil {
-		row.ID = cur.ID
-		if d, err := a.Store.ReplaceOrderDraftItems(ctx, instanceID, row); err == nil {
-			return d.ID
+		p.row.ID, p.update = cur.ID, true
+	} else {
+		p.row.ID = secure.NewID("odr_")
+	}
+	return p
+}
+
+// writeOrderDraft saves a planned draft (after its event was published); the customer
+// changing the order updates the open draft. A failure is logged: the event went out.
+func (a *Attendant) writeOrderDraft(instanceID string, p *plannedDraft) {
+	if p == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if p.update {
+		if _, err := a.Store.ReplaceOrderDraftItems(ctx, instanceID, p.row); err == nil {
+			return
 		}
+		p.row.ID = secure.NewID("odr_") // it was sent or confirmed meanwhile: a new draft
 	}
-	d, err := a.Store.CreateOrderDraft(ctx, instanceID, row)
-	if err != nil {
+	if _, err := a.Store.CreateOrderDraft(ctx, instanceID, p.row); err != nil {
 		a.log().Warn("attendant: order draft not saved", "instance_id", instanceID, "err", err)
-		return ""
 	}
-	return d.ID
 }
 
 // Extract runs one structured call with the instance's configured provider, for the

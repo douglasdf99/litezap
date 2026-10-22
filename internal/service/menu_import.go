@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -455,7 +456,7 @@ func (m *Menu) ImportCatalog(ctx context.Context, instanceID string, in MenuCata
 	}
 	if images {
 		x.photo = func(ctx context.Context, row int, itemID string, budget int) (int, []string) {
-			return m.catalogPhotos(ctx, instanceID, inst, prods[row], itemID, 0, budget)
+			return m.catalogPhotos(ctx, instanceID, inst, prods[row], itemID, nil, budget)
 		}
 	}
 	itemOf := map[string]string{} // product id -> item id
@@ -488,11 +489,12 @@ func (m *Menu) ImportCatalog(ctx context.Context, instanceID string, in MenuCata
 	}
 	if images {
 		for i, it := range known {
-			if len(it.Images) >= len(knownProds[i].Images) || len(it.Images) >= store.MaxMenuImages {
+			have := copiedPhotos(it, knownProds[i].ID)
+			if len(have) >= len(knownProds[i].Images) || len(it.Images) >= store.MaxMenuImages {
 				continue
 			}
 			budget := maxImportImages - v.ImagesSaved - len(v.ImageErrors)
-			saved, errs := m.catalogPhotos(ctx, instanceID, inst, knownProds[i], it.ID, len(it.Images), budget)
+			saved, errs := m.catalogPhotos(ctx, instanceID, inst, knownProds[i], it.ID, have, budget)
 			v.ImagesSaved += saved
 			for _, e := range errs {
 				if e == errPending {
@@ -506,13 +508,42 @@ func (m *Menu) ImportCatalog(ctx context.Context, instanceID string, in MenuCata
 	return v, nil
 }
 
-// catalogPhotos copies a product's photos from index from on (the ones the item does
-// not have yet) into a menu item, at most budget downloads; the rest are errPending.
+// catalogPhotoRef marks a photo copied from the catalog: "wa:<product id>/<index>", so
+// a second copy only fetches the ones the item does not have (a photo the user removed
+// is not brought back as a duplicate of one that stayed).
+func catalogPhotoRef(productID string, i int) string { return fmt.Sprintf("wa:%s/%d", productID, i) }
+
+// copiedPhotos lists the catalog photos (by index) an item already has. Items copied
+// before the photos were marked have their first len(Images) photos.
+func copiedPhotos(it store.MenuItem, productID string) map[int]bool {
+	have := map[int]bool{}
+	marked := false
+	prefix := "wa:" + productID + "/"
+	for _, im := range it.Images {
+		if rest, ok := strings.CutPrefix(im.SourceURL, prefix); ok {
+			if i, err := strconv.Atoi(rest); err == nil {
+				have[i], marked = true, true
+			}
+		}
+	}
+	if !marked {
+		for i := range it.Images {
+			have[i] = true
+		}
+	}
+	return have
+}
+
+// catalogPhotos copies a product's photos the item does not have yet (have, by index)
+// into a menu item, at most budget downloads; the rest are errPending.
 func (m *Menu) catalogPhotos(ctx context.Context, instanceID string, inst store.Instance, p catalog.Product, itemID string,
-	from, budget int) (int, []string) {
+	have map[int]bool, budget int) (int, []string) {
 	saved := 0
 	var errs []string
-	for i := from; i < len(p.Images) && i < store.MaxMenuImages; i++ {
+	for i := 0; i < len(p.Images) && i < store.MaxMenuImages; i++ {
+		if have[i] {
+			continue
+		}
 		if saved+len(errs) >= budget || ctx.Err() != nil {
 			errs = append(errs, errPending)
 			continue
@@ -523,7 +554,7 @@ func (m *Menu) catalogPhotos(ctx context.Context, instanceID string, inst store.
 			jpg, err = m.normalize(ctx, data)
 		}
 		if err == nil {
-			err = m.storeImage(ctx, instanceID, itemID, jpg, "", photoAppend)
+			err = m.storeImage(ctx, instanceID, itemID, jpg, catalogPhotoRef(p.ID, i), photoAppend)
 		}
 		if err != nil {
 			errs = append(errs, errMessage(err))

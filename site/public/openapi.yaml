@@ -5654,7 +5654,8 @@ paths:
       description: |
         Coloca na fila o resumo do pedido (itens, opções, promoções riscadas, total e entrega) para o chat do
         pedido (ou `to`), com `intro` opcional antes, e marca o pedido como `sent`. Pedido cancelado ou com
-        problema é recusado. Sem `client_message_id`, a chave vem do conteúdo: repetir o mesmo resumo não envia
+        problema é recusado, e também o que não bate mais com o cardápio (item oculto, esgotado ou removido, ou
+        preço diferente: monte de novo). Sem `client_message_id`, a chave vem do conteúdo: repetir o mesmo resumo não envia
         duas vezes. Chaves `send` podem enviar.
       requestBody:
         content:
@@ -8079,10 +8080,11 @@ webhooks:
       x-related: [agent.lead]
       x-fields:
         - [chat, string, "Chat do cliente."]
-        - [items, array, "name, quantity, unit_price, subtotal, in_catalog."]
+        - [items, array, "name, quantity, unit_price, subtotal, in_catalog; com o Cardápio também menu_item_id, available, on_sale, options, unknown_options e missing_required_options."]
         - [total, number, "Total recalculado."]
         - [currency, string, "Moeda do agente (BRL)."]
         - [all_items_in_catalog, boolean, "Todos os itens casaram com o catálogo."]
+        - [order_draft_id, string, "Com o Cardápio: o pedido montado gravado (odr_…, em GET /menu/orders), atualizado quando o cliente muda o pedido."]
         - [address, string, "Endereço (ou retirada)."]
         - [notes, string, "Observações."]
       requestBody:

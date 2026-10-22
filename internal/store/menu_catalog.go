@@ -873,8 +873,8 @@ func scanDraft(sc interface{ Scan(...any) error }) (OrderDraftRow, error) {
 	return d, err
 }
 
-// CreateOrderDraft stores a draft (status draft) and removes the oldest drafts over
-// MaxOrderDrafts.
+// CreateOrderDraft stores a draft (status draft, with d.ID when set) and removes the
+// oldest drafts over MaxOrderDrafts.
 func (s *Store) CreateOrderDraft(ctx context.Context, instanceID string, d OrderDraftRow) (OrderDraftRow, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -882,7 +882,10 @@ func (s *Store) CreateOrderDraft(ctx context.Context, instanceID string, d Order
 	}
 	defer tx.Rollback()
 	ts := now()
-	d.ID, d.Status = secure.NewID("odr_"), OrderDraft
+	if d.ID == "" { // the attendant decides the id before publishing its event
+		d.ID = secure.NewID("odr_")
+	}
+	d.Status = OrderDraft
 	if d.Currency == "" {
 		d.Currency = "BRL"
 	}

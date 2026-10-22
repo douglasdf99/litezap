@@ -184,6 +184,30 @@ func itemOut(v service.MenuItemView) menuItemOut {
 	return o
 }
 
+// itemOut is an item as these tools show it; for the agents, without the collection
+// ids (an inactive collection is not theirs to see: get_collection lists the active ones).
+func (t *tools) itemOut(v service.MenuItemView) menuItemOut {
+	o := itemOut(v)
+	if t.agent {
+		o.CollectionIDs = nil
+	}
+	return o
+}
+
+// visible counts the items the caller may see (agents never count hidden ones).
+func (t *tools) visible(items []service.MenuItemView) int {
+	if !t.agent {
+		return len(items)
+	}
+	n := 0
+	for _, it := range items {
+		if !it.Hidden {
+			n++
+		}
+	}
+	return n
+}
+
 // withPhotos adds the photo ids (for the photo tools).
 func withPhotos(o menuItemOut, v service.MenuItemView) menuItemOut {
 	for _, im := range v.Images {
@@ -267,11 +291,29 @@ func (t *tools) registerMenu(s *sdk.Server) {
 		}
 		all := in.IncludeUnavailable == nil || *in.IncludeUnavailable
 		out := menuOutput{Categories: []menuCategoryOut{}, Note: menuDataNote}
+		hidden := map[string]bool{}
+		for _, c := range v.Categories {
+			for _, it := range c.Items {
+				hidden[it.ID] = it.Hidden
+			}
+		}
+		for _, it := range v.Uncategorized {
+			hidden[it.ID] = it.Hidden
+		}
 		for _, c := range v.Collections {
 			if t.agent && !c.Active {
 				continue
 			}
-			out.Collections = append(out.Collections, menuCollectionSummary{ID: c.ID, Name: c.Name, Active: c.Active, ItemCount: c.ItemCount})
+			n := c.ItemCount
+			if t.agent {
+				n = 0
+				for _, id := range c.ItemIDs {
+					if !hidden[id] {
+						n++
+					}
+				}
+			}
+			out.Collections = append(out.Collections, menuCollectionSummary{ID: c.ID, Name: c.Name, Active: c.Active, ItemCount: n})
 		}
 		addCat := func(cid, name string, items []service.MenuItemView) {
 			if in.CategoryID != "" && cid != in.CategoryID {
@@ -282,9 +324,9 @@ func (t *tools) registerMenu(s *sdk.Server) {
 				if (!it.Available && !all) || (t.agent && it.Hidden) {
 					continue
 				}
-				c.Items = append(c.Items, itemOut(it))
+				c.Items = append(c.Items, t.itemOut(it))
 			}
-			c.ItemCount = len(items)
+			c.ItemCount = t.visible(items)
 			if len(c.Items) > 0 || (in.IncludeEmpty && cid != "" && len(items) == 0) {
 				out.Categories = append(out.Categories, c)
 				out.ItemCount += len(c.Items)
@@ -318,7 +360,7 @@ func (t *tools) registerMenu(s *sdk.Server) {
 		if t.agent && v.Hidden { // agents never see hidden items
 			return nil, menuItemOut{}, apierr.New(http.StatusNotFound, "not_found", "menu item not found", false)
 		}
-		o := withPhotos(itemOut(v), v)
+		o := withPhotos(t.itemOut(v), v)
 		o.Options = v.Options // with their ids (update_menu_option_group, delete_menu_option_group)
 		return nil, o, nil
 	})

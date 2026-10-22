@@ -657,15 +657,22 @@ func (a *Attendant) buildEvents(in runInput, e modelEvent) []agenthook.AgentEven
 	if a.duplicate(key, hash) {
 		return nil
 	}
-	if len(order.Lines) > 0 { // stored as the chat's order draft (Cardápio > Pedidos montados)
-		if id := a.saveOrderDraft(in.instanceID, in.chat, order, menu.OrderInfo{CustomerName: str(e.CustomerName, 200),
-			Address: str(e.Address, 500), Notes: str(e.Notes, 1000)}); id != "" {
-			data["order_draft_id"] = id
+	// The chat's order draft (Cardápio > Pedidos montados): its id goes in the event, and
+	// it is written only once the event is published, like the dedupe mark.
+	var draft *plannedDraft
+	if len(order.Lines) > 0 {
+		draft = a.planOrderDraft(in.instanceID, in.chat, order, menu.OrderInfo{CustomerName: str(e.CustomerName, 200),
+			Address: str(e.Address, 500), Notes: str(e.Notes, 1000)})
+		if draft != nil {
+			data["order_draft_id"] = draft.row.ID
 		}
 	}
 	// Marked only once the hook published it: a reply discarded (human took over, send
 	// refused) leaves the event free to be emitted on the next answer.
-	return []agenthook.AgentEvent{{Type: typ, Data: data, Published: func() { a.mark(key, hash) }}}
+	return []agenthook.AgentEvent{{Type: typ, Data: data, Published: func() {
+		a.mark(key, hash)
+		a.writeOrderDraft(in.instanceID, draft)
+	}}}
 }
 
 // priceOrder keeps sane items, taking unit prices from the catalog when the name matches.

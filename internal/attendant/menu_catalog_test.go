@@ -64,6 +64,11 @@ func TestMenuHiddenSaleAndDraft(t *testing.T) {
 	if id == "" {
 		t.Fatalf("no order_draft_id in %+v", d)
 	}
+	// Nothing is written until the hook published the event (a discarded reply leaves no draft).
+	if _, err := e.st.GetOrderDraft(ctx, inst, id); err == nil {
+		t.Fatal("the draft was written before the event was published")
+	}
+	resp.Events[0].Published()
 	dr, err := e.st.GetOrderDraft(ctx, inst, id)
 	if err != nil || dr.Chat != chatJID || dr.Source != "attendant" || dr.TotalCents != 7980 || !dr.Valid || dr.CustomerName != "Ana" || dr.Address != "Rua B, 5" {
 		t.Fatalf("draft = %+v %v", dr, err)
@@ -74,6 +79,7 @@ func TestMenuHiddenSaleAndDraft(t *testing.T) {
 	if got := resp.Events[0].Data["order_draft_id"]; got != id {
 		t.Fatalf("a new draft (%v) instead of updating %s", got, id)
 	}
+	resp.Events[0].Published()
 	if dr, _ := e.st.GetOrderDraft(ctx, inst, id); dr.TotalCents != 11970 {
 		t.Fatalf("updated total = %d", dr.TotalCents)
 	}
@@ -83,6 +89,7 @@ func TestMenuHiddenSaleAndDraft(t *testing.T) {
 	if it := resp.Events[0].Data["items"].([]map[string]any)[0]; it["in_catalog"] != false {
 		t.Fatalf("hidden item priced from the menu: %+v", it)
 	}
+	resp.Events[0].Published()
 	list, _ := e.st.ListOrderDrafts(ctx, inst, store.OrderDraftFilter{})
 	if len(list) != 1 || list[0].Valid {
 		t.Fatalf("drafts = %+v", list)
