@@ -68,7 +68,6 @@ type Local struct {
 	Account   AccountService   // marco 9 tools (nil: they answer not_implemented)
 	Social    SocialService    // marco 10 tools (nil: they answer not_implemented)
 	Attendant AttendantService // built-in attendant read tools (nil: not_implemented)
-	Menu      MenuService      // Cardápio tools (nil: not_implemented)
 }
 
 var _ Backend = (*Local)(nil)

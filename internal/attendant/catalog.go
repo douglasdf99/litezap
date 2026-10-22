@@ -10,6 +10,9 @@ import (
 const (
 	KnowledgeManual  = "manual"  // the products typed in the profile (default)
 	KnowledgeCatalog = "catalog" // the instance's WhatsApp Business catalog
+
+	// knowledgeRemovedMenu was the removed Cardápio; stored profiles fall back to manual.
+	knowledgeRemovedMenu = "menu"
 )
 
 // sourceCatalog marks knowledge entries that came from the WhatsApp catalog: written by

@@ -102,10 +102,7 @@ Todos podem **passar para humano** (`handoff`): o atendente avisa o cliente, des
    do catálogo chegam com `in_catalog: false` e `all_items_in_catalog: false` — **sempre confira esse campo** antes de
    aceitar o pedido.
 2. Ligue `order_draft`. Cada resumo novo gera `agent.order_draft` com itens, total, moeda e endereço; repetições
-   idênticas na mesma conversa não são reemitidas. Com o [Cardápio](/docs/guias/cardapio/#pedidos-montados) como
-   lista de produtos, o pedido também fica gravado em **Cardápio > Pedidos montados** (`order_draft_id`), com as
-   promoções e opções calculadas pelo mesmo motor de `POST /menu/orders`, e é atualizado quando o cliente muda o
-   pedido.
+   idênticas na mesma conversa não são reemitidas.
 3. A confirmação do cliente ("sim") é a próxima mensagem: trate no seu sistema (n8n, ERP) e responda o cliente.
 
 #### SDR / agendamento

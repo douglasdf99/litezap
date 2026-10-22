@@ -15,13 +15,13 @@ const MODE = {
   sugerir: ['Só sugerir', 'ag-tone-info', 'Nada é executado: as ações viram notas.'],
 };
 const GROUPS = {
-  ler: ['Ler a conversa do gatilho', 'Mensagens, contato e grupo da conversa que disparou o agente, mais a lista de conversas (só nomes), as etiquetas, o catálogo e o cardápio.'],
+  ler: ['Ler a conversa do gatilho', 'Mensagens, contato e grupo da conversa que disparou o agente, mais a lista de conversas (só nomes) e as etiquetas.'],
   ler_outros_chats: ['Ler outras conversas', 'Ler as mensagens de qualquer conversa e a agenda de contatos.'],
-  responder_no_chat: ['Responder no chat do gatilho', 'Mensagens, reações e o cardápio em texto só na conversa que disparou o agente (cada mensagem do cardápio conta no limite de envios).'],
+  responder_no_chat: ['Responder no chat do gatilho', 'Mensagens e reações só na conversa que disparou o agente.'],
   enviar_outros_chats: ['Enviar para outros chats', 'Mandar mensagem para qualquer conversa (no máximo o limite de destinatários por execução).'],
   etiquetas: ['Etiquetas', 'Aplicar e tirar etiquetas do WhatsApp Business, em qualquer conversa.'],
   grupos: ['Grupos (gerenciar)', 'Criar grupos, mudar nome e configurações, adicionar e remover pessoas e pegar o link de convite.'],
-  midia: ['Mídia', 'Enviar imagem, áudio, vídeo e documento por URL, produtos do catálogo e itens do cardápio com foto.'],
+  midia: ['Mídia', 'Enviar imagem, áudio, vídeo e documento por URL.'],
 };
 const RISK = {
   ler_outros_chats: 'O agente poderá ler as mensagens de todas as suas conversas e a sua agenda de contatos, e esse conteúdo vai para o provedor de IA. Uma mensagem maliciosa pode tentar fazê-lo repassar o que leu: evite junto com "Enviar para outros chats".',
@@ -38,7 +38,6 @@ const STATUS = {
 };
 const TOOL_LABEL = {
   send_message: 'Mensagem', send_reaction: 'Reação', send_media: 'Mídia', send_product: 'Produto do catálogo', label_chat: 'Etiqueta',
-  send_menu: 'Cardápio', send_menu_item: 'Item do cardápio',
   create_group: 'Criar grupo', update_group: 'Alterar grupo', manage_group_participants: 'Participantes do grupo',
   get_group_invite_link: 'Link de convite do grupo',
 };
@@ -266,8 +265,6 @@ function draftsPanel(ctx, base) {
         case 'send_media': what = h('div', { class: 'ag-bubble' }, `${a.type || 'arquivo'}: ${a.url || ''}`, a.caption ? h('div', { class: 'prewrap' }, a.caption) : null); break;
         case 'send_product': what = h('div', { class: 'ag-bubble' }, `Produto ${a.product_id || ''}${a.catalog_owner ? ` do catálogo de ${a.catalog_owner}` : ''}`, a.body ? h('div', { class: 'prewrap' }, a.body) : null); break;
         case 'label_chat': what = h('div', { class: 'ag-bubble' }, `${a.labeled === false ? 'Tirar' : 'Aplicar'} a etiqueta ${a.label || ''}`); break;
-        case 'send_menu': what = h('div', { class: 'ag-bubble' }, `Cardápio${a.category_id ? ` (categoria ${a.category_id})` : ' completo'}, até ${a.max_messages || 3} mensagens`); break;
-        case 'send_menu_item': what = h('div', { class: 'ag-bubble' }, `Item ${a.item_id || ''} do cardápio`, a.caption ? h('div', { class: 'prewrap' }, a.caption) : null); break;
         default: what = h('pre', { class: 'json' }, JSON.stringify(a, null, 2));
       }
       return h('li', { class: 'ag-draft' },

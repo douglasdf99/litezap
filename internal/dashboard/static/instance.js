@@ -9,7 +9,6 @@ import { groupsPanel } from './groups.js';
 import { statusPanel, channelsPanel, labelsPanel } from './social.js';
 import { profilePanel } from './profile.js';
 import { catalogPanel } from './catalog.js';
-import { menuPanel } from './menu.js';
 import { chatActions, chatMarks } from './chatactions.js';
 import { editInstance, tagChips } from './platform.js';
 import { connectPanel, initials } from './wizard.js';
@@ -33,7 +32,7 @@ export function availableActions(state) {
 }
 
 const TABS = [
-  ['chats', 'Conversas'], ['groups', 'Grupos'], ['status', 'Status'], ['channels', 'Canais'], ['labels', 'Etiquetas'], ['menu', 'Cardápio'], ['catalog', 'Catálogo'],
+  ['chats', 'Conversas'], ['groups', 'Grupos'], ['status', 'Status'], ['channels', 'Canais'], ['labels', 'Etiquetas'], ['catalog', 'Catálogo'],
   ['pair', 'Conectar'], ['settings', 'Configurações'],
   ['agent', 'Atendente IA'], ['agents', 'Agentes'], ['profile', 'Perfil'], ['webhooks', 'Webhooks'], ['events', 'Eventos ao vivo'],
 ];
@@ -135,7 +134,7 @@ export function instanceView(id, { root, shell, setLive, openWizard }) {
       if (current && current.name === tab && current.update) { current.update(rest); return; }
       if (current && current.cleanup) current.cleanup();
       const make = { chats: chatsTab, pair: pairTab, settings: settingsTab, webhooks: webhooksTab, events: eventsTab, agent: agentPanel, agents: agentsPanel, groups: groupsPanel, profile: profilePanel,
-        status: statusPanel, channels: channelsPanel, labels: labelsPanel, catalog: catalogPanel, menu: menuPanel }[tab];
+        status: statusPanel, channels: channelsPanel, labels: labelsPanel, catalog: catalogPanel }[tab];
       current = { name: tab, ...make(ctx, rest) };
       mount(body, current.el);
       renderHeader();

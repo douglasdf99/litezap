@@ -28,9 +28,8 @@ var outputSchema = json.RawMessage(`{"type":"object","additionalProperties":fals
    "need":{"type":"string"},
    "preferred_time":{"type":"string"},
    "items":{"type":"array","items":{"type":"object","additionalProperties":false,
-     "required":["name","quantity","unit_price","options"],
-     "properties":{"name":{"type":"string"},"quantity":{"type":"number"},"unit_price":{"type":"number"},
-      "options":{"type":"array","items":{"type":"string"}}}}},
+     "required":["name","quantity","unit_price"],
+     "properties":{"name":{"type":"string"},"quantity":{"type":"number"},"unit_price":{"type":"number"}}}},
    "address":{"type":"string"},
    "notes":{"type":"string"}}}}}`)
 
@@ -56,8 +55,6 @@ type orderItem struct {
 	Name      string  `json:"name"`
 	Quantity  float64 `json:"quantity"`
 	UnitPrice float64 `json:"unit_price"`
-	// Options are the chosen menu options (choice names, e.g. "G", "Borda Catupiry").
-	Options []string `json:"options"`
 }
 
 // newCanary is a random marker placed in the system prompt: a reply containing it is
@@ -121,7 +118,7 @@ Answer only the customer's latest message(s), taking the whole conversation into
 		b.WriteString(`- "appointment_requested": you collected name, need and preferred day/time for a consultation or meeting. Fill customer_name, need, preferred_time (as the customer said it, plus an ISO date if clear). Tell the customer the team will confirm; never say it is booked.` + "\n")
 	}
 	if p.allows(ActionOrderDraft) {
-		fmt.Fprintf(&b, `- "order_draft": you have the items (catalog products only), quantities and delivery address (or pickup). Fill items with name exactly as in the catalog, quantity, unit_price and options (the chosen option choices by name, for example ["G", "Catupiry"]; [] when none), plus address and notes. Your reply must show the summary with the total in %s and ask the customer to confirm. Emit it again only when the order changes.`+"\n", p.Currency)
+		fmt.Fprintf(&b, `- "order_draft": you have the items (catalog products only), quantities and delivery address (or pickup). Fill items with name exactly as in the catalog, quantity and unit_price, plus address and notes. Your reply must show the summary with the total in %s and ask the customer to confirm. Emit it again only when the order changes.`+"\n", p.Currency)
 	}
 	b.WriteString("Unused event fields are empty strings or an empty list.\n")
 	var catalog []KnowledgeEntry
@@ -145,14 +142,10 @@ Answer only the customer's latest message(s), taking the whole conversation into
 	if len(catalog) > 0 {
 		writeCatalog(&b, p.Currency, catalog)
 	}
-	if len(p.menu) > 0 {
-		writeMenu(&b, p.Currency, p.menu)
-	}
 	b.WriteString(`
 # Output
 Answer with ONE JSON object and nothing else:
 {"reply": "<message to the customer, or empty to stay silent>", "handoff": false, "handoff_note": "", "event": {"type": "none", "customer_name": "", "need": "", "preferred_time": "", "items": [], "address": "", "notes": ""}}
-Each event item is {"name": "", "quantity": 1, "unit_price": 0, "options": []}.
 Stay silent (empty reply) only when the customer's message needs no answer (for example "ok", a thank-you after the goodbye, or a sticker).
 `)
 	return b.String()

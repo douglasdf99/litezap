@@ -5,28 +5,51 @@ description: O que mudou em cada marco do LiteZap.
 
 As versões seguem os marcos do motor. Mudanças que quebram compatibilidade são marcadas com **Quebra**.
 
+## Cardápio removido
+
+O LiteZap é uma API de WhatsApp: o catálogo próprio (Cardápio) saiu do produto. O catálogo nativo do WhatsApp
+continua igual: `GET /catalog*`, `type: "product"`, `catalog_link`, `order.received`, `GET /orders` e o Atendente
+IA com `knowledge_source: "catalog"`.
+
+**Removido** (**Quebra**)
+
+- As rotas `/v1/instances/{id}/menu/*` (itens, categorias, opções, fotos, coleções, importações, pedidos montados e
+  CSV) e a aba **Cardápio** do painel.
+- Os tipos `menu_item` e `menu` em `POST /messages` (agora respondem `400 validation_failed`).
+- As ferramentas MCP do Cardápio (`get_menu`, `get_menu_item`, `search_menu`, `get_collection`, `send_menu`,
+  `send_menu_item`, `send_collection`, `send_order_summary`, as de montar e editar o cardápio e as de pedidos
+  montados) e o comando `/litezap:montar-cardapio` do plugin. Os agentes deixam de recebê-las; um rascunho
+  pendente de uma delas falha ao ser aprovado ("tool is not available").
+- `knowledge_source: "menu"` do Atendente IA. Na migração, os perfis que o usavam passam para `catalog` quando a
+  instância tinha catálogo do WhatsApp (cardápio copiado dele ou pedidos recebidos) e para `manual` nos outros
+  casos; um perfil antigo que ainda diga `menu` é lido como `manual`. O `agent.order_draft` volta ao comportamento
+  anterior ao Cardápio (preços da base de conhecimento ou do catálogo, sem `order_draft_id`).
+- Dados: a migração `0018_drop_menu.sql` apaga as tabelas do Cardápio (`menu_categories`, `menu_items`,
+  `menu_options`, `menu_item_images`, `menu_collections`, `menu_collection_items` e `order_drafts`), e a pasta
+  `data/menu/` (fotos) é apagada na primeira inicialização.
+
 ## Cardápio completo (paridade com o catálogo do WhatsApp)
 
 Tudo continua no LiteZap: nada é escrito na Meta ou no WhatsApp. Migração nova `0017_menu_catalog.sql`.
 
 **Novo**
 
-- [Coleções](/docs/guias/cardapio/#coleções) ("Promoções", "Mais vendidos"): itens de qualquer categoria, capa de
+- Coleções ("Promoções", "Mais vendidos"): itens de qualquer categoria, capa de
   uma foto, ordem, ativa/inativa, texto e envio com as fotos dos primeiros itens. Até 50 coleções com 100 itens.
-- [Preço promocional](/docs/guias/cardapio/#preços-e-promoções) com data final: menor que o preço, mostrado como
+- Preço promocional com data final: menor que o preço, mostrado como
   `~R$ 50,00~ *R$ 39,90*`; pedidos, Atendente IA e agentes usam o preço efetivo.
-- [Até 10 fotos por item](/docs/guias/cardapio/#fotos), com a principal; envio em álbum (`album: true`). A API de
+- Até 10 fotos por item, com a principal; envio em álbum (`album: true`). A API de
   foto única continua e troca a foto principal.
-- Link e SKU em todos os itens; [oculto](/docs/guias/cardapio/#esgotado-e-oculto) (`hidden`): nunca aparece para
+- Link e SKU em todos os itens; oculto (`hidden`): nunca aparece para
   clientes, atendente ou agentes, diferente de esgotado.
-- [Busca e filtros](/docs/guias/cardapio/#buscar-e-filtrar) (`GET /menu/items?q=…`, `search_menu`),
-  [duplicar item](/docs/guias/cardapio/#duplicar) e [alterações em massa](/docs/guias/cardapio/#alterações-em-massa)
+- Busca e filtros (`GET /menu/items?q=…`, `search_menu`),
+  duplicar item e alterações em massa
   com prévia (`POST /menu/items/bulk`).
-- [Pedidos montados](/docs/guias/cardapio/#pedidos-montados): o motor de pedidos calcula o carrinho com opções,
+- Pedidos montados: o motor de pedidos calcula o carrinho com opções,
   promoções e disponibilidade (`POST /menu/orders`), guarda o rascunho, envia o resumo pela fila
   (`POST /menu/orders/{id}/send`) e acompanha o status (draft, sent, confirmed, cancelled). O
   `agent.order_draft` do Atendente IA usa o mesmo motor, grava o mesmo rascunho e traz `order_draft_id`.
-- [Exportar CSV](/docs/guias/cardapio/#exportar-planilha-csv) (`GET /menu/export.csv`), com proteção contra
+- Exportar CSV (`GET /menu/export.csv`), com proteção contra
   injeção de fórmula; a importação lê as colunas novas `preco_promocional`, `promocao_ate`, `link`, `colecoes`,
   `fotos` (links separados por `|`) e `oculto`.
 - Cópia do catálogo do WhatsApp (só leitura): todas as fotos, link, `retailer_id` como SKU, preço promocional e as
@@ -37,7 +60,7 @@ Tudo continua no LiteZap: nada é escrito na Meta ou no WhatsApp. Migração nov
   `list_order_drafts`, `get_order_draft`, `update_order_draft_status`, `get_menu_text`, `export_menu_csv`,
   `create_menu_collection`, `update_menu_collection`, `delete_menu_collection`, `set_menu_collection_items`,
   `reorder_menu_collections`, `add_menu_item_photo`, `remove_menu_item_photo`, `reorder_menu_item_photos`,
-  `set_menu_item_main_photo`, `duplicate_menu_item` e `bulk_update_menu_items`. Veja [Ferramentas MCP](/docs/mcp/ferramentas/#cardápio).
+  `set_menu_item_main_photo`, `duplicate_menu_item` e `bulk_update_menu_items`. Veja Ferramentas MCP.
 - Painel: abas Itens, Coleções e Pedidos montados; galeria de fotos; prévia do preço riscado; seleção de vários
   itens com ações em massa.
 
@@ -59,7 +82,7 @@ Tudo continua no LiteZap: nada é escrito na Meta ou no WhatsApp. Migração nov
 
 **Novo**
 
-- [Montar o cardápio com a sua assinatura](/docs/guias/cardapio/#montar-com-a-sua-assinatura-claudechatgpt): o seu
+- Montar o cardápio com a sua assinatura: o seu
   Claude (Desktop ou Code) ou ChatGPT lê o texto, a foto do cardápio impresso ou a planilha e usa as ferramentas do
   LiteZap; sem Ollama e sem chave de API.
 - MCP: [ferramentas para montar e editar o cardápio](/docs/mcp/ferramentas/#montar-o-cardápio) —
@@ -79,17 +102,17 @@ Tudo continua no LiteZap: nada é escrito na Meta ou no WhatsApp. Migração nov
 
 **Novo**
 
-- [Cardápio](/docs/guias/cardapio/): o catálogo próprio do LiteZap, guardado no LiteZap por instância e **nunca
+- Cardápio: o catálogo próprio do LiteZap, guardado no LiteZap por instância e **nunca
   escrito na Meta** (sem conta de anúncios nem conta Business). Categorias, itens com preço em centavos, foto
   (upload ou link, reduzida para JPEG de até 1080 px), esgotado, SKU, tags e grupos de opções com acréscimos.
   Até 500 itens e 50 categorias.
-- API [Cardápio](/docs/api/cardapio/): `GET /menu`, `/menu/text`, criar, alterar, apagar e reordenar categorias,
+- API Cardápio: `GET /menu`, `/menu/text`, criar, alterar, apagar e reordenar categorias,
   itens e opções, `PUT /menu/items/{id}/available` e a foto do item.
 - Importações: planilha CSV com pré-visualização (`dry_run`) e preços brasileiros ("45,90", "R$ 1.234,50"),
   **Copiar do catálogo do WhatsApp** (só leitura, com as fotos) e **Montar com IA** com o provedor do Atendente IA
   (inclusive Ollama), sempre com revisão antes de salvar.
 - Envios pela fila: tipos `menu_item` (foto e legenda) e `menu` em `POST /messages`,
-  [`POST /menu/send`](/docs/api/cardapio/enviar-o-cardapio/) (divide cardápios longos, idempotente por
+  `POST /menu/send` (divide cardápios longos, idempotente por
   `client_message_id`) e `POST /menu/items/{id}/send`.
 - Atendente IA: `knowledge_source: "menu"`, sugerido para agentes novos quando há cardápio; o `agent.order_draft`
   recalcula os preços pelo cardápio somando as opções escolhidas (itens ganham `options`).

@@ -52,28 +52,22 @@ var RiskyGroups = []string{GroupReadOther, GroupOtherChats, GroupGroups}
 // tool the agent has. label_chat (etiquetas) may label any chat.
 var groupTools = map[string][]string{
 	GroupRead: {"get_instance_status", "list_chats", "get_messages", "get_message_status", "get_contact",
-		"list_groups", "get_group", "list_labels", "get_catalog", "get_product", "get_menu", "get_menu_item", "search_menu", "get_collection"},
+		"list_groups", "get_group", "list_labels", "get_catalog", "get_product"},
 	GroupReadOther: {"get_instance_status", "list_chats", "get_messages", "get_message_status", "get_contact",
-		"list_groups", "get_group", "list_labels", "list_contacts", "get_catalog", "get_product", "get_menu", "get_menu_item",
-		"search_menu", "get_collection"},
-	// send_menu and send_collection (the Cardápio as text) and send_order_summary (the
-	// cart priced by the menu) are replies; each of their messages counts as a send.
-	// send_collection's photos need midia too.
-	GroupReply:      {"send_message", "send_reaction", "send_menu", "send_collection", "send_order_summary"},
-	GroupOtherChats: {"send_message", "send_reaction", "send_menu", "send_collection", "send_order_summary"},
+		"list_groups", "get_group", "list_labels", "list_contacts", "get_catalog", "get_product"},
+	GroupReply:      {"send_message", "send_reaction"},
+	GroupOtherChats: {"send_message", "send_reaction"},
 	GroupLabels:     {"label_chat"},
 	GroupGroups:     {"create_group", "update_group", "manage_group_participants", "get_group_invite_link"},
 	// send_product (marco 12) carries the product photo: it needs midia, and like every
 	// send it is limited to the trigger chat unless enviar_outros_chats.
-	// send_menu_item carries the item's photo, so it needs midia too.
-	GroupMedia: {"send_media", "send_product", "send_menu_item"},
+	GroupMedia: {"send_media", "send_product"},
 }
 
 // writeTools change something outside LiteZap: in aprovacao they become drafts, in
 // sugerir notes, in the simulator dry runs.
 // get_group_invite_link only reads, but the link lets anyone join: it is handled as a write.
-var writeTools = map[string]bool{"send_message": true, "send_reaction": true, "send_media": true, "send_product": true,
-	"send_menu": true, "send_menu_item": true, "send_collection": true, "send_order_summary": true, "label_chat": true,
+var writeTools = map[string]bool{"send_message": true, "send_reaction": true, "send_media": true, "send_product": true, "label_chat": true,
 	"create_group": true, "update_group": true, "manage_group_participants": true, "get_group_invite_link": true}
 
 // groupChangeTools change a group (they count in limits.max_group_changes).
@@ -84,8 +78,7 @@ var chatReadTools = map[string]string{"get_messages": "chat", "get_contact": "co
 
 // sendTools send a message to their "to" (restricted to the trigger chat unless
 // enviar_outros_chats).
-var sendTools = map[string]bool{"send_message": true, "send_reaction": true, "send_media": true, "send_product": true,
-	"send_menu": true, "send_menu_item": true, "send_collection": true, "send_order_summary": true}
+var sendTools = map[string]bool{"send_message": true, "send_reaction": true, "send_media": true, "send_product": true}
 
 // Trigger types.
 const (

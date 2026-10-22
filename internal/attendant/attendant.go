@@ -22,7 +22,6 @@ import (
 
 	"github.com/douglasdf99/litezap/internal/agenthook"
 	"github.com/douglasdf99/litezap/internal/events"
-	"github.com/douglasdf99/litezap/internal/menu"
 	"github.com/douglasdf99/litezap/internal/service"
 	"github.com/douglasdf99/litezap/internal/store"
 )
@@ -152,6 +151,11 @@ func decodeProfile(row store.AttendantAgent) (Profile, error) {
 	}
 	p.Name = row.Name
 	p.normalize()
+	if p.KnowledgeSource == knowledgeRemovedMenu {
+		// The Cardápio was removed (migration 0018 already rewrote these profiles): a
+		// profile still pointing at it uses the typed products instead of failing.
+		p.KnowledgeSource = KnowledgeManual
+	}
 	return p, nil
 }
 
@@ -472,7 +476,6 @@ const messageTask = `Write your answer to the customer's new message as the JSON
 // run calls the model and turns its answer into a safe result.
 func (a *Attendant) run(ctx context.Context, in runInput) (runResult, error) {
 	in.profile = a.withCatalog(ctx, in.instanceID, in.profile)
-	in.profile = a.withMenu(ctx, in.instanceID, in.profile)
 	p, s := in.profile, in.settings
 	canary := newCanary()
 	task := messageTask
@@ -616,7 +619,6 @@ func (a *Attendant) buildEvents(in runInput, e modelEvent) []agenthook.AgentEven
 	base := map[string]any{"agent_id": in.agentID, "agent_name": p.Name, "mode": p.Mode}
 	str := func(s string, n int) string { return clip(strings.TrimSpace(s), n) }
 	var typ string
-	var order menu.OrderResult // the Cardápio's priced order (order_draft)
 	data := base
 	switch e.Type {
 	case "lead":
@@ -637,9 +639,6 @@ func (a *Attendant) buildEvents(in runInput, e modelEvent) []agenthook.AgentEven
 			return nil
 		}
 		items, total, allCatalog := priceOrder(p, e.Items)
-		if len(p.menuItems) > 0 { // the Cardápio prices items and their options
-			items, total, allCatalog, order = priceMenuOrder(p.menuItems, e.Items)
-		}
 		if len(items) == 0 {
 			return nil
 		}
@@ -657,22 +656,9 @@ func (a *Attendant) buildEvents(in runInput, e modelEvent) []agenthook.AgentEven
 	if a.duplicate(key, hash) {
 		return nil
 	}
-	// The chat's order draft (Cardápio > Pedidos montados): its id goes in the event, and
-	// it is written only once the event is published, like the dedupe mark.
-	var draft *plannedDraft
-	if len(order.Lines) > 0 {
-		draft = a.planOrderDraft(in.instanceID, in.chat, order, menu.OrderInfo{CustomerName: str(e.CustomerName, 200),
-			Address: str(e.Address, 500), Notes: str(e.Notes, 1000)})
-		if draft != nil {
-			data["order_draft_id"] = draft.row.ID
-		}
-	}
 	// Marked only once the hook published it: a reply discarded (human took over, send
 	// refused) leaves the event free to be emitted on the next answer.
-	return []agenthook.AgentEvent{{Type: typ, Data: data, Published: func() {
-		a.mark(key, hash)
-		a.writeOrderDraft(in.instanceID, draft)
-	}}}
+	return []agenthook.AgentEvent{{Type: typ, Data: data, Published: func() { a.mark(key, hash) }}}
 }
 
 // priceOrder keeps sane items, taking unit prices from the catalog when the name matches.

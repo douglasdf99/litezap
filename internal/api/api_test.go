@@ -114,8 +114,7 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 	vault, _ := attendant.NewVault([]byte("attendant-key-0123456789abcdef01"))
 	att := &attendant.Attendant{Store: st, Vault: vault}
 	attAdmin := &attendant.Admin{A: att}
-	opt.Attendant = attAdmin                                                                                   // spec 4.7
-	opt.Menu = &service.Menu{Store: st, DataDir: dir, Fetcher: msg.Fetcher, Catalog: msg.Catalog, Sender: msg} // Cardápio
+	opt.Attendant = attAdmin // spec 4.7
 	// LiteZap agents: the MCP tool table in process, the attendant's provider.
 	deps := mcp.HTTPDeps{Instances: svc, Messaging: msg, Events: bus, Groups: groups, Account: acct, Social: social, Attendant: attAdmin}
 	opt.Agents = &agents.Runner{Store: st, Sessions: agents.FromAttendant(att), Events: bus, Log: log,

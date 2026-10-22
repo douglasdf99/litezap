@@ -107,19 +107,6 @@ miniatura, pela fila como qualquer envio. Produtos ocultos, em análise ou sem f
 `footer` até 60. Veja [Catálogo e pedidos](/docs/guias/catalogo-e-pedidos/). Para mandar o catálogo inteiro,
 envie o `catalog_link` de `GET /catalog` como texto com `link_preview: "auto"`.
 
-### Item e cardápio do LiteZap <span class="lz-badge lz-badge--ok">Novo</span>
-
-```json
-{ "to": "5511999999999", "type": "menu_item", "menu_item_id": "mitm_0a1b2c3d4e5f6a7b", "caption": "A pizza do dia!" }
-{ "to": "5511999999999", "type": "menu", "menu_category_id": "mcat_1a2b3c4d5e6f7a8b" }
-```
-
-Do [Cardápio](/docs/guias/cardapio/), o catálogo próprio do LiteZap (não precisa de conta Business nem de
-catálogo no WhatsApp). `menu_item` envia a foto do item com a legenda (nome, preço, descrição e opções), ou só o
-texto se ele não tiver foto; `caption` opcional vira a primeira linha. `menu` envia o cardápio (ou uma categoria)
-como um texto agrupado por categoria; se precisar de mais de uma mensagem, use
-[`POST /menu/send`](/docs/api/cardapio/enviar-o-cardapio/), que divide. Itens esgotados não são enviados.
-
 ## Ações sobre mensagens <span class="lz-badge lz-badge--ok">M6</span>
 
 `edit`, `revoke` e `pin` usam `message_id` (id do LiteZap ou `wa_message_id`); com id do LiteZap, `to` é opcional.

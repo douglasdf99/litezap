@@ -38,23 +38,11 @@ func TestToolList(t *testing.T) {
 	}
 	want := []string{"block_contact", "check_numbers", "create_group", "delete_message", "edit_message", "follow_channel",
 		"get_attendant", "get_attendant_agent", "get_business_profile", "get_catalog", "get_channel", "get_channel_messages", "get_contact",
-		"get_contact_about", "get_group", "get_group_invite_link", "get_instance_status", "get_menu", "get_menu_item", "get_message_status", "get_messages", "get_order",
+		"get_contact_about", "get_group", "get_group_invite_link", "get_instance_status", "get_message_status", "get_messages", "get_order",
 		"get_product", "get_profile_picture", "get_qr", "label_chat", "list_blocked", "list_channels", "list_chats", "list_contacts", "list_groups",
 		"list_instances", "list_labels", "list_status_updates",
-		"manage_group_participants", "mark_read", "send_contact", "send_location", "send_media", "send_menu", "send_menu_item", "send_message", "send_product", "send_reaction",
-		"unblock_contact", "update_business_profile", "update_chat", "update_group", "wait_for_events",
-		// Building the Cardápio (the user's assistant only).
-		"add_menu_option_group", "create_menu_category", "create_menu_item", "delete_menu_category", "delete_menu_item",
-		"delete_menu_option_group", "import_menu_rows", "reorder_menu", "set_menu_item_available", "set_menu_item_image_url",
-		"update_menu_category", "update_menu_item", "update_menu_option_group",
-		// Cardápio parity with the WhatsApp catalog: reads and sends (agents may get them) and the
-		// assistant-only collections, photos, bulk, duplicate, order drafts, text and CSV.
-		"search_menu", "get_collection", "send_collection", "send_order_summary",
-		"create_order_draft", "list_order_drafts", "get_order_draft", "update_order_draft_status", "get_menu_text", "export_menu_csv",
-		"create_menu_collection", "update_menu_collection", "delete_menu_collection", "set_menu_collection_items", "reorder_menu_collections",
-		"add_menu_item_photo", "remove_menu_item_photo", "reorder_menu_item_photos", "set_menu_item_main_photo", "duplicate_menu_item",
-		"bulk_update_menu_items"}
-	slices.Sort(want)
+		"manage_group_participants", "mark_read", "send_contact", "send_location", "send_media", "send_message", "send_product", "send_reaction",
+		"unblock_contact", "update_business_profile", "update_chat", "update_group", "wait_for_events"}
 	slices.Sort(names)
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v", names)

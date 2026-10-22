@@ -182,7 +182,7 @@ func (s *Instances) Delete(ctx context.Context, id string) error {
 		return mapErr(err)
 	}
 	// The worker is stopped; if the rest fails, let the instance be started again.
-	for _, dir := range []string{"instances", "media", "outbox", "menu"} {
+	for _, dir := range []string{"instances", "media", "outbox"} {
 		if err := os.RemoveAll(filepath.Join(s.DataDir, dir, id)); err != nil {
 			s.Manager.Unretire(id)
 			return err

@@ -300,12 +300,6 @@ func (ad *Admin) CreateAgent(ctx context.Context, id string, p Profile) (AgentVi
 	if err := ad.instance(ctx, id); err != nil {
 		return AgentView{}, err
 	}
-	// The Cardápio is the recommended product list once the instance has one.
-	if strings.TrimSpace(p.KnowledgeSource) == "" {
-		if _, n, err := ad.A.Store.MenuCounts(ctx, id); err == nil && n > 0 {
-			p.KnowledgeSource = KnowledgeMenu
-		}
-	}
 	p, err := prepare(p, true)
 	if err != nil {
 		return AgentView{}, err

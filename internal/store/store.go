@@ -43,7 +43,11 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error                   { return s.db.Close() }
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
-func (s *Store) migrate(ctx context.Context) error {
+func (s *Store) migrate(ctx context.Context) error { return s.migrateUpTo(ctx, "") }
+
+// migrateUpTo applies the pending migrations whose file name is <= last ("" applies
+// them all). Tests use it to build a database as an older version left it.
+func (s *Store) migrateUpTo(ctx context.Context, last string) error {
 	if _, err := s.db.ExecContext(ctx,
 		`CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
@@ -53,6 +57,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	for _, e := range entries { // ReadDir returns entries sorted by name
+		if last != "" && e.Name() > last {
+			break
+		}
 		var n int
 		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, e.Name()).Scan(&n); err != nil {
 			return err

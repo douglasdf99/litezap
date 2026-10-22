@@ -7,12 +7,6 @@ Desde o marco 12 o LiteZap lê o catálogo do WhatsApp Business, envia produtos 
 feitos pelo carrinho. É a **fase 1**: tudo o que é leitura ou mensagem comum. Criar e editar produtos continua no
 celular. A referência completa está em [Catálogo e pedidos](/docs/api/catalogo/).
 
-:::tip[Quer montar um catálogo?]
-Use o [Cardápio](/docs/guias/cardapio/), o catálogo próprio do LiteZap: categorias, preços, opções, fotos e
-esgotados, montados no painel, por planilha, por IA ou copiados deste catálogo com um clique. Ele fica no
-LiteZap e nunca é escrito na Meta, então não exige ligar o número a uma conta de anúncios.
-:::
-
 ```bash
 B=localhost:8787/v1/instances/$ID
 curl -s "$B/catalog" -H "Authorization: Bearer $TOK"                    # o catálogo do próprio número
@@ -120,8 +114,7 @@ Além disso, cada produto passa pela política de comércio da Meta, e recusas r
 ou a conta. Por isso, por enquanto:
 
 > Crie e edite os produtos no **app WhatsApp Business** do celular, em **Ferramentas comerciais > Catálogo**.
-> Eles aparecem no LiteZap em alguns minutos. Para montar o catálogo pelo LiteZap, use o
-> [Cardápio](/docs/guias/cardapio/): ele fica no LiteZap e não toca na Meta.
+> Eles aparecem no LiteZap em alguns minutos.
 
 Se a fase 2 vier, será **opt-in por instância**, com aviso claro e limites duros de ritmo.
 

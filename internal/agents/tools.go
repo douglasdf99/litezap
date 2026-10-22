@@ -220,12 +220,12 @@ func (e *executor) run(ctx context.Context, call attendant.ToolCall, st *Step) (
 	}
 	switch {
 	case e.dryRun:
-		e.count(call.Name, chat, args)
+		e.count(call.Name, chat)
 		st.Outcome = OutcomeDryRun
 		return string(mustJSON(map[string]any{"executed": false, "dry_run": true, "would": map[string]any{"tool": call.Name, "args": args},
 			"note": "Simulation: nothing was sent or changed. Continue as if it had worked."})), false
 	case e.mode == ModeSuggest:
-		e.count(call.Name, chat, args)
+		e.count(call.Name, chat)
 		st.Outcome = OutcomeNote
 		e.actions = append(e.actions, call.Name+":note")
 		return string(mustJSON(map[string]any{"executed": false, "note": "This agent only suggests: the action was recorded " +
@@ -237,7 +237,7 @@ func (e *executor) run(ctx context.Context, call attendant.ToolCall, st *Step) (
 			st.Outcome = OutcomeError
 			return toolError("could not save the draft: internal error")
 		}
-		e.count(call.Name, chat, args)
+		e.count(call.Name, chat)
 		st.Outcome, st.DraftID = OutcomeDraft, d.ID
 		e.drafts++
 		e.actions = append(e.actions, call.Name+":draft")
@@ -256,7 +256,7 @@ func (e *executor) run(ctx context.Context, call attendant.ToolCall, st *Step) (
 		args["wait"] = false
 		args["client_message_id"] = "agent:" + e.runID + ":" + strconv.Itoa(e.n)
 	}
-	e.count(call.Name, chat, args) // counted even if it fails: a retry loop must still hit the caps
+	e.count(call.Name, chat) // counted even if it fails: a retry loop must still hit the caps
 	out, err := def.Call(ctx, mustJSON(args))
 	if err != nil {
 		st.Outcome = OutcomeError
@@ -274,12 +274,11 @@ func (e *executor) run(ctx context.Context, call attendant.ToolCall, st *Step) (
 	return string(out), false
 }
 
-// count records an accepted write in the run's caps (send_menu counts the messages it
-// may send: its max_messages, set by checkWrite).
-func (e *executor) count(tool, chat string, args map[string]any) {
+// count records an accepted write in the run's caps.
+func (e *executor) count(tool, chat string) {
 	e.writes++
 	if sendTools[tool] {
-		e.sends += sendWeight(tool, args)
+		e.sends++
 		e.recipients[chat] = true
 	}
 	if groupChangeTools[tool] {
@@ -303,37 +302,6 @@ func (e *executor) checkWrite(tool string, args map[string]any) (string, error) 
 		}
 	}
 	l := e.agent.Limits
-	left := max(l.MaxSends-e.sends, 1)
-	switch tool {
-	case "send_menu", "send_collection":
-		// A long menu or collection is several messages: it may send at most the sends
-		// left in this run (3 by default), and it is refused when it needs more.
-		n := 3
-		if f, ok := args["max_messages"].(float64); ok && f >= 1 {
-			n = int(f)
-		}
-		args["max_messages"] = min(n, 10, left)
-		if tool == "send_collection" {
-			// Its photos are more messages, within the sends left, and need midia.
-			photos := 0
-			if f, ok := args["photos"].(float64); ok && f > 0 {
-				photos = int(f)
-			}
-			if !e.agent.has(GroupMedia) {
-				photos = 0
-			}
-			args["photos"] = min(photos, 10, max(left-args["max_messages"].(int), 0))
-		}
-	case "send_menu_item":
-		if album, _ := args["album"].(bool); album {
-			// An album is one message per photo, within the sends left.
-			n := 10
-			if f, ok := args["max_photos"].(float64); ok && f >= 1 {
-				n = int(f)
-			}
-			args["max_photos"] = min(n, 10, left)
-		}
-	}
 	switch {
 	case e.writes >= l.MaxWrites:
 		return "", fmt.Errorf("at most %d write actions per run", l.MaxWrites)
@@ -345,32 +313,6 @@ func (e *executor) checkWrite(tool string, args map[string]any) (string, error) 
 		return "", fmt.Errorf("at most %d group changes per run", l.MaxGroupChanges)
 	}
 	return chat, nil
-}
-
-// sendWeight is how many sends a send tool call counts for: the messages a menu or a
-// collection may use (its max_messages, plus a collection's photos) and the photos of an
-// album.
-func sendWeight(tool string, args map[string]any) int {
-	num := func(k string, def int) int {
-		switch n := args[k].(type) {
-		case int:
-			return n
-		case float64:
-			return int(n)
-		}
-		return def
-	}
-	switch tool {
-	case "send_menu":
-		return max(num("max_messages", 3), 1)
-	case "send_collection":
-		return max(num("max_messages", 3), 1) + max(num("photos", 0), 0)
-	case "send_menu_item":
-		if album, _ := args["album"].(bool); album {
-			return max(num("max_photos", 10), 1)
-		}
-	}
-	return 1
 }
 
 // checkMentions refuses mentioning everyone, whatever its spelling, and malformed lists.

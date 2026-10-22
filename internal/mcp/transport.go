@@ -25,7 +25,6 @@ type HTTPDeps struct {
 	Account   AccountService   // marco 9 tools
 	Social    SocialService    // marco 10 tools
 	Attendant AttendantService // built-in attendant read tools (spec 4.7)
-	Menu      MenuService      // Cardápio tools (LiteZap's own catalog)
 	Version   string
 	Logger    *slog.Logger
 	// PublicHost is the host[:port] of public_url, if any. The SDK rejects requests that
@@ -38,7 +37,7 @@ type HTTPDeps struct {
 // and the agents' tool table via Catalog).
 func (d HTTPDeps) Local(sc service.Scope) *Local {
 	return &Local{Instances: d.Instances, Messaging: d.Messaging, Events: d.Events, Groups: d.Groups, Caller: sc, Account: d.Account,
-		Social: d.Social, Attendant: d.Attendant, Menu: d.Menu}
+		Social: d.Social, Attendant: d.Attendant}
 }
 
 // NewHTTPHandler serves MCP streamable HTTP. It must sit behind the API authentication,

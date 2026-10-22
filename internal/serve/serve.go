@@ -3,7 +3,6 @@ package serve
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,7 +17,6 @@ import (
 	"github.com/douglasdf99/litezap/internal/agenthook"
 	"github.com/douglasdf99/litezap/internal/agents"
 	"github.com/douglasdf99/litezap/internal/api"
-	"github.com/douglasdf99/litezap/internal/apierr"
 	"github.com/douglasdf99/litezap/internal/attendant"
 	"github.com/douglasdf99/litezap/internal/autoread"
 	"github.com/douglasdf99/litezap/internal/catalog"
@@ -252,17 +250,11 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		Fetcher: msg.Fetcher, Defaults: cfg.InstanceDefaults, DefaultProxy: cfg.DefaultProxyURL}
 	social := &service.Social{Store: st, Workers: mgr, Messaging: msg, Sending: cl.sending, Fetcher: msg.Fetcher, Events: bus}
 	attAdmin := &attendant.Admin{A: att}
-	// Cardápio: LiteZap's own catalog (never written to Meta); sends take the guarded path.
-	menuSvc := &service.Menu{Store: st, DataDir: cfg.DataDir, Fetcher: msg.Fetcher, Catalog: msg.Catalog, Sender: guarded,
-		AI: menuAI(att)}
-	// Photo files no item points at (a crash mid-upload, a deleted instance): before serving.
-	if n, err := menuSvc.SweepImages(ctx); err != nil {
-		log.Warn("menu: photo sweep failed", "err", err)
-	} else if n > 0 {
-		log.Info("menu: removed orphan photos", "count", n)
-	}
+	// The Cardápio was removed: its photo folder (data/menu) is deleted once, on the
+	// first start after the upgrade (its tables are dropped by migration 0018).
+	removeMenuData(cfg.DataDir, log)
 	mcpDeps := mcp.HTTPDeps{Instances: svc, Messaging: guarded, Events: bus, Groups: groups, Logger: log, Account: acct,
-		Social: social, Attendant: attAdmin, Menu: menuSvc, PublicHost: publicHost(cfg.PublicURL)}
+		Social: social, Attendant: attAdmin, PublicHost: publicHost(cfg.PublicURL)}
 	// The agents call the same tools as MCP, in process, with the instance's own scope.
 	agentsRunner.Tools = func(id string) []agents.ToolDef { return agentTools(mcpDeps, id, log) }
 	agentsRunner.Events = bus
@@ -286,7 +278,6 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		Groups:     groups,
 		Account:    acct,
 		Social:     social,
-		Menu:       menuSvc,
 		// Marco 11: IP allowlists, scoped API keys, metadata, bulk, hosted pairing.
 		Platform: &service.Platform{Store: st, Instances: svc},
 		Pairing:  links,
@@ -401,28 +392,21 @@ func workerEnv(st *store.Store, cfg config.Config) func(context.Context, string)
 	}
 }
 
-// menuAI is "Montar com IA" over the attendant's configured provider; its call errors
-// become API errors (the provider's own message is not shown: it may carry details).
-func menuAI(att *attendant.Attendant) service.MenuAI { return menuAIFrom(att.Extract) }
-
-func menuAIFrom(extract service.MenuAI) service.MenuAI {
-	return func(ctx context.Context, instanceID, system, user string, schema json.RawMessage) (string, error) {
-		out, err := extract(ctx, instanceID, system, user, schema)
-		if err == nil {
-			return out, nil
-		}
-		var ce *agenthook.CallError
-		if errors.As(err, &ce) {
-			switch ce.Reason {
-			case "not_configured":
-				return "", apierr.New(http.StatusConflict, "ai_not_configured", ce.Detail, false)
-			case "daily_cap":
-				return "", apierr.New(http.StatusTooManyRequests, "rate_limited", ce.Detail, true)
-			}
-		}
-		// Anything else (provider, store, timeout) is generic: its text may carry details.
-		return "", apierr.New(http.StatusBadGateway, "ai_error", "the AI provider failed; try again", true)
+// removeMenuData deletes the photo folder of the removed Cardápio (data/menu), if it is
+// still there. A failure is only logged: the folder is never read again.
+func removeMenuData(dataDir string, log *slog.Logger) {
+	if dataDir == "" {
+		return
 	}
+	dir := filepath.Join(dataDir, "menu")
+	if _, err := os.Lstat(dir); err != nil {
+		return
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		log.Warn("removed Cardápio: could not delete its photo folder", "dir", dir, "err", err)
+		return
+	}
+	log.Info("removed Cardápio: deleted its photo folder", "dir", dir)
 }
 
 // catalogKnowledge lists an instance's own catalog as the attendant's product knowledge

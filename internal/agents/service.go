@@ -659,22 +659,16 @@ func (r *Runner) revalidate(ctx context.Context, instanceID string, d store.Agen
 	}
 	for _, s := range siblings {
 		if s.ID != d.ID && (s.Status == DraftApproved || s.Status == DraftApproving) {
-			var sargs map[string]any
-			_ = json.Unmarshal([]byte(s.ArgsJSON), &sargs)
-			ex.count(s.Tool, s.ChatJID, sargs)
+			ex.count(s.Tool, s.ChatJID)
 		}
 	}
 	var args map[string]any
 	if err := json.Unmarshal([]byte(d.ArgsJSON), &args); err != nil || args == nil {
 		return errors.New("the stored call is corrupt")
 	}
-	stored := sendWeight(d.Tool, args)
 	chat, err := ex.checkWrite(d.Tool, args)
 	if err != nil {
 		return err
-	}
-	if sendWeight(d.Tool, args) < stored { // send_menu: fewer sends left than it may use
-		return fmt.Errorf("at most %d sends per run", a.Limits.MaxSends)
 	}
 	if chat != d.ChatJID {
 		return errors.New("the recipient no longer matches the draft")
