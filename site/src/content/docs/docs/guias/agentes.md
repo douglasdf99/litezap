@@ -98,13 +98,13 @@ o seu sistema (webhook, n8n).
 
 | Grupo | Ferramentas | Observação |
 |---|---|---|
-| `ler` | `get_messages`, `get_message_status`, `get_contact` e `get_group` **só da conversa do gatilho**; `list_chats` (só nomes, horário e não lidas, sem texto), `list_groups`, `list_labels`, `get_instance_status`, `get_catalog` e `get_product` (só o catálogo do próprio número), `get_menu` e `get_menu_item` (o [Cardápio](/docs/guias/cardapio/)) | Padrão |
+| `ler` | `get_messages`, `get_message_status`, `get_contact` e `get_group` **só da conversa do gatilho**; `list_chats` (só nomes, horário e não lidas, sem texto), `list_groups`, `list_labels`, `get_instance_status`, `get_catalog` e `get_product` (só o catálogo do próprio número), `get_menu`, `get_menu_item`, `search_menu` e `get_collection` (o [Cardápio](/docs/guias/cardapio/), sem itens ocultos nem coleções inativas) | Padrão |
 | `ler_outros_chats` | As mesmas leituras em **qualquer** conversa, mais `list_contacts` (agenda) | **Risco**: o conteúdo de outras conversas vai para o provedor de IA; pede confirmação |
-| `responder_no_chat` | `send_message`, `send_reaction`, `send_menu` (o Cardápio em texto) | Só no chat que disparou a execução. Padrão. Cada mensagem de `send_menu` conta em `max_sends`: o motor limita `max_messages` aos envios que restam |
-| `enviar_outros_chats` | `send_message`, `send_reaction`, `send_menu` em qualquer chat | **Risco**: pede confirmação no painel |
+| `responder_no_chat` | `send_message`, `send_reaction`, `send_menu` (o Cardápio em texto), `send_collection` (uma coleção em texto) e `send_order_summary` (o resumo de um pedido calculado pelo cardápio) | Só no chat que disparou a execução. Padrão. Cada mensagem de `send_menu` e `send_collection` conta em `max_sends`: o motor limita `max_messages` (e as fotos da coleção) aos envios que restam |
+| `enviar_outros_chats` | `send_message`, `send_reaction`, `send_menu`, `send_collection` e `send_order_summary` em qualquer chat (um pedido só vai para o próprio chat) | **Risco**: pede confirmação no painel |
 | `etiquetas` | `label_chat` | Só contas Business. Pode etiquetar **qualquer** conversa |
 | `grupos` | `create_group`, `update_group`, `manage_group_participants`, `get_group_invite_link` | **Risco de banimento**: pede confirmação. O link de convite conta como escrita (rascunho na aprovação) |
-| `midia` | `send_media`, `send_product` (produto do catálogo do próprio número), `send_menu_item` (item do Cardápio com foto) | Segue a regra de chat de `responder_no_chat` e os limites de envio da execução |
+| `midia` | `send_media`, `send_product` (produto do catálogo do próprio número), `send_menu_item` (item do Cardápio com foto; `album` manda todas as fotos, uma mensagem cada) e as fotos de `send_collection` | Segue a regra de chat de `responder_no_chat` e os limites de envio da execução |
 
 O **motor** aplica as permissões, não só o prompt. Um envio para outro chat sem `enviar_outros_chats` é recusado,
 mesmo que uma mensagem convença o modelo a tentar, e a recusa aparece como passo `refused` na execução. Ferramentas

@@ -5,6 +5,56 @@ description: O que mudou em cada marco do LiteZap.
 
 As versões seguem os marcos do motor. Mudanças que quebram compatibilidade são marcadas com **Quebra**.
 
+## Cardápio completo (paridade com o catálogo do WhatsApp)
+
+Tudo continua no LiteZap: nada é escrito na Meta ou no WhatsApp. Migração nova `0017_menu_catalog.sql`.
+
+**Novo**
+
+- [Coleções](/docs/guias/cardapio/#coleções) ("Promoções", "Mais vendidos"): itens de qualquer categoria, capa de
+  uma foto, ordem, ativa/inativa, texto e envio com as fotos dos primeiros itens. Até 50 coleções com 100 itens.
+- [Preço promocional](/docs/guias/cardapio/#preços-e-promoções) com data final: menor que o preço, mostrado como
+  `~R$ 50,00~ *R$ 39,90*`; pedidos, Atendente IA e agentes usam o preço efetivo.
+- [Até 10 fotos por item](/docs/guias/cardapio/#fotos), com a principal; envio em álbum (`album: true`). A API de
+  foto única continua e troca a foto principal.
+- Link e SKU em todos os itens; [oculto](/docs/guias/cardapio/#esgotado-e-oculto) (`hidden`): nunca aparece para
+  clientes, atendente ou agentes, diferente de esgotado.
+- [Busca e filtros](/docs/guias/cardapio/#buscar-e-filtrar) (`GET /menu/items?q=…`, `search_menu`),
+  [duplicar item](/docs/guias/cardapio/#duplicar) e [alterações em massa](/docs/guias/cardapio/#alterações-em-massa)
+  com prévia (`POST /menu/items/bulk`).
+- [Pedidos montados](/docs/guias/cardapio/#pedidos-montados): o motor de pedidos calcula o carrinho com opções,
+  promoções e disponibilidade (`POST /menu/orders`), guarda o rascunho, envia o resumo pela fila
+  (`POST /menu/orders/{id}/send`) e acompanha o status (draft, sent, confirmed, cancelled). O
+  `agent.order_draft` do Atendente IA usa o mesmo motor, grava o mesmo rascunho e traz `order_draft_id`.
+- [Exportar CSV](/docs/guias/cardapio/#exportar-planilha-csv) (`GET /menu/export.csv`), com proteção contra
+  injeção de fórmula; a importação lê as colunas novas `preco_promocional`, `promocao_ate`, `link`, `colecoes`,
+  `fotos` (links separados por `|`) e `oculto`.
+- Cópia do catálogo do WhatsApp (só leitura): todas as fotos, link, `retailer_id` como SKU, preço promocional e as
+  coleções do WhatsApp como coleções do LiteZap.
+- Texto para compartilhar por coleção (`GET /menu/collections/{id}/text`, `GET /menu/text?collection_id=…`).
+- MCP: `search_menu`, `get_collection`, `send_collection`, `send_order_summary` (também para os agentes, nos grupos
+  `ler` e `responder_no_chat`, com os limites de envio) e, só para a IA do usuário, `create_order_draft`,
+  `list_order_drafts`, `get_order_draft`, `update_order_draft_status`, `get_menu_text`, `export_menu_csv`,
+  `create_menu_collection`, `update_menu_collection`, `delete_menu_collection`, `set_menu_collection_items`,
+  `reorder_menu_collections`, `add_menu_item_photo`, `remove_menu_item_photo`, `reorder_menu_item_photos`,
+  `set_menu_item_main_photo`, `duplicate_menu_item` e `bulk_update_menu_items`. Veja [Ferramentas MCP](/docs/mcp/ferramentas/#cardápio).
+- Painel: abas Itens, Coleções e Pedidos montados; galeria de fotos; prévia do preço riscado; seleção de vários
+  itens com ações em massa.
+
+**Corrigido**
+
+- `get_menu` e `get_menu_item` devolvem as `tags` dos itens.
+- A prévia da importação lista em `errors` o motivo de cada linha inválida (`linha 3: preço inválido 'abc' …`),
+  com linha e campo em `error_details` e um `error` por linha; `file_errors` traz os problemas do arquivo.
+- `get_menu` aceita `include_empty: true` para achar e apagar categorias vazias pelo nome; `GET /menu` aceita
+  `include_empty=false` e `include_hidden=false`.
+
+**Mudou**
+
+- Itens copiados do catálogo do WhatsApp guardam a origem em `source_ref` (`wa:<id>`) e o `sku` passa a ser o
+  `retailer_id`; itens copiados antes continuam com o `sku` antigo e não são copiados de novo.
+- O `agent.order_draft` ganhou `on_sale` por item e `order_draft_id`.
+
 ## Cardápio com a sua assinatura (Claude/ChatGPT)
 
 **Novo**

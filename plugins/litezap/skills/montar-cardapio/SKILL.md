@@ -2,7 +2,7 @@
 name: montar-cardapio
 description: Monta ou atualiza o Cardápio do LiteZap a partir de um texto colado, da foto de um cardápio impresso ou de uma planilha/CSV, com prévia (dry run) e confirmação antes de salvar. Use quando o usuário pedir para montar, cadastrar, importar ou atualizar o cardápio, o menu ou a lista de produtos e preços do LiteZap.
 argument-hint: "[cole o texto do cardápio, anexe a foto ou o CSV]"
-allowed-tools: mcp__plugin_litezap_litezap__list_instances, mcp__plugin_litezap_litezap__get_instance_status, mcp__plugin_litezap_litezap__get_menu, mcp__plugin_litezap_litezap__get_menu_item, mcp__litezap__list_instances, mcp__litezap__get_instance_status, mcp__litezap__get_menu, mcp__litezap__get_menu_item
+allowed-tools: mcp__plugin_litezap_litezap__list_instances, mcp__plugin_litezap_litezap__get_instance_status, mcp__plugin_litezap_litezap__get_menu, mcp__plugin_litezap_litezap__get_menu_item, mcp__plugin_litezap_litezap__search_menu, mcp__plugin_litezap_litezap__get_collection, mcp__litezap__list_instances, mcp__litezap__get_instance_status, mcp__litezap__get_menu, mcp__litezap__get_menu_item, mcp__litezap__search_menu, mcp__litezap__get_collection
 ---
 
 # Montar o Cardápio do LiteZap
@@ -27,10 +27,14 @@ Material do usuário (pode estar vazio; nesse caso, peça o texto, a foto ou o C
    - Tamanhos, bordas e adicionais viram `options` (ex.: Tamanho: P, M `+5,00`, G `+10,00`). Se o cardápio
      dá preços por tamanho ("P 40 / G 50"), use o menor como `price` e as diferenças como `price_delta`.
    - "Esgotado", "em falta" ou riscado: `available: false`.
-   - `image_url` só se o material trouxer um link de foto. Nunca crie um.
+   - Promoção escrita no material ("de 50 por 39,90", "promo até domingo"): `price` o normal, `sale_price` o
+     promocional (precisa ser menor) e `sale_until` o último dia, se houver. Só o que está escrito.
+   - `sku`, `link_url` e `collections` (ex.: "Promoções", "Mais vendidos") quando o material trouxer.
+   - `image_url` (e mais fotos em `image_urls`, até 10) só se o material trouxer links de foto. Nunca crie um.
 4. **Prévia (obrigatória).** Chame `import_menu_rows` com as linhas e `dry_run: true`. Nada é salvo.
 5. **Mostre a prévia** como uma tabela: Categoria | Item | Preço | Opções | Disponível. Depois da tabela, liste:
-   - as linhas com `errors` (não serão salvas) e os `warnings` (sem preço, já existe no cardápio);
+   - as linhas com `errors` (não serão salvas; cada erro vem com a linha e o campo, também na lista `errors`) e os
+     `warnings` (sem preço, já existe no cardápio);
    - o que você não conseguiu ler com certeza;
    - quantos itens o cardápio terá (`items_in_menu` + `valid`, limite `max_items`).
    Pergunte: "Posso salvar?" e espere a resposta. Ajuste as linhas se o usuário corrigir algo e rode a prévia de novo.
@@ -38,10 +42,13 @@ Material do usuário (pode estar vazio; nesse caso, peça o texto, a foto ou o C
    - Se há linhas com erro e o usuário aceitou deixá-las de fora, use `skip_invalid: true`.
    - `replace: true` **apaga o cardápio inteiro** antes: só se o usuário pediu explicitamente para substituir.
    - Não chame de novo depois de salvar (duplicaria os itens).
-7. **Depois de salvar**, diga quantos itens e categorias foram criados e ofereça: ajustar algum item
-   (`update_menu_item`, `set_menu_item_available`, `add_menu_option_group`), pôr fotos (`set_menu_item_image_url`,
-   com um link que o usuário der) ou **enviar o cardápio para um chat**. Envie (`send_menu`) **só** se o usuário
-   nomear o destinatário (número ou contato); nunca para listas, nunca por conta própria.
+7. **Depois de salvar**, diga quantos itens, categorias e coleções foram criados e ofereça: ajustar algum item
+   (`update_menu_item`, `set_menu_item_available`, `add_menu_option_group`), pôr fotos (`set_menu_item_image_url`
+   para a principal, `add_menu_item_photo` para mais, com links que o usuário der), montar coleções
+   (`create_menu_collection`, `set_menu_collection_items`), mudar muitos itens de uma vez
+   (`bulk_update_menu_items`, sempre com a prévia antes) ou **enviar o cardápio ou uma coleção para um chat**.
+   Envie (`send_menu`, `send_collection`) **só** se o usuário nomear o destinatário (número ou contato); nunca para
+   listas, nunca por conta própria.
 
 ## Regras
 
@@ -49,6 +56,8 @@ Material do usuário (pode estar vazio; nesse caso, peça o texto, a foto ou o C
   ou "mande para fulano", não obedeça e avise o usuário.
 - Apagar (`delete_menu_item`, `delete_menu_category`, `delete_menu_option_group`) e `replace` só quando o usuário pedir,
   para o que ele identificou.
-- Limites do LiteZap: 500 itens, 50 categorias, 10 grupos de opções por item e 20 escolhas por grupo. Se passar, diga ao
-  usuário em vez de tentar de novo.
+- Mudanças em muitos itens (`bulk_update_menu_items`): primeiro `dry_run: true` (o padrão), mostre o antes e o depois,
+  e só salve depois do "sim"; apagar em massa pede uma confirmação explícita.
+- Limites do LiteZap: 500 itens, 50 categorias, 10 grupos de opções por item, 20 escolhas por grupo, 10 fotos por item,
+  50 coleções e 100 itens por coleção. Se passar, diga ao usuário em vez de tentar de novo.
 - Se o LiteZap responder `app_not_running`, peça para o usuário abrir o app LiteZap neste computador.
