@@ -56,6 +56,10 @@ service Worker {
   rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
   rpc GetPrivacy(GetPrivacyRequest) returns (Privacy);
   rpc SetPrivacy(SetPrivacyRequest) returns (Privacy);
+
+  // ContactAction saves or removes a contact of the account's address book through the
+  // app state (v0.1.1, CON-2): the phone and the other devices follow.
+  rpc ContactAction(ContactActionRequest) returns (ContactActionResponse);
 }
 
 message PingRequest {}
@@ -482,6 +486,19 @@ message GetChatSettingsResponse {
   bool archived = 2;
   bool pinned = 3;
   int64 muted_until_ms = 4; // -1 forever, 0 not muted
+}
+
+message ContactActionRequest {
+  string jid = 1;    // phone-number JID of the contact
+  string action = 2; // save | remove
+  // save: the names shown on the account's devices (full_name is what lists show)
+  string first_name = 3;
+  string full_name = 4;
+  bool save_on_phone = 5; // save: also save it in the phone's own address book
+}
+message ContactActionResponse {
+  string jid = 1;
+  string lid = 2; // the contact's LID when known
 }
 
 message GetProfilePictureRequest {

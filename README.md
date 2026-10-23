@@ -118,6 +118,7 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `GET\|POST /v1/instances/{id}/communities` · `GET /communities/{jid}` · `GET\|POST /communities/{jid}/groups` · `DELETE /communities/{jid}/groups/{group}` | instância ou admin |
 | `GET\|PATCH\|DELETE /v1/instances/{id}/chats/{jid}` (estado do chat; arquivar, fixar, silenciar, não lida; apagar — seção "Chats, contatos, perfil e privacidade") | instância ou admin |
 | `POST /v1/instances/{id}/chats/{jid}/clear` (limpar conversa; destrutivo) | instância ou admin |
+| `POST /v1/instances/{id}/contacts` · `DELETE /contacts/{jid}` (agenda do WhatsApp; sincroniza com o celular) | instância ou admin |
 | `PUT /v1/instances/{id}/messages/{msg_id}/star` `{"starred"}` | instância ou admin |
 | `GET /v1/instances/{id}/contacts/{jid}/picture[?preview=1&download=1]` · `/contacts/{jid}/profile` | instância ou admin (cota de consultas) |
 | `POST /v1/instances/{id}/contacts/{jid}/block\|unblock` · `GET /v1/instances/{id}/blocklist` | instância ou admin |
@@ -275,6 +276,9 @@ curl -s -X PUT .../messages/$MSG_ID/star -d '{"starred":true}'
 # foto (URL do CDN do WhatsApp, expira; ?download=1 baixa o JPEG pelo proxy da instância) e recado/empresa do contato
 curl -s .../contacts/5511988887777/picture
 curl -s .../contacts/5511988887777/profile
+# agenda: salvar/renomear e remover um contato (sincroniza com o celular e, com save_on_phone, com a agenda do aparelho)
+curl -s -X POST .../contacts -d '{"phone":"5511999990000","first_name":"Ana","last_name":"Teste"}'
+curl -s -X DELETE .../contacts/5511999990000
 # bloquear, desbloquear, lista de bloqueados
 curl -s -X POST .../contacts/5511988887777/block
 curl -s .../blocklist

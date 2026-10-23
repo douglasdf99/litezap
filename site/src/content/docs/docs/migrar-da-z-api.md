@@ -91,7 +91,7 @@ fora do escopo** de propósito.
 | Pegar contatos / Metadata do contato | [`GET /contacts`](/docs/api/contatos/listar-contatos/), [`GET /contacts/{jid}`](/docs/api/contatos/consultar-contato/), [recado e perfil comercial](/docs/api/contatos/recado-e-perfil-comercial-do-contato/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Pegar imagem do contato | [`GET /contacts/{jid}/picture`](/docs/api/contatos/foto-de-perfil-do-contato/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Bloquear contato | [`POST /contacts/{jid}/block`](/docs/api/contatos/bloquear-contato/), `unblock` e [`GET /blocklist`](/docs/api/contatos/listar-bloqueados/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
-| Adicionar / remover contato na agenda | — | <span class="lz-badge lz-badge--soon">Ainda não</span> |
+| Adicionar / remover contato na agenda | [`POST /contacts`](/docs/api/contatos/salvar-contato-na-agenda/) e [`DELETE /contacts/{jid}`](/docs/api/contatos/remover-contato-da-agenda/) (sincroniza com a agenda do celular) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Número com WhatsApp / Validação em lote | [`POST /check-numbers`](/docs/api/numeros/verificar-numeros/) (até 10 por chamada, cache e cota) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 
 ### Grupos e comunidades

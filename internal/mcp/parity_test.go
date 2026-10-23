@@ -9,6 +9,29 @@ import (
 	"github.com/douglasdf99/litezap/internal/service"
 )
 
+// CON-2: save_contact and remove_contact.
+func TestAddressBookTools(t *testing.T) {
+	for _, m := range allModes {
+		t.Run(string(m), func(t *testing.T) {
+			e := newEnv(t, nil)
+			id, tok := e.connected("Agenda")
+			f := e.sp.Last(id)
+			cs := e.client(m, tok)
+			var saved service.SavedContact
+			ok(t, cs, "save_contact", map[string]any{"phone": "5511999990000", "first_name": "Ana", "last_name": "Teste"}, &saved)
+			if saved.JID != "5511999990000@s.whatsapp.net" || saved.FullName != "Ana Teste" || !saved.SaveOnPhone {
+				t.Fatalf("saved = %+v", saved)
+			}
+			var out okContactOutput
+			ok(t, cs, "remove_contact", map[string]any{"contact": "5511999990000"}, &out)
+			if acts := f.WA.ContactActions(); !out.OK || len(acts) != 2 || acts[1].Action != "remove" {
+				t.Fatalf("remove = %+v %+v", out, acts)
+			}
+			fails(t, cs, "save_contact", map[string]any{"phone": "5511999990000", "first_name": " "}, "first_name is required")
+		})
+	}
+}
+
 // CHT-11: search_messages reads the instance's log (local and REST backends).
 func TestSearchMessagesTool(t *testing.T) {
 	for _, m := range allModes {

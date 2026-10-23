@@ -19,6 +19,8 @@ type AccountBackend interface {
 	SetBlocked(ctx context.Context, id, jid string, block bool) ([]string, error)
 	UpdateChat(ctx context.Context, id, chat string, p service.ChatPatch) (service.ChatView, error)
 	ClearChat(ctx context.Context, id, chat string, in service.ClearInput) (service.ClearResult, error)
+	SaveContact(ctx context.Context, id string, in service.AddressBookInput) (service.SavedContact, error)
+	RemoveContact(ctx context.Context, id, jid string) error
 }
 
 // AccountService is the subset of service.Account used by Local.
@@ -29,6 +31,8 @@ type AccountService interface {
 	SetBlocked(ctx context.Context, instanceID, jid string, block bool) ([]string, error)
 	UpdateChat(ctx context.Context, instanceID, chat string, p service.ChatPatch) (service.ChatView, error)
 	ClearChat(ctx context.Context, instanceID, chat string, in service.ClearInput) (service.ClearResult, error)
+	SaveContact(ctx context.Context, instanceID string, in service.AddressBookInput) (service.SavedContact, error)
+	RemoveContact(ctx context.Context, instanceID, jid string) error
 }
 
 var (
@@ -92,6 +96,36 @@ func (l *Local) ClearChat(ctx context.Context, id, chat string, in service.Clear
 		return service.ClearResult{}, err
 	}
 	return a.ClearChat(ctx, id, chat, in)
+}
+
+func (l *Local) SaveContact(ctx context.Context, id string, in service.AddressBookInput) (service.SavedContact, error) {
+	a, err := l.account(id)
+	if err != nil {
+		return service.SavedContact{}, err
+	}
+	return a.SaveContact(ctx, id, in)
+}
+
+func (l *Local) RemoveContact(ctx context.Context, id, jid string) error {
+	a, err := l.account(id)
+	if err != nil {
+		return err
+	}
+	return a.RemoveContact(ctx, id, jid)
+}
+
+func (r *REST) SaveContact(ctx context.Context, id string, in service.AddressBookInput) (service.SavedContact, error) {
+	var v service.SavedContact
+	err := r.call(ctx, restTimeout, "POST", instPath(id, "contacts"), nil, in, &v)
+	return v, err
+}
+
+func (r *REST) RemoveContact(ctx context.Context, id, jid string) error {
+	seg, err := chatSegment(jid)
+	if err != nil {
+		return err
+	}
+	return r.call(ctx, restTimeout, "DELETE", instPath(id, "contacts", seg), nil, nil, nil)
 }
 
 func (r *REST) ClearChat(ctx context.Context, id, chat string, in service.ClearInput) (service.ClearResult, error) {
@@ -297,6 +331,39 @@ func (t *tools) registerAccount(s *sdk.Server) {
 	})
 
 	add(t, s, &sdk.Tool{
+		Name:  "save_contact",
+		Title: "Save a contact in the address book",
+		Description: "Saves (or renames) a contact in the address book of the user's WhatsApp number. It syncs to the user's phone and linked devices and, with save_on_phone (default true), to the phone's own contacts app. " +
+			"Only save contacts the user explicitly asked for, with the names the user gave; never import lists. A number never seen is first checked (spends the check-numbers quota). Limited to 10 changes per minute.",
+		InputSchema: schema[saveContactInput](map[string]func(*jsonschema.Schema){"instance_id": instID}),
+		Annotations: &sdk.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(false), OpenWorldHint: ptr(true)},
+	}, func(ctx context.Context, in saveContactInput) (*sdk.CallToolResult, service.SavedContact, error) {
+		id, err := t.instance(ctx, in.InstanceID)
+		if err != nil {
+			return nil, service.SavedContact{}, err
+		}
+		v, err := ab.SaveContact(ctx, id, service.AddressBookInput{Phone: in.Phone, FirstName: in.FirstName, LastName: in.LastName, SaveOnPhone: in.SaveOnPhone})
+		return nil, v, err
+	})
+	add(t, s, &sdk.Tool{
+		Name:  "remove_contact",
+		Title: "Remove a contact from the address book",
+		Description: "Removes a contact from the address book of the user's WhatsApp number (the phone and linked devices follow; the chat and its messages stay). " +
+			"Only when the user explicitly asks, for the contact they named (confirm it first).",
+		InputSchema: schema[contactInput](map[string]func(*jsonschema.Schema){"instance_id": instID}),
+		Annotations: &sdk.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
+	}, func(ctx context.Context, in contactInput) (*sdk.CallToolResult, okContactOutput, error) {
+		id, err := t.instance(ctx, in.InstanceID)
+		if err != nil {
+			return nil, okContactOutput{}, err
+		}
+		if err := ab.RemoveContact(ctx, id, in.Contact); err != nil {
+			return nil, okContactOutput{}, err
+		}
+		return nil, okContactOutput{OK: true}, nil
+	})
+
+	add(t, s, &sdk.Tool{
 		Name:  "clear_chat",
 		Title: "Clear a chat's messages",
 		Description: "Clears every message of a chat on the user's WhatsApp number (phone and linked devices) and deletes them from LiteZap's history; the chat itself stays. " +
@@ -312,6 +379,18 @@ func (t *tools) registerAccount(s *sdk.Server) {
 		v, err := ab.ClearChat(ctx, id, in.Chat, service.ClearInput{KeepStarred: in.KeepStarred})
 		return nil, v, err
 	})
+}
+
+type saveContactInput struct {
+	InstanceID  string `json:"instance_id,omitempty" jsonschema:"Instance whose address book changes"`
+	Phone       string `json:"phone" jsonschema:"Phone number with country code (or …@s.whatsapp.net jid)."`
+	FirstName   string `json:"first_name" jsonschema:"First name, as the user gave it."`
+	LastName    string `json:"last_name,omitempty" jsonschema:"Last name (optional)."`
+	SaveOnPhone *bool  `json:"save_on_phone,omitempty" jsonschema:"Also save it in the phone's own address book (default true)."`
+}
+
+type okContactOutput struct {
+	OK bool `json:"ok"`
 }
 
 type clearChatInput struct {

@@ -19,6 +19,8 @@ type AccountService interface {
 	UpdateChat(ctx context.Context, instanceID, chat string, p service.ChatPatch) (service.ChatView, error)
 	DeleteChat(ctx context.Context, instanceID, chat string, deleteMedia bool) error
 	ClearChat(ctx context.Context, instanceID, chat string, in service.ClearInput) (service.ClearResult, error)
+	SaveContact(ctx context.Context, instanceID string, in service.AddressBookInput) (service.SavedContact, error)
+	RemoveContact(ctx context.Context, instanceID, jid string) error
 	StarMessage(ctx context.Context, instanceID, id string, starred bool) (service.MessageView, error)
 	ContactPicture(ctx context.Context, instanceID, jid string, preview bool) (service.PictureView, error)
 	ContactPictureFile(ctx context.Context, instanceID, jid string, preview bool) (service.MediaFile, error)
@@ -43,6 +45,8 @@ func (s *server) accountRoutes(r chi.Router) {
 	r.Patch("/chats/{jid}", s.patchChat)
 	r.Delete("/chats/{jid}", s.deleteChat)
 	r.Post("/chats/{jid}/clear", s.clearChat)
+	r.Post("/contacts", s.saveContact)
+	r.Delete("/contacts/{jid}", s.removeContact)
 	r.Put("/messages/{msg_id}/star", s.starMessage)
 	r.Get("/contacts/{jid}/picture", s.contactPicture)
 	r.Get("/contacts/{jid}/profile", s.contactProfile)
@@ -95,6 +99,29 @@ func (s *server) patchChat(w http.ResponseWriter, r *http.Request) {
 func (s *server) deleteChat(w http.ResponseWriter, r *http.Request) {
 	media := r.URL.Query().Get("delete_media") == "1"
 	if err := s.opt.Account.DeleteChat(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "jid"), media); err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// saveContact saves a contact in the account's address book (CON-2).
+func (s *server) saveContact(w http.ResponseWriter, r *http.Request) {
+	var in service.AddressBookInput
+	if err := decodeStrict(w, r, &in); err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	v, err := s.opt.Account.SaveContact(r.Context(), chi.URLParam(r, "id"), in)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+func (s *server) removeContact(w http.ResponseWriter, r *http.Request) {
+	if err := s.opt.Account.RemoveContact(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "jid")); err != nil {
 		s.writeErr(w, err)
 		return
 	}

@@ -37,6 +37,8 @@ type fakeAccount struct {
 	lookups  int // network lookups (pictures, user info)
 	err      error
 	echo     bool // ChatAction emits the matching ChatUpdate, like whatsmeow's echo
+	// contactActs are the ContactAction requests (CON-2).
+	contactActs []*workerv1.ContactActionRequest
 }
 
 // SetAccountErr makes every Account method fail with err (nil restores answers).
@@ -162,6 +164,50 @@ func (f *FakeWA) ChatAction(_ context.Context, req *workerv1.ChatActionRequest) 
 	}
 	f.getSink().Data(&workerv1.Event{Kind: &workerv1.Event_ChatUpdate{ChatUpdate: u}})
 	return nil
+}
+
+// ContactActions returns the ContactAction requests received so far.
+func (f *FakeWA) ContactActions() []*workerv1.ContactActionRequest {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	return append([]*workerv1.ContactActionRequest(nil), f.acct.contactActs...)
+}
+
+// ContactAction saves or removes the contact's name in the fake address book (what the
+// app state echo does on a real account).
+func (f *FakeWA) ContactAction(_ context.Context, req *workerv1.ContactActionRequest) (*workerv1.ContactActionResponse, error) {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	if f.acct.err != nil {
+		return nil, f.acct.err
+	}
+	f.acct.contactActs = append(f.acct.contactActs, req)
+	kept := f.contacts[:0:0]
+	var found *workerv1.Contact
+	for _, c := range f.contacts {
+		if c.Jid == req.Jid {
+			found = proto.Clone(c).(*workerv1.Contact)
+			continue
+		}
+		kept = append(kept, c)
+	}
+	if found == nil {
+		found = &workerv1.Contact{Jid: req.Jid}
+	}
+	switch req.Action {
+	case "save":
+		found.Name = req.FullName
+		kept = append(kept, found)
+	case "remove":
+		if found.PushName != "" || found.BusinessName != "" { // still known by its push name
+			found.Name = ""
+			kept = append(kept, found)
+		}
+	default:
+		return nil, status.Error(codes.InvalidArgument, "validation_failed: unknown contact action")
+	}
+	f.contacts = kept
+	return &workerv1.ContactActionResponse{Jid: req.Jid}, nil
 }
 
 func (f *FakeWA) ChatSettings(_ context.Context, chat string) (*workerv1.GetChatSettingsResponse, error) {

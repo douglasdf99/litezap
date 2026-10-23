@@ -34,10 +34,11 @@ type Account struct {
 	// Groups changes a group's disappearing messages timer (nil: only direct chats).
 	Groups *Groups
 
-	lookupQuota slidingQuota // contact pictures and profiles, per instance
-	pictures    pictureCache
-	actionMu    sync.Mutex
-	actionLocks map[string]*sync.Mutex // per instance and chat: API actions applied in order
+	lookupQuota  slidingQuota // contact pictures and profiles, per instance
+	contactQuota slidingQuota // address book changes (CON-2), per instance
+	pictures     pictureCache
+	actionMu     sync.Mutex
+	actionLocks  map[string]*sync.Mutex // per instance and chat: API actions applied in order
 	// pending marks API actions in flight (instance, chat, field): their app state echo
 	// may arrive before the RPC returns and is then reported with source "api".
 	pending map[string]int

@@ -96,6 +96,35 @@ export function chatActions(ctx, jid, { onChange, onDeleted, onCleared }) {
     } catch (e) { toast(e, 'error'); }
   };
 
+  // Address book (v0.1.1): save or remove the contact; it syncs to the phone.
+  const addressBook = () => {
+    const first = h('input', { 'aria-label': 'Nome', placeholder: 'Nome', maxlength: 64 });
+    const last = h('input', { 'aria-label': 'Sobrenome', placeholder: 'Sobrenome (opcional)', maxlength: 64 });
+    const onPhone = h('input', { type: 'checkbox', checked: true });
+    modal('Contato na agenda', h('div', null,
+      h('p', { class: 'small muted' }, 'Salva (ou renomeia) o contato na agenda do seu WhatsApp: o celular e os aparelhos vinculados passam a mostrar este nome.'),
+      first, last,
+      h('label', { class: 'row small' }, onPhone, ' Salvar também na agenda do celular')), [
+      { label: 'Cancelar' },
+      {
+        label: 'Remover da agenda', danger: true, onclick: async () => {
+          if (!(await confirmDanger(`Remover ${phoneOf(jid)} da agenda do WhatsApp (celular e aparelhos vinculados)? A conversa continua.`))) return false;
+          try { await api.del(`${ctx.base}/contacts/${encodeURIComponent(jid)}`); toast('Contato removido da agenda'); } catch (e) { toast(e, 'error'); }
+        },
+      },
+      {
+        label: 'Salvar', primary: true, onclick: async () => {
+          if (!first.value.trim()) { toast('Informe o nome', 'error'); return false; }
+          try {
+            await api.post(`${ctx.base}/contacts`, { phone: jid, first_name: first.value, last_name: last.value, save_on_phone: onPhone.checked });
+            toast('Contato salvo na agenda');
+            if (onChange) onChange(chat);
+          } catch (e) { toast(e, 'error'); }
+        },
+      },
+    ]);
+  };
+
   const disappearingMenu = () => {
     const sel = h('select', { 'aria-label': 'Mensagens temporárias' },
       DISAPPEARING_OPTIONS.map(([l, v]) => h('option', { value: v, selected: (chat.disappearing || 'off') === v }, l)));
@@ -146,6 +175,7 @@ export function chatActions(ctx, jid, { onChange, onDeleted, onCleared }) {
       chat.muted ? btn('Reativar som', () => patch({ muted: false }, 'Som reativado')) : btn('Silenciar…', muteMenu),
       btn(chat.unread ? 'Marcar como lida' : 'Marcar como não lida', () => patch({ unread: !chat.unread }, chat.unread ? 'Marcada como lida' : 'Marcada como não lida')),
       btn(isGroup ? 'Foto do grupo' : 'Perfil', contactInfo, 'btn small ghost'),
+      isGroup || !jid.endsWith('@s.whatsapp.net') ? null : btn('Agenda…', addressBook, 'btn small ghost'),
       isGroup ? null : btn('Bloquear', () => block(true), 'btn small ghost danger'),
       isGroup ? null : btn('Desbloquear', () => block(false), 'btn small ghost'),
       btn(chat.disappearing && chat.disappearing !== 'off' ? `Temporárias: ${chat.disappearing}` : 'Temporárias…', disappearingMenu, 'btn small ghost'),

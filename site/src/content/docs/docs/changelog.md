@@ -39,6 +39,13 @@ validação num aparelho real**.
   inicialização (`index_complete: false` enquanto isso). Ferramenta MCP `search_messages` (só leitura; não
   entra nos grupos de ferramentas dos agentes, que ficam presos ao chat da conversa) e campo **Buscar nas
   mensagens** na aba Conversas do painel. Chaves de API com escopo `read` podem buscar.
+- **Contatos na agenda** (CON-2): `POST /contacts` (`phone`, `first_name`, `last_name`, `save_on_phone`) salva
+  ou renomeia um contato e `DELETE /contacts/{jid}` o remove, pelo app state (a mutação `contact`, montada
+  como o WhatsApp Web; a remoção usa uma mutação `REMOVE`, que o whatsmeow não codifica e o LiteZap monta
+  com as mesmas chaves e MACs). **Atenção:** a mudança aparece no celular e nos aparelhos vinculados e, com
+  `save_on_phone` (padrão), também na agenda do próprio celular. Número fora do log é verificado antes (cota do
+  `check-numbers`). Limite de 10 mudanças por minuto e 200 por dia. Ferramentas MCP `save_contact` e
+  `remove_contact` (só a pedido do usuário) e botão **Agenda…** na conversa.
 
 ## Cardápio removido
 

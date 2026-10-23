@@ -44,6 +44,7 @@ const (
 	Worker_UpdateProfile_FullMethodName          = "/worker.v1.Worker/UpdateProfile"
 	Worker_GetPrivacy_FullMethodName             = "/worker.v1.Worker/GetPrivacy"
 	Worker_SetPrivacy_FullMethodName             = "/worker.v1.Worker/SetPrivacy"
+	Worker_ContactAction_FullMethodName          = "/worker.v1.Worker/ContactAction"
 )
 
 // WorkerClient is the client API for Worker service.
@@ -97,6 +98,9 @@ type WorkerClient interface {
 	UpdateProfile(ctx context.Context, in *UpdateProfileRequest, opts ...grpc.CallOption) (*UpdateProfileResponse, error)
 	GetPrivacy(ctx context.Context, in *GetPrivacyRequest, opts ...grpc.CallOption) (*Privacy, error)
 	SetPrivacy(ctx context.Context, in *SetPrivacyRequest, opts ...grpc.CallOption) (*Privacy, error)
+	// ContactAction saves or removes a contact of the account's address book through the
+	// app state (v0.1.1, CON-2): the phone and the other devices follow.
+	ContactAction(ctx context.Context, in *ContactActionRequest, opts ...grpc.CallOption) (*ContactActionResponse, error)
 }
 
 type workerClient struct {
@@ -366,6 +370,16 @@ func (c *workerClient) SetPrivacy(ctx context.Context, in *SetPrivacyRequest, op
 	return out, nil
 }
 
+func (c *workerClient) ContactAction(ctx context.Context, in *ContactActionRequest, opts ...grpc.CallOption) (*ContactActionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ContactActionResponse)
+	err := c.cc.Invoke(ctx, Worker_ContactAction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkerServer is the server API for Worker service.
 // All implementations must embed UnimplementedWorkerServer
 // for forward compatibility.
@@ -417,6 +431,9 @@ type WorkerServer interface {
 	UpdateProfile(context.Context, *UpdateProfileRequest) (*UpdateProfileResponse, error)
 	GetPrivacy(context.Context, *GetPrivacyRequest) (*Privacy, error)
 	SetPrivacy(context.Context, *SetPrivacyRequest) (*Privacy, error)
+	// ContactAction saves or removes a contact of the account's address book through the
+	// app state (v0.1.1, CON-2): the phone and the other devices follow.
+	ContactAction(context.Context, *ContactActionRequest) (*ContactActionResponse, error)
 	mustEmbedUnimplementedWorkerServer()
 }
 
@@ -501,6 +518,9 @@ func (UnimplementedWorkerServer) GetPrivacy(context.Context, *GetPrivacyRequest)
 }
 func (UnimplementedWorkerServer) SetPrivacy(context.Context, *SetPrivacyRequest) (*Privacy, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetPrivacy not implemented")
+}
+func (UnimplementedWorkerServer) ContactAction(context.Context, *ContactActionRequest) (*ContactActionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ContactAction not implemented")
 }
 func (UnimplementedWorkerServer) mustEmbedUnimplementedWorkerServer() {}
 func (UnimplementedWorkerServer) testEmbeddedByValue()                {}
@@ -966,6 +986,24 @@ func _Worker_SetPrivacy_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Worker_ContactAction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ContactActionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).ContactAction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_ContactAction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).ContactAction(ctx, req.(*ContactActionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Worker_ServiceDesc is the grpc.ServiceDesc for Worker service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1068,6 +1106,10 @@ var Worker_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetPrivacy",
 			Handler:    _Worker_SetPrivacy_Handler,
+		},
+		{
+			MethodName: "ContactAction",
+			Handler:    _Worker_ContactAction_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

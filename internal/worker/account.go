@@ -43,6 +43,7 @@ type Account interface {
 	UpdateProfile(ctx context.Context, req *workerv1.UpdateProfileRequest) (*workerv1.UpdateProfileResponse, error)
 	Privacy(ctx context.Context) (map[string]string, error)
 	SetPrivacy(ctx context.Context, req *workerv1.SetPrivacyRequest) (map[string]string, error)
+	ContactAction(ctx context.Context, req *workerv1.ContactActionRequest) (*workerv1.ContactActionResponse, error)
 }
 
 var _ Account = (*Whatsmeow)(nil)
@@ -169,6 +170,7 @@ type accountHooks struct {
 	proxyURL string
 
 	sendAppState    func(context.Context, appstate.PatchInfo) error
+	removeAppState  func(context.Context, appstate.WAPatchName, appstate.MutationInfo) error
 	chatSettings    func(context.Context, types.JID) (types.LocalChatSettings, error)
 	pictureInfo     func(context.Context, types.JID, *whatsmeow.GetProfilePictureParams) (*types.ProfilePictureInfo, error)
 	userInfo        func(context.Context, []types.JID) (map[types.JID]types.UserInfo, error)
@@ -189,6 +191,9 @@ func (w *Whatsmeow) hooks() accountHooks {
 	h := w.acct
 	if h.sendAppState == nil {
 		h.sendAppState = w.cli.SendAppState
+	}
+	if h.removeAppState == nil {
+		h.removeAppState = w.removeAppState
 	}
 	if h.chatSettings == nil {
 		h.chatSettings = func(ctx context.Context, jid types.JID) (types.LocalChatSettings, error) {

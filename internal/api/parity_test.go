@@ -71,6 +71,58 @@ func TestClearChat(t *testing.T) {
 	}
 }
 
+// CON-2: POST /contacts and DELETE /contacts/{jid} change the account's address book.
+func TestAddressBook(t *testing.T) {
+	e := newEnv(t)
+	id, tok := e.connected("Agenda")
+	f := e.sp.Last(id)
+	base := "/v1/instances/" + id + "/contacts"
+
+	code, v := e.do("POST", base, tok, `{"phone":"+55 11 99999-0000","first_name":"Ana","last_name":"Teste"}`)
+	if code != 200 || v["jid"] != "5511999990000@s.whatsapp.net" || v["full_name"] != "Ana Teste" || v["save_on_phone"] != true {
+		t.Fatalf("save = %d %v", code, v)
+	}
+	acts := f.WA.ContactActions()
+	if len(acts) != 1 || acts[0].Action != "save" || acts[0].FirstName != "Ana" || acts[0].FullName != "Ana Teste" || !acts[0].SaveOnPhone {
+		t.Fatalf("actions = %+v", acts)
+	}
+	if f.WA.Checks() != 1 {
+		t.Fatalf("a number never seen must be checked first (checks = %d)", f.WA.Checks())
+	}
+	if _, v := e.do("GET", base+"/5511999990000@s.whatsapp.net", tok, ""); v["name"] != "Ana Teste" {
+		t.Fatalf("contact = %v", v)
+	}
+	// A chat of the log is not looked up again; save_on_phone false is passed on.
+	e.inbound(id, "W1", contact)
+	if code, _ := e.do("POST", base, tok, `{"phone":"5511988887777","first_name":"Bia","save_on_phone":false}`); code != 200 {
+		t.Fatalf("save known = %d", code)
+	}
+	if acts = f.WA.ContactActions(); acts[1].SaveOnPhone || acts[1].FullName != "Bia" || f.WA.Checks() != 1 {
+		t.Fatalf("second save = %+v (checks %d)", acts[1], f.WA.Checks())
+	}
+	if code, _ := e.do("DELETE", base+"/5511999990000", tok, ""); code != 204 {
+		t.Fatalf("remove = %d", code)
+	}
+	if acts = f.WA.ContactActions(); acts[2].Action != "remove" || acts[2].Jid != "5511999990000@s.whatsapp.net" {
+		t.Fatalf("remove = %+v", acts[2])
+	}
+	f.WA.SetUnregistered("5511999990009")
+	for body, want := range map[string]string{
+		`{"phone":"5511999990000"}`:                                   "validation_failed",
+		`{"first_name":"Ana"}`:                                        "validation_failed",
+		`{"phone":"120363000000000001@g.us","first_name":"Grupo"}`:    "validation_failed",
+		`{"phone":"5511999990000","first_name":"Ana","nickname":"x"}`: "validation_failed",
+		`{"phone":"5511999990009","first_name":"Ninguém"}`:            "invalid_number",
+	} {
+		if code, v := e.do("POST", base, tok, body); code < 400 || errCode(v) != want {
+			t.Errorf("%s = %d %v", body, code, v)
+		}
+	}
+	if code, v := e.do("DELETE", base+"/120363000000000001@g.us", tok, ""); code != 400 {
+		t.Fatalf("remove group = %d %v", code, v)
+	}
+}
+
 // CHT-11: GET /messages/search searches the instance's log.
 func TestSearchMessagesRoute(t *testing.T) {
 	e := newEnv(t)

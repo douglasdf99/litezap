@@ -1122,6 +1122,58 @@ paths:
         "409": { $ref: "#/components/responses/InstanceConflict" }
         "502": { $ref: "#/components/responses/WorkerError" }
         "504": { $ref: "#/components/responses/WorkerTimeout" }
+    post:
+      tags: [Contatos]
+      operationId: saveContact
+      x-litezap-milestone: v0.1.1
+      x-zapi: "Adicionar contatos"
+      summary: Salvar contato na agenda
+      x-litezap-scope: instancia
+      description: |
+        Salva (ou renomeia) um contato na agenda da conta. Um número que não está no log é antes verificado
+        (gasta a cota do `check-numbers`; sem WhatsApp responde `422 invalid_number`) e o contato é salvo com o
+        JID que o WhatsApp devolve.
+        Sincroniza com a agenda: o contato vai para a agenda do WhatsApp desta conta pelo app state (celular e
+        aparelhos vinculados passam a mostrar o nome) e, com `save_on_phone` (padrão `true`), também para a
+        agenda do próprio celular (app Contatos). Use só para contatos que você quer de fato na agenda do
+        aparelho; nunca para importar listas. Limite de 10 mudanças por minuto e 200 por dia por instância.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, first_name]
+              additionalProperties: false
+              properties:
+                phone: { type: string, description: "Número com DDI (ou JID `…@s.whatsapp.net`)." }
+                first_name: { type: string, maxLength: 64 }
+                last_name: { type: string, maxLength: 64 }
+                save_on_phone: { type: boolean, default: true, description: "Também salva na agenda do celular." }
+            example: { phone: "5511999990000", first_name: Ana, last_name: Teste }
+      responses:
+        "200":
+          description: Salvo.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jid: { type: string }
+                  lid: { type: string }
+                  first_name: { type: string }
+                  full_name: { type: string }
+                  save_on_phone: { type: boolean }
+              example: { jid: 5511999990000@s.whatsapp.net, first_name: Ana, full_name: Ana Teste, save_on_phone: true }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/ChatConflict" }
+        "422": { description: "`invalid_number`: o número não tem WhatsApp." }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
   /v1/instances/{id}/contacts/{jid}:
     parameters:
       - $ref: "#/components/parameters/InstanceID"
@@ -1149,6 +1201,27 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/InstanceConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
+    delete:
+      tags: [Contatos]
+      operationId: removeContact
+      x-litezap-milestone: v0.1.1
+      x-zapi: "Remover contatos"
+      summary: Remover contato da agenda
+      x-litezap-scope: instancia
+      description: |
+        Remove o contato da agenda da conta (mutação `REMOVE` do app state, como o WhatsApp Web; o celular e os
+        aparelhos vinculados acompanham). A conversa e as mensagens continuam. Aceita número ou JID
+        `…@s.whatsapp.net`. Mesmo limite de mudanças de `POST /contacts`.
+      responses:
+        "204": { description: Removido. }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/ChatConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "502": { $ref: "#/components/responses/WorkerError" }
         "504": { $ref: "#/components/responses/WorkerTimeout" }
 
