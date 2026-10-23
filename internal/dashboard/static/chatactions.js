@@ -17,7 +17,7 @@ const MUTE_OPTIONS = [['8 horas', 8 * 3600], ['1 semana', 7 * 86400], ['Sempre',
 
 // chatActions returns the action bar of an open chat. onChange(chatView) is called after
 // a change; onDeleted() after the chat was deleted.
-export function chatActions(ctx, jid, { onChange, onDeleted }) {
+export function chatActions(ctx, jid, { onChange, onDeleted, onCleared }) {
   const bar = h('div', { class: 'chat-actions row' });
   const path = `${ctx.base}/chats/${encodeURIComponent(jid)}`;
   const isGroup = jid.endsWith('@g.us');
@@ -94,6 +94,26 @@ export function chatActions(ctx, jid, { onChange, onDeleted }) {
     } catch (e) { toast(e, 'error'); }
   };
 
+  const clear = async () => {
+    const keep = h('input', { type: 'checkbox', checked: true });
+    modal('Limpar conversa', h('div', null,
+      h('p', null, 'Apaga todas as mensagens desta conversa no seu WhatsApp (celular e aparelhos vinculados) e no histórico do LiteZap. A conversa continua na lista; o contato não é afetado. Não dá para desfazer.'),
+      h('label', { class: 'row small' }, keep, ' Manter as mensagens favoritas')), [
+      { label: 'Cancelar' },
+      {
+        label: 'Limpar', danger: true, onclick: async () => {
+          try {
+            const r = await api.post(`${path}/clear`, { keep_starred: keep.checked });
+            chat = r.chat;
+            toast(`Conversa limpa (${r.deleted_messages} mensagens)`);
+            render();
+            if (onCleared) onCleared(chat); else if (onChange) onChange(chat);
+          } catch (e) { toast(e, 'error'); }
+        },
+      },
+    ]);
+  };
+
   function render() {
     if (!chat) { mount(bar); return; }
     mount(bar,
@@ -104,6 +124,7 @@ export function chatActions(ctx, jid, { onChange, onDeleted }) {
       btn(isGroup ? 'Foto do grupo' : 'Perfil', contactInfo, 'btn small ghost'),
       isGroup ? null : btn('Bloquear', () => block(true), 'btn small ghost danger'),
       isGroup ? null : btn('Desbloquear', () => block(false), 'btn small ghost'),
+      btn('Limpar…', clear, 'btn small ghost danger'),
       btn('Apagar', remove, 'btn small danger'));
   }
 

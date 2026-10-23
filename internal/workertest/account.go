@@ -155,6 +155,8 @@ func (f *FakeWA) ChatAction(_ context.Context, req *workerv1.ChatActionRequest) 
 		u.Field, u.Value = "unread", req.Action == "unread"
 	case "delete":
 		u.Field, u.Value = "deleted", true
+	case "clear":
+		u.Field, u.Value = "cleared", true
 	case "star", "unstar":
 		u.Field, u.Value, u.MessageId, u.FromMe = "starred", req.Action == "star", req.Message.GetId(), req.Message.GetFromMe()
 	}

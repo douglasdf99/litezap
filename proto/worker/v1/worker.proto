@@ -450,11 +450,13 @@ message MessageRef {
 
 message ChatActionRequest {
   string chat = 1;
-  // archive | unarchive | pin | unpin | mute | unmute | read | unread | delete | star | unstar
+  // archive | unarchive | pin | unpin | mute | unmute | read | unread | delete | clear |
+  // star | unstar
   string action = 2;
   int64 mute_until_ms = 3; // mute: 0 forever
-  MessageRef message = 4;  // last message (archive, read, unread, delete) or target (star)
-  bool delete_media = 5;   // delete
+  MessageRef message = 4;  // last message (archive, read, unread, delete, clear) or target (star)
+  bool delete_media = 5;   // delete, clear
+  bool keep_starred = 6;   // clear: keep the starred messages
 }
 message ChatActionResponse {}
 

@@ -156,6 +156,7 @@ WhatsApp vêm marcadas como destrutivas ou com aviso de risco, para o cliente pe
 | `get_profile_picture` · `get_contact_about` | Foto e recado/empresa de um contato (gastam a cota de consultas) | [Contatos](/docs/api/contatos/) |
 | `list_blocked` · `block_contact` · `unblock_contact` | Bloqueados; bloquear e desbloquear | [Contatos](/docs/api/contatos/) |
 | `update_chat` | Arquivar, fixar ou silenciar um chat | [Chats](/docs/api/chats/) |
+| `clear_chat` | Limpa as mensagens de um chat no WhatsApp da conta e no histórico do LiteZap (a conversa fica). **Destrutiva**: só quando o usuário pedir, para o chat que ele indicar | [Limpar conversa](/docs/api/chats/limpar-conversa/) |
 | `list_status_updates` | Status recebidos dos contatos e os nossos (publicar não é ferramenta) | [Status](/docs/api/status/) |
 | `list_channels` · `get_channel` · `get_channel_messages` | Canais seguidos, um canal, publicações recentes | [Canais](/docs/api/canais/) |
 | `follow_channel` | Segue ou deixa de seguir um canal | [Canais](/docs/api/canais/) |

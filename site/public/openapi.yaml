@@ -1191,6 +1191,56 @@ paths:
         "409": { $ref: "#/components/responses/ChatConflict" }
         "502": { $ref: "#/components/responses/WorkerError" }
         "504": { $ref: "#/components/responses/WorkerTimeout" }
+  /v1/instances/{id}/chats/{jid}/clear:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - $ref: "#/components/parameters/ChatJID"
+    post:
+      tags: [Chats]
+      operationId: clearChat
+      x-litezap-milestone: v0.1.1
+      x-zapi: "Limpar chat"
+      summary: Limpar conversa
+      x-litezap-scope: instancia
+      x-litezap-events: [chat.updated]
+      description: |
+        **Destrutivo, não dá para desfazer.** Limpa as mensagens da conversa no WhatsApp desta conta (celular
+        e aparelhos vinculados, pelo app state, como "Limpar conversa" no app) e apaga essas mensagens do log
+        do LiteZap, com as mídias baixadas. A conversa continua na lista; o contato não é afetado e mantém
+        as dele. `keep_starred: true` mantém as favoritas (no WhatsApp e no log); `delete_media: true`
+        também apaga as mídias da conversa da galeria do celular. Mensagens ainda na fila de envio não são
+        apagadas. O corpo é opcional. Uma limpeza feita no celular só gera `chat.updated` com
+        `cleared: true` (o log mantém as mensagens). Teste antes numa conversa só com mensagens de teste.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                keep_starred: { type: boolean, default: false, description: "Mantém as mensagens favoritas." }
+                delete_media: { type: boolean, default: false, description: "Também apaga as mídias da conversa no celular." }
+            example: { keep_starred: true }
+      responses:
+        "200":
+          description: Conversa limpa.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [chat, deleted_messages]
+                properties:
+                  chat: { $ref: "#/components/schemas/Chat" }
+                  deleted_messages: { type: integer, description: Mensagens apagadas do log do LiteZap. }
+              example: { chat: { jid: 5511999990000@s.whatsapp.net, name: Maria, is_group: false, last_message_at: "2026-10-23T10:00:00Z", unread_count: 0, archived: false, pinned: false, muted: false, unread: false }, deleted_messages: 42 }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ChatConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
   /v1/instances/{id}/messages/{msg_id}/star:
     parameters:
       - $ref: "#/components/parameters/InstanceID"

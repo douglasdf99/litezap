@@ -273,7 +273,13 @@ func (s *Store) PruneMessages(ctx context.Context, before time.Time) (int64, err
 }
 
 func (s *Store) pruneMessageBatch(ctx context.Context, cut string) (int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT seq, id FROM messages WHERE timestamp < ? LIMIT ?`, cut, pruneBatch)
+	return s.deleteMessageBatch(ctx, `SELECT seq, id FROM messages WHERE timestamp < ? LIMIT ?`, cut, pruneBatch)
+}
+
+// deleteMessageBatch deletes the messages a query selects (columns seq, id), with their
+// media rows and local files, in one transaction, and returns how many were deleted.
+func (s *Store) deleteMessageBatch(ctx context.Context, query string, args ...any) (int64, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return 0, err
 	}

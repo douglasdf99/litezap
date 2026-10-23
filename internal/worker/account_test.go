@@ -88,6 +88,42 @@ func TestChatActionPatches(t *testing.T) {
 	}
 }
 
+// CHT-7: the clearChat mutation is built by hand (whatsmeow has no builder), as WhatsApp
+// Web sends it.
+func TestClearChatPatch(t *testing.T) {
+	w := newMsgAdapter(t)
+	var sent []appstate.PatchInfo
+	w.acct.sendAppState = func(_ context.Context, p appstate.PatchInfo) error { sent = append(sent, p); return nil }
+	w.acct.chatSettings = func(context.Context, types.JID) (types.LocalChatSettings, error) {
+		return types.LocalChatSettings{}, nil
+	}
+	chat := "5511999990000@s.whatsapp.net"
+	last := &workerv1.MessageRef{Id: "WA9", TimestampMs: 1_800_000_000_000}
+	if err := w.ChatAction(context.Background(), &workerv1.ChatActionRequest{Chat: chat, Action: "clear", Message: last, KeepStarred: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.ChatAction(context.Background(), &workerv1.ChatActionRequest{Chat: chat, Action: "clear", DeleteMedia: true}); err != nil {
+		t.Fatal(err)
+	}
+	keep, all := sent[0], sent[1]
+	if keep.Type != appstate.WAPatchRegularHigh || keep.Mutations[0].Version != 6 {
+		t.Fatalf("patch = %+v", keep)
+	}
+	if got := keep.Mutations[0].Index; len(got) != 4 || got[0] != appstate.IndexClearChat || got[1] != chat || got[2] != "0" || got[3] != "0" {
+		t.Fatalf("keep starred index = %v", got)
+	}
+	if got := all.Mutations[0].Index; got[2] != "1" || got[3] != "1" {
+		t.Fatalf("clear all index = %v", got)
+	}
+	r := keep.Mutations[0].Value.GetClearChatAction().GetMessageRange()
+	if r.GetLastMessageTimestamp() != 1_800_000_000 || r.GetMessages()[0].GetKey().GetID() != "WA9" {
+		t.Fatalf("range = %+v", r)
+	}
+	if all.Mutations[0].Value.GetClearChatAction().GetMessageRange().GetLastMessageTimestamp() == 0 {
+		t.Fatal("a clear without a last message must still carry a timestamp")
+	}
+}
+
 func TestChatActionUsesLIDForMigratedAccounts(t *testing.T) {
 	w := newMsgAdapter(t)
 	w.cli.Store.LID = types.NewJID("999", types.HiddenUserServer)

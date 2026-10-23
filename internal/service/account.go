@@ -423,6 +423,62 @@ func (a *Account) DeleteChat(ctx context.Context, instanceID, raw string, delete
 	return err
 }
 
+// ClearInput is the body of POST /chats/{jid}/clear.
+type ClearInput struct {
+	// KeepStarred keeps the starred messages (on WhatsApp and in the log).
+	KeepStarred bool `json:"keep_starred,omitempty"`
+	// DeleteMedia also deletes the chat's media files from the phone's gallery.
+	DeleteMedia bool `json:"delete_media,omitempty"`
+}
+
+// ClearResult is the answer of a clear: the chat (kept) and how many messages left the log.
+type ClearResult struct {
+	Chat            ChatView `json:"chat"`
+	DeletedMessages int64    `json:"deleted_messages"`
+}
+
+// ClearChat clears a chat's messages on WhatsApp for this account (phone and linked
+// devices; the contact keeps theirs) and deletes them from the log, keeping the chat. It
+// is destructive and cannot be undone. Messages still in the send queue are kept.
+func (a *Account) ClearChat(ctx context.Context, instanceID, raw string, in ClearInput) (ClearResult, error) {
+	c, err := a.loadChat(ctx, instanceID, raw)
+	if err != nil {
+		return ClearResult{}, err
+	}
+	mu := a.chatLock(instanceID, c.JID)
+	mu.Lock()
+	defer mu.Unlock()
+	cli, err := a.Messaging.client(instanceID)
+	if err != nil {
+		return ClearResult{}, err
+	}
+	k := pendingKey(instanceID, c.JID, "cleared")
+	a.markPending(k, 1)
+	defer a.markPending(k, -1)
+	req := &workerv1.ChatActionRequest{Chat: c.JID, Action: "clear", KeepStarred: in.KeepStarred, DeleteMedia: in.DeleteMedia}
+	upTo := time.Now()
+	if m, err := a.st().LastChatMessage(ctx, instanceID, c.JID); err == nil {
+		req.Message = lastRef(m)
+		upTo = m.Timestamp
+	}
+	rctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	defer cancel()
+	if _, err := cli.ChatAction(rctx, req); err != nil {
+		return ClearResult{}, accountErr(err)
+	}
+	n, err := a.st().ClearChatMessages(ctx, instanceID, c.JID, upTo, in.KeepStarred)
+	if err != nil {
+		return ClearResult{}, err
+	}
+	if next, err := a.st().GetChat(ctx, instanceID, c.JID); err == nil {
+		c = next
+	}
+	ev := a.chatUpdated(instanceID, c, []string{"cleared"}, "api")
+	ev.Cleared = true
+	a.publish(instanceID, ev)
+	return ClearResult{Chat: chatView(c), DeletedMessages: n}, nil
+}
+
 // StarMessage stars or unstars a logged message on WhatsApp (all devices).
 func (a *Account) StarMessage(ctx context.Context, instanceID, id string, starred bool) (MessageView, error) {
 	if _, err := a.st().GetInstance(ctx, instanceID); err != nil {
@@ -527,6 +583,11 @@ func (a *Account) WorkerEvent(instanceID string, ev *workerv1.Event) {
 		_ = a.applyStar(ctx, instanceID, u.Chat, u.MessageId, u.Value, source)
 		return
 	case "cleared":
+		// Cleared on the phone: reported, the log keeps the messages (only POST
+		// /chats/{jid}/clear deletes them). The echo of our own clear was already reported.
+		if source == "api" {
+			return
+		}
 		if c, err := a.st().GetChat(ctx, instanceID, u.Chat); err == nil {
 			ev := a.chatUpdated(instanceID, c, []string{"cleared"}, "device")
 			ev.Cleared = true

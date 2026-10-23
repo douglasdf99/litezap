@@ -3733,11 +3733,13 @@ func (x *MessageRef) GetTimestampMs() int64 {
 type ChatActionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Chat  string                 `protobuf:"bytes,1,opt,name=chat,proto3" json:"chat,omitempty"`
-	// archive | unarchive | pin | unpin | mute | unmute | read | unread | delete | star | unstar
+	// archive | unarchive | pin | unpin | mute | unmute | read | unread | delete | clear |
+	// star | unstar
 	Action        string      `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
 	MuteUntilMs   int64       `protobuf:"varint,3,opt,name=mute_until_ms,json=muteUntilMs,proto3" json:"mute_until_ms,omitempty"` // mute: 0 forever
-	Message       *MessageRef `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`                               // last message (archive, read, unread, delete) or target (star)
-	DeleteMedia   bool        `protobuf:"varint,5,opt,name=delete_media,json=deleteMedia,proto3" json:"delete_media,omitempty"`   // delete
+	Message       *MessageRef `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`                               // last message (archive, read, unread, delete, clear) or target (star)
+	DeleteMedia   bool        `protobuf:"varint,5,opt,name=delete_media,json=deleteMedia,proto3" json:"delete_media,omitempty"`   // delete, clear
+	KeepStarred   bool        `protobuf:"varint,6,opt,name=keep_starred,json=keepStarred,proto3" json:"keep_starred,omitempty"`   // clear: keep the starred messages
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3803,6 +3805,13 @@ func (x *ChatActionRequest) GetMessage() *MessageRef {
 func (x *ChatActionRequest) GetDeleteMedia() bool {
 	if x != nil {
 		return x.DeleteMedia
+	}
+	return false
+}
+
+func (x *ChatActionRequest) GetKeepStarred() bool {
+	if x != nil {
+		return x.KeepStarred
 	}
 	return false
 }
@@ -5213,13 +5222,14 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\afrom_me\x18\x02 \x01(\bR\x06fromMe\x12\x16\n" +
 	"\x06sender\x18\x03 \x01(\tR\x06sender\x12!\n" +
-	"\ftimestamp_ms\x18\x04 \x01(\x03R\vtimestampMs\"\xb7\x01\n" +
+	"\ftimestamp_ms\x18\x04 \x01(\x03R\vtimestampMs\"\xda\x01\n" +
 	"\x11ChatActionRequest\x12\x12\n" +
 	"\x04chat\x18\x01 \x01(\tR\x04chat\x12\x16\n" +
 	"\x06action\x18\x02 \x01(\tR\x06action\x12\"\n" +
 	"\rmute_until_ms\x18\x03 \x01(\x03R\vmuteUntilMs\x12/\n" +
 	"\amessage\x18\x04 \x01(\v2\x15.worker.v1.MessageRefR\amessage\x12!\n" +
-	"\fdelete_media\x18\x05 \x01(\bR\vdeleteMedia\"\x14\n" +
+	"\fdelete_media\x18\x05 \x01(\bR\vdeleteMedia\x12!\n" +
+	"\fkeep_starred\x18\x06 \x01(\bR\vkeepStarred\"\x14\n" +
 	"\x12ChatActionResponse\",\n" +
 	"\x16GetChatSettingsRequest\x12\x12\n" +
 	"\x04chat\x18\x01 \x01(\tR\x04chat\"\x89\x01\n" +

@@ -172,3 +172,33 @@ func (s *Store) SetStarred(ctx context.Context, instanceID, chatJID, waID string
 	}
 	return false, err
 }
+
+// ClearChatMessages deletes a chat's messages up to upTo (the newest message cleared, on
+// WhatsApp's clock) with their media rows and files, as "clear chat" does on the phone,
+// and resets the chat's unread counters; the chat itself stays. Messages still being sent
+// (pending) are kept, and so are starred ones when keepStarred is set. ErrNotFound when
+// the chat is not in the log.
+func (s *Store) ClearChatMessages(ctx context.Context, instanceID, jid string, upTo time.Time, keepStarred bool) (int64, error) {
+	if _, err := s.GetChat(ctx, instanceID, jid); err != nil {
+		return 0, err
+	}
+	q := `SELECT seq, id FROM messages WHERE instance_id = ? AND chat_jid = ? AND timestamp <= ? AND status <> 'pending'`
+	if keepStarred {
+		q += ` AND json_extract(CASE WHEN meta_json = '' THEN '{}' ELSE meta_json END, '$.starred') IS NULL`
+	}
+	q += ` LIMIT ?`
+	var total int64
+	for {
+		n, err := s.deleteMessageBatch(ctx, q, instanceID, jid, fmtTS(upTo), pruneBatch)
+		total += n
+		if err != nil {
+			return total, err
+		}
+		if n < pruneBatch {
+			break
+		}
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE chats SET unread_count = 0, marked_unread = 0 WHERE instance_id = ? AND jid = ?`,
+		instanceID, jid)
+	return total, err
+}

@@ -333,6 +333,7 @@ function chatsTab(ctx, rest) {
     const actions = jid.includes('@') ? chatActions(ctx, jid, {
       onChange: () => reloadChats(),
       onDeleted: () => { location.hash = ctx.href('chats'); reloadChats(); },
+      onCleared: () => { reloadChats(); openChat(jid); },
     }) : null;
     current.actions = actions;
     mount(pane,

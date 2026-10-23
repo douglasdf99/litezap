@@ -5,6 +5,21 @@ description: O que mudou em cada marco do LiteZap.
 
 As versões seguem os marcos do motor. Mudanças que quebram compatibilidade são marcadas com **Quebra**.
 
+## Unreleased (v0.1.1)
+
+Recursos de paridade com a Z-API. Todos estão prontos e testados com o worker simulado, mas ainda **aguardam
+validação num aparelho real**.
+
+**Novo**
+
+- **Limpar conversa** (CHT-7): `POST /chats/{jid}/clear` (corpo opcional `{keep_starred, delete_media}`) limpa
+  as mensagens da conversa no WhatsApp desta conta pelo app state (celular e aparelhos vinculados; a conversa
+  fica, o contato não é afetado) e apaga essas mensagens do log do LiteZap, com as mídias baixadas. Responde a
+  conversa e `deleted_messages`; publica `chat.updated` com `cleared: true` e `source: "api"`. É destrutivo:
+  a ferramenta MCP `clear_chat` é marcada como destrutiva e só deve ser usada a pedido do usuário. Botão
+  **Limpar…** na aba Conversas do painel. Uma limpeza feita no celular continua só gerando o evento (o log
+  mantém as mensagens).
+
 ## Cardápio removido
 
 O LiteZap é uma API de WhatsApp: o catálogo próprio (Cardápio) saiu do produto. O catálogo nativo do WhatsApp

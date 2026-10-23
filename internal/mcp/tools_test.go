@@ -36,7 +36,7 @@ func TestToolList(t *testing.T) {
 			t.Errorf("%s lacks a description or annotations", tl.Name)
 		}
 	}
-	want := []string{"block_contact", "check_numbers", "create_group", "delete_message", "edit_message", "follow_channel",
+	want := []string{"block_contact", "check_numbers", "clear_chat", "create_group", "delete_message", "edit_message", "follow_channel",
 		"get_attendant", "get_attendant_agent", "get_business_profile", "get_catalog", "get_channel", "get_channel_messages", "get_contact",
 		"get_contact_about", "get_group", "get_group_invite_link", "get_instance_status", "get_message_status", "get_messages", "get_order",
 		"get_product", "get_profile_picture", "get_qr", "label_chat", "list_blocked", "list_channels", "list_chats", "list_contacts", "list_groups",

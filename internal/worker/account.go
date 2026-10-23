@@ -17,6 +17,7 @@ import (
 	"go.mau.fi/whatsmeow/appstate"
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waCommon"
+	"go.mau.fi/whatsmeow/proto/waSyncAction"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -383,6 +384,8 @@ func (w *Whatsmeow) ChatAction(ctx context.Context, req *workerv1.ChatActionRequ
 		patch = appstate.BuildMarkChatAsRead(target, req.Action == "read", ts, key)
 	case "delete":
 		patch = appstate.BuildDeleteChat(target, ts, key, req.DeleteMedia)
+	case "clear":
+		patch = buildClearChat(target, ts, key, req.KeepStarred, req.DeleteMedia)
 	case "star", "unstar":
 		m := req.Message
 		if m == nil || m.Id == "" {
@@ -406,6 +409,36 @@ func (w *Whatsmeow) ChatAction(ctx context.Context, req *workerv1.ChatActionRequ
 		return accountErr(err)
 	}
 	return nil
+}
+
+// buildClearChat builds the app state patch that clears a chat's messages on every device
+// of the account while keeping the chat (whatsmeow has no builder for it). The mutation is
+// what WhatsApp Web sends: index ["clearChat", jid, starred, media], version 6, where
+// starred is "1" when starred messages are cleared too and "0" when they are kept, and
+// media is "1" when the chat's media is also deleted from the phone.
+func buildClearChat(target types.JID, ts time.Time, key *waCommon.MessageKey, keepStarred, deleteMedia bool) appstate.PatchInfo {
+	starred, media := "1", "0"
+	if keepStarred {
+		starred = "0"
+	}
+	if deleteMedia {
+		media = "1"
+	}
+	if ts.IsZero() {
+		ts = time.Now()
+	}
+	rng := &waSyncAction.SyncActionMessageRange{LastMessageTimestamp: proto.Int64(ts.Unix())}
+	if key != nil {
+		rng.Messages = []*waSyncAction.SyncActionMessage{{Key: key, Timestamp: proto.Int64(ts.Unix())}}
+	}
+	return appstate.PatchInfo{
+		Type: appstate.WAPatchRegularHigh,
+		Mutations: []appstate.MutationInfo{{
+			Index:   []string{appstate.IndexClearChat, target.String(), starred, media},
+			Version: 6,
+			Value:   &waSyncAction.SyncActionValue{ClearChatAction: &waSyncAction.ClearChatAction{MessageRange: rng}},
+		}},
+	}
 }
 
 func mutedUntilMs(t time.Time) int64 {

@@ -18,6 +18,7 @@ type AccountBackend interface {
 	Blocklist(ctx context.Context, id string) ([]string, error)
 	SetBlocked(ctx context.Context, id, jid string, block bool) ([]string, error)
 	UpdateChat(ctx context.Context, id, chat string, p service.ChatPatch) (service.ChatView, error)
+	ClearChat(ctx context.Context, id, chat string, in service.ClearInput) (service.ClearResult, error)
 }
 
 // AccountService is the subset of service.Account used by Local.
@@ -27,6 +28,7 @@ type AccountService interface {
 	Blocklist(ctx context.Context, instanceID string) ([]string, error)
 	SetBlocked(ctx context.Context, instanceID, jid string, block bool) ([]string, error)
 	UpdateChat(ctx context.Context, instanceID, chat string, p service.ChatPatch) (service.ChatView, error)
+	ClearChat(ctx context.Context, instanceID, chat string, in service.ClearInput) (service.ClearResult, error)
 }
 
 var (
@@ -82,6 +84,24 @@ func (l *Local) UpdateChat(ctx context.Context, id, chat string, p service.ChatP
 		return service.ChatView{}, err
 	}
 	return a.UpdateChat(ctx, id, chat, p)
+}
+
+func (l *Local) ClearChat(ctx context.Context, id, chat string, in service.ClearInput) (service.ClearResult, error) {
+	a, err := l.account(id)
+	if err != nil {
+		return service.ClearResult{}, err
+	}
+	return a.ClearChat(ctx, id, chat, in)
+}
+
+func (r *REST) ClearChat(ctx context.Context, id, chat string, in service.ClearInput) (service.ClearResult, error) {
+	seg, err := chatSegment(chat)
+	if err != nil {
+		return service.ClearResult{}, err
+	}
+	var v service.ClearResult
+	err = r.call(ctx, restTimeout, "POST", instPath(id, "chats", seg, "clear"), nil, in, &v)
+	return v, err
 }
 
 func (r *REST) ContactPicture(ctx context.Context, id, jid string) (service.PictureView, error) {
@@ -268,4 +288,27 @@ func (t *tools) registerAccount(s *sdk.Server) {
 		v, err := ab.UpdateChat(ctx, id, in.Chat, p)
 		return nil, v, err
 	})
+
+	add(t, s, &sdk.Tool{
+		Name:  "clear_chat",
+		Title: "Clear a chat's messages",
+		Description: "Clears every message of a chat on the user's WhatsApp number (phone and linked devices) and deletes them from LiteZap's history; the chat itself stays. " +
+			"The contact keeps their copy. This is destructive and cannot be undone: only clear when the user explicitly asks, for the chat they named (confirm it first). " +
+			"keep_starred keeps the starred messages. Messages still waiting in the send queue are not affected.",
+		InputSchema: schema[clearChatInput](map[string]func(*jsonschema.Schema){"instance_id": instID}),
+		Annotations: &sdk.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
+	}, func(ctx context.Context, in clearChatInput) (*sdk.CallToolResult, service.ClearResult, error) {
+		id, err := t.instance(ctx, in.InstanceID)
+		if err != nil {
+			return nil, service.ClearResult{}, err
+		}
+		v, err := ab.ClearChat(ctx, id, in.Chat, service.ClearInput{KeepStarred: in.KeepStarred})
+		return nil, v, err
+	})
+}
+
+type clearChatInput struct {
+	InstanceID  string `json:"instance_id,omitempty" jsonschema:"Instance of the chat"`
+	Chat        string `json:"chat" jsonschema:"Chat: its jid from list_chats, or a phone number with country code."`
+	KeepStarred bool   `json:"keep_starred,omitempty" jsonschema:"Keep the starred messages (default false: clear them too)."`
 }

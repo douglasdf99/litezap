@@ -18,6 +18,7 @@ type AccountService interface {
 	GetChat(ctx context.Context, instanceID, chat string) (service.ChatView, error)
 	UpdateChat(ctx context.Context, instanceID, chat string, p service.ChatPatch) (service.ChatView, error)
 	DeleteChat(ctx context.Context, instanceID, chat string, deleteMedia bool) error
+	ClearChat(ctx context.Context, instanceID, chat string, in service.ClearInput) (service.ClearResult, error)
 	StarMessage(ctx context.Context, instanceID, id string, starred bool) (service.MessageView, error)
 	ContactPicture(ctx context.Context, instanceID, jid string, preview bool) (service.PictureView, error)
 	ContactPictureFile(ctx context.Context, instanceID, jid string, preview bool) (service.MediaFile, error)
@@ -41,6 +42,7 @@ func (s *server) accountRoutes(r chi.Router) {
 	r.Get("/chats/{jid}", s.getChat)
 	r.Patch("/chats/{jid}", s.patchChat)
 	r.Delete("/chats/{jid}", s.deleteChat)
+	r.Post("/chats/{jid}/clear", s.clearChat)
 	r.Put("/messages/{msg_id}/star", s.starMessage)
 	r.Get("/contacts/{jid}/picture", s.contactPicture)
 	r.Get("/contacts/{jid}/profile", s.contactProfile)
@@ -97,6 +99,23 @@ func (s *server) deleteChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// clearChat clears a chat's messages (destructive). The body is optional.
+func (s *server) clearChat(w http.ResponseWriter, r *http.Request) {
+	var in service.ClearInput
+	if r.ContentLength != 0 {
+		if err := decodeStrict(w, r, &in); err != nil {
+			s.writeErr(w, err)
+			return
+		}
+	}
+	v, err := s.opt.Account.ClearChat(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "jid"), in)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
 }
 
 func (s *server) starMessage(w http.ResponseWriter, r *http.Request) {

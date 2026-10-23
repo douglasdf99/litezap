@@ -116,6 +116,7 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `POST /groups/preview` `{"code"}` · `POST /groups/join` `{"code"}` | instância ou admin |
 | `GET\|POST /v1/instances/{id}/communities` · `GET /communities/{jid}` · `GET\|POST /communities/{jid}/groups` · `DELETE /communities/{jid}/groups/{group}` | instância ou admin |
 | `GET\|PATCH\|DELETE /v1/instances/{id}/chats/{jid}` (estado do chat; arquivar, fixar, silenciar, não lida; apagar — seção "Chats, contatos, perfil e privacidade") | instância ou admin |
+| `POST /v1/instances/{id}/chats/{jid}/clear` (limpar conversa; destrutivo) | instância ou admin |
 | `PUT /v1/instances/{id}/messages/{msg_id}/star` `{"starred"}` | instância ou admin |
 | `GET /v1/instances/{id}/contacts/{jid}/picture[?preview=1&download=1]` · `/contacts/{jid}/profile` | instância ou admin (cota de consultas) |
 | `POST /v1/instances/{id}/contacts/{jid}/block\|unblock` · `GET /v1/instances/{id}/blocklist` | instância ou admin |
@@ -264,6 +265,8 @@ curl -s -X PATCH .../chats/$JID -d '{"muted":true,"mute_seconds":28800}'
 curl -s -X PATCH .../chats/$JID -d '{"unread":true}'
 # apagar a conversa no WhatsApp (o log do LiteZap continua); ?delete_media=1 apaga a mídia no celular
 curl -s -X DELETE .../chats/$JID
+# limpar a conversa (DESTRUTIVO: apaga as mensagens no WhatsApp da conta e no log; a conversa fica)
+curl -s -X POST .../chats/$JID/clear -d '{"keep_starred":true}'
 # favoritar uma mensagem do log
 curl -s -X PUT .../messages/$MSG_ID/star -d '{"starred":true}'
 # foto (URL do CDN do WhatsApp, expira; ?download=1 baixa o JPEG pelo proxy da instância) e recado/empresa do contato
@@ -282,7 +285,7 @@ curl -s -X PATCH .../privacy -d '{"last_seen":"contacts","read_receipts":"none",
 ```
 
 - As ações de chat vão pelo *app state* do WhatsApp: o celular e os outros aparelhos acompanham, e mudanças feitas no celular chegam como `chat.updated` (`source: "device"`) e atualizam `GET /chats`. Logo depois de parear, até o celular mandar as chaves, as ações respondem `409 app_state_not_synced` (tente de novo em instantes). Só chats que estão no log (`404` nos demais). O WhatsApp permite 3 chats fixados (`409 pin_limit`); arquivar desafixa.
-- Apagar só marca o chat no log: ele sai de `GET /chats` até chegar mensagem nova, e `GET /chats/{jid}/messages` continua funcionando. "Limpar conversa" não existe (o WhatsApp não documenta a mutação e o whatsmeow não a monta); limpezas feitas no celular só geram `chat.updated` com `cleared: true`.
+- Apagar só marca o chat no log: ele sai de `GET /chats` até chegar mensagem nova, e `GET /chats/{jid}/messages` continua funcionando. `POST /chats/{jid}/clear` limpa a conversa (a mutação `clearChat` do app state, montada como o WhatsApp Web) e apaga as mensagens do log, menos as que estão na fila e, com `keep_starred`, as favoritas; não dá para desfazer. Limpezas feitas no celular só geram `chat.updated` com `cleared: true` (o log mantém as mensagens).
 - O estado que já existia no celular chega no sync inicial do app state (logo após parear) e é gravado no log sem um `chat.updated` por chat; `GET /chats/{jid}` ainda confere o chat com a cópia local do worker.
 - Foto e perfil de contato consultam o WhatsApp: até 30 consultas por minuto e 1000 por dia por instância (`429 rate_limited`), recusadas enquanto o operador suspende envios; respostas ficam em cache (URL 10 min, arquivo 1h, "sem foto" 10 min). Foto inexistente ou escondida pela privacidade responde `404 not_found`, nunca `502`. A foto da própria conta (`GET /profile/picture`) não gasta a cota.
 - Nome do perfil: 1 a 25 caracteres; recado: até 139. Privacidade: valores `all`, `contacts`, `contact_blacklist`, `none` (`last_seen`, `profile_photo`, `about`, `groups_add`), `all`/`none` (`read_receipts`), `all`/`match_last_seen` (`online`), `all`/`known` (`calls`), `all`/`contacts` (`messages`); as listas de exceção ("meus contatos, exceto…") só no celular.

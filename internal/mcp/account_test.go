@@ -50,6 +50,15 @@ func TestAccountTools(t *testing.T) {
 				t.Fatalf("chat = %+v", chat)
 			}
 			fails(t, cs, "update_chat", map[string]any{"chat": contact}, "nothing to change")
+
+			var cleared service.ClearResult
+			ok(t, cs, "clear_chat", map[string]any{"chat": contact, "keep_starred": true}, &cleared)
+			acts := f.WA.ChatActions()
+			if last := acts[len(acts)-1]; cleared.DeletedMessages != 1 || cleared.Chat.JID != contact ||
+				last.Action != "clear" || !last.KeepStarred || last.Message.GetId() != "W1" {
+				t.Fatalf("clear = %+v, action = %+v", cleared, last)
+			}
+			fails(t, cs, "clear_chat", map[string]any{"chat": "5511900001111"}, "not_found")
 		})
 	}
 }
