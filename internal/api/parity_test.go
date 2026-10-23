@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,6 +70,142 @@ func TestClearChat(t *testing.T) {
 	if code, _ := e.do("POST", "/v1/instances/"+id+"/chats/5511999990000@s.whatsapp.net/clear", tok, ""); code != 404 {
 		t.Fatalf("unknown chat = %d", code)
 	}
+}
+
+// MSG-24: create, edit/cancel and answer events; receive events and answers.
+func TestEvents(t *testing.T) {
+	e := newEnv(t)
+	id, tok := e.connected("Eventos")
+	f := e.sp.Last(id)
+	e.inbound(id, "W1", contact)
+	sse, _ := e.sse("/v1/instances/"+id+"/events?types=message.*", tok)
+	base := "/v1/instances/" + id + "/messages"
+	start := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second)
+
+	code, v := e.do("POST", base+"?wait=true&timeout=2s", tok, `{"to":"`+contact+`","type":"event","event":{"name":"Reunião",`+
+		`"description":"Pauta: orçamento","start_time":"`+start.Format(time.RFC3339)+`","location":{"name":"Escritório"},"extra_guests_allowed":true}}`)
+	if code != 200 || v["type"] != "event" || v["text"] != "Reunião" {
+		t.Fatalf("create = %d %v", code, v)
+	}
+	evID := v["id"].(string)
+	sent := f.WA.Sent()
+	if last := sent[len(sent)-1]; last.Type != "event" || last.Event.GetName() != "Reunião" || last.Event.GetStartTime() != start.Unix() ||
+		last.Event.GetLocation().GetName() != "Escritório" || !last.Event.GetExtraGuestsAllowed() {
+		t.Fatalf("sent = %+v", last)
+	}
+	_, got := e.do("GET", base+"/"+evID, tok, "")
+	if ev := got["event"].(map[string]any); ev["name"] != "Reunião" || ev["start_time"] != start.Format(time.RFC3339) {
+		t.Fatalf("logged = %v", got)
+	}
+	for sse.next(events.TypeMessageSent).data == "" {
+	}
+
+	// Cancel it (PATCH merges onto the current event).
+	code, v = e.do("PATCH", base+"/"+evID+"?wait=true&timeout=2s", tok, `{"event":{"canceled":true}}`)
+	if code != 200 {
+		t.Fatalf("cancel = %d %v", code, v)
+	}
+	sent = f.WA.Sent()
+	if last := sent[len(sent)-1]; last.Type != "edit" || !last.Event.GetCanceled() || last.Event.GetName() != "Reunião" ||
+		last.TargetId == "" || !last.TargetFromMe || last.EphemeralExpiration != 0 {
+		t.Fatalf("edit = %+v", last)
+	}
+	ed := sse.next(events.TypeMessageEdited)
+	if !strings.Contains(ed.data, `"canceled":true`) {
+		t.Fatalf("message.edited = %s", ed.data)
+	}
+	_, got = e.do("GET", base+"/"+evID, tok, "")
+	if ev := got["event"].(map[string]any); ev["canceled"] != true || got["edited_at"] == nil {
+		t.Fatalf("after cancel = %v", got)
+	}
+	if code, v := e.do("POST", base+"/"+evID+"/event-response", tok, `{"response":"going"}`); code != 409 || errCode(v) != "event_canceled" {
+		t.Fatalf("answer canceled = %d %v", code, v)
+	}
+	if code, _ := e.do("PATCH", base+"/"+evID+"?wait=true&timeout=2s", tok, `{"event":{"canceled":false,"name":"Reunião nova"}}`); code != 200 {
+		t.Fatalf("restore = %d", code)
+	}
+
+	// A contact's event, answered by us and by the contact.
+	f.EmitMessage(&workerv1.Message{Id: "EV2", Chat: contact, Sender: contact, Type: "event", Text: "Festa", TimestampMs: time.Now().UnixMilli(),
+		Event: &workerv1.EventInfo{Name: "Festa", StartTime: start.Unix(), ExtraGuestsAllowed: true}})
+	if rec := sse.next(events.TypeMessageReceived); !strings.Contains(rec.data, `"event":{"name":"Festa"`) {
+		t.Fatalf("message.received = %s", rec.data)
+	}
+	msg, err := e.st.MessageByWAID(context.Background(), id, contact, "EV2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, v = e.do("POST", base+"/"+msg.ID+"/event-response?wait=true&timeout=2s", tok, `{"response":"going","extra_guests":1}`)
+	if code != 200 {
+		t.Fatalf("answer = %d %v", code, v)
+	}
+	sent = f.WA.Sent()
+	if last := sent[len(sent)-1]; last.Type != "event_response" || last.EventResponse != "going" || last.ExtraGuests != 1 ||
+		last.TargetId != "EV2" || last.TargetFromMe {
+		t.Fatalf("response sent = %+v", last)
+	}
+	if r := sse.next(events.TypeMessageEventResponse); !strings.Contains(r.data, `"response":"going"`) || !strings.Contains(r.data, `"from_me":true`) {
+		t.Fatalf("our answer event = %s", r.data)
+	}
+	f.EmitMessage(&workerv1.Message{Id: "R9", Chat: contact, Sender: contact, Type: "event_response", TargetId: evID2WA(t, e, id, evID),
+		EventResponse: "maybe", TimestampMs: time.Now().UnixMilli()})
+	if r := sse.next(events.TypeMessageEventResponse); !strings.Contains(r.data, `"response":"maybe"`) || !strings.Contains(r.data, `"event_id":"`+evID+`"`) {
+		t.Fatalf("contact answer = %s", r.data)
+	}
+	_, got = e.do("GET", base+"/"+evID, tok, "")
+	if resp := got["event"].(map[string]any)["responses"].(map[string]any)[contact].(map[string]any); resp["response"] != "maybe" {
+		t.Fatalf("responses = %v", got["event"])
+	}
+	_, got = e.do("GET", base+"/"+msg.ID, tok, "")
+	if resp := got["event"].(map[string]any)["responses"].(map[string]any)["me"].(map[string]any); resp["response"] != "going" {
+		t.Fatalf("our response = %v", got["event"])
+	}
+
+	// The contact edits their event: the log follows and keeps the responses.
+	f.EmitMessage(&workerv1.Message{Id: "ED2", Chat: contact, Sender: contact, Type: "edit", TargetId: "EV2", Text: "Festa adiada",
+		TimestampMs: time.Now().UnixMilli(), Event: &workerv1.EventInfo{Name: "Festa adiada", StartTime: start.Add(time.Hour).Unix()}})
+	if ed := sse.next(events.TypeMessageEdited); !strings.Contains(ed.data, `"name":"Festa adiada"`) {
+		t.Fatalf("contact edit = %s", ed.data)
+	}
+	_, got = e.do("GET", base+"/"+msg.ID, tok, "")
+	if ev := got["event"].(map[string]any); got["text"] != "Festa adiada" || ev["responses"] == nil {
+		t.Fatalf("after contact edit = %v", got)
+	}
+
+	for path, body := range map[string]string{
+		base + "/" + msg.ID:                      `{"event":{"name":"x"}}`, // not ours
+		base + "/" + evID:                        `{"event":{}}`,
+		base + "/W1x/event-response":             `{"response":"going"}`,
+		base + "/" + msg.ID + "/event-response":  `{"response":"sim"}`,
+		base + "/" + evID + "/event-response?x=": `{"response":"maybe","extra_guests":3}`,
+	} {
+		method := "PATCH"
+		if strings.Contains(path, "event-response") {
+			method = "POST"
+		}
+		if code, v := e.do(method, path, tok, body); code < 400 {
+			t.Errorf("%s %s = %d %v", path, body, code, v)
+		}
+	}
+	for _, body := range []string{
+		`{"to":"` + contact + `","type":"event","event":{"name":"x"}}`,
+		`{"to":"` + contact + `","type":"event","event":{"name":"x","start_time":"2020-01-01T00:00:00Z"}}`,
+		`{"to":"` + contact + `","type":"event","event":{"name":"x","start_time":"` + start.Format(time.RFC3339) + `","join_link":"https://example.com/x"}}`,
+		`{"to":"` + contact + `","type":"text","text":"x","event":{"name":"x"}}`,
+	} {
+		if code, v := e.do("POST", base, tok, body); code != 400 {
+			t.Errorf("%s = %d %v", body, code, v)
+		}
+	}
+}
+
+func evID2WA(t *testing.T, e *env, instanceID, id string) string {
+	t.Helper()
+	m, err := e.st.GetMessage(context.Background(), instanceID, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m.WAMessageID
 }
 
 // CON-2: POST /contacts and DELETE /contacts/{jid} change the account's address book.

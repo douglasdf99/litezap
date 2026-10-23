@@ -207,6 +207,8 @@ type SendInput struct {
 	CatalogOwner string `json:"catalog_owner,omitempty"`
 	Body         string `json:"body,omitempty"`
 	Footer       string `json:"footer,omitempty"`
+	// Event is the event of type event (v0.1.1). Edits go through PATCH /messages/{id}.
+	Event *EventInput `json:"event,omitempty"`
 	// DelayMS waits before sending and TypingMS shows "typing..." for that long (0-15000).
 	// They never shorten the anti-ban pacing.
 	DelayMS         int    `json:"delay_ms,omitempty"`
@@ -222,6 +224,8 @@ type SendInput struct {
 	statusQuote *queue.QuoteTarget
 	// disappearing is the new timer of a type disappearing send (set by Account only).
 	disappearing *uint32
+	// eventResponse answers the MessageID event (set by RespondEvent only).
+	eventResponse *EventResponseInput
 }
 
 // requestHash fingerprints a send request (without its client id) to detect a
@@ -323,6 +327,10 @@ func outboundView(o store.Outbound, logged *store.Message) MessageView {
 		if logged != nil {
 			v.Status = logged.Status // delivered / read from receipts
 			v.Text = logged.Text     // edits and revokes change the logged text
+			// ...and the meta (star, event edits and responses).
+			if logged.MetaJSON != "" {
+				v.MessageMeta = store.ParseMeta(logged.MetaJSON)
+			}
 			if !logged.EditedAt.IsZero() {
 				v.EditedAt = &logged.EditedAt
 			}
@@ -385,8 +393,8 @@ func (s *Messaging) send(ctx context.Context, instanceID string, in SendInput, c
 		return MessageView{}, apierr.Validation("client_message_id is limited to 128 characters")
 	}
 	hash := requestHash(in)
-	if in.statusStyle != nil || in.statusQuote != nil { // unexported: not in requestHash
-		b, _ := json.Marshal([]any{hash, in.statusStyle, in.statusQuote})
+	if in.statusStyle != nil || in.statusQuote != nil || in.eventResponse != nil { // unexported: not in requestHash
+		b, _ := json.Marshal([]any{hash, in.statusStyle, in.statusQuote, in.eventResponse})
 		sum := sha256.Sum256(b)
 		hash = hex.EncodeToString(sum[:])
 	}
@@ -490,6 +498,9 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 	if err := s.common(ctx, instanceID, chat, in, &p); err != nil {
 		return p, err
 	}
+	if in.Event != nil && in.Type != "event" && in.Type != "edit" {
+		return p, apierr.Validation("event only applies to type event")
+	}
 	if in.Type != "product" && (in.ProductID != "" || in.CatalogOwner != "" || in.Body != "" || in.Footer != "") {
 		return p, apierr.Validation("product_id, catalog_owner, body and footer only apply to type product")
 	}
@@ -522,13 +533,17 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 		err = s.composeMedia(ctx, instanceID, id, in, &p)
 	case "product":
 		err = s.composeProduct(ctx, instanceID, id, in, &p)
+	case "event":
+		err = composeEvent(in, &p)
+	case "event_response":
+		err = s.composeTarget(ctx, instanceID, chat, in, &p)
 	case "disappearing":
 		if in.disappearing == nil {
 			return p, apierr.Validation("use PATCH /chats/{jid} with disappearing to change a chat's disappearing messages")
 		}
 		p.DisappearingSeconds = *in.disappearing
 	default:
-		return p, apierr.Validation("type must be text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, edit, revoke, pin, forward or product")
+		return p, apierr.Validation("type must be text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, event, reaction, edit, revoke, pin, forward or product")
 	}
 	return p, err
 }

@@ -63,7 +63,7 @@ fora do escopo** de propósito.
 | Editar, apagar, fixar, encaminhar | `type: edit` / `revoke` / `pin` / `forward`, com [`message.edited`](/docs/eventos/message-edited/) e [`message.revoked`](/docs/eventos/message-revoked/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Link com prévia | `link_preview` (`auto` ou cartão pronto) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Enquete e votos | `type: poll` e [`message.poll_vote`](/docs/eventos/message-poll-vote/); votar pela API não | <span class="lz-badge lz-badge--soon">Parcial</span> |
-| Eventos (agenda) | — | <span class="lz-badge lz-badge--no">Avaliar</span> |
+| Eventos (criar, editar, responder) | `type: "event"` em [`POST /messages`](/docs/api/mensagens/tipos/), [`PATCH /messages/{id}`](/docs/api/mensagens/editar-ou-cancelar-evento/), [`POST /messages/{id}/event-response`](/docs/api/mensagens/responder-evento/) e [`message.event_response`](/docs/eventos/message-event-response/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Enviar produto do catálogo | `type: product` ([tipos](/docs/api/mensagens/tipos/)); catálogo inteiro pelo `catalog_link` | <span class="lz-badge lz-badge--soon">Disponível</span> (aguardando validação num número Business real) |
 | Pedidos | [`order.received`](/docs/eventos/order-received/) e [`GET /orders/{order_id}`](/docs/api/catalogo/detalhes-de-um-pedido/) (só leitura) | <span class="lz-badge lz-badge--soon">Parcial</span> |
 | Botões, listas, OTP/PIX, carrossel | — (respostas a eles chegam em [`message.button_reply`](/docs/eventos/message-button-reply/)) | <span class="lz-badge lz-badge--exp">Exp</span> |

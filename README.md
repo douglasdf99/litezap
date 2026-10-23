@@ -104,6 +104,7 @@ Autenticação: `Authorization: Bearer <token>`. O token de instância só acess
 | `DELETE /v1/instances/{id}/queue/{msg_id}` (cancela um item `queued`) · `DELETE /v1/instances/{id}/queue` (esvazia) | instância ou admin |
 | `GET /v1/instances/{id}/chats[?limit=&cursor=]` | instância ou admin |
 | `GET /v1/instances/{id}/chats/{jid}/messages[?limit=&cursor=]` | instância ou admin |
+| `PATCH /v1/instances/{id}/messages/{msg_id}` (editar/cancelar evento) · `POST /messages/{msg_id}/event-response` (responder evento) | instância ou admin |
 | `GET /v1/instances/{id}/messages/search?q=[&chat=&from=&after=&before=&limit=&cursor=]` (busca full-text no histórico) | instância ou admin |
 | `POST /v1/instances/{id}/chats/{jid}/read` | instância ou admin |
 | `GET /v1/instances/{id}/contacts` · `/contacts/{jid}` | instância ou admin |

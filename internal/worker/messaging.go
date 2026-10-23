@@ -443,6 +443,10 @@ func content(m *waE2E.Message) (typ, text string, media *workerv1.Media, reactio
 		return "product", productText(m), nil, "", true
 	case m.GetOrderMessage() != nil:
 		return "order", orderText(m), nil, "", true
+	case m.GetEventMessage() != nil:
+		return "event", m.GetEventMessage().GetName(), nil, "", true
+	case m.GetEncEventResponseMessage() != nil:
+		return "", "", nil, "", false // reported by toUpdate
 	case m.GetProtocolMessage() != nil, m.GetSenderKeyDistributionMessage() != nil,
 		m.GetPollUpdateMessage() != nil, m.GetPinInChatMessage() != nil, m.GetKeepInChatMessage() != nil,
 		m.GetSecretEncryptedMessage() != nil:
@@ -489,6 +493,8 @@ func contextOf(m *waE2E.Message) *waE2E.ContextInfo {
 		return m.GetProductMessage().GetContextInfo()
 	case m.GetOrderMessage() != nil:
 		return m.GetOrderMessage().GetContextInfo()
+	case m.GetEventMessage() != nil:
+		return m.GetEventMessage().GetContextInfo()
 	}
 	return nil
 }
@@ -536,6 +542,7 @@ func details(m *waE2E.Message, out *workerv1.Message) {
 		}
 	}
 	out.ButtonReply = buttonReply(m)
+	out.Event = eventOf(m.GetEventMessage())
 	out.Product, out.Order = productOf(m), orderOf(m)
 	if p := pollCreation(m); p != nil {
 		poll := &workerv1.Poll{Name: p.GetName(), Selectable: p.GetSelectableOptionsCount()}
@@ -671,7 +678,7 @@ func (w *Whatsmeow) toUpdate(e *events.Message) *workerv1.Message {
 		}
 	case m.GetSecretEncryptedMessage() != nil:
 		sm := m.GetSecretEncryptedMessage()
-		if sm.GetSecretEncType() != waE2E.SecretEncryptedMessage_MESSAGE_EDIT {
+		if t := sm.GetSecretEncType(); t != waE2E.SecretEncryptedMessage_MESSAGE_EDIT && t != waE2E.SecretEncryptedMessage_EVENT_EDIT {
 			return nil
 		}
 		decrypt := w.decryptSecret
@@ -688,6 +695,20 @@ func (w *Whatsmeow) toUpdate(e *events.Message) *workerv1.Message {
 			return nil
 		}
 		u.Type, u.TargetId, u.Text = "edit", sm.GetTargetMessageKey().GetID(), t
+		u.Event = eventOf(dm.GetEventMessage()) // an event edit (or cancellation)
+	case m.GetEncEventResponseMessage() != nil:
+		decrypt := w.decryptEventResp
+		if decrypt == nil {
+			decrypt = w.decryptEventResponse
+		}
+		r, err := decrypt(ctx, e)
+		if err != nil {
+			// Responses to events created before pairing cannot be decrypted (no secret).
+			w.log.Warn("cannot decrypt event response", "id", e.Info.ID, "err", err)
+			return nil
+		}
+		u.Type, u.TargetId = "event_response", m.GetEncEventResponseMessage().GetEventCreationMessageKey().GetID()
+		u.EventResponse, u.ExtraGuests = eventResponseName(r.GetResponse()), r.GetExtraGuestCount()
 	case m.GetPollUpdateMessage() != nil:
 		decrypt := w.decryptPoll
 		if decrypt == nil {

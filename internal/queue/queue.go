@@ -63,6 +63,23 @@ type Payload struct {
 	Product *Product `json:"product,omitempty"`
 	// DisappearingSeconds is the new timer of a type disappearing send (CHT-9; 0: off).
 	DisappearingSeconds uint32 `json:"disappearing_seconds,omitempty"`
+	// EventResponse (going | not_going | maybe) and ExtraGuests answer the Target event
+	// (MSG-24). A new event or an event edit carries the event in Meta.Event.
+	EventResponse string `json:"event_response,omitempty"`
+	ExtraGuests   int    `json:"extra_guests,omitempty"`
+}
+
+// eventInfo is the worker form of an event card.
+func eventInfo(c *store.EventCard) *workerv1.EventInfo {
+	e := &workerv1.EventInfo{Name: c.Name, Description: c.Description, JoinLink: c.JoinLink, StartTime: c.StartTime.Unix(),
+		Canceled: c.Canceled, ExtraGuestsAllowed: c.ExtraGuestsAllowed}
+	if c.EndTime != nil {
+		e.EndTime = c.EndTime.Unix()
+	}
+	if l := c.Location; l != nil {
+		e.Location = &workerv1.Location{Latitude: l.Latitude, Longitude: l.Longitude, Name: l.Name, Address: l.Address}
+	}
+	return e
 }
 
 // Product is a catalog product snapshot (prices in thousandths of the currency unit).
@@ -127,7 +144,7 @@ const (
 // Updates reports whether a type changes another message instead of sending a new one
 // (not logged as a message of its own).
 func Updates(typ string) bool {
-	return typ == "edit" || typ == "revoke" || typ == "pin" || typ == "disappearing"
+	return typ == "edit" || typ == "revoke" || typ == "pin" || typ == "disappearing" || typ == "event_response"
 }
 
 // carriesExpiration reports whether a send of this type to chat is marked with the chat's
@@ -146,7 +163,7 @@ func windowError(p Payload, now time.Time) string {
 	}
 	age := now.Sub(p.Target.SentAt)
 	switch {
-	case p.Type == "edit" && age > EditWindow:
+	case p.Type == "edit" && age > EditWindow && (p.Meta == nil || p.Meta.Event == nil): // events stay editable
 		return "edit_window_expired: messages can only be edited for 15 minutes"
 	case p.Type == "revoke" && age > RevokeWindow:
 		return "revoke_window_expired: messages can only be deleted for everyone for 48 hours"
@@ -827,6 +844,7 @@ func buildRequest(item store.Outbound, p Payload) (*workerv1.SendRequest, error)
 	req.Animated, req.MentionAll, req.Unpin, req.PinSeconds = p.Animated, p.MentionAll, p.Unpin, p.PinSeconds
 	req.ForwardKind, req.ForwardRef = p.ForwardKind, p.ForwardRef
 	req.DisappearingSeconds = p.DisappearingSeconds
+	req.EventResponse, req.ExtraGuests = p.EventResponse, int32(p.ExtraGuests)
 	if m := p.Meta; m != nil {
 		req.Mentions, req.Forwarded = m.Mentions, m.Forwarded
 		if l := m.Location; l != nil {
@@ -837,6 +855,9 @@ func buildRequest(item store.Outbound, p Payload) (*workerv1.SendRequest, error)
 		}
 		if pl := m.Poll; pl != nil {
 			req.Poll = &workerv1.Poll{Name: pl.Name, Options: pl.Options, Selectable: uint32(pl.Selectable)}
+		}
+		if ev := m.Event; ev != nil {
+			req.Event = eventInfo(ev)
 		}
 	}
 	if q := p.Quote; q != nil {
@@ -1000,6 +1021,10 @@ func (d *dispatcher) sent(item store.Outbound, p Payload, at time.Time) error {
 // applyUpdate applies a sent edit or revoke to the target message in the log and
 // publishes message.edited / message.revoked.
 func (d *dispatcher) applyUpdate(item store.Outbound, p Payload, at time.Time) {
+	if p.Type == "event_response" && p.Target != nil {
+		d.applyEventResponse(item, p, at)
+		return
+	}
 	if p.Target == nil || (p.Type != "edit" && p.Type != "revoke") {
 		return
 	}
@@ -1007,9 +1032,16 @@ func (d *dispatcher) applyUpdate(item store.Outbound, p Payload, at time.Time) {
 	var m store.Message
 	var err error
 	typ := events.TypeMessageEdited
-	if p.Type == "edit" {
+	var card *store.EventCard
+	if p.Meta != nil {
+		card = p.Meta.Event
+	}
+	switch {
+	case p.Type == "edit" && card != nil:
+		m, err = d.q.store.EditEvent(ctx, d.id, item.ChatJID, p.Target.WAMessageID, *card, at)
+	case p.Type == "edit":
 		m, err = d.q.store.EditMessage(ctx, d.id, item.ChatJID, p.Target.WAMessageID, p.Text, at)
-	} else {
+	default:
 		typ = events.TypeMessageRevoked
 		m, err = d.q.store.RevokeMessage(ctx, d.id, item.ChatJID, p.Target.WAMessageID, at)
 	}
@@ -1020,9 +1052,28 @@ func (d *dispatcher) applyUpdate(item store.Outbound, p Payload, at time.Time) {
 		u := events.MessageUpdate{ID: m.ID, WAMessageID: p.Target.WAMessageID, Chat: item.ChatJID, FromMe: true,
 			Source: "api", Timestamp: at.UTC()}
 		if p.Type == "edit" {
-			u.Text = p.Text
+			u.Text, u.Event = p.Text, card
 		}
 		pub.Publish(d.id, typ, u)
+	}
+}
+
+// applyEventResponse records our sent answer on the event and publishes
+// message.event_response.
+func (d *dispatcher) applyEventResponse(item store.Outbound, p Payload, at time.Time) {
+	ctx := context.Background()
+	v := events.EventResponse{EventWAMessageID: p.Target.WAMessageID, Chat: item.ChatJID, Responder: "me", FromMe: true,
+		Response: p.EventResponse, ExtraGuests: p.ExtraGuests, Timestamp: at.UTC()}
+	m, err := d.q.store.SetEventResponse(ctx, d.id, item.ChatJID, p.Target.WAMessageID, "me",
+		store.EventAnswer{Response: p.EventResponse, ExtraGuests: p.ExtraGuests, At: at.UTC()})
+	switch {
+	case err == nil:
+		v.EventID = m.ID
+	case !errors.Is(err, store.ErrNotFound):
+		d.log().Error("queue: apply event response", "err", err)
+	}
+	if pub := d.q.opt.Events; pub != nil {
+		pub.Publish(d.id, events.TypeMessageEventResponse, v)
 	}
 }
 

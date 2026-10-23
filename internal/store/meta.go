@@ -1,6 +1,10 @@
 package store
 
-import "encoding/json"
+import (
+	"context"
+	"encoding/json"
+	"time"
+)
 
 // MessageMeta is the structured content of a message, stored as messages.meta_json and
 // shown (flattened) by the API and the events.
@@ -17,6 +21,29 @@ type MessageMeta struct {
 	// Marco 12: a catalog product card, or an order placed from a catalog (no token).
 	Product *ProductCard `json:"product,omitempty"`
 	Order   *OrderCard   `json:"order,omitempty"`
+	// v0.1.1 (MSG-24): a WhatsApp event, with the responses seen so far.
+	Event *EventCard `json:"event,omitempty"`
+}
+
+// EventCard is a WhatsApp event (an event message and its later edits).
+type EventCard struct {
+	Name               string     `json:"name"`
+	Description        string     `json:"description,omitempty"`
+	Location           *Location  `json:"location,omitempty"`
+	JoinLink           string     `json:"join_link,omitempty"`
+	StartTime          time.Time  `json:"start_time"`
+	EndTime            *time.Time `json:"end_time,omitempty"`
+	Canceled           bool       `json:"canceled,omitempty"`
+	ExtraGuestsAllowed bool       `json:"extra_guests_allowed,omitempty"`
+	// Responses maps who answered (JID) to their latest answer.
+	Responses map[string]EventAnswer `json:"responses,omitempty"`
+}
+
+// EventAnswer is one person's answer to an event: going | not_going | maybe.
+type EventAnswer struct {
+	Response    string    `json:"response"`
+	ExtraGuests int       `json:"extra_guests,omitempty"`
+	At          time.Time `json:"at"`
 }
 
 // ProductCard is the product of a product message (prices in thousandths of the unit).
@@ -83,7 +110,84 @@ type LinkPreview struct {
 func (m MessageMeta) Empty() bool {
 	return m.ReplyTo == "" && len(m.Mentions) == 0 && !m.Forwarded && m.Location == nil &&
 		len(m.Contacts) == 0 && m.Poll == nil && m.LinkPreview == nil && m.ButtonReply == nil &&
-		m.Product == nil && m.Order == nil
+		m.Product == nil && m.Order == nil && m.Event == nil && !m.Starred
+}
+
+// updateMeta rewrites the meta of a logged message in one transaction; change may also
+// return a new text (nil: kept) and reports whether to write. ErrNotFound when the
+// message is not in the log.
+func (s *Store) updateMeta(ctx context.Context, instanceID, chatJID, waID string, change func(*Message, *MessageMeta) (*string, bool)) (Message, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Message{}, err
+	}
+	defer tx.Rollback()
+	m, err := scanMessage(tx.QueryRowContext(ctx, `SELECT `+messageCols+` FROM messages
+		WHERE instance_id = ? AND chat_jid = ? AND wa_message_id = ?`, instanceID, chatJID, waID))
+	if err != nil {
+		return m, err
+	}
+	meta := ParseMeta(m.MetaJSON)
+	text, write := change(&m, &meta)
+	if !write {
+		return m, nil
+	}
+	if text != nil {
+		m.Text = *text
+	}
+	m.MetaJSON = meta.JSON()
+	if _, err := tx.ExecContext(ctx, `UPDATE messages SET meta_json = ?, text = ?, edited_at = ? WHERE instance_id = ? AND chat_jid = ? AND wa_message_id = ?`,
+		m.MetaJSON, m.Text, fmtTS(m.EditedAt), instanceID, chatJID, waID); err != nil {
+		return m, err
+	}
+	return m, tx.Commit()
+}
+
+// EditEvent replaces the details of a logged event (an edit or a cancellation), keeping
+// the responses, and returns the updated message. ErrNotFound when it is not in the log
+// or is not an event.
+func (s *Store) EditEvent(ctx context.Context, instanceID, chatJID, waID string, card EventCard, at time.Time) (Message, error) {
+	notEvent := false
+	m, err := s.updateMeta(ctx, instanceID, chatJID, waID, func(m *Message, meta *MessageMeta) (*string, bool) {
+		if m.Type != "event" || !m.RevokedAt.IsZero() {
+			notEvent = true
+			return nil, false
+		}
+		if meta.Event != nil {
+			card.Responses = meta.Event.Responses
+		}
+		meta.Event = &card
+		m.EditedAt = at
+		return &card.Name, true
+	})
+	if err == nil && notEvent {
+		return m, ErrNotFound
+	}
+	return m, err
+}
+
+// SetEventResponse records someone's answer to a logged event (the latest one wins) and
+// returns the event. ErrNotFound when the event is not in the log.
+func (s *Store) SetEventResponse(ctx context.Context, instanceID, chatJID, waID, who string, a EventAnswer) (Message, error) {
+	notEvent := false
+	m, err := s.updateMeta(ctx, instanceID, chatJID, waID, func(m *Message, meta *MessageMeta) (*string, bool) {
+		if m.Type != "event" || meta.Event == nil {
+			notEvent = true
+			return nil, false
+		}
+		if old, ok := meta.Event.Responses[who]; ok && old.At.After(a.At) {
+			return nil, false
+		}
+		if meta.Event.Responses == nil {
+			meta.Event.Responses = map[string]EventAnswer{}
+		}
+		meta.Event.Responses[who] = a
+		return nil, true
+	})
+	if err == nil && notEvent {
+		return m, ErrNotFound
+	}
+	return m, err
 }
 
 // JSON encodes m for meta_json ("" when empty).

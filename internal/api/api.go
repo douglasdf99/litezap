@@ -44,6 +44,8 @@ type MessagingService interface {
 	Chats(ctx context.Context, instanceID string, limit int, cursor string) (service.ChatPage, error)
 	ChatMessages(ctx context.Context, instanceID, chat string, limit int, cursor string) (service.MessagePage, error)
 	SearchMessages(ctx context.Context, instanceID string, p service.SearchParams) (service.SearchPage, error)
+	EditEvent(ctx context.Context, instanceID, id string, p service.EventPatch, wait time.Duration) (service.MessageView, error)
+	RespondEvent(ctx context.Context, instanceID, id string, in service.EventResponseInput, wait time.Duration) (service.MessageView, error)
 	MarkRead(ctx context.Context, instanceID, chat string) error
 	Contacts(ctx context.Context, instanceID string) ([]service.ContactView, error)
 	Contact(ctx context.Context, instanceID, jid string) (service.ContactView, error)
@@ -192,6 +194,8 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 			r.Post("/messages", s.sendMessage)
 			r.Get("/messages/search", s.searchMessages)
 			r.Get("/messages/{msg_id}", s.getMessage)
+			r.Patch("/messages/{msg_id}", s.editEvent)
+			r.Post("/messages/{msg_id}/event-response", s.respondEvent)
 			r.Get("/queue", s.listQueue)
 			r.Delete("/queue", s.clearQueue)
 			r.Delete("/queue/{msg_id}", s.cancelQueued)

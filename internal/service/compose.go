@@ -63,7 +63,9 @@ type ForwardInput struct {
 // pinDurations are the durations WhatsApp offers when pinning.
 var pinDurations = map[string]uint32{"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
 
-func validTarget(t string) bool { return t == "edit" || t == "revoke" || t == "pin" }
+func validTarget(t string) bool {
+	return t == "edit" || t == "revoke" || t == "pin" || t == "event_response"
+}
 
 // findInChat finds a logged message of chat by LiteZap id or WhatsApp id.
 func (s *Messaging) findInChat(ctx context.Context, instanceID, chat, id string) (store.Message, error) {
@@ -283,6 +285,19 @@ func (s *Messaging) composeTarget(ctx context.Context, instanceID, chat string, 
 		if !t.FromMe {
 			return apierr.Validation("only your own messages can be edited")
 		}
+		if in.Event != nil || t.Type == "event" {
+			// An event stays editable (and cancelable) until it happens.
+			if in.Event == nil || t.Type != "event" {
+				return apierr.Validation("use PATCH /messages/{id} to edit an event")
+			}
+			c, err := eventCard(*in.Event)
+			if err != nil {
+				return err
+			}
+			metaOf(p).Event = c
+			p.Text = c.Name
+			return nil
+		}
 		if t.Type != "text" {
 			return apierr.Validation("only text messages can be edited")
 		}
@@ -303,6 +318,17 @@ func (s *Messaging) composeTarget(ctx context.Context, instanceID, chat string, 
 		if now.Sub(t.Timestamp) > queue.RevokeWindow {
 			return apierr.New(http.StatusConflict, "revoke_window_expired", "messages can only be deleted for everyone for 48 hours", false)
 		}
+	case "event_response":
+		if in.eventResponse == nil {
+			return apierr.Validation("use POST /messages/{id}/event-response to answer an event")
+		}
+		if t.Type != "event" {
+			return apierr.Validation("the message is not an event")
+		}
+		if strings.HasSuffix(chat, "@g.us") && !t.FromMe && t.SenderJID == "" {
+			return apierr.Validation("the author of the event is unknown")
+		}
+		p.EventResponse, p.ExtraGuests = in.eventResponse.Response, in.eventResponse.ExtraGuests
 	case "pin":
 		pin := in.Pin
 		if pin == nil {

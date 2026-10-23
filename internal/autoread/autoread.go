@@ -68,7 +68,7 @@ func (r *Reader) StateChanged(string, instance.State, string) {}
 // skipped are message types that get no read receipt (updates of other messages).
 func skipped(m *workerv1.Message) bool {
 	switch m.Type {
-	case "reaction", "edit", "revoke", "poll_vote", "unknown":
+	case "reaction", "edit", "revoke", "poll_vote", "event_response", "unknown":
 		return true
 	}
 	return m.FromMe || m.Id == "" || m.Chat == "" || strings.HasSuffix(m.Chat, "@broadcast") ||

@@ -88,6 +88,7 @@ func meta(m *workerv1.Message) store.MessageMeta {
 	if p := m.Poll; p != nil {
 		mm.Poll = &store.Poll{Name: p.Name, Options: p.Options, Selectable: int(p.Selectable)}
 	}
+	mm.Event = EventCard(m.Event)
 	if b := m.ButtonReply; b != nil {
 		mm.ButtonReply = &store.ButtonReply{Kind: b.Kind, ID: b.Id, Title: b.Title, Description: b.Description}
 	}
@@ -136,6 +137,8 @@ func (in *Ingestor) message(ctx context.Context, instanceID string, m *workerv1.
 		return in.update(ctx, instanceID, m)
 	case "poll_vote":
 		return in.pollVote(ctx, instanceID, m)
+	case "event_response":
+		return in.eventResponse(ctx, instanceID, m)
 	}
 	source, err := in.source(ctx, instanceID, m)
 	if err != nil {
@@ -244,6 +247,8 @@ func (in *Ingestor) update(ctx context.Context, instanceID string, m *workerv1.M
 	case !mayChange(m, rec):
 		in.Log.Warn("ignored "+m.Type+" of a message by someone else", "instance_id", instanceID, "chat", m.Chat, "target", m.TargetId)
 		return nil
+	case m.Type == "edit" && m.Event != nil:
+		rec, err = in.Store.EditEvent(ctx, instanceID, m.Chat, m.TargetId, *EventCard(m.Event), at)
 	case m.Type == "edit":
 		rec, err = in.Store.EditMessage(ctx, instanceID, m.Chat, m.TargetId, m.Text, at)
 	default:
@@ -256,9 +261,53 @@ func (in *Ingestor) update(ctx context.Context, instanceID string, m *workerv1.M
 		u := events.MessageUpdate{ID: rec.ID, WAMessageID: m.TargetId, Chat: m.Chat, Sender: m.Sender,
 			FromMe: m.FromMe, Source: source, Timestamp: at}
 		if m.Type == "edit" {
-			u.Text = m.Text
+			u.Text, u.Event = m.Text, EventCard(m.Event)
 		}
 		in.Events.Publish(instanceID, typ, u)
+	}
+	return nil
+}
+
+// EventCard converts a worker event (nil: none).
+func EventCard(e *workerv1.EventInfo) *store.EventCard {
+	if e == nil {
+		return nil
+	}
+	c := &store.EventCard{Name: e.Name, Description: e.Description, JoinLink: e.JoinLink,
+		StartTime: time.Unix(e.StartTime, 0).UTC(), Canceled: e.Canceled, ExtraGuestsAllowed: e.ExtraGuestsAllowed}
+	if e.EndTime > 0 {
+		t := time.Unix(e.EndTime, 0).UTC()
+		c.EndTime = &t
+	}
+	if l := e.Location; l != nil {
+		c.Location = &store.Location{Latitude: l.Latitude, Longitude: l.Longitude, Name: l.Name, Address: l.Address}
+	}
+	return c
+}
+
+// eventResponse records an answer to an event in the event's meta and publishes
+// message.event_response. Answers are not logged as messages.
+func (in *Ingestor) eventResponse(ctx context.Context, instanceID string, m *workerv1.Message) error {
+	if m.TargetId == "" {
+		return nil
+	}
+	at := time.UnixMilli(m.TimestampMs).UTC()
+	who := m.Sender
+	if m.FromMe && who == "" {
+		who = "me"
+	}
+	v := events.EventResponse{EventWAMessageID: m.TargetId, Chat: m.Chat, Responder: who, PushName: m.PushName,
+		FromMe: m.FromMe, Response: m.EventResponse, ExtraGuests: int(m.ExtraGuests), Timestamp: at}
+	ev, err := in.Store.SetEventResponse(ctx, instanceID, m.Chat, m.TargetId, who,
+		store.EventAnswer{Response: m.EventResponse, ExtraGuests: int(m.ExtraGuests), At: at})
+	switch {
+	case err == nil:
+		v.EventID = ev.ID
+	case !errors.Is(err, store.ErrNotFound):
+		return err
+	}
+	if in.Events != nil {
+		in.Events.Publish(instanceID, events.TypeMessageEventResponse, v)
 	}
 	return nil
 }

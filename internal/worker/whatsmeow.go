@@ -55,6 +55,8 @@ type Whatsmeow struct {
 	upload        func(context.Context, io.Reader, whatsmeow.MediaType) (whatsmeow.UploadResponse, error)
 	decryptPoll   func(context.Context, *events.Message) (*waE2E.PollVoteMessage, error)
 	decryptSecret func(context.Context, *events.Message) (*waE2E.Message, error)
+	// decryptEventResp opens event responses (events.go); tests replace it.
+	decryptEventResp func(context.Context, *events.Message) (*waE2E.EventResponseMessage, error)
 	// Calls and presence (realtime.go); the funcs default to the client, tests replace them.
 	calls             callBook
 	rejectCall        func(context.Context, types.JID, string) error

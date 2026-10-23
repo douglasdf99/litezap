@@ -52,6 +52,7 @@ Cada entrega é um `POST` com o envelope como corpo (`Content-Type: application/
 | [`message.edited`](/docs/eventos/message-edited/) | Mensagem editada (pela API, pelo celular ou pelo contato) | M6 |
 | [`message.revoked`](/docs/eventos/message-revoked/) | Mensagem apagada para todos | M6 |
 | [`message.poll_vote`](/docs/eventos/message-poll-vote/) | Voto em enquete, com as opções decifradas | M6 |
+| [`message.event_response`](/docs/eventos/message-event-response/) | Resposta a evento (vou, não vou, talvez) | v0.1.1 |
 | [`message.button_reply`](/docs/eventos/message-button-reply/) | Resposta a botão, lista, template ou interativa | M7 |
 | [`chat.presence`](/docs/eventos/chat-presence/) | Digitando, gravando, online/offline (opt-in) | M7 |
 | [`call.received`](/docs/eventos/call-received/) | Chamada tocando (e se foi rejeitada automaticamente) | M7 |

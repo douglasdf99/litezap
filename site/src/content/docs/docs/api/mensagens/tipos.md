@@ -95,6 +95,21 @@ vídeo redondo, sem legenda. Todos usam `media` como os outros anexos.
 2 a 12 opções distintas; `max_selections` padrão 1 (`0` = qualquer número). Os votos chegam no evento
 [`message.poll_vote`](/docs/eventos/message-poll-vote/), já decifrados.
 
+### Evento <span class="lz-badge lz-badge--soon">v0.1.1</span>
+
+```json
+{ "to": "120363000000000000@g.us", "type": "event", "event": { "name": "Reunião de pais",
+  "description": "Pauta: passeio", "start_time": "2026-11-05T19:00:00-03:00", "end_time": "2026-11-05T20:00:00-03:00",
+  "location": { "name": "Escola", "address": "Rua Exemplo, 100" }, "extra_guests_allowed": true } }
+```
+
+Convite com data, local e link de chamada opcional (`join_link`, `https://call.whatsapp.com/...`); todos do chat
+respondem "vou / não vou / talvez". `PATCH /messages/{id}` edita ou cancela (`{"event": {"canceled": true}}`),
+`POST /messages/{id}/event-response` responde (`going`, `not_going`, `maybe`). As respostas chegam em
+[`message.event_response`](/docs/eventos/message-event-response/) e a última de cada pessoa fica em
+`event.responses`. Eventos recebidos antes do pareamento não podem ser respondidos (a chave deles não existe na
+sessão). Ainda aguardando validação num aparelho real.
+
 ### Produto do catálogo <span class="lz-badge lz-badge--soon">M12</span>
 
 ```json

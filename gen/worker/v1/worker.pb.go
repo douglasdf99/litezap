@@ -1226,8 +1226,14 @@ type Message struct {
 	// seconds; 0: none) and when that timer was set (unix seconds; 0 unknown).
 	EphemeralSeconds   uint32 `protobuf:"varint,24,opt,name=ephemeral_seconds,json=ephemeralSeconds,proto3" json:"ephemeral_seconds,omitempty"`
 	EphemeralSettingTs int64  `protobuf:"varint,25,opt,name=ephemeral_setting_ts,json=ephemeralSettingTs,proto3" json:"ephemeral_setting_ts,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// v0.1.1 (MSG-24): type event (and an edit of an event: type edit with event set), and
+	// the update event_response (target_id: the event; event_response: going | not_going |
+	// maybe, with extra_guests).
+	Event         *EventInfo `protobuf:"bytes,26,opt,name=event,proto3" json:"event,omitempty"`
+	EventResponse string     `protobuf:"bytes,27,opt,name=event_response,json=eventResponse,proto3" json:"event_response,omitempty"`
+	ExtraGuests   int32      `protobuf:"varint,28,opt,name=extra_guests,json=extraGuests,proto3" json:"extra_guests,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Message) Reset() {
@@ -1435,6 +1441,128 @@ func (x *Message) GetEphemeralSettingTs() int64 {
 	return 0
 }
 
+func (x *Message) GetEvent() *EventInfo {
+	if x != nil {
+		return x.Event
+	}
+	return nil
+}
+
+func (x *Message) GetEventResponse() string {
+	if x != nil {
+		return x.EventResponse
+	}
+	return ""
+}
+
+func (x *Message) GetExtraGuests() int32 {
+	if x != nil {
+		return x.ExtraGuests
+	}
+	return 0
+}
+
+// EventInfo is a WhatsApp event (EventMessage). Times are unix seconds (0: none).
+type EventInfo struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Name               string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Description        string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	Location           *Location              `protobuf:"bytes,3,opt,name=location,proto3" json:"location,omitempty"`
+	JoinLink           string                 `protobuf:"bytes,4,opt,name=join_link,json=joinLink,proto3" json:"join_link,omitempty"` // a WhatsApp call link
+	StartTime          int64                  `protobuf:"varint,5,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`
+	EndTime            int64                  `protobuf:"varint,6,opt,name=end_time,json=endTime,proto3" json:"end_time,omitempty"`
+	Canceled           bool                   `protobuf:"varint,7,opt,name=canceled,proto3" json:"canceled,omitempty"`
+	ExtraGuestsAllowed bool                   `protobuf:"varint,8,opt,name=extra_guests_allowed,json=extraGuestsAllowed,proto3" json:"extra_guests_allowed,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *EventInfo) Reset() {
+	*x = EventInfo{}
+	mi := &file_worker_v1_worker_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EventInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EventInfo) ProtoMessage() {}
+
+func (x *EventInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EventInfo.ProtoReflect.Descriptor instead.
+func (*EventInfo) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *EventInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *EventInfo) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *EventInfo) GetLocation() *Location {
+	if x != nil {
+		return x.Location
+	}
+	return nil
+}
+
+func (x *EventInfo) GetJoinLink() string {
+	if x != nil {
+		return x.JoinLink
+	}
+	return ""
+}
+
+func (x *EventInfo) GetStartTime() int64 {
+	if x != nil {
+		return x.StartTime
+	}
+	return 0
+}
+
+func (x *EventInfo) GetEndTime() int64 {
+	if x != nil {
+		return x.EndTime
+	}
+	return 0
+}
+
+func (x *EventInfo) GetCanceled() bool {
+	if x != nil {
+		return x.Canceled
+	}
+	return false
+}
+
+func (x *EventInfo) GetExtraGuestsAllowed() bool {
+	if x != nil {
+		return x.ExtraGuestsAllowed
+	}
+	return false
+}
+
 // Product is a catalog product as sent in a ProductMessage (prices in thousandths).
 type Product struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
@@ -1457,7 +1585,7 @@ type Product struct {
 
 func (x *Product) Reset() {
 	*x = Product{}
-	mi := &file_worker_v1_worker_proto_msgTypes[17]
+	mi := &file_worker_v1_worker_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1469,7 +1597,7 @@ func (x *Product) String() string {
 func (*Product) ProtoMessage() {}
 
 func (x *Product) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[17]
+	mi := &file_worker_v1_worker_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1482,7 +1610,7 @@ func (x *Product) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Product.ProtoReflect.Descriptor instead.
 func (*Product) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{17}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Product) GetProductId() string {
@@ -1595,7 +1723,7 @@ type Order struct {
 
 func (x *Order) Reset() {
 	*x = Order{}
-	mi := &file_worker_v1_worker_proto_msgTypes[18]
+	mi := &file_worker_v1_worker_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1607,7 +1735,7 @@ func (x *Order) String() string {
 func (*Order) ProtoMessage() {}
 
 func (x *Order) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[18]
+	mi := &file_worker_v1_worker_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1620,7 +1748,7 @@ func (x *Order) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Order.ProtoReflect.Descriptor instead.
 func (*Order) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{18}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *Order) GetOrderId() string {
@@ -1699,7 +1827,7 @@ type ButtonReply struct {
 
 func (x *ButtonReply) Reset() {
 	*x = ButtonReply{}
-	mi := &file_worker_v1_worker_proto_msgTypes[19]
+	mi := &file_worker_v1_worker_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1711,7 +1839,7 @@ func (x *ButtonReply) String() string {
 func (*ButtonReply) ProtoMessage() {}
 
 func (x *ButtonReply) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[19]
+	mi := &file_worker_v1_worker_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1724,7 +1852,7 @@ func (x *ButtonReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ButtonReply.ProtoReflect.Descriptor instead.
 func (*ButtonReply) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{19}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ButtonReply) GetKind() string {
@@ -1768,7 +1896,7 @@ type Location struct {
 
 func (x *Location) Reset() {
 	*x = Location{}
-	mi := &file_worker_v1_worker_proto_msgTypes[20]
+	mi := &file_worker_v1_worker_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1780,7 +1908,7 @@ func (x *Location) String() string {
 func (*Location) ProtoMessage() {}
 
 func (x *Location) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[20]
+	mi := &file_worker_v1_worker_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1793,7 +1921,7 @@ func (x *Location) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Location.ProtoReflect.Descriptor instead.
 func (*Location) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{20}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *Location) GetLatitude() float64 {
@@ -1841,7 +1969,7 @@ type ContactCard struct {
 
 func (x *ContactCard) Reset() {
 	*x = ContactCard{}
-	mi := &file_worker_v1_worker_proto_msgTypes[21]
+	mi := &file_worker_v1_worker_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1853,7 +1981,7 @@ func (x *ContactCard) String() string {
 func (*ContactCard) ProtoMessage() {}
 
 func (x *ContactCard) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[21]
+	mi := &file_worker_v1_worker_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1866,7 +1994,7 @@ func (x *ContactCard) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContactCard.ProtoReflect.Descriptor instead.
 func (*ContactCard) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{21}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ContactCard) GetDisplayName() string {
@@ -1894,7 +2022,7 @@ type Poll struct {
 
 func (x *Poll) Reset() {
 	*x = Poll{}
-	mi := &file_worker_v1_worker_proto_msgTypes[22]
+	mi := &file_worker_v1_worker_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1906,7 +2034,7 @@ func (x *Poll) String() string {
 func (*Poll) ProtoMessage() {}
 
 func (x *Poll) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[22]
+	mi := &file_worker_v1_worker_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1919,7 +2047,7 @@ func (x *Poll) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Poll.ProtoReflect.Descriptor instead.
 func (*Poll) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{22}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *Poll) GetName() string {
@@ -1957,7 +2085,7 @@ type Quote struct {
 
 func (x *Quote) Reset() {
 	*x = Quote{}
-	mi := &file_worker_v1_worker_proto_msgTypes[23]
+	mi := &file_worker_v1_worker_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1969,7 +2097,7 @@ func (x *Quote) String() string {
 func (*Quote) ProtoMessage() {}
 
 func (x *Quote) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[23]
+	mi := &file_worker_v1_worker_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1982,7 +2110,7 @@ func (x *Quote) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Quote.ProtoReflect.Descriptor instead.
 func (*Quote) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{23}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *Quote) GetMessageId() string {
@@ -2032,7 +2160,7 @@ type LinkPreview struct {
 
 func (x *LinkPreview) Reset() {
 	*x = LinkPreview{}
-	mi := &file_worker_v1_worker_proto_msgTypes[24]
+	mi := &file_worker_v1_worker_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2044,7 +2172,7 @@ func (x *LinkPreview) String() string {
 func (*LinkPreview) ProtoMessage() {}
 
 func (x *LinkPreview) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[24]
+	mi := &file_worker_v1_worker_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2057,7 +2185,7 @@ func (x *LinkPreview) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LinkPreview.ProtoReflect.Descriptor instead.
 func (*LinkPreview) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{24}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *LinkPreview) GetUrl() string {
@@ -2104,7 +2232,7 @@ type Media struct {
 
 func (x *Media) Reset() {
 	*x = Media{}
-	mi := &file_worker_v1_worker_proto_msgTypes[25]
+	mi := &file_worker_v1_worker_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2116,7 +2244,7 @@ func (x *Media) String() string {
 func (*Media) ProtoMessage() {}
 
 func (x *Media) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[25]
+	mi := &file_worker_v1_worker_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2129,7 +2257,7 @@ func (x *Media) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Media.ProtoReflect.Descriptor instead.
 func (*Media) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{25}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *Media) GetKind() string {
@@ -2200,7 +2328,7 @@ type Receipt struct {
 
 func (x *Receipt) Reset() {
 	*x = Receipt{}
-	mi := &file_worker_v1_worker_proto_msgTypes[26]
+	mi := &file_worker_v1_worker_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2212,7 +2340,7 @@ func (x *Receipt) String() string {
 func (*Receipt) ProtoMessage() {}
 
 func (x *Receipt) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[26]
+	mi := &file_worker_v1_worker_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2225,7 +2353,7 @@ func (x *Receipt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Receipt.ProtoReflect.Descriptor instead.
 func (*Receipt) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{26}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *Receipt) GetMessageIds() []string {
@@ -2269,7 +2397,7 @@ type HistoryChunk struct {
 
 func (x *HistoryChunk) Reset() {
 	*x = HistoryChunk{}
-	mi := &file_worker_v1_worker_proto_msgTypes[27]
+	mi := &file_worker_v1_worker_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2281,7 +2409,7 @@ func (x *HistoryChunk) String() string {
 func (*HistoryChunk) ProtoMessage() {}
 
 func (x *HistoryChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[27]
+	mi := &file_worker_v1_worker_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2294,7 +2422,7 @@ func (x *HistoryChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoryChunk.ProtoReflect.Descriptor instead.
 func (*HistoryChunk) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{27}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *HistoryChunk) GetChat() string {
@@ -2330,7 +2458,8 @@ type SendRequest struct {
 	To        string                 `protobuf:"bytes,1,opt,name=to,proto3" json:"to,omitempty"`                                // chat JID
 	MessageId string                 `protobuf:"bytes,2,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"` // WhatsApp message id chosen by the supervisor (same on every retry)
 	// text | image | video | gif | ptv | audio | document | sticker | location | contact |
-	// poll | reaction | edit | revoke | pin | forward | product | disappearing
+	// poll | reaction | edit | revoke | pin | forward | product | disappearing | event |
+	// event_response
 	Type string `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
 	// body, caption, reaction emoji ("" removes a reaction), poll name or new text of an edit
 	Text              string         `protobuf:"bytes,4,opt,name=text,proto3" json:"text,omitempty"`
@@ -2371,13 +2500,19 @@ type SendRequest struct {
 	// disappears like the others of the chat (0: the chat has no timer), and when it was set.
 	EphemeralExpiration uint32 `protobuf:"varint,31,opt,name=ephemeral_expiration,json=ephemeralExpiration,proto3" json:"ephemeral_expiration,omitempty"`
 	EphemeralSettingTs  int64  `protobuf:"varint,32,opt,name=ephemeral_setting_ts,json=ephemeralSettingTs,proto3" json:"ephemeral_setting_ts,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// type event, or type edit of an event (target_*: the event; the edit is encrypted with
+	// the event's secret, as WhatsApp sends it). The event secret is generated here.
+	Event *EventInfo `protobuf:"bytes,33,opt,name=event,proto3" json:"event,omitempty"`
+	// type event_response (target_*: the event): going | not_going | maybe.
+	EventResponse string `protobuf:"bytes,34,opt,name=event_response,json=eventResponse,proto3" json:"event_response,omitempty"`
+	ExtraGuests   int32  `protobuf:"varint,35,opt,name=extra_guests,json=extraGuests,proto3" json:"extra_guests,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SendRequest) Reset() {
 	*x = SendRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[28]
+	mi := &file_worker_v1_worker_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2389,7 +2524,7 @@ func (x *SendRequest) String() string {
 func (*SendRequest) ProtoMessage() {}
 
 func (x *SendRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[28]
+	mi := &file_worker_v1_worker_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2402,7 +2537,7 @@ func (x *SendRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendRequest.ProtoReflect.Descriptor instead.
 func (*SendRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{28}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *SendRequest) GetTo() string {
@@ -2629,6 +2764,27 @@ func (x *SendRequest) GetEphemeralSettingTs() int64 {
 	return 0
 }
 
+func (x *SendRequest) GetEvent() *EventInfo {
+	if x != nil {
+		return x.Event
+	}
+	return nil
+}
+
+func (x *SendRequest) GetEventResponse() string {
+	if x != nil {
+		return x.EventResponse
+	}
+	return ""
+}
+
+func (x *SendRequest) GetExtraGuests() int32 {
+	if x != nil {
+		return x.ExtraGuests
+	}
+	return 0
+}
+
 type SendResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	MessageId     string                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
@@ -2639,7 +2795,7 @@ type SendResponse struct {
 
 func (x *SendResponse) Reset() {
 	*x = SendResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[29]
+	mi := &file_worker_v1_worker_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2651,7 +2807,7 @@ func (x *SendResponse) String() string {
 func (*SendResponse) ProtoMessage() {}
 
 func (x *SendResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[29]
+	mi := &file_worker_v1_worker_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2664,7 +2820,7 @@ func (x *SendResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendResponse.ProtoReflect.Descriptor instead.
 func (*SendResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{29}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *SendResponse) GetMessageId() string {
@@ -2691,7 +2847,7 @@ type SendPresenceRequest struct {
 
 func (x *SendPresenceRequest) Reset() {
 	*x = SendPresenceRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[30]
+	mi := &file_worker_v1_worker_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2703,7 +2859,7 @@ func (x *SendPresenceRequest) String() string {
 func (*SendPresenceRequest) ProtoMessage() {}
 
 func (x *SendPresenceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[30]
+	mi := &file_worker_v1_worker_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2716,7 +2872,7 @@ func (x *SendPresenceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendPresenceRequest.ProtoReflect.Descriptor instead.
 func (*SendPresenceRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{30}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *SendPresenceRequest) GetTo() string {
@@ -2741,7 +2897,7 @@ type SendPresenceResponse struct {
 
 func (x *SendPresenceResponse) Reset() {
 	*x = SendPresenceResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[31]
+	mi := &file_worker_v1_worker_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2753,7 +2909,7 @@ func (x *SendPresenceResponse) String() string {
 func (*SendPresenceResponse) ProtoMessage() {}
 
 func (x *SendPresenceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[31]
+	mi := &file_worker_v1_worker_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2766,7 +2922,7 @@ func (x *SendPresenceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendPresenceResponse.ProtoReflect.Descriptor instead.
 func (*SendPresenceResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{31}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{32}
 }
 
 type MarkReadRequest struct {
@@ -2780,7 +2936,7 @@ type MarkReadRequest struct {
 
 func (x *MarkReadRequest) Reset() {
 	*x = MarkReadRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[32]
+	mi := &file_worker_v1_worker_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2792,7 +2948,7 @@ func (x *MarkReadRequest) String() string {
 func (*MarkReadRequest) ProtoMessage() {}
 
 func (x *MarkReadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[32]
+	mi := &file_worker_v1_worker_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2805,7 +2961,7 @@ func (x *MarkReadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MarkReadRequest.ProtoReflect.Descriptor instead.
 func (*MarkReadRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{32}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *MarkReadRequest) GetChat() string {
@@ -2837,7 +2993,7 @@ type MarkReadResponse struct {
 
 func (x *MarkReadResponse) Reset() {
 	*x = MarkReadResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[33]
+	mi := &file_worker_v1_worker_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2849,7 +3005,7 @@ func (x *MarkReadResponse) String() string {
 func (*MarkReadResponse) ProtoMessage() {}
 
 func (x *MarkReadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[33]
+	mi := &file_worker_v1_worker_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2862,7 +3018,7 @@ func (x *MarkReadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MarkReadResponse.ProtoReflect.Descriptor instead.
 func (*MarkReadResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{33}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{34}
 }
 
 type DownloadMediaRequest struct {
@@ -2876,7 +3032,7 @@ type DownloadMediaRequest struct {
 
 func (x *DownloadMediaRequest) Reset() {
 	*x = DownloadMediaRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[34]
+	mi := &file_worker_v1_worker_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2888,7 +3044,7 @@ func (x *DownloadMediaRequest) String() string {
 func (*DownloadMediaRequest) ProtoMessage() {}
 
 func (x *DownloadMediaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[34]
+	mi := &file_worker_v1_worker_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2901,7 +3057,7 @@ func (x *DownloadMediaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DownloadMediaRequest.ProtoReflect.Descriptor instead.
 func (*DownloadMediaRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{34}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *DownloadMediaRequest) GetKind() string {
@@ -2934,7 +3090,7 @@ type DownloadMediaResponse struct {
 
 func (x *DownloadMediaResponse) Reset() {
 	*x = DownloadMediaResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[35]
+	mi := &file_worker_v1_worker_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2946,7 +3102,7 @@ func (x *DownloadMediaResponse) String() string {
 func (*DownloadMediaResponse) ProtoMessage() {}
 
 func (x *DownloadMediaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[35]
+	mi := &file_worker_v1_worker_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2959,7 +3115,7 @@ func (x *DownloadMediaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DownloadMediaResponse.ProtoReflect.Descriptor instead.
 func (*DownloadMediaResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{35}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *DownloadMediaResponse) GetSize() int64 {
@@ -2981,7 +3137,7 @@ type Contact struct {
 
 func (x *Contact) Reset() {
 	*x = Contact{}
-	mi := &file_worker_v1_worker_proto_msgTypes[36]
+	mi := &file_worker_v1_worker_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2993,7 +3149,7 @@ func (x *Contact) String() string {
 func (*Contact) ProtoMessage() {}
 
 func (x *Contact) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[36]
+	mi := &file_worker_v1_worker_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3006,7 +3162,7 @@ func (x *Contact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Contact.ProtoReflect.Descriptor instead.
 func (*Contact) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{36}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *Contact) GetJid() string {
@@ -3045,7 +3201,7 @@ type GetContactsRequest struct {
 
 func (x *GetContactsRequest) Reset() {
 	*x = GetContactsRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[37]
+	mi := &file_worker_v1_worker_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3057,7 +3213,7 @@ func (x *GetContactsRequest) String() string {
 func (*GetContactsRequest) ProtoMessage() {}
 
 func (x *GetContactsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[37]
+	mi := &file_worker_v1_worker_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3070,7 +3226,7 @@ func (x *GetContactsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetContactsRequest.ProtoReflect.Descriptor instead.
 func (*GetContactsRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{37}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{38}
 }
 
 type GetContactsResponse struct {
@@ -3082,7 +3238,7 @@ type GetContactsResponse struct {
 
 func (x *GetContactsResponse) Reset() {
 	*x = GetContactsResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[38]
+	mi := &file_worker_v1_worker_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3094,7 +3250,7 @@ func (x *GetContactsResponse) String() string {
 func (*GetContactsResponse) ProtoMessage() {}
 
 func (x *GetContactsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[38]
+	mi := &file_worker_v1_worker_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3107,7 +3263,7 @@ func (x *GetContactsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetContactsResponse.ProtoReflect.Descriptor instead.
 func (*GetContactsResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{38}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *GetContactsResponse) GetContacts() []*Contact {
@@ -3126,7 +3282,7 @@ type GetContactRequest struct {
 
 func (x *GetContactRequest) Reset() {
 	*x = GetContactRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[39]
+	mi := &file_worker_v1_worker_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3138,7 +3294,7 @@ func (x *GetContactRequest) String() string {
 func (*GetContactRequest) ProtoMessage() {}
 
 func (x *GetContactRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[39]
+	mi := &file_worker_v1_worker_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3151,7 +3307,7 @@ func (x *GetContactRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetContactRequest.ProtoReflect.Descriptor instead.
 func (*GetContactRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{39}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *GetContactRequest) GetJid() string {
@@ -3171,7 +3327,7 @@ type GetContactResponse struct {
 
 func (x *GetContactResponse) Reset() {
 	*x = GetContactResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[40]
+	mi := &file_worker_v1_worker_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3183,7 +3339,7 @@ func (x *GetContactResponse) String() string {
 func (*GetContactResponse) ProtoMessage() {}
 
 func (x *GetContactResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[40]
+	mi := &file_worker_v1_worker_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3196,7 +3352,7 @@ func (x *GetContactResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetContactResponse.ProtoReflect.Descriptor instead.
 func (*GetContactResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{40}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *GetContactResponse) GetContact() *Contact {
@@ -3222,7 +3378,7 @@ type CheckNumbersRequest struct {
 
 func (x *CheckNumbersRequest) Reset() {
 	*x = CheckNumbersRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[41]
+	mi := &file_worker_v1_worker_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3234,7 +3390,7 @@ func (x *CheckNumbersRequest) String() string {
 func (*CheckNumbersRequest) ProtoMessage() {}
 
 func (x *CheckNumbersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[41]
+	mi := &file_worker_v1_worker_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3247,7 +3403,7 @@ func (x *CheckNumbersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckNumbersRequest.ProtoReflect.Descriptor instead.
 func (*CheckNumbersRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{41}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *CheckNumbersRequest) GetPhones() []string {
@@ -3268,7 +3424,7 @@ type NumberStatus struct {
 
 func (x *NumberStatus) Reset() {
 	*x = NumberStatus{}
-	mi := &file_worker_v1_worker_proto_msgTypes[42]
+	mi := &file_worker_v1_worker_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3280,7 +3436,7 @@ func (x *NumberStatus) String() string {
 func (*NumberStatus) ProtoMessage() {}
 
 func (x *NumberStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[42]
+	mi := &file_worker_v1_worker_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3293,7 +3449,7 @@ func (x *NumberStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NumberStatus.ProtoReflect.Descriptor instead.
 func (*NumberStatus) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{42}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *NumberStatus) GetPhone() string {
@@ -3326,7 +3482,7 @@ type CheckNumbersResponse struct {
 
 func (x *CheckNumbersResponse) Reset() {
 	*x = CheckNumbersResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[43]
+	mi := &file_worker_v1_worker_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3338,7 +3494,7 @@ func (x *CheckNumbersResponse) String() string {
 func (*CheckNumbersResponse) ProtoMessage() {}
 
 func (x *CheckNumbersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[43]
+	mi := &file_worker_v1_worker_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3351,7 +3507,7 @@ func (x *CheckNumbersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckNumbersResponse.ProtoReflect.Descriptor instead.
 func (*CheckNumbersResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{43}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *CheckNumbersResponse) GetResults() []*NumberStatus {
@@ -3370,7 +3526,7 @@ type RejectCallRequest struct {
 
 func (x *RejectCallRequest) Reset() {
 	*x = RejectCallRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[44]
+	mi := &file_worker_v1_worker_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3382,7 +3538,7 @@ func (x *RejectCallRequest) String() string {
 func (*RejectCallRequest) ProtoMessage() {}
 
 func (x *RejectCallRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[44]
+	mi := &file_worker_v1_worker_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3395,7 +3551,7 @@ func (x *RejectCallRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RejectCallRequest.ProtoReflect.Descriptor instead.
 func (*RejectCallRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{44}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *RejectCallRequest) GetCallId() string {
@@ -3413,7 +3569,7 @@ type RejectCallResponse struct {
 
 func (x *RejectCallResponse) Reset() {
 	*x = RejectCallResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[45]
+	mi := &file_worker_v1_worker_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3425,7 +3581,7 @@ func (x *RejectCallResponse) String() string {
 func (*RejectCallResponse) ProtoMessage() {}
 
 func (x *RejectCallResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[45]
+	mi := &file_worker_v1_worker_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3438,7 +3594,7 @@ func (x *RejectCallResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RejectCallResponse.ProtoReflect.Descriptor instead.
 func (*RejectCallResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{45}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{46}
 }
 
 type SetPresenceRequest struct {
@@ -3450,7 +3606,7 @@ type SetPresenceRequest struct {
 
 func (x *SetPresenceRequest) Reset() {
 	*x = SetPresenceRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[46]
+	mi := &file_worker_v1_worker_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3462,7 +3618,7 @@ func (x *SetPresenceRequest) String() string {
 func (*SetPresenceRequest) ProtoMessage() {}
 
 func (x *SetPresenceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[46]
+	mi := &file_worker_v1_worker_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3475,7 +3631,7 @@ func (x *SetPresenceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetPresenceRequest.ProtoReflect.Descriptor instead.
 func (*SetPresenceRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{46}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *SetPresenceRequest) GetAvailable() bool {
@@ -3493,7 +3649,7 @@ type SetPresenceResponse struct {
 
 func (x *SetPresenceResponse) Reset() {
 	*x = SetPresenceResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[47]
+	mi := &file_worker_v1_worker_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3505,7 +3661,7 @@ func (x *SetPresenceResponse) String() string {
 func (*SetPresenceResponse) ProtoMessage() {}
 
 func (x *SetPresenceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[47]
+	mi := &file_worker_v1_worker_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3518,7 +3674,7 @@ func (x *SetPresenceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetPresenceResponse.ProtoReflect.Descriptor instead.
 func (*SetPresenceResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{47}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{48}
 }
 
 type SubscribePresenceRequest struct {
@@ -3530,7 +3686,7 @@ type SubscribePresenceRequest struct {
 
 func (x *SubscribePresenceRequest) Reset() {
 	*x = SubscribePresenceRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[48]
+	mi := &file_worker_v1_worker_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3542,7 +3698,7 @@ func (x *SubscribePresenceRequest) String() string {
 func (*SubscribePresenceRequest) ProtoMessage() {}
 
 func (x *SubscribePresenceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[48]
+	mi := &file_worker_v1_worker_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3555,7 +3711,7 @@ func (x *SubscribePresenceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribePresenceRequest.ProtoReflect.Descriptor instead.
 func (*SubscribePresenceRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{48}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *SubscribePresenceRequest) GetJid() string {
@@ -3573,7 +3729,7 @@ type SubscribePresenceResponse struct {
 
 func (x *SubscribePresenceResponse) Reset() {
 	*x = SubscribePresenceResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[49]
+	mi := &file_worker_v1_worker_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3585,7 +3741,7 @@ func (x *SubscribePresenceResponse) String() string {
 func (*SubscribePresenceResponse) ProtoMessage() {}
 
 func (x *SubscribePresenceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[49]
+	mi := &file_worker_v1_worker_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3598,7 +3754,7 @@ func (x *SubscribePresenceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribePresenceResponse.ProtoReflect.Descriptor instead.
 func (*SubscribePresenceResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{49}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{50}
 }
 
 // ChatUpdate is a chat state change from the app state (made on any device of the
@@ -3625,7 +3781,7 @@ type ChatUpdate struct {
 
 func (x *ChatUpdate) Reset() {
 	*x = ChatUpdate{}
-	mi := &file_worker_v1_worker_proto_msgTypes[50]
+	mi := &file_worker_v1_worker_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3637,7 +3793,7 @@ func (x *ChatUpdate) String() string {
 func (*ChatUpdate) ProtoMessage() {}
 
 func (x *ChatUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[50]
+	mi := &file_worker_v1_worker_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3650,7 +3806,7 @@ func (x *ChatUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatUpdate.ProtoReflect.Descriptor instead.
 func (*ChatUpdate) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{50}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *ChatUpdate) GetChat() string {
@@ -3730,7 +3886,7 @@ type MessageRef struct {
 
 func (x *MessageRef) Reset() {
 	*x = MessageRef{}
-	mi := &file_worker_v1_worker_proto_msgTypes[51]
+	mi := &file_worker_v1_worker_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3742,7 +3898,7 @@ func (x *MessageRef) String() string {
 func (*MessageRef) ProtoMessage() {}
 
 func (x *MessageRef) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[51]
+	mi := &file_worker_v1_worker_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3755,7 +3911,7 @@ func (x *MessageRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MessageRef.ProtoReflect.Descriptor instead.
 func (*MessageRef) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{51}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *MessageRef) GetId() string {
@@ -3802,7 +3958,7 @@ type ChatActionRequest struct {
 
 func (x *ChatActionRequest) Reset() {
 	*x = ChatActionRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[52]
+	mi := &file_worker_v1_worker_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3814,7 +3970,7 @@ func (x *ChatActionRequest) String() string {
 func (*ChatActionRequest) ProtoMessage() {}
 
 func (x *ChatActionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[52]
+	mi := &file_worker_v1_worker_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3827,7 +3983,7 @@ func (x *ChatActionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatActionRequest.ProtoReflect.Descriptor instead.
 func (*ChatActionRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{52}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *ChatActionRequest) GetChat() string {
@@ -3880,7 +4036,7 @@ type ChatActionResponse struct {
 
 func (x *ChatActionResponse) Reset() {
 	*x = ChatActionResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[53]
+	mi := &file_worker_v1_worker_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3892,7 +4048,7 @@ func (x *ChatActionResponse) String() string {
 func (*ChatActionResponse) ProtoMessage() {}
 
 func (x *ChatActionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[53]
+	mi := &file_worker_v1_worker_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3905,7 +4061,7 @@ func (x *ChatActionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatActionResponse.ProtoReflect.Descriptor instead.
 func (*ChatActionResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{53}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{54}
 }
 
 type GetChatSettingsRequest struct {
@@ -3917,7 +4073,7 @@ type GetChatSettingsRequest struct {
 
 func (x *GetChatSettingsRequest) Reset() {
 	*x = GetChatSettingsRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[54]
+	mi := &file_worker_v1_worker_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3929,7 +4085,7 @@ func (x *GetChatSettingsRequest) String() string {
 func (*GetChatSettingsRequest) ProtoMessage() {}
 
 func (x *GetChatSettingsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[54]
+	mi := &file_worker_v1_worker_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3942,7 +4098,7 @@ func (x *GetChatSettingsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetChatSettingsRequest.ProtoReflect.Descriptor instead.
 func (*GetChatSettingsRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{54}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *GetChatSettingsRequest) GetChat() string {
@@ -3964,7 +4120,7 @@ type GetChatSettingsResponse struct {
 
 func (x *GetChatSettingsResponse) Reset() {
 	*x = GetChatSettingsResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[55]
+	mi := &file_worker_v1_worker_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3976,7 +4132,7 @@ func (x *GetChatSettingsResponse) String() string {
 func (*GetChatSettingsResponse) ProtoMessage() {}
 
 func (x *GetChatSettingsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[55]
+	mi := &file_worker_v1_worker_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3989,7 +4145,7 @@ func (x *GetChatSettingsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetChatSettingsResponse.ProtoReflect.Descriptor instead.
 func (*GetChatSettingsResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{55}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *GetChatSettingsResponse) GetFound() bool {
@@ -4034,7 +4190,7 @@ type ContactActionRequest struct {
 
 func (x *ContactActionRequest) Reset() {
 	*x = ContactActionRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[56]
+	mi := &file_worker_v1_worker_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4046,7 +4202,7 @@ func (x *ContactActionRequest) String() string {
 func (*ContactActionRequest) ProtoMessage() {}
 
 func (x *ContactActionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[56]
+	mi := &file_worker_v1_worker_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4059,7 +4215,7 @@ func (x *ContactActionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContactActionRequest.ProtoReflect.Descriptor instead.
 func (*ContactActionRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{56}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *ContactActionRequest) GetJid() string {
@@ -4107,7 +4263,7 @@ type ContactActionResponse struct {
 
 func (x *ContactActionResponse) Reset() {
 	*x = ContactActionResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[57]
+	mi := &file_worker_v1_worker_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4119,7 +4275,7 @@ func (x *ContactActionResponse) String() string {
 func (*ContactActionResponse) ProtoMessage() {}
 
 func (x *ContactActionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[57]
+	mi := &file_worker_v1_worker_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4132,7 +4288,7 @@ func (x *ContactActionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContactActionResponse.ProtoReflect.Descriptor instead.
 func (*ContactActionResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{57}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *ContactActionResponse) GetJid() string {
@@ -4159,7 +4315,7 @@ type GetProfilePictureRequest struct {
 
 func (x *GetProfilePictureRequest) Reset() {
 	*x = GetProfilePictureRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[58]
+	mi := &file_worker_v1_worker_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4171,7 +4327,7 @@ func (x *GetProfilePictureRequest) String() string {
 func (*GetProfilePictureRequest) ProtoMessage() {}
 
 func (x *GetProfilePictureRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[58]
+	mi := &file_worker_v1_worker_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4184,7 +4340,7 @@ func (x *GetProfilePictureRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetProfilePictureRequest.ProtoReflect.Descriptor instead.
 func (*GetProfilePictureRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{58}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *GetProfilePictureRequest) GetJid() string {
@@ -4212,7 +4368,7 @@ type GetProfilePictureResponse struct {
 
 func (x *GetProfilePictureResponse) Reset() {
 	*x = GetProfilePictureResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[59]
+	mi := &file_worker_v1_worker_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4224,7 +4380,7 @@ func (x *GetProfilePictureResponse) String() string {
 func (*GetProfilePictureResponse) ProtoMessage() {}
 
 func (x *GetProfilePictureResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[59]
+	mi := &file_worker_v1_worker_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4237,7 +4393,7 @@ func (x *GetProfilePictureResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetProfilePictureResponse.ProtoReflect.Descriptor instead.
 func (*GetProfilePictureResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{59}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *GetProfilePictureResponse) GetId() string {
@@ -4272,7 +4428,7 @@ type DownloadProfilePictureRequest struct {
 
 func (x *DownloadProfilePictureRequest) Reset() {
 	*x = DownloadProfilePictureRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[60]
+	mi := &file_worker_v1_worker_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4284,7 +4440,7 @@ func (x *DownloadProfilePictureRequest) String() string {
 func (*DownloadProfilePictureRequest) ProtoMessage() {}
 
 func (x *DownloadProfilePictureRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[60]
+	mi := &file_worker_v1_worker_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4297,7 +4453,7 @@ func (x *DownloadProfilePictureRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DownloadProfilePictureRequest.ProtoReflect.Descriptor instead.
 func (*DownloadProfilePictureRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{60}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *DownloadProfilePictureRequest) GetJid() string {
@@ -4331,7 +4487,7 @@ type DownloadProfilePictureResponse struct {
 
 func (x *DownloadProfilePictureResponse) Reset() {
 	*x = DownloadProfilePictureResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[61]
+	mi := &file_worker_v1_worker_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4343,7 +4499,7 @@ func (x *DownloadProfilePictureResponse) String() string {
 func (*DownloadProfilePictureResponse) ProtoMessage() {}
 
 func (x *DownloadProfilePictureResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[61]
+	mi := &file_worker_v1_worker_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4356,7 +4512,7 @@ func (x *DownloadProfilePictureResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DownloadProfilePictureResponse.ProtoReflect.Descriptor instead.
 func (*DownloadProfilePictureResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{61}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *DownloadProfilePictureResponse) GetId() string {
@@ -4383,7 +4539,7 @@ type GetUserInfoRequest struct {
 
 func (x *GetUserInfoRequest) Reset() {
 	*x = GetUserInfoRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[62]
+	mi := &file_worker_v1_worker_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4395,7 +4551,7 @@ func (x *GetUserInfoRequest) String() string {
 func (*GetUserInfoRequest) ProtoMessage() {}
 
 func (x *GetUserInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[62]
+	mi := &file_worker_v1_worker_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4408,7 +4564,7 @@ func (x *GetUserInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUserInfoRequest.ProtoReflect.Descriptor instead.
 func (*GetUserInfoRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{62}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *GetUserInfoRequest) GetJid() string {
@@ -4436,7 +4592,7 @@ type BusinessProfile struct {
 
 func (x *BusinessProfile) Reset() {
 	*x = BusinessProfile{}
-	mi := &file_worker_v1_worker_proto_msgTypes[63]
+	mi := &file_worker_v1_worker_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4448,7 +4604,7 @@ func (x *BusinessProfile) String() string {
 func (*BusinessProfile) ProtoMessage() {}
 
 func (x *BusinessProfile) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[63]
+	mi := &file_worker_v1_worker_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4461,7 +4617,7 @@ func (x *BusinessProfile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BusinessProfile.ProtoReflect.Descriptor instead.
 func (*BusinessProfile) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{63}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *BusinessProfile) GetAddress() string {
@@ -4499,7 +4655,7 @@ type GetUserInfoResponse struct {
 
 func (x *GetUserInfoResponse) Reset() {
 	*x = GetUserInfoResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[64]
+	mi := &file_worker_v1_worker_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4511,7 +4667,7 @@ func (x *GetUserInfoResponse) String() string {
 func (*GetUserInfoResponse) ProtoMessage() {}
 
 func (x *GetUserInfoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[64]
+	mi := &file_worker_v1_worker_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4524,7 +4680,7 @@ func (x *GetUserInfoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUserInfoResponse.ProtoReflect.Descriptor instead.
 func (*GetUserInfoResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{64}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *GetUserInfoResponse) GetJid() string {
@@ -4577,7 +4733,7 @@ type GetBlocklistRequest struct {
 
 func (x *GetBlocklistRequest) Reset() {
 	*x = GetBlocklistRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[65]
+	mi := &file_worker_v1_worker_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4589,7 +4745,7 @@ func (x *GetBlocklistRequest) String() string {
 func (*GetBlocklistRequest) ProtoMessage() {}
 
 func (x *GetBlocklistRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[65]
+	mi := &file_worker_v1_worker_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4602,7 +4758,7 @@ func (x *GetBlocklistRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBlocklistRequest.ProtoReflect.Descriptor instead.
 func (*GetBlocklistRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{65}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{66}
 }
 
 type UpdateBlocklistRequest struct {
@@ -4615,7 +4771,7 @@ type UpdateBlocklistRequest struct {
 
 func (x *UpdateBlocklistRequest) Reset() {
 	*x = UpdateBlocklistRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[66]
+	mi := &file_worker_v1_worker_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4627,7 +4783,7 @@ func (x *UpdateBlocklistRequest) String() string {
 func (*UpdateBlocklistRequest) ProtoMessage() {}
 
 func (x *UpdateBlocklistRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[66]
+	mi := &file_worker_v1_worker_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4640,7 +4796,7 @@ func (x *UpdateBlocklistRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateBlocklistRequest.ProtoReflect.Descriptor instead.
 func (*UpdateBlocklistRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{66}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *UpdateBlocklistRequest) GetJid() string {
@@ -4666,7 +4822,7 @@ type GetBlocklistResponse struct {
 
 func (x *GetBlocklistResponse) Reset() {
 	*x = GetBlocklistResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[67]
+	mi := &file_worker_v1_worker_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4678,7 +4834,7 @@ func (x *GetBlocklistResponse) String() string {
 func (*GetBlocklistResponse) ProtoMessage() {}
 
 func (x *GetBlocklistResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[67]
+	mi := &file_worker_v1_worker_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4691,7 +4847,7 @@ func (x *GetBlocklistResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBlocklistResponse.ProtoReflect.Descriptor instead.
 func (*GetBlocklistResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{67}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *GetBlocklistResponse) GetJids() []string {
@@ -4709,7 +4865,7 @@ type GetProfileRequest struct {
 
 func (x *GetProfileRequest) Reset() {
 	*x = GetProfileRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[68]
+	mi := &file_worker_v1_worker_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4721,7 +4877,7 @@ func (x *GetProfileRequest) String() string {
 func (*GetProfileRequest) ProtoMessage() {}
 
 func (x *GetProfileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[68]
+	mi := &file_worker_v1_worker_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4734,7 +4890,7 @@ func (x *GetProfileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetProfileRequest.ProtoReflect.Descriptor instead.
 func (*GetProfileRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{68}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{69}
 }
 
 type GetProfileResponse struct {
@@ -4752,7 +4908,7 @@ type GetProfileResponse struct {
 
 func (x *GetProfileResponse) Reset() {
 	*x = GetProfileResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[69]
+	mi := &file_worker_v1_worker_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4764,7 +4920,7 @@ func (x *GetProfileResponse) String() string {
 func (*GetProfileResponse) ProtoMessage() {}
 
 func (x *GetProfileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[69]
+	mi := &file_worker_v1_worker_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4777,7 +4933,7 @@ func (x *GetProfileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetProfileResponse.ProtoReflect.Descriptor instead.
 func (*GetProfileResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{69}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *GetProfileResponse) GetJid() string {
@@ -4843,7 +4999,7 @@ type UpdateProfileRequest struct {
 
 func (x *UpdateProfileRequest) Reset() {
 	*x = UpdateProfileRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[70]
+	mi := &file_worker_v1_worker_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4855,7 +5011,7 @@ func (x *UpdateProfileRequest) String() string {
 func (*UpdateProfileRequest) ProtoMessage() {}
 
 func (x *UpdateProfileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[70]
+	mi := &file_worker_v1_worker_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4868,7 +5024,7 @@ func (x *UpdateProfileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateProfileRequest.ProtoReflect.Descriptor instead.
 func (*UpdateProfileRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{70}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *UpdateProfileRequest) GetSetName() bool {
@@ -4922,7 +5078,7 @@ type UpdateProfileResponse struct {
 
 func (x *UpdateProfileResponse) Reset() {
 	*x = UpdateProfileResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[71]
+	mi := &file_worker_v1_worker_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4934,7 +5090,7 @@ func (x *UpdateProfileResponse) String() string {
 func (*UpdateProfileResponse) ProtoMessage() {}
 
 func (x *UpdateProfileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[71]
+	mi := &file_worker_v1_worker_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4947,7 +5103,7 @@ func (x *UpdateProfileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateProfileResponse.ProtoReflect.Descriptor instead.
 func (*UpdateProfileResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{71}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *UpdateProfileResponse) GetPictureId() string {
@@ -4968,7 +5124,7 @@ type Privacy struct {
 
 func (x *Privacy) Reset() {
 	*x = Privacy{}
-	mi := &file_worker_v1_worker_proto_msgTypes[72]
+	mi := &file_worker_v1_worker_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4980,7 +5136,7 @@ func (x *Privacy) String() string {
 func (*Privacy) ProtoMessage() {}
 
 func (x *Privacy) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[72]
+	mi := &file_worker_v1_worker_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4993,7 +5149,7 @@ func (x *Privacy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Privacy.ProtoReflect.Descriptor instead.
 func (*Privacy) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{72}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *Privacy) GetSettings() map[string]string {
@@ -5011,7 +5167,7 @@ type GetPrivacyRequest struct {
 
 func (x *GetPrivacyRequest) Reset() {
 	*x = GetPrivacyRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[73]
+	mi := &file_worker_v1_worker_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5023,7 +5179,7 @@ func (x *GetPrivacyRequest) String() string {
 func (*GetPrivacyRequest) ProtoMessage() {}
 
 func (x *GetPrivacyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[73]
+	mi := &file_worker_v1_worker_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5036,7 +5192,7 @@ func (x *GetPrivacyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPrivacyRequest.ProtoReflect.Descriptor instead.
 func (*GetPrivacyRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{73}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{74}
 }
 
 type SetPrivacyRequest struct {
@@ -5051,7 +5207,7 @@ type SetPrivacyRequest struct {
 
 func (x *SetPrivacyRequest) Reset() {
 	*x = SetPrivacyRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[74]
+	mi := &file_worker_v1_worker_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5063,7 +5219,7 @@ func (x *SetPrivacyRequest) String() string {
 func (*SetPrivacyRequest) ProtoMessage() {}
 
 func (x *SetPrivacyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[74]
+	mi := &file_worker_v1_worker_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5076,7 +5232,7 @@ func (x *SetPrivacyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetPrivacyRequest.ProtoReflect.Descriptor instead.
 func (*SetPrivacyRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{74}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *SetPrivacyRequest) GetName() string {
@@ -5194,7 +5350,7 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x02QR\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x1d\n" +
 	"\n" +
-	"timeout_ms\x18\x02 \x01(\x03R\ttimeoutMs\"\xdc\x06\n" +
+	"timeout_ms\x18\x02 \x01(\x03R\ttimeoutMs\"\xd2\a\n" +
 	"\aMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04chat\x18\x02 \x01(\tR\x04chat\x12\x16\n" +
@@ -5223,7 +5379,20 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\aproduct\x18\x16 \x01(\v2\x12.worker.v1.ProductR\aproduct\x12&\n" +
 	"\x05order\x18\x17 \x01(\v2\x10.worker.v1.OrderR\x05order\x12+\n" +
 	"\x11ephemeral_seconds\x18\x18 \x01(\rR\x10ephemeralSeconds\x120\n" +
-	"\x14ephemeral_setting_ts\x18\x19 \x01(\x03R\x12ephemeralSettingTs\"\xa9\x03\n" +
+	"\x14ephemeral_setting_ts\x18\x19 \x01(\x03R\x12ephemeralSettingTs\x12*\n" +
+	"\x05event\x18\x1a \x01(\v2\x14.worker.v1.EventInfoR\x05event\x12%\n" +
+	"\x0eevent_response\x18\x1b \x01(\tR\reventResponse\x12!\n" +
+	"\fextra_guests\x18\x1c \x01(\x05R\vextraGuests\"\x97\x02\n" +
+	"\tEventInfo\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12/\n" +
+	"\blocation\x18\x03 \x01(\v2\x13.worker.v1.LocationR\blocation\x12\x1b\n" +
+	"\tjoin_link\x18\x04 \x01(\tR\bjoinLink\x12\x1d\n" +
+	"\n" +
+	"start_time\x18\x05 \x01(\x03R\tstartTime\x12\x19\n" +
+	"\bend_time\x18\x06 \x01(\x03R\aendTime\x12\x1a\n" +
+	"\bcanceled\x18\a \x01(\bR\bcanceled\x120\n" +
+	"\x14extra_guests_allowed\x18\b \x01(\bR\x12extraGuestsAllowed\"\xa9\x03\n" +
 	"\aProduct\x12\x1d\n" +
 	"\n" +
 	"product_id\x18\x01 \x01(\tR\tproductId\x12\x14\n" +
@@ -5306,7 +5475,8 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x04chat\x18\x01 \x01(\tR\x04chat\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x19\n" +
 	"\bis_group\x18\x03 \x01(\bR\aisGroup\x12.\n" +
-	"\bmessages\x18\x04 \x03(\v2\x12.worker.v1.MessageR\bmessages\"\x91\t\n" +
+	"\bmessages\x18\x04 \x03(\v2\x12.worker.v1.MessageR\bmessages\"\x87\n" +
+	"\n" +
 	"\vSendRequest\x12\x0e\n" +
 	"\x02to\x18\x01 \x01(\tR\x02to\x12\x1d\n" +
 	"\n" +
@@ -5345,7 +5515,10 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\aproduct\x18\x1d \x01(\v2\x12.worker.v1.ProductR\aproduct\x121\n" +
 	"\x14disappearing_seconds\x18\x1e \x01(\rR\x13disappearingSeconds\x121\n" +
 	"\x14ephemeral_expiration\x18\x1f \x01(\rR\x13ephemeralExpiration\x120\n" +
-	"\x14ephemeral_setting_ts\x18  \x01(\x03R\x12ephemeralSettingTs\"P\n" +
+	"\x14ephemeral_setting_ts\x18  \x01(\x03R\x12ephemeralSettingTs\x12*\n" +
+	"\x05event\x18! \x01(\v2\x14.worker.v1.EventInfoR\x05event\x12%\n" +
+	"\x0eevent_response\x18\" \x01(\tR\reventResponse\x12!\n" +
+	"\fextra_guests\x18# \x01(\x05R\vextraGuests\"P\n" +
 	"\fSendResponse\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x01 \x01(\tR\tmessageId\x12!\n" +
@@ -5553,7 +5726,7 @@ func file_worker_v1_worker_proto_rawDescGZIP() []byte {
 	return file_worker_v1_worker_proto_rawDescData
 }
 
-var file_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 77)
+var file_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 78)
 var file_worker_v1_worker_proto_goTypes = []any{
 	(*PingRequest)(nil),                    // 0: worker.v1.PingRequest
 	(*PingResponse)(nil),                   // 1: worker.v1.PingResponse
@@ -5572,162 +5745,166 @@ var file_worker_v1_worker_proto_goTypes = []any{
 	(*ConnState)(nil),                      // 14: worker.v1.ConnState
 	(*QR)(nil),                             // 15: worker.v1.QR
 	(*Message)(nil),                        // 16: worker.v1.Message
-	(*Product)(nil),                        // 17: worker.v1.Product
-	(*Order)(nil),                          // 18: worker.v1.Order
-	(*ButtonReply)(nil),                    // 19: worker.v1.ButtonReply
-	(*Location)(nil),                       // 20: worker.v1.Location
-	(*ContactCard)(nil),                    // 21: worker.v1.ContactCard
-	(*Poll)(nil),                           // 22: worker.v1.Poll
-	(*Quote)(nil),                          // 23: worker.v1.Quote
-	(*LinkPreview)(nil),                    // 24: worker.v1.LinkPreview
-	(*Media)(nil),                          // 25: worker.v1.Media
-	(*Receipt)(nil),                        // 26: worker.v1.Receipt
-	(*HistoryChunk)(nil),                   // 27: worker.v1.HistoryChunk
-	(*SendRequest)(nil),                    // 28: worker.v1.SendRequest
-	(*SendResponse)(nil),                   // 29: worker.v1.SendResponse
-	(*SendPresenceRequest)(nil),            // 30: worker.v1.SendPresenceRequest
-	(*SendPresenceResponse)(nil),           // 31: worker.v1.SendPresenceResponse
-	(*MarkReadRequest)(nil),                // 32: worker.v1.MarkReadRequest
-	(*MarkReadResponse)(nil),               // 33: worker.v1.MarkReadResponse
-	(*DownloadMediaRequest)(nil),           // 34: worker.v1.DownloadMediaRequest
-	(*DownloadMediaResponse)(nil),          // 35: worker.v1.DownloadMediaResponse
-	(*Contact)(nil),                        // 36: worker.v1.Contact
-	(*GetContactsRequest)(nil),             // 37: worker.v1.GetContactsRequest
-	(*GetContactsResponse)(nil),            // 38: worker.v1.GetContactsResponse
-	(*GetContactRequest)(nil),              // 39: worker.v1.GetContactRequest
-	(*GetContactResponse)(nil),             // 40: worker.v1.GetContactResponse
-	(*CheckNumbersRequest)(nil),            // 41: worker.v1.CheckNumbersRequest
-	(*NumberStatus)(nil),                   // 42: worker.v1.NumberStatus
-	(*CheckNumbersResponse)(nil),           // 43: worker.v1.CheckNumbersResponse
-	(*RejectCallRequest)(nil),              // 44: worker.v1.RejectCallRequest
-	(*RejectCallResponse)(nil),             // 45: worker.v1.RejectCallResponse
-	(*SetPresenceRequest)(nil),             // 46: worker.v1.SetPresenceRequest
-	(*SetPresenceResponse)(nil),            // 47: worker.v1.SetPresenceResponse
-	(*SubscribePresenceRequest)(nil),       // 48: worker.v1.SubscribePresenceRequest
-	(*SubscribePresenceResponse)(nil),      // 49: worker.v1.SubscribePresenceResponse
-	(*ChatUpdate)(nil),                     // 50: worker.v1.ChatUpdate
-	(*MessageRef)(nil),                     // 51: worker.v1.MessageRef
-	(*ChatActionRequest)(nil),              // 52: worker.v1.ChatActionRequest
-	(*ChatActionResponse)(nil),             // 53: worker.v1.ChatActionResponse
-	(*GetChatSettingsRequest)(nil),         // 54: worker.v1.GetChatSettingsRequest
-	(*GetChatSettingsResponse)(nil),        // 55: worker.v1.GetChatSettingsResponse
-	(*ContactActionRequest)(nil),           // 56: worker.v1.ContactActionRequest
-	(*ContactActionResponse)(nil),          // 57: worker.v1.ContactActionResponse
-	(*GetProfilePictureRequest)(nil),       // 58: worker.v1.GetProfilePictureRequest
-	(*GetProfilePictureResponse)(nil),      // 59: worker.v1.GetProfilePictureResponse
-	(*DownloadProfilePictureRequest)(nil),  // 60: worker.v1.DownloadProfilePictureRequest
-	(*DownloadProfilePictureResponse)(nil), // 61: worker.v1.DownloadProfilePictureResponse
-	(*GetUserInfoRequest)(nil),             // 62: worker.v1.GetUserInfoRequest
-	(*BusinessProfile)(nil),                // 63: worker.v1.BusinessProfile
-	(*GetUserInfoResponse)(nil),            // 64: worker.v1.GetUserInfoResponse
-	(*GetBlocklistRequest)(nil),            // 65: worker.v1.GetBlocklistRequest
-	(*UpdateBlocklistRequest)(nil),         // 66: worker.v1.UpdateBlocklistRequest
-	(*GetBlocklistResponse)(nil),           // 67: worker.v1.GetBlocklistResponse
-	(*GetProfileRequest)(nil),              // 68: worker.v1.GetProfileRequest
-	(*GetProfileResponse)(nil),             // 69: worker.v1.GetProfileResponse
-	(*UpdateProfileRequest)(nil),           // 70: worker.v1.UpdateProfileRequest
-	(*UpdateProfileResponse)(nil),          // 71: worker.v1.UpdateProfileResponse
-	(*Privacy)(nil),                        // 72: worker.v1.Privacy
-	(*GetPrivacyRequest)(nil),              // 73: worker.v1.GetPrivacyRequest
-	(*SetPrivacyRequest)(nil),              // 74: worker.v1.SetPrivacyRequest
-	nil,                                    // 75: worker.v1.ChannelPost.ReactionsEntry
-	nil,                                    // 76: worker.v1.Privacy.SettingsEntry
-	(*GroupUpdate)(nil),                    // 77: worker.v1.GroupUpdate
+	(*EventInfo)(nil),                      // 17: worker.v1.EventInfo
+	(*Product)(nil),                        // 18: worker.v1.Product
+	(*Order)(nil),                          // 19: worker.v1.Order
+	(*ButtonReply)(nil),                    // 20: worker.v1.ButtonReply
+	(*Location)(nil),                       // 21: worker.v1.Location
+	(*ContactCard)(nil),                    // 22: worker.v1.ContactCard
+	(*Poll)(nil),                           // 23: worker.v1.Poll
+	(*Quote)(nil),                          // 24: worker.v1.Quote
+	(*LinkPreview)(nil),                    // 25: worker.v1.LinkPreview
+	(*Media)(nil),                          // 26: worker.v1.Media
+	(*Receipt)(nil),                        // 27: worker.v1.Receipt
+	(*HistoryChunk)(nil),                   // 28: worker.v1.HistoryChunk
+	(*SendRequest)(nil),                    // 29: worker.v1.SendRequest
+	(*SendResponse)(nil),                   // 30: worker.v1.SendResponse
+	(*SendPresenceRequest)(nil),            // 31: worker.v1.SendPresenceRequest
+	(*SendPresenceResponse)(nil),           // 32: worker.v1.SendPresenceResponse
+	(*MarkReadRequest)(nil),                // 33: worker.v1.MarkReadRequest
+	(*MarkReadResponse)(nil),               // 34: worker.v1.MarkReadResponse
+	(*DownloadMediaRequest)(nil),           // 35: worker.v1.DownloadMediaRequest
+	(*DownloadMediaResponse)(nil),          // 36: worker.v1.DownloadMediaResponse
+	(*Contact)(nil),                        // 37: worker.v1.Contact
+	(*GetContactsRequest)(nil),             // 38: worker.v1.GetContactsRequest
+	(*GetContactsResponse)(nil),            // 39: worker.v1.GetContactsResponse
+	(*GetContactRequest)(nil),              // 40: worker.v1.GetContactRequest
+	(*GetContactResponse)(nil),             // 41: worker.v1.GetContactResponse
+	(*CheckNumbersRequest)(nil),            // 42: worker.v1.CheckNumbersRequest
+	(*NumberStatus)(nil),                   // 43: worker.v1.NumberStatus
+	(*CheckNumbersResponse)(nil),           // 44: worker.v1.CheckNumbersResponse
+	(*RejectCallRequest)(nil),              // 45: worker.v1.RejectCallRequest
+	(*RejectCallResponse)(nil),             // 46: worker.v1.RejectCallResponse
+	(*SetPresenceRequest)(nil),             // 47: worker.v1.SetPresenceRequest
+	(*SetPresenceResponse)(nil),            // 48: worker.v1.SetPresenceResponse
+	(*SubscribePresenceRequest)(nil),       // 49: worker.v1.SubscribePresenceRequest
+	(*SubscribePresenceResponse)(nil),      // 50: worker.v1.SubscribePresenceResponse
+	(*ChatUpdate)(nil),                     // 51: worker.v1.ChatUpdate
+	(*MessageRef)(nil),                     // 52: worker.v1.MessageRef
+	(*ChatActionRequest)(nil),              // 53: worker.v1.ChatActionRequest
+	(*ChatActionResponse)(nil),             // 54: worker.v1.ChatActionResponse
+	(*GetChatSettingsRequest)(nil),         // 55: worker.v1.GetChatSettingsRequest
+	(*GetChatSettingsResponse)(nil),        // 56: worker.v1.GetChatSettingsResponse
+	(*ContactActionRequest)(nil),           // 57: worker.v1.ContactActionRequest
+	(*ContactActionResponse)(nil),          // 58: worker.v1.ContactActionResponse
+	(*GetProfilePictureRequest)(nil),       // 59: worker.v1.GetProfilePictureRequest
+	(*GetProfilePictureResponse)(nil),      // 60: worker.v1.GetProfilePictureResponse
+	(*DownloadProfilePictureRequest)(nil),  // 61: worker.v1.DownloadProfilePictureRequest
+	(*DownloadProfilePictureResponse)(nil), // 62: worker.v1.DownloadProfilePictureResponse
+	(*GetUserInfoRequest)(nil),             // 63: worker.v1.GetUserInfoRequest
+	(*BusinessProfile)(nil),                // 64: worker.v1.BusinessProfile
+	(*GetUserInfoResponse)(nil),            // 65: worker.v1.GetUserInfoResponse
+	(*GetBlocklistRequest)(nil),            // 66: worker.v1.GetBlocklistRequest
+	(*UpdateBlocklistRequest)(nil),         // 67: worker.v1.UpdateBlocklistRequest
+	(*GetBlocklistResponse)(nil),           // 68: worker.v1.GetBlocklistResponse
+	(*GetProfileRequest)(nil),              // 69: worker.v1.GetProfileRequest
+	(*GetProfileResponse)(nil),             // 70: worker.v1.GetProfileResponse
+	(*UpdateProfileRequest)(nil),           // 71: worker.v1.UpdateProfileRequest
+	(*UpdateProfileResponse)(nil),          // 72: worker.v1.UpdateProfileResponse
+	(*Privacy)(nil),                        // 73: worker.v1.Privacy
+	(*GetPrivacyRequest)(nil),              // 74: worker.v1.GetPrivacyRequest
+	(*SetPrivacyRequest)(nil),              // 75: worker.v1.SetPrivacyRequest
+	nil,                                    // 76: worker.v1.ChannelPost.ReactionsEntry
+	nil,                                    // 77: worker.v1.Privacy.SettingsEntry
+	(*GroupUpdate)(nil),                    // 78: worker.v1.GroupUpdate
 }
 var file_worker_v1_worker_proto_depIdxs = []int32{
 	14, // 0: worker.v1.Event.conn:type_name -> worker.v1.ConnState
 	15, // 1: worker.v1.Event.qr:type_name -> worker.v1.QR
 	16, // 2: worker.v1.Event.message:type_name -> worker.v1.Message
-	26, // 3: worker.v1.Event.receipt:type_name -> worker.v1.Receipt
-	27, // 4: worker.v1.Event.history:type_name -> worker.v1.HistoryChunk
+	27, // 3: worker.v1.Event.receipt:type_name -> worker.v1.Receipt
+	28, // 4: worker.v1.Event.history:type_name -> worker.v1.HistoryChunk
 	11, // 5: worker.v1.Event.chat_presence:type_name -> worker.v1.ChatPresence
 	12, // 6: worker.v1.Event.presence:type_name -> worker.v1.Presence
 	13, // 7: worker.v1.Event.call:type_name -> worker.v1.Call
-	77, // 8: worker.v1.Event.group:type_name -> worker.v1.GroupUpdate
-	50, // 9: worker.v1.Event.chat_update:type_name -> worker.v1.ChatUpdate
+	78, // 8: worker.v1.Event.group:type_name -> worker.v1.GroupUpdate
+	51, // 9: worker.v1.Event.chat_update:type_name -> worker.v1.ChatUpdate
 	16, // 10: worker.v1.Event.status:type_name -> worker.v1.Message
 	8,  // 11: worker.v1.Event.channel_post:type_name -> worker.v1.ChannelPost
 	9,  // 12: worker.v1.Event.label:type_name -> worker.v1.LabelUpdate
 	16, // 13: worker.v1.ChannelPost.message:type_name -> worker.v1.Message
-	75, // 14: worker.v1.ChannelPost.reactions:type_name -> worker.v1.ChannelPost.ReactionsEntry
-	25, // 15: worker.v1.Message.media:type_name -> worker.v1.Media
-	20, // 16: worker.v1.Message.location:type_name -> worker.v1.Location
-	21, // 17: worker.v1.Message.contacts:type_name -> worker.v1.ContactCard
-	22, // 18: worker.v1.Message.poll:type_name -> worker.v1.Poll
-	19, // 19: worker.v1.Message.button_reply:type_name -> worker.v1.ButtonReply
-	17, // 20: worker.v1.Message.product:type_name -> worker.v1.Product
-	18, // 21: worker.v1.Message.order:type_name -> worker.v1.Order
-	16, // 22: worker.v1.HistoryChunk.messages:type_name -> worker.v1.Message
-	23, // 23: worker.v1.SendRequest.quote:type_name -> worker.v1.Quote
-	24, // 24: worker.v1.SendRequest.link_preview:type_name -> worker.v1.LinkPreview
-	20, // 25: worker.v1.SendRequest.location:type_name -> worker.v1.Location
-	21, // 26: worker.v1.SendRequest.contacts:type_name -> worker.v1.ContactCard
-	22, // 27: worker.v1.SendRequest.poll:type_name -> worker.v1.Poll
-	10, // 28: worker.v1.SendRequest.status_style:type_name -> worker.v1.StatusStyle
-	17, // 29: worker.v1.SendRequest.product:type_name -> worker.v1.Product
-	36, // 30: worker.v1.GetContactsResponse.contacts:type_name -> worker.v1.Contact
-	36, // 31: worker.v1.GetContactResponse.contact:type_name -> worker.v1.Contact
-	42, // 32: worker.v1.CheckNumbersResponse.results:type_name -> worker.v1.NumberStatus
-	51, // 33: worker.v1.ChatActionRequest.message:type_name -> worker.v1.MessageRef
-	63, // 34: worker.v1.GetUserInfoResponse.business:type_name -> worker.v1.BusinessProfile
-	76, // 35: worker.v1.Privacy.settings:type_name -> worker.v1.Privacy.SettingsEntry
-	0,  // 36: worker.v1.Worker.Ping:input_type -> worker.v1.PingRequest
-	2,  // 37: worker.v1.Worker.PairPhone:input_type -> worker.v1.PairPhoneRequest
-	4,  // 38: worker.v1.Worker.Logout:input_type -> worker.v1.LogoutRequest
-	6,  // 39: worker.v1.Worker.Events:input_type -> worker.v1.EventsRequest
-	28, // 40: worker.v1.Worker.Send:input_type -> worker.v1.SendRequest
-	30, // 41: worker.v1.Worker.SendPresence:input_type -> worker.v1.SendPresenceRequest
-	32, // 42: worker.v1.Worker.MarkRead:input_type -> worker.v1.MarkReadRequest
-	34, // 43: worker.v1.Worker.DownloadMedia:input_type -> worker.v1.DownloadMediaRequest
-	37, // 44: worker.v1.Worker.GetContacts:input_type -> worker.v1.GetContactsRequest
-	39, // 45: worker.v1.Worker.GetContact:input_type -> worker.v1.GetContactRequest
-	41, // 46: worker.v1.Worker.CheckNumbers:input_type -> worker.v1.CheckNumbersRequest
-	44, // 47: worker.v1.Worker.RejectCall:input_type -> worker.v1.RejectCallRequest
-	46, // 48: worker.v1.Worker.SetPresence:input_type -> worker.v1.SetPresenceRequest
-	48, // 49: worker.v1.Worker.SubscribePresence:input_type -> worker.v1.SubscribePresenceRequest
-	52, // 50: worker.v1.Worker.ChatAction:input_type -> worker.v1.ChatActionRequest
-	54, // 51: worker.v1.Worker.GetChatSettings:input_type -> worker.v1.GetChatSettingsRequest
-	58, // 52: worker.v1.Worker.GetProfilePicture:input_type -> worker.v1.GetProfilePictureRequest
-	60, // 53: worker.v1.Worker.DownloadProfilePicture:input_type -> worker.v1.DownloadProfilePictureRequest
-	62, // 54: worker.v1.Worker.GetUserInfo:input_type -> worker.v1.GetUserInfoRequest
-	65, // 55: worker.v1.Worker.GetBlocklist:input_type -> worker.v1.GetBlocklistRequest
-	66, // 56: worker.v1.Worker.UpdateBlocklist:input_type -> worker.v1.UpdateBlocklistRequest
-	68, // 57: worker.v1.Worker.GetProfile:input_type -> worker.v1.GetProfileRequest
-	70, // 58: worker.v1.Worker.UpdateProfile:input_type -> worker.v1.UpdateProfileRequest
-	73, // 59: worker.v1.Worker.GetPrivacy:input_type -> worker.v1.GetPrivacyRequest
-	74, // 60: worker.v1.Worker.SetPrivacy:input_type -> worker.v1.SetPrivacyRequest
-	56, // 61: worker.v1.Worker.ContactAction:input_type -> worker.v1.ContactActionRequest
-	1,  // 62: worker.v1.Worker.Ping:output_type -> worker.v1.PingResponse
-	3,  // 63: worker.v1.Worker.PairPhone:output_type -> worker.v1.PairPhoneResponse
-	5,  // 64: worker.v1.Worker.Logout:output_type -> worker.v1.LogoutResponse
-	7,  // 65: worker.v1.Worker.Events:output_type -> worker.v1.Event
-	29, // 66: worker.v1.Worker.Send:output_type -> worker.v1.SendResponse
-	31, // 67: worker.v1.Worker.SendPresence:output_type -> worker.v1.SendPresenceResponse
-	33, // 68: worker.v1.Worker.MarkRead:output_type -> worker.v1.MarkReadResponse
-	35, // 69: worker.v1.Worker.DownloadMedia:output_type -> worker.v1.DownloadMediaResponse
-	38, // 70: worker.v1.Worker.GetContacts:output_type -> worker.v1.GetContactsResponse
-	40, // 71: worker.v1.Worker.GetContact:output_type -> worker.v1.GetContactResponse
-	43, // 72: worker.v1.Worker.CheckNumbers:output_type -> worker.v1.CheckNumbersResponse
-	45, // 73: worker.v1.Worker.RejectCall:output_type -> worker.v1.RejectCallResponse
-	47, // 74: worker.v1.Worker.SetPresence:output_type -> worker.v1.SetPresenceResponse
-	49, // 75: worker.v1.Worker.SubscribePresence:output_type -> worker.v1.SubscribePresenceResponse
-	53, // 76: worker.v1.Worker.ChatAction:output_type -> worker.v1.ChatActionResponse
-	55, // 77: worker.v1.Worker.GetChatSettings:output_type -> worker.v1.GetChatSettingsResponse
-	59, // 78: worker.v1.Worker.GetProfilePicture:output_type -> worker.v1.GetProfilePictureResponse
-	61, // 79: worker.v1.Worker.DownloadProfilePicture:output_type -> worker.v1.DownloadProfilePictureResponse
-	64, // 80: worker.v1.Worker.GetUserInfo:output_type -> worker.v1.GetUserInfoResponse
-	67, // 81: worker.v1.Worker.GetBlocklist:output_type -> worker.v1.GetBlocklistResponse
-	67, // 82: worker.v1.Worker.UpdateBlocklist:output_type -> worker.v1.GetBlocklistResponse
-	69, // 83: worker.v1.Worker.GetProfile:output_type -> worker.v1.GetProfileResponse
-	71, // 84: worker.v1.Worker.UpdateProfile:output_type -> worker.v1.UpdateProfileResponse
-	72, // 85: worker.v1.Worker.GetPrivacy:output_type -> worker.v1.Privacy
-	72, // 86: worker.v1.Worker.SetPrivacy:output_type -> worker.v1.Privacy
-	57, // 87: worker.v1.Worker.ContactAction:output_type -> worker.v1.ContactActionResponse
-	62, // [62:88] is the sub-list for method output_type
-	36, // [36:62] is the sub-list for method input_type
-	36, // [36:36] is the sub-list for extension type_name
-	36, // [36:36] is the sub-list for extension extendee
-	0,  // [0:36] is the sub-list for field type_name
+	76, // 14: worker.v1.ChannelPost.reactions:type_name -> worker.v1.ChannelPost.ReactionsEntry
+	26, // 15: worker.v1.Message.media:type_name -> worker.v1.Media
+	21, // 16: worker.v1.Message.location:type_name -> worker.v1.Location
+	22, // 17: worker.v1.Message.contacts:type_name -> worker.v1.ContactCard
+	23, // 18: worker.v1.Message.poll:type_name -> worker.v1.Poll
+	20, // 19: worker.v1.Message.button_reply:type_name -> worker.v1.ButtonReply
+	18, // 20: worker.v1.Message.product:type_name -> worker.v1.Product
+	19, // 21: worker.v1.Message.order:type_name -> worker.v1.Order
+	17, // 22: worker.v1.Message.event:type_name -> worker.v1.EventInfo
+	21, // 23: worker.v1.EventInfo.location:type_name -> worker.v1.Location
+	16, // 24: worker.v1.HistoryChunk.messages:type_name -> worker.v1.Message
+	24, // 25: worker.v1.SendRequest.quote:type_name -> worker.v1.Quote
+	25, // 26: worker.v1.SendRequest.link_preview:type_name -> worker.v1.LinkPreview
+	21, // 27: worker.v1.SendRequest.location:type_name -> worker.v1.Location
+	22, // 28: worker.v1.SendRequest.contacts:type_name -> worker.v1.ContactCard
+	23, // 29: worker.v1.SendRequest.poll:type_name -> worker.v1.Poll
+	10, // 30: worker.v1.SendRequest.status_style:type_name -> worker.v1.StatusStyle
+	18, // 31: worker.v1.SendRequest.product:type_name -> worker.v1.Product
+	17, // 32: worker.v1.SendRequest.event:type_name -> worker.v1.EventInfo
+	37, // 33: worker.v1.GetContactsResponse.contacts:type_name -> worker.v1.Contact
+	37, // 34: worker.v1.GetContactResponse.contact:type_name -> worker.v1.Contact
+	43, // 35: worker.v1.CheckNumbersResponse.results:type_name -> worker.v1.NumberStatus
+	52, // 36: worker.v1.ChatActionRequest.message:type_name -> worker.v1.MessageRef
+	64, // 37: worker.v1.GetUserInfoResponse.business:type_name -> worker.v1.BusinessProfile
+	77, // 38: worker.v1.Privacy.settings:type_name -> worker.v1.Privacy.SettingsEntry
+	0,  // 39: worker.v1.Worker.Ping:input_type -> worker.v1.PingRequest
+	2,  // 40: worker.v1.Worker.PairPhone:input_type -> worker.v1.PairPhoneRequest
+	4,  // 41: worker.v1.Worker.Logout:input_type -> worker.v1.LogoutRequest
+	6,  // 42: worker.v1.Worker.Events:input_type -> worker.v1.EventsRequest
+	29, // 43: worker.v1.Worker.Send:input_type -> worker.v1.SendRequest
+	31, // 44: worker.v1.Worker.SendPresence:input_type -> worker.v1.SendPresenceRequest
+	33, // 45: worker.v1.Worker.MarkRead:input_type -> worker.v1.MarkReadRequest
+	35, // 46: worker.v1.Worker.DownloadMedia:input_type -> worker.v1.DownloadMediaRequest
+	38, // 47: worker.v1.Worker.GetContacts:input_type -> worker.v1.GetContactsRequest
+	40, // 48: worker.v1.Worker.GetContact:input_type -> worker.v1.GetContactRequest
+	42, // 49: worker.v1.Worker.CheckNumbers:input_type -> worker.v1.CheckNumbersRequest
+	45, // 50: worker.v1.Worker.RejectCall:input_type -> worker.v1.RejectCallRequest
+	47, // 51: worker.v1.Worker.SetPresence:input_type -> worker.v1.SetPresenceRequest
+	49, // 52: worker.v1.Worker.SubscribePresence:input_type -> worker.v1.SubscribePresenceRequest
+	53, // 53: worker.v1.Worker.ChatAction:input_type -> worker.v1.ChatActionRequest
+	55, // 54: worker.v1.Worker.GetChatSettings:input_type -> worker.v1.GetChatSettingsRequest
+	59, // 55: worker.v1.Worker.GetProfilePicture:input_type -> worker.v1.GetProfilePictureRequest
+	61, // 56: worker.v1.Worker.DownloadProfilePicture:input_type -> worker.v1.DownloadProfilePictureRequest
+	63, // 57: worker.v1.Worker.GetUserInfo:input_type -> worker.v1.GetUserInfoRequest
+	66, // 58: worker.v1.Worker.GetBlocklist:input_type -> worker.v1.GetBlocklistRequest
+	67, // 59: worker.v1.Worker.UpdateBlocklist:input_type -> worker.v1.UpdateBlocklistRequest
+	69, // 60: worker.v1.Worker.GetProfile:input_type -> worker.v1.GetProfileRequest
+	71, // 61: worker.v1.Worker.UpdateProfile:input_type -> worker.v1.UpdateProfileRequest
+	74, // 62: worker.v1.Worker.GetPrivacy:input_type -> worker.v1.GetPrivacyRequest
+	75, // 63: worker.v1.Worker.SetPrivacy:input_type -> worker.v1.SetPrivacyRequest
+	57, // 64: worker.v1.Worker.ContactAction:input_type -> worker.v1.ContactActionRequest
+	1,  // 65: worker.v1.Worker.Ping:output_type -> worker.v1.PingResponse
+	3,  // 66: worker.v1.Worker.PairPhone:output_type -> worker.v1.PairPhoneResponse
+	5,  // 67: worker.v1.Worker.Logout:output_type -> worker.v1.LogoutResponse
+	7,  // 68: worker.v1.Worker.Events:output_type -> worker.v1.Event
+	30, // 69: worker.v1.Worker.Send:output_type -> worker.v1.SendResponse
+	32, // 70: worker.v1.Worker.SendPresence:output_type -> worker.v1.SendPresenceResponse
+	34, // 71: worker.v1.Worker.MarkRead:output_type -> worker.v1.MarkReadResponse
+	36, // 72: worker.v1.Worker.DownloadMedia:output_type -> worker.v1.DownloadMediaResponse
+	39, // 73: worker.v1.Worker.GetContacts:output_type -> worker.v1.GetContactsResponse
+	41, // 74: worker.v1.Worker.GetContact:output_type -> worker.v1.GetContactResponse
+	44, // 75: worker.v1.Worker.CheckNumbers:output_type -> worker.v1.CheckNumbersResponse
+	46, // 76: worker.v1.Worker.RejectCall:output_type -> worker.v1.RejectCallResponse
+	48, // 77: worker.v1.Worker.SetPresence:output_type -> worker.v1.SetPresenceResponse
+	50, // 78: worker.v1.Worker.SubscribePresence:output_type -> worker.v1.SubscribePresenceResponse
+	54, // 79: worker.v1.Worker.ChatAction:output_type -> worker.v1.ChatActionResponse
+	56, // 80: worker.v1.Worker.GetChatSettings:output_type -> worker.v1.GetChatSettingsResponse
+	60, // 81: worker.v1.Worker.GetProfilePicture:output_type -> worker.v1.GetProfilePictureResponse
+	62, // 82: worker.v1.Worker.DownloadProfilePicture:output_type -> worker.v1.DownloadProfilePictureResponse
+	65, // 83: worker.v1.Worker.GetUserInfo:output_type -> worker.v1.GetUserInfoResponse
+	68, // 84: worker.v1.Worker.GetBlocklist:output_type -> worker.v1.GetBlocklistResponse
+	68, // 85: worker.v1.Worker.UpdateBlocklist:output_type -> worker.v1.GetBlocklistResponse
+	70, // 86: worker.v1.Worker.GetProfile:output_type -> worker.v1.GetProfileResponse
+	72, // 87: worker.v1.Worker.UpdateProfile:output_type -> worker.v1.UpdateProfileResponse
+	73, // 88: worker.v1.Worker.GetPrivacy:output_type -> worker.v1.Privacy
+	73, // 89: worker.v1.Worker.SetPrivacy:output_type -> worker.v1.Privacy
+	58, // 90: worker.v1.Worker.ContactAction:output_type -> worker.v1.ContactActionResponse
+	65, // [65:91] is the sub-list for method output_type
+	39, // [39:65] is the sub-list for method input_type
+	39, // [39:39] is the sub-list for extension type_name
+	39, // [39:39] is the sub-list for extension extendee
+	0,  // [0:39] is the sub-list for field type_name
 }
 
 func init() { file_worker_v1_worker_proto_init() }
@@ -5757,7 +5934,7 @@ func file_worker_v1_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_worker_v1_worker_proto_rawDesc), len(file_worker_v1_worker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   77,
+			NumMessages:   78,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

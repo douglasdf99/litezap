@@ -258,7 +258,18 @@ function chatsTab(ctx, rest) {
     let content;
     if (m.type === 'text') content = h('div', { class: 'text' }, m.text || '');
     else if (m.type === 'reaction') content = h('div', { class: 'text muted' }, m.text ? `reagiu ${m.text}` : 'removeu a reação');
-    else {
+    else if (m.type === 'event' && m.event) {
+      // WhatsApp event (v0.1.1): name, when, where and the answers seen so far.
+      const ev = m.event;
+      const answers = Object.values(ev.responses || {});
+      const count = (r) => answers.filter((a) => a.response === r).length;
+      content = h('div', { class: 'text' },
+        h('span', { class: 'tag' }, ev.canceled ? 'evento cancelado' : 'evento'), ` ${ev.name}`,
+        h('div', { class: 'small' }, new Date(ev.start_time).toLocaleString('pt-BR'),
+          ev.location ? ` · ${ev.location.name || ev.location.address || ''}` : ''),
+        ev.description ? h('div', { class: 'small muted' }, ev.description) : null,
+        answers.length ? h('div', { class: 'small muted' }, `vão: ${count('going')} · talvez: ${count('maybe')} · não vão: ${count('not_going')}`) : null);
+    } else {
       content = h('div', { class: 'text' },
         h('span', { class: 'tag' }, TYPE_LABEL[m.type] || m.type),
         m.text ? ` ${m.text}` : '',

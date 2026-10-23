@@ -164,6 +164,44 @@ func (s *server) chatMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, page)
 }
 
+// editEvent changes or cancels one of our events (MSG-24); it goes through the queue.
+func (s *server) editEvent(w http.ResponseWriter, r *http.Request) {
+	wait, err := waitParam(r)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	var in struct {
+		Event *service.EventPatch `json:"event"`
+	}
+	if err := decodeStrict(w, r, &in); err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	if in.Event == nil {
+		s.writeErr(w, apierr.Validation("event is required (only events can be changed with PATCH; edit texts with type edit)"))
+		return
+	}
+	v, err := s.msg.EditEvent(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "msg_id"), *in.Event, wait)
+	s.writeQueued(w, v, err)
+}
+
+// respondEvent answers an event (MSG-24); it goes through the queue.
+func (s *server) respondEvent(w http.ResponseWriter, r *http.Request) {
+	wait, err := waitParam(r)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	var in service.EventResponseInput
+	if err := decodeStrict(w, r, &in); err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	v, err := s.msg.RespondEvent(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "msg_id"), in, wait)
+	s.writeQueued(w, v, err)
+}
+
 // searchMessages is the full-text search over the message log (CHT-11).
 func (s *server) searchMessages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()

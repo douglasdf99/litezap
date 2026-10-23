@@ -46,6 +46,14 @@ validação num aparelho real**.
   `save_on_phone` (padrão), também na agenda do próprio celular. Número fora do log é verificado antes (cota do
   `check-numbers`). Limite de 10 mudanças por minuto e 200 por dia. Ferramentas MCP `save_contact` e
   `remove_contact` (só a pedido do usuário) e botão **Agenda…** na conversa.
+- **Eventos do WhatsApp** (MSG-24): `type: "event"` em `POST /messages` (nome, descrição, início e fim, local,
+  link de chamada, acompanhantes), `PATCH /messages/{id}` edita ou cancela (cifrado como o WhatsApp envia, sem a
+  janela de 15 minutos dos textos) e `POST /messages/{id}/event-response` responde (`going`, `not_going`,
+  `maybe`), tudo pela fila. Eventos recebidos entram no log como `type: "event"` com `event`; edições e
+  cancelamentos do autor atualizam o log e saem em `message.edited` (com `event`); respostas (decifradas com a
+  chave do evento, como votos de enquete) saem no evento novo `message.event_response` e a última de cada pessoa
+  fica em `event.responses`. Ferramentas MCP `send_event`, `update_event` e `respond_event`; o painel mostra
+  os eventos na conversa.
 
 ## Cardápio removido
 

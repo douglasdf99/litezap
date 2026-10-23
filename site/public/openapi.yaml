@@ -859,6 +859,50 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+    patch:
+      tags: [Mensagens]
+      operationId: editEvent
+      x-litezap-milestone: v0.1.1
+      x-zapi: "Editar evento"
+      x-litezap-events: [message.edited]
+      summary: Editar ou cancelar evento
+      x-litezap-scope: instancia
+      description: |
+        Muda um evento deste número (nome, descrição, horários, local, link de chamada, acompanhantes) ou o
+        cancela (`canceled: true`; `false` restaura), para todos do chat. Campos ausentes mantêm o valor; string
+        vazia limpa `description`, `end_time` e `join_link`; `location: {}` remove o local. Diferente de textos,
+        eventos continuam editáveis depois de 15 minutos. A edição é cifrada com a chave do evento, como o
+        WhatsApp envia (`EVENT_EDIT`). Vai pela fila; aceita `?wait=true`. Só eventos: textos se editam com
+        `type: edit` em `POST /messages`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event]
+              additionalProperties: false
+              properties:
+                event:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    description: { type: string }
+                    start_time: { type: string, format: date-time }
+                    end_time: { type: string }
+                    location: { type: object }
+                    join_link: { type: string }
+                    extra_guests_allowed: { type: boolean }
+                    canceled: { type: boolean }
+                    client_message_id: { type: string }
+            example: { event: { canceled: true } }
+      responses:
+        "200": { description: Enviada., content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } } }
+        "202": { description: Na fila., content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/instances/{id}/queue:
     parameters: [{ $ref: "#/components/parameters/InstanceID" }]
     get:
@@ -1366,6 +1410,44 @@ paths:
         "409": { $ref: "#/components/responses/ChatConflict" }
         "502": { $ref: "#/components/responses/WorkerError" }
         "504": { $ref: "#/components/responses/WorkerTimeout" }
+  /v1/instances/{id}/messages/{msg_id}/event-response:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - { name: msg_id, in: path, required: true, schema: { type: string }, description: "Id LiteZap do evento (`GET /chats/{jid}/messages`)." }
+    post:
+      tags: [Mensagens]
+      operationId: respondEvent
+      x-litezap-milestone: v0.1.1
+      x-zapi: "Responder evento"
+      x-litezap-events: [message.event_response]
+      summary: Responder evento
+      x-litezap-scope: instancia
+      description: |
+        Responde um evento do chat (nosso ou de um contato) com `going`, `not_going` ou `maybe`; quem está no
+        chat vê a resposta. A resposta é cifrada com a chave do evento (como um voto de enquete): eventos
+        recebidos antes do pareamento não podem ser respondidos (`event_secret_missing`). `extra_guests` (até
+        20) só com `going` num evento que permite acompanhantes. Vai pela fila; aceita `?wait=true`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [response]
+              additionalProperties: false
+              properties:
+                response: { type: string, enum: [going, not_going, maybe] }
+                extra_guests: { type: integer, minimum: 0, maximum: 20 }
+                client_message_id: { type: string }
+            example: { response: going }
+      responses:
+        "200": { description: Enviada., content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } } }
+        "202": { description: Na fila., content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "`event_canceled`: o evento foi cancelado." }
   /v1/instances/{id}/messages/{msg_id}/star:
     parameters:
       - $ref: "#/components/parameters/InstanceID"
@@ -4970,8 +5052,9 @@ components:
       required: [to, type]
       properties:
         to: { type: string, description: "Número com DDI (10 a 15 dígitos) ou JID." }
-        type: { type: string, enum: [text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, edit, revoke, pin, forward, product] }
+        type: { type: string, enum: [text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, event, reaction, edit, revoke, pin, forward, product] }
         text: { type: string, description: "Obrigatório em `text` (até 64KB)." }
+        event: { $ref: "#/components/schemas/EventInput" }
         product_id: { type: string, description: "`product`: id numérico do produto (GET /catalog)." }
         catalog_owner: { type: string, description: "`product`: número da empresa dona do catálogo; padrão, o próprio número." }
         body: { type: string, maxLength: 1024, description: "`product`: texto abaixo do cartão." }
@@ -4985,6 +5068,45 @@ components:
             emoji: { type: string, description: "Vazio remove a reação." }
         client_message_id: { type: string, maxLength: 128, description: Chave de idempotência. }
         expires_after: { type: string, description: "Duração entre 1m e 168h (padrão 24h). Não enviada até lá: message_expired.", example: 24h }
+    EventInput:
+      type: object
+      description: "Evento do WhatsApp (`type: event`, v0.1.1). Horários em RFC 3339 com fuso."
+      required: [name, start_time]
+      properties:
+        name: { type: string, maxLength: 256 }
+        description: { type: string, maxLength: 2048 }
+        start_time: { type: string, format: date-time }
+        end_time: { type: string, format: date-time }
+        location:
+          type: object
+          properties:
+            name: { type: string }
+            address: { type: string }
+            latitude: { type: number }
+            longitude: { type: number }
+        join_link: { type: string, description: "Link de chamada do WhatsApp (`https://call.whatsapp.com/...`)." }
+        extra_guests_allowed: { type: boolean, description: "Permite levar acompanhantes." }
+    EventCard:
+      type: object
+      description: "O evento como está no log: o último estado (edições e cancelamento) e a última resposta de cada pessoa."
+      properties:
+        name: { type: string }
+        description: { type: string }
+        start_time: { type: string, format: date-time }
+        end_time: { type: string, format: date-time }
+        location: { type: object }
+        join_link: { type: string }
+        canceled: { type: boolean }
+        extra_guests_allowed: { type: boolean }
+        responses:
+          type: object
+          description: "JID de quem respondeu (`me` = este número) → `{response, extra_guests, at}`."
+          additionalProperties:
+            type: object
+            properties:
+              response: { type: string, enum: [going, not_going, maybe] }
+              extra_guests: { type: integer }
+              at: { type: string, format: date-time }
     MediaInfo:
       type: object
       properties:
@@ -5017,6 +5139,7 @@ components:
         attempts: { type: integer }
         error: { type: string, description: "Último erro (`codigo: detalhe`) de item não enviado." }
         timestamp: { type: string, format: date-time }
+        event: { $ref: "#/components/schemas/EventCard" }
     Chat:
       type: object
       properties:
@@ -6288,6 +6411,33 @@ webhooks:
           application/json:
             schema: { $ref: "#/components/schemas/Envelope" }
             example: { id: evt_9e3b7d1a5c0f4628, type: message.poll_vote, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-18T11:02:15.880Z", data: { poll_id: msg_5c8e1a3f7b2d4069, poll_wa_message_id: 3EB0D2E4F6A8B0C1D3E5F7, chat: 5511999999999@s.whatsapp.net, voter: 5511999999999@s.whatsapp.net, push_name: Maria, from_me: false, selected_options: ["Terça às 14h"], timestamp: "2026-10-18T11:02:15Z" } }
+      responses:
+        "2XX": { description: Qualquer 2xx confirma a entrega. }
+  message.event_response:
+    post:
+      summary: Resposta a evento
+      x-slug: message-event-response
+      x-litezap-milestone: v0.1.1
+      x-zapi: Ao receber (resposta de evento)
+      description: |
+        Alguém respondeu um evento do WhatsApp (vou, não vou, talvez), ou este número respondeu pela API.
+        Respostas não viram mensagens do log: a última de cada pessoa fica em `event.responses` do evento.
+        Respostas a eventos criados antes do pareamento não são decifradas (não geram o evento).
+      x-related: [message.received, message.edited]
+      x-fields:
+        - [event_id, string, "Id LiteZap do evento (opcional)."]
+        - [event_wa_message_id, string, "Id no WhatsApp do evento."]
+        - [chat, string, "JID do chat."]
+        - [responder, string, "Quem respondeu (`me` = este número)."]
+        - [push_name, string, "Nome de perfil (opcional)."]
+        - [from_me, boolean, "Resposta deste número."]
+        - [response, string, "going, not_going ou maybe."]
+        - [extra_guests, integer, "Acompanhantes (opcional)."]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Envelope" }
+            example: { id: evt_2c7d9e1b4a6f3058, type: message.event_response, version: 1, instance_id: inst_7f3a9c2e5b1d4086, timestamp: "2026-10-23T11:02:15.880Z", data: { event_id: msg_5c8e1a3f7b2d4069, event_wa_message_id: 3EB0D2E4F6A8B0C1D3E5F7, chat: 120363000000000001@g.us, responder: 5511999990000@s.whatsapp.net, push_name: Ana, from_me: false, response: going, timestamp: "2026-10-23T11:02:15Z" } }
       responses:
         "2XX": { description: Qualquer 2xx confirma a entrega. }
   history.synced:

@@ -66,14 +66,16 @@ type Message struct {
 
 // MessageUpdate is the data of message.edited (Text is the new text) and message.revoked.
 type MessageUpdate struct {
-	ID          string    `json:"id,omitempty"` // LiteZap id of the changed message (empty if not in the log)
-	WAMessageID string    `json:"wa_message_id"`
-	Chat        string    `json:"chat"`
-	Sender      string    `json:"sender,omitempty"` // who edited or deleted it
-	FromMe      bool      `json:"from_me"`
-	Source      string    `json:"source"` // api | device | contact
-	Text        string    `json:"text,omitempty"`
-	Timestamp   time.Time `json:"timestamp"`
+	ID          string `json:"id,omitempty"` // LiteZap id of the changed message (empty if not in the log)
+	WAMessageID string `json:"wa_message_id"`
+	Chat        string `json:"chat"`
+	Sender      string `json:"sender,omitempty"` // who edited or deleted it
+	FromMe      bool   `json:"from_me"`
+	Source      string `json:"source"` // api | device | contact
+	Text        string `json:"text,omitempty"`
+	// Event is the new state of an edited (or canceled) WhatsApp event (v0.1.1).
+	Event     *store.EventCard `json:"event,omitempty"`
+	Timestamp time.Time        `json:"timestamp"`
 }
 
 // PollVote is the data of message.poll_vote: the voter's current choice (an empty list

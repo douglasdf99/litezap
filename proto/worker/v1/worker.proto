@@ -216,6 +216,24 @@ message Message {
   // seconds; 0: none) and when that timer was set (unix seconds; 0 unknown).
   uint32 ephemeral_seconds = 24;
   int64 ephemeral_setting_ts = 25;
+  // v0.1.1 (MSG-24): type event (and an edit of an event: type edit with event set), and
+  // the update event_response (target_id: the event; event_response: going | not_going |
+  // maybe, with extra_guests).
+  EventInfo event = 26;
+  string event_response = 27;
+  int32 extra_guests = 28;
+}
+
+// EventInfo is a WhatsApp event (EventMessage). Times are unix seconds (0: none).
+message EventInfo {
+  string name = 1;
+  string description = 2;
+  Location location = 3;
+  string join_link = 4; // a WhatsApp call link
+  int64 start_time = 5;
+  int64 end_time = 6;
+  bool canceled = 7;
+  bool extra_guests_allowed = 8;
 }
 
 // Product is a catalog product as sent in a ProductMessage (prices in thousandths).
@@ -322,7 +340,8 @@ message SendRequest {
   string to = 1;         // chat JID
   string message_id = 2; // WhatsApp message id chosen by the supervisor (same on every retry)
   // text | image | video | gif | ptv | audio | document | sticker | location | contact |
-  // poll | reaction | edit | revoke | pin | forward | product | disappearing
+  // poll | reaction | edit | revoke | pin | forward | product | disappearing | event |
+  // event_response
   string type = 3;
   // body, caption, reaction emoji ("" removes a reaction), poll name or new text of an edit
   string text = 4;
@@ -363,6 +382,12 @@ message SendRequest {
   // disappears like the others of the chat (0: the chat has no timer), and when it was set.
   uint32 ephemeral_expiration = 31;
   int64 ephemeral_setting_ts = 32;
+  // type event, or type edit of an event (target_*: the event; the edit is encrypted with
+  // the event's secret, as WhatsApp sends it). The event secret is generated here.
+  EventInfo event = 33;
+  // type event_response (target_*: the event): going | not_going | maybe.
+  string event_response = 34;
+  int32 extra_guests = 35;
 }
 message SendResponse {
   string message_id = 1;

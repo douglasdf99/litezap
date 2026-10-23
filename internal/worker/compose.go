@@ -60,6 +60,12 @@ func (w *Whatsmeow) build(ctx context.Context, to types.JID, req *workerv1.SendR
 	if req.Type == "disappearing" {
 		return buildDisappearing(to, req)
 	}
+	if req.Type == "event_response" {
+		return w.buildEventResponse(ctx, to, req)
+	}
+	if req.Type == "edit" && req.Event != nil {
+		return w.buildEventEdit(ctx, to, req)
+	}
 	if req.Type != "edit" && req.Type != "revoke" && req.Type != "pin" {
 		var renames map[string]string
 		var err error
@@ -121,6 +127,8 @@ func (w *Whatsmeow) build(ctx context.Context, to types.JID, req *workerv1.SendR
 		msg, err = buildForward(req.ForwardKind, req.ForwardRef)
 	case "product":
 		msg, err = w.buildProduct(ctx, req)
+	case "event":
+		msg, err = buildEvent(req)
 	default:
 		msg, err = w.buildUpload(ctx, req)
 	}
@@ -470,6 +478,8 @@ func setContextInfo(msg *waE2E.Message, ci *waE2E.ContextInfo) bool {
 		msg.PollCreationMessage.ContextInfo = ci
 	case msg.ProductMessage != nil:
 		msg.ProductMessage.ContextInfo = ci
+	case msg.EventMessage != nil:
+		msg.EventMessage.ContextInfo = ci
 	default:
 		return false
 	}

@@ -9,6 +9,49 @@ import (
 	"github.com/douglasdf99/litezap/internal/service"
 )
 
+// MSG-24: send_event, update_event and respond_event.
+func TestEventTools(t *testing.T) {
+	for _, m := range allModes {
+		t.Run(string(m), func(t *testing.T) {
+			e := newEnv(t, nil)
+			id, tok := e.connected("Eventos")
+			f := e.sp.Last(id)
+			cs := e.client(m, tok)
+			contact := "5511999990000@s.whatsapp.net"
+			f.EmitMessage(&workerv1.Message{Id: "W1", Chat: contact, Sender: contact, Type: "text", Text: "oi", TimestampMs: time.Now().UnixMilli()})
+			start := time.Now().Add(72 * time.Hour).UTC().Format(time.RFC3339)
+			eventually(t, "chat logged", func() bool {
+				p, err := e.msg.Chats(context.Background(), id, 10, "")
+				return err == nil && len(p.Chats) == 1
+			})
+			var out sendOutput
+			ok(t, cs, "send_event", map[string]any{"to": contact, "name": "Visita", "start_time": start,
+				"location": map[string]any{"address": "Rua Exemplo, 1"}}, &out)
+			if !out.Sent || out.Message.Type != "event" || out.Message.Event == nil || out.Message.Event.Location.Address != "Rua Exemplo, 1" {
+				t.Fatalf("send_event = %+v", out)
+			}
+			ok(t, cs, "update_event", map[string]any{"message_id": out.Message.ID, "canceled": true}, &out)
+			sent := f.WA.Sent()
+			if !out.Sent || sent[len(sent)-1].Type != "edit" || !sent[len(sent)-1].Event.GetCanceled() {
+				t.Fatalf("update_event = %+v / %+v", out, sent[len(sent)-1])
+			}
+			f.EmitMessage(&workerv1.Message{Id: "EV2", Chat: contact, Sender: contact, Type: "event", Text: "Festa",
+				TimestampMs: time.Now().UnixMilli(), Event: &workerv1.EventInfo{Name: "Festa", StartTime: time.Now().Add(time.Hour).Unix()}})
+			var evID string
+			eventually(t, "event logged", func() bool {
+				msg, err := e.msg.Store.MessageByWAID(context.Background(), id, contact, "EV2")
+				evID = msg.ID
+				return err == nil
+			})
+			ok(t, cs, "respond_event", map[string]any{"message_id": evID, "response": "not_going"}, &out)
+			if sent = f.WA.Sent(); !out.Sent || sent[len(sent)-1].EventResponse != "not_going" {
+				t.Fatalf("respond_event = %+v", out)
+			}
+			fails(t, cs, "respond_event", map[string]any{"message_id": evID, "response": "going", "extra_guests": 2}, "extra_guests")
+		})
+	}
+}
+
 // CON-2: save_contact and remove_contact.
 func TestAddressBookTools(t *testing.T) {
 	for _, m := range allModes {
