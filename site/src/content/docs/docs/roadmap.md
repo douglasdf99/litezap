@@ -13,7 +13,7 @@ prometidas; a ordem é. O detalhe de cada entrega está no [changelog](/docs/cha
 | M1 | Esqueleto: binário, config, banco, supervisor + worker por número, estados, pareamento por QR e código | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | M2 | Mensagens: fila com ritmo, rampa, janela e verificação de número; recebimento, chats, histórico; mídia; proxy por instância | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | M3 | Eventos: envelope v1, webhooks assinados com retry e dead-letter, SSE | <span class="lz-badge lz-badge--ok">Entregue</span> |
-| M4 | MCP: `/mcp` (HTTP) e `litezap mcp` (stdio), `GET /v1/me`; hoje com 40 ferramentas | <span class="lz-badge lz-badge--ok">Entregue</span> |
+| M4 | MCP: `/mcp` (HTTP) e `litezap mcp` (stdio), `GET /v1/me`; hoje com 53 ferramentas | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | M5 e M5b | Atendente IA: hook de agente com pausa por humano; atendente embutido com perfis prontos (vendedor, pedido, SDR, suporte, personalizado), base de conhecimento, simulador, provedores Anthropic e OpenAI-compatível, chaves cifradas, áudio, imagem/PDF, resposta em voz, follow-up de ligação, eventos `agent.*` e tetos de gasto | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | M6 | Mensagens completas: figurinha, GIF, vídeo redondo, localização, contatos, enquete, citação, menções, prévia de link, editar, apagar, fixar, encaminhar, atraso por mensagem; fila visível | <span class="lz-badge lz-badge--ok">Entregue</span> |
 | M7 | Eventos e chamadas: `chat.presence`, chamadas recebidas e rejeição automática, status `played`, respostas de botão, filtros de webhook | <span class="lz-badge lz-badge--ok">Entregue</span> |

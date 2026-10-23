@@ -7,7 +7,7 @@ description: Use o WhatsApp a partir do Claude, ChatGPT, Cursor e outros cliente
 
 O [Model Context Protocol](https://modelcontextprotocol.io) (MCP) permite que assistentes de IA usem ferramentas
 externas. Com o MCP do LiteZap, um assistente lê suas conversas e envia mensagens pelo seu número, com as mesmas
-regras de ritmo, rampa e janela da API. São [40 ferramentas](/docs/mcp/ferramentas/).
+regras de ritmo, rampa e janela da API. São [53 ferramentas](/docs/mcp/ferramentas/).
 
 ## Pelo app, em um clique
 

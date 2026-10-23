@@ -1,6 +1,6 @@
 ---
 title: Ferramentas MCP
-description: Referência das 40 ferramentas do servidor MCP do LiteZap, com parâmetros e retornos.
+description: Referência das 53 ferramentas do servidor MCP do LiteZap, com parâmetros e retornos.
 ---
 
 <span class="lz-badge lz-badge--ok">Disponível · M4</span>

@@ -276,12 +276,12 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 
 | ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
 |---|---|---|---|---|---|---|---|
-| AI-1 | Servidor MCP | MCP Server (introdução, como conectar) | N/A | Pronto — `/mcp` (streamable HTTP) e `litezap mcp` (stdio), 40 ferramentas (M4, ampliado do M6 ao M10) | M | LiteZap terá HTTP e stdio | M4 |
+| AI-1 | Servidor MCP | MCP Server (introdução, como conectar) | N/A | Pronto — `/mcp` (streamable HTTP) e `litezap mcp` (stdio), 53 ferramentas (M4, ampliado do M6 à v0.1.1) | M | LiteZap terá HTTP e stdio | M4 |
 | AI-2 | Agente que responde mensagens (hook) | (não há) | N/A | Pronto — hook de agente com pausa por humano (M5) e atendente embutido com perfis, provedores Anthropic/OpenAI-compatível e multimodal (M5b) | M | Vantagem LiteZap planejada | M5 |
 
 ## 3. Contagens
 
-Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-API; as ~250 páginas de referência viram 159 linhas). Atualizada em 2026-10-19 com o código do `main` (marcos 1 a 11 e atendente IA). As linhas LiteZap foram recontadas em 2026-10-21 com o script do Anexo A, depois do M12 (MSG-30, MSG-31, BUS-1…3 e BUS-7).
+Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-API; as ~250 páginas de referência viram 159 linhas). Atualizada em 2026-10-19 com o código do `main` (marcos 1 a 11 e atendente IA). As linhas LiteZap foram recontadas em 2026-10-21 com o script do Anexo A, depois do M12 (MSG-30, MSG-31, BUS-1…3 e BUS-7), e de novo em 2026-10-23 para a v0.1.1 (CHT-7, CHT-9, CHT-11, CON-2, MSG-24 e STA-4, todos "Pronto, aguardando validação no aparelho").
 
 | | Linhas |
 |---|---|
@@ -292,9 +292,9 @@ Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-AP
 | — whatsmeow `Parcial` | 10 |
 | — whatsmeow `Não` | 21 |
 | Recursos só da camada LiteZap (`N/A`) | 27 |
-| **LiteZap `Pronto`** (inclui "Pronto, aguardando validação") | **117** |
-| LiteZap `Parcial` | 6 |
-| LiteZap `Falta` | 22 |
+| **LiteZap `Pronto`** (inclui "Pronto, aguardando validação") | **123** |
+| LiteZap `Parcial` | 5 |
+| LiteZap `Falta` | 17 |
 | LiteZap `Fora` | 14 |
 
 Viáveis com whatsmeow (`Sim` + `Manual` + `Parcial`): **111 de 132** recursos de protocolo. Os 21 inviáveis hoje: INS-11 (extensão, produto próprio da Z-API), MOB-1…4 (registro como aparelho principal), CON-8 (denúncia), CAL-1/2 (chamadas de voz e SIP), COM-8 (desativar comunidade), CHN-2/5/7/9/10/11 (administração avançada de canais), BRD-1 (listas de transmissão), BUS-1/2/3/6/7 (catálogo, coleções, notas, perfil comercial editável).

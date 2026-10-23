@@ -28,9 +28,9 @@ Legenda: <span class="lz-badge lz-badge--ok">Disponível</span> já funciona; <s
 <span class="lz-badge lz-badge--exp">Exp</span> experimental, fora da trilha principal; <span class="lz-badge lz-badge--no">Avaliar</span> depende de engenharia reversa ou tem valor baixo;
 <span class="lz-badge lz-badge--no">Fora</span> não planejado.
 
-Na matriz completa (159 recursos da Z-API, revisada com o código atual), o LiteZap tem **115 prontos**, **3
-parciais**, **23 faltando** (a maioria administração avançada de canais, catálogo e mensagens interativas) e **18
-fora do escopo** de propósito.
+Na matriz completa (159 recursos da Z-API, revisada com o código atual), o LiteZap tem **123 prontos** (os da
+v0.1.1 ainda aguardando validação num aparelho real), **5 parciais**, **17 faltando** (a maioria administração
+avançada de canais, catálogo e mensagens interativas) e **14 fora do escopo** de propósito.
 
 ### Instância e conexão
 
@@ -155,7 +155,7 @@ fora do escopo** de propósito.
 | Componente de conexão embutível / token do SDK | [Link de pareamento hospedado](/docs/api/plataforma/gerar-link-de-pareamento/) + `<litezap-pair>` e evento [`instance.paired`](/docs/eventos/instance-paired/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Apagar instâncias em lote | [`POST /v1/instances/bulk`](/docs/api/plataforma/operacao-em-lote/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Restrição de chamadas por IP | `ip_allowlist` na instância e nas chaves; `admin_allowed_ips` e `trusted_proxies` no servidor | <span class="lz-badge lz-badge--ok">Disponível</span> |
-| MCP Server | [`/mcp` e `litezap mcp`](/docs/mcp/), 40 ferramentas | <span class="lz-badge lz-badge--ok">Disponível</span> |
+| MCP Server | [`/mcp` e `litezap mcp`](/docs/mcp/), 53 ferramentas | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | (atendente que responde sozinho) | [Atendente IA](/docs/guias/atendimento-ia/) embutido ou [hook de agente](/docs/mcp/hook-de-agente/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 
 ## Roteiro de migração
