@@ -30,6 +30,15 @@ validação num aparelho real**.
   para conversas novas continua em `PATCH /privacy` (`default_disappearing_seconds`). A ferramenta MCP
   `update_chat` aceita `disappearing` e o painel tem o botão **Temporárias…**. Migração nova
   `0019_chat_disappearing.sql`.
+- **Busca full-text** (CHT-11): `GET /messages/search?q=&chat=&from=&after=&before=&limit=&cursor=` busca no
+  histórico guardado (texto, legendas e nome de arquivo de documentos; todas as palavras, como prefixo, sem
+  diferenciar acentos e maiúsculas), mais novas primeiro e com `snippet`. Índice SQLite FTS5 mantido por
+  gatilhos (migração `0020_messages_fts.sql`): edições, mensagens apagadas para todos, retenção, limpeza de
+  conversa e remoção da instância seguem o índice. As mensagens que já existiam são indexadas em segundo plano
+  depois da atualização, em lotes pequenos e das mais novas para as mais antigas, sem atrasar a
+  inicialização (`index_complete: false` enquanto isso). Ferramenta MCP `search_messages` (só leitura; não
+  entra nos grupos de ferramentas dos agentes, que ficam presos ao chat da conversa) e campo **Buscar nas
+  mensagens** na aba Conversas do painel. Chaves de API com escopo `read` podem buscar.
 
 ## Cardápio removido
 

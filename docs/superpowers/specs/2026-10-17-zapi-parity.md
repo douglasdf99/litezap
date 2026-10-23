@@ -138,7 +138,7 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 | CHT-8 | Apagar chat | Deletar chat | Sim — `appstate.BuildDeleteChat` | Pronto — `DELETE /chats/{jid}` (só marca no log; some da lista até mensagem nova) (M9) | S | Também apagar do log local? (decidir: só flag) | M9 |
 | CHT-9 | Mensagens temporárias do chat | Expiração do chat | Sim — `SetDisappearingTimer` (send.go); o whatsmeow não marca as mensagens seguintes com o prazo | Pronto, aguardando validação no aparelho — `PATCH /chats/{jid} {"disappearing": "off\|24h\|7d\|90d"}`: chat individual pela fila (mensagem de protocolo `EPHEMERAL_SETTING` com o id da fila), grupo pela configuração do grupo; os envios seguintes levam `ContextInfo.expiration`; prazo em `GET /chats/{jid}` quando conhecido; `chat.updated`; padrão da conta em `PATCH /privacy` (`default_disappearing_seconds`); MCP `update_chat` e painel (v0.1.1) | S | Prazo aprendido também de mensagens recebidas (só um ajuste mais novo substitui) | v0.1.1 |
 | CHT-10 | Histórico de mensagens do chat | (não há) | N/A | Pronto — `GET /chats/{jid}/messages` com cursor | — | Vantagem LiteZap | M2 |
-| CHT-11 | Busca full-text | (não há) | N/A | Falta — planejado | S | `GET /messages/search` (FTS5) | M2b |
+| CHT-11 | Busca full-text | (não há) | N/A | Pronto, aguardando validação no aparelho — `GET /messages/search` (`q`, `chat`, `from`, `after`, `before`, cursor) sobre FTS5 (texto, legendas, nome de arquivo; prefixo, sem acentos), gatilhos para edições/apagadas/retenção/limpeza, backfill em segundo plano das mensagens antigas (`index_complete`); MCP `search_messages`; busca no painel (v0.1.1) | S | Vantagem LiteZap. Validar com o histórico real (volume do backfill) | v0.1.1 |
 
 ### 2.8 Chamadas (Z-API: Calls)
 

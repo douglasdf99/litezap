@@ -758,6 +758,55 @@ paths:
         "503": { $ref: "#/components/responses/BusyOrShuttingDown" }
         "504": { $ref: "#/components/responses/WorkerTimeout" }
 
+  /v1/instances/{id}/messages/search:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    get:
+      tags: [Mensagens]
+      operationId: searchMessages
+      x-litezap-milestone: v0.1.1
+      x-zapi: "(sem equivalente)"
+      summary: Buscar mensagens
+      x-litezap-scope: instancia
+      description: |
+        Busca full-text (SQLite FTS5) no histórico guardado pelo LiteZap: texto, legendas e nome de arquivo de
+        documentos. Todas as palavras precisam aparecer (como prefixo; acentos e maiúsculas são ignorados);
+        aspas e operadores digitados valem como texto. Mensagens apagadas para todos e reações ficam de fora;
+        o que a retenção, a limpeza de conversa ou a remoção da instância apagam sai do índice. Mais novas
+        primeiro, com `snippet` (as palavras encontradas entre « e »). Só lê o log local: nada vai ao WhatsApp.
+        Depois da atualização, as mensagens antigas são indexadas em segundo plano (das mais novas para as mais
+        antigas); enquanto isso `index_complete` é `false`.
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, maxLength: 200 }, description: "Palavras a buscar." }
+        - { name: chat, in: query, schema: { type: string }, description: "Só este chat (JID ou número)." }
+        - { name: from, in: query, schema: { type: string }, description: "`me` (enviadas por este número) ou o remetente (número ou JID)." }
+        - { name: after, in: query, schema: { type: string, format: date-time }, description: "Só depois deste instante (RFC 3339)." }
+        - { name: before, in: query, schema: { type: string, format: date-time }, description: "Só antes deste instante (RFC 3339)." }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: cursor, in: query, schema: { type: string }, description: "`next_cursor` da página anterior." }
+      responses:
+        "200":
+          description: Resultados, mais novos primeiro.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages, index_complete]
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/Message"
+                        - type: object
+                          properties:
+                            snippet: { type: string, description: "Trecho com as palavras encontradas entre « e »." }
+                  next_cursor: { type: string, description: Ausente na última página. }
+                  index_complete: { type: boolean, description: "false enquanto as mensagens antigas ainda estão sendo indexadas." }
+              example: { messages: [{ id: msg_2f8a, wa_message_id: 3EB0C431D5A1, chat: 5511999990000@s.whatsapp.net, sender: 5511999990000@s.whatsapp.net, from_me: false, source: contact, type: text, text: "Pode mandar o orçamento?", status: received, timestamp: "2026-10-23T10:00:00Z", snippet: "Pode mandar o «orçamento»?" }], index_complete: true }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/instances/{id}/messages/{msg_id}:
     parameters:
       - $ref: "#/components/parameters/InstanceID"

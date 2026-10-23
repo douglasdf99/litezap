@@ -164,6 +164,20 @@ func (s *server) chatMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, page)
 }
 
+// searchMessages is the full-text search over the message log (CHT-11).
+func (s *server) searchMessages(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, err := s.msg.SearchMessages(r.Context(), chi.URLParam(r, "id"), service.SearchParams{
+		Q: q.Get("q"), Chat: q.Get("chat"), From: q.Get("from"), Before: q.Get("before"), After: q.Get("after"),
+		Limit: limitParam(r), Cursor: q.Get("cursor"),
+	})
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, page)
+}
+
 func (s *server) markRead(w http.ResponseWriter, r *http.Request) {
 	if err := s.msg.MarkRead(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "jid")); err != nil {
 		s.writeErr(w, err)

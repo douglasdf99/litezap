@@ -71,6 +71,49 @@ func TestClearChat(t *testing.T) {
 	}
 }
 
+// CHT-11: GET /messages/search searches the instance's log.
+func TestSearchMessagesRoute(t *testing.T) {
+	e := newEnv(t)
+	id, tok := e.connected("Busca")
+	f := e.sp.Last(id)
+	now := time.Now()
+	for i, m := range []*workerv1.Message{
+		{Id: "S1", Chat: contact, Sender: contact, Type: "text", Text: "Qual o preço do orçamento?"},
+		{Id: "S2", Chat: contact, Sender: contact, Type: "document", Media: &workerv1.Media{Kind: "document", FileName: "Orcamento-2026.pdf", Ref: []byte("r")}},
+		{Id: "S3", Chat: "5511999990003@s.whatsapp.net", Sender: "5511999990003@s.whatsapp.net", Type: "text", Text: "orçamento aprovado"},
+	} {
+		m.TimestampMs = now.Add(time.Duration(i) * time.Second).UnixMilli()
+		f.EmitMessage(m)
+	}
+	base := "/v1/instances/" + id + "/messages/search"
+	e.eventually("indexed", func() bool {
+		_, v := e.do("GET", base+"?q=orcamento", tok, "")
+		return v["messages"] != nil && len(v["messages"].([]any)) == 3
+	})
+	_, v := e.do("GET", base+"?q=orcamento&chat=5511988887777&limit=1", tok, "")
+	msgs := v["messages"].([]any)
+	if len(msgs) != 1 || msgs[0].(map[string]any)["wa_message_id"] != "S2" || v["next_cursor"] == nil || v["index_complete"] != true {
+		t.Fatalf("page 1 = %v", v)
+	}
+	_, v = e.do("GET", base+"?q=orcamento&chat=5511988887777&limit=1&cursor="+v["next_cursor"].(string), tok, "")
+	if hit := v["messages"].([]any)[0].(map[string]any); hit["wa_message_id"] != "S1" || hit["snippet"] == "" {
+		t.Fatalf("page 2 = %v", v)
+	}
+	_, v = e.do("GET", base+"?q=aprovado&from=5511999990003", tok, "")
+	if len(v["messages"].([]any)) != 1 {
+		t.Fatalf("from = %v", v)
+	}
+	_, v = e.do("GET", base+"?q=orcamento&from=me", tok, "")
+	if len(v["messages"].([]any)) != 0 {
+		t.Fatalf("from me = %v", v)
+	}
+	for _, q := range []string{"", "?q=", "?q=%3F%3F", "?q=a&before=ontem", "?q=a&cursor=xx", "?q=a&from=120363000000000001%40g.us"} {
+		if code, v := e.do("GET", base+q, tok, ""); code != 400 || errCode(v) != "validation_failed" {
+			t.Errorf("%q = %d %v", q, code, v)
+		}
+	}
+}
+
 // CHT-9: a direct chat's timer change goes through the queue as a protocol message; later
 // sends carry the timer; the contact turning it off is recorded; groups use their setting.
 func TestDisappearingMessages(t *testing.T) {

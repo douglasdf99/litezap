@@ -98,6 +98,17 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 		return err
 	}
 	defer st.Close()
+	// Messages logged before the search index existed are indexed in the background, in
+	// small batches (startup and the other writers never wait for it).
+	bctx, bcancel := context.WithCancel(ctx)
+	backfilled := make(chan struct{})
+	go func() {
+		defer close(backfilled)
+		if err := st.BackfillSearchIndex(bctx, 1000, 200*time.Millisecond); err != nil && bctx.Err() == nil {
+			log.Warn("search index backfill", "err", err)
+		}
+	}()
+	defer func() { bcancel(); <-backfilled }() // before st.Close
 
 	cl := newCloud(cfg, st, log)
 	if err := cl.listenOps(); err != nil {

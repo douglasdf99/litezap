@@ -346,7 +346,8 @@ func (s *Store) deleteMessageBatch(ctx context.Context, query string, args ...an
 func (s *Store) ScrubForExport(ctx context.Context) error {
 	for _, q := range []string{
 		`DELETE FROM webhooks WHERE owner = 'operator'`,
-		`DELETE FROM engine_kv`,
+		// The search index backfill marker is not a setting: a restored copy must finish it.
+		`DELETE FROM engine_kv WHERE key <> 'messages_fts_backfill'`,
 		`DELETE FROM instance_flags`,
 		// Proxy credentials never leave the server (the operator's pool, E4); instance
 		// tokens are not exported either (a restore issues new ones).

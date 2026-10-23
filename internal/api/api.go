@@ -43,6 +43,7 @@ type MessagingService interface {
 	GetMessage(ctx context.Context, instanceID, id string) (service.MessageView, error)
 	Chats(ctx context.Context, instanceID string, limit int, cursor string) (service.ChatPage, error)
 	ChatMessages(ctx context.Context, instanceID, chat string, limit int, cursor string) (service.MessagePage, error)
+	SearchMessages(ctx context.Context, instanceID string, p service.SearchParams) (service.SearchPage, error)
 	MarkRead(ctx context.Context, instanceID, chat string) error
 	Contacts(ctx context.Context, instanceID string) ([]service.ContactView, error)
 	Contact(ctx context.Context, instanceID, jid string) (service.ContactView, error)
@@ -189,6 +190,7 @@ func New(svc InstanceService, msg MessagingService, opt Options, log *slog.Logge
 			r.Get("/settings", s.getSettings)
 			r.Put("/settings", s.putSettings)
 			r.Post("/messages", s.sendMessage)
+			r.Get("/messages/search", s.searchMessages)
 			r.Get("/messages/{msg_id}", s.getMessage)
 			r.Get("/queue", s.listQueue)
 			r.Delete("/queue", s.clearQueue)

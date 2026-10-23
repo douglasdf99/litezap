@@ -155,6 +155,7 @@ WhatsApp vêm marcadas como destrutivas ou com aviso de risco, para o cliente pe
 | `get_group_invite_link` | Link de convite (nunca redefine) | [Link de convite](/docs/api/grupos/link-de-convite/) |
 | `get_profile_picture` · `get_contact_about` | Foto e recado/empresa de um contato (gastam a cota de consultas) | [Contatos](/docs/api/contatos/) |
 | `list_blocked` · `block_contact` · `unblock_contact` | Bloqueados; bloquear e desbloquear | [Contatos](/docs/api/contatos/) |
+| `search_messages` | Busca full-text no histórico guardado (texto, legendas, nomes de arquivo), com filtros de chat, remetente e data; só leitura | [Buscar mensagens](/docs/api/mensagens/buscar-mensagens/) |
 | `update_chat` | Arquivar, fixar ou silenciar um chat; `disappearing` muda as mensagens temporárias (visto pelo contato ou pelo grupo; num chat individual passa pela fila) | [Chats](/docs/api/chats/) |
 | `clear_chat` | Limpa as mensagens de um chat no WhatsApp da conta e no histórico do LiteZap (a conversa fica). **Destrutiva**: só quando o usuário pedir, para o chat que ele indicar | [Limpar conversa](/docs/api/chats/limpar-conversa/) |
 | `list_status_updates` | Status recebidos dos contatos e os nossos (publicar não é ferramenta) | [Status](/docs/api/status/) |

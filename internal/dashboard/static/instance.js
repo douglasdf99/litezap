@@ -380,6 +380,41 @@ function chatsTab(ctx, rest) {
     },
   }, toInput, h('button', { class: 'btn small', type: 'submit' }, 'Abrir'));
 
+  // Full-text search over the stored history (v0.1.1): results replace the open chat.
+  const searchInput = h('input', { type: 'search', placeholder: 'Buscar nas mensagens…', 'aria-label': 'Buscar nas mensagens' });
+  const showSearch = async (q, cursorQ = '', box = null) => {
+    if (!box) {
+      current = null;
+      box = h('ul', { class: 'search-results' });
+      mount(pane, h('div', { class: 'conv-head' }, h('b', null, `Busca: “${q}”`)), box);
+    }
+    try {
+      const page = await api.get(`${ctx.base}/messages/search?limit=30&q=${encodeURIComponent(q)}${cursorQ ? `&cursor=${encodeURIComponent(cursorQ)}` : ''}`);
+      for (const m of page.messages || []) {
+        const c = chats.get(m.chat);
+        box.appendChild(h('li', null, h('a', { href: ctx.href('chats', m.chat) },
+          h('span', { class: 'chat-name' }, c && c.name ? c.name : phoneOf(m.chat), m.from_me ? h('span', { class: 'tag' }, 'você') : null),
+          h('span', { class: 'chat-meta' }, fmtTime(m.timestamp)),
+          h('p', { class: 'small' }, m.snippet || m.text || (m.media && m.media.file_name) || ''))));
+      }
+      if (!box.children.length) box.appendChild(h('li', { class: 'muted small pad' }, 'Nada encontrado no histórico guardado pelo LiteZap.'));
+      if (!page.index_complete && !cursorQ) box.appendChild(h('li', { class: 'muted small pad' }, 'Mensagens antigas ainda estão sendo indexadas: alguns resultados podem faltar.'));
+      if (page.next_cursor) {
+        const moreBtn = h('button', { class: 'btn small ghost', type: 'button' }, 'Mais resultados');
+        moreBtn.addEventListener('click', () => { moreBtn.remove(); showSearch(q, page.next_cursor, box); });
+        box.appendChild(h('li', null, moreBtn));
+      }
+    } catch (e) { toast(e, 'error'); }
+  };
+  const searchForm = h('form', {
+    class: 'row new-chat',
+    onsubmit: (ev) => {
+      ev.preventDefault();
+      const q = searchInput.value.trim();
+      if (q) showSearch(q);
+    },
+  }, searchInput, h('button', { class: 'btn small', type: 'submit' }, 'Buscar'));
+
   const off = ctx.on((type, ev) => {
     const d = ev.data || {};
     if (type === 'message.received' || type === 'message.sent' || type === 'message.reaction') {
@@ -396,7 +431,7 @@ function chatsTab(ctx, rest) {
   });
 
   const el = h('div', { class: 'chats card' },
-    h('aside', { class: 'chat-side' }, newForm, list, more),
+    h('aside', { class: 'chat-side' }, newForm, searchForm, list, more),
     pane);
   loadChats(false).then(() => openChat(rest[0] || null));
   return {
