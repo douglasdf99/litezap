@@ -85,7 +85,7 @@ func newEnv(t *testing.T, tweak func(*settings.Settings)) *env {
 	msg.Catalog = &service.CatalogReader{Client: cat.Client(), Store: st, Defaults: defaults,
 		HTTP: func(p string) (catalog.Doer, error) { return cat.Doer(p), nil }}
 	grp := &service.Groups{Store: st, Workers: mgr, Resolver: resolver, Defaults: defaults}
-	acct := &service.Account{Messaging: msg, Events: bus}
+	acct := &service.Account{Messaging: msg, Events: bus, Groups: grp}
 	soc := &service.Social{Store: st, Workers: mgr, Messaging: msg, Events: bus}
 	vault, _ := attendant.NewVault([]byte("attendant-key-0123456789abcdef01"))
 	att := &attendant.Admin{A: &attendant.Attendant{Store: st, Vault: vault}}

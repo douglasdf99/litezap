@@ -248,6 +248,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	msg.OnSettingsChanged = rt.SettingsChanged
 	groups := &service.Groups{Store: st, Workers: mgr, Resolver: resolver, Sending: cl.sending,
 		Fetcher: msg.Fetcher, Defaults: cfg.InstanceDefaults, DefaultProxy: cfg.DefaultProxyURL}
+	acct.Groups = groups // a group chat's disappearing timer is a group setting
 	social := &service.Social{Store: st, Workers: mgr, Messaging: msg, Sending: cl.sending, Fetcher: msg.Fetcher, Events: bus}
 	attAdmin := &attendant.Admin{A: att}
 	// The Cardápio was removed: its photo folder (data/menu) is deleted once, on the

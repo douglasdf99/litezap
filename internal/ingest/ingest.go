@@ -146,6 +146,15 @@ func (in *Ingestor) message(ctx context.Context, instanceID string, m *workerv1.
 	if err != nil || !isNew {
 		return err
 	}
+	if m.EphemeralSeconds > 0 {
+		// The message disappears: the chat has a timer (only a newer setting replaces
+		// what is known; turning it off arrives as a protocol message).
+		at := time.UnixMilli(m.TimestampMs)
+		if m.EphemeralSettingTs > 0 {
+			at = time.Unix(m.EphemeralSettingTs, 0)
+		}
+		_, _ = in.Store.SetChatDisappearing(ctx, instanceID, m.Chat, m.EphemeralSeconds, at, true)
+	}
 	var orderEv *events.OrderReceived
 	if o := m.Order; o != nil && o.OrderId != "" {
 		if orderEv, err = in.order(ctx, instanceID, m, rec); err != nil {

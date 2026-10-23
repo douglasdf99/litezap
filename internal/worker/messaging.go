@@ -140,6 +140,9 @@ func (w *Whatsmeow) Send(ctx context.Context, req *workerv1.SendRequest) (*worke
 	msg, handle, special, err := w.buildSpecial(ctx, to, req)
 	if !special && err == nil {
 		msg, err = w.build(ctx, to, req)
+		if err == nil && req.EphemeralExpiration > 0 && req.Type != "disappearing" {
+			applyEphemeral(msg, req.EphemeralExpiration, req.EphemeralSettingTs)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -626,6 +629,9 @@ func (w *Whatsmeow) toMessage(info types.MessageInfo, m *waE2E.Message, known li
 		PushName: info.PushName, Type: typ, Text: text, Media: media, ReactionTo: reactionTo,
 	}
 	details(m, out)
+	if ci := contextOf(m); ci.GetExpiration() > 0 {
+		out.EphemeralSeconds, out.EphemeralSettingTs = ci.GetExpiration(), ci.GetEphemeralSettingTimestamp()
+	}
 	return out
 }
 
@@ -723,7 +729,9 @@ func receiptType(t types.ReceiptType) (string, bool) {
 func (w *Whatsmeow) onData(evt any) bool {
 	switch e := evt.(type) {
 	case *events.Message:
-		if u := w.toUpdate(e); u != nil {
+		if cu := w.disappearingUpdate(e); cu != nil {
+			w.sink.Data(&workerv1.Event{Kind: &workerv1.Event_ChatUpdate{ChatUpdate: cu}})
+		} else if u := w.toUpdate(e); u != nil {
 			w.sink.Data(&workerv1.Event{Kind: &workerv1.Event_Message{Message: u}})
 		} else if m := w.toMessage(e.Info, e.Message, nil); m != nil {
 			w.sink.Data(&workerv1.Event{Kind: &workerv1.Event_Message{Message: m}})

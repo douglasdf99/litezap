@@ -51,6 +51,12 @@ func TestAccountTools(t *testing.T) {
 			}
 			fails(t, cs, "update_chat", map[string]any{"chat": contact}, "nothing to change")
 
+			ok(t, cs, "update_chat", map[string]any{"chat": contact, "disappearing": "24h"}, &chat)
+			if chat.Disappearing != "24h" {
+				t.Fatalf("disappearing = %+v", chat)
+			}
+			fails(t, cs, "update_chat", map[string]any{"chat": contact, "disappearing": "1h"}, "")
+
 			var cleared service.ClearResult
 			ok(t, cs, "clear_chat", map[string]any{"chat": contact, "keep_starred": true}, &cleared)
 			acts := f.WA.ChatActions()

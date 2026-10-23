@@ -61,6 +61,8 @@ type Payload struct {
 	// Product is the catalog product of a type product send (marco 12); MediaFile holds
 	// its first image.
 	Product *Product `json:"product,omitempty"`
+	// DisappearingSeconds is the new timer of a type disappearing send (CHT-9; 0: off).
+	DisappearingSeconds uint32 `json:"disappearing_seconds,omitempty"`
 }
 
 // Product is a catalog product snapshot (prices in thousandths of the currency unit).
@@ -124,7 +126,18 @@ const (
 
 // Updates reports whether a type changes another message instead of sending a new one
 // (not logged as a message of its own).
-func Updates(typ string) bool { return typ == "edit" || typ == "revoke" || typ == "pin" }
+func Updates(typ string) bool {
+	return typ == "edit" || typ == "revoke" || typ == "pin" || typ == "disappearing"
+}
+
+// carriesExpiration reports whether a send of this type to chat is marked with the chat's
+// disappearing timer (updates, reactions, statuses and channel posts are not).
+func carriesExpiration(typ, chat string) bool {
+	if Updates(typ) || typ == "reaction" {
+		return false
+	}
+	return !strings.HasSuffix(chat, "@broadcast") && !strings.HasSuffix(chat, "@newsletter")
+}
 
 // windowError is the last_error of an edit or revoke whose window closed (empty: still open).
 func windowError(p Payload, now time.Time) string {
@@ -541,6 +554,16 @@ func (d *dispatcher) step(ctx context.Context) (next time.Duration, alive bool) 
 	if err != nil {
 		return pauseOn(d.fail(item, item.Attempts, "validation_failed: "+err.Error())), true
 	}
+	if carriesExpiration(p.Type, item.ChatJID) {
+		// The chat's disappearing timer, read now: a change queued before this message
+		// was sent first (strict order per chat).
+		if c, err := st.GetChat(ctx, d.id, item.ChatJID); err == nil && c.DisappearingSeconds > 0 {
+			req.EphemeralExpiration = c.DisappearingSeconds
+			if !c.DisappearingAt.IsZero() {
+				req.EphemeralSettingTs = c.DisappearingAt.Unix()
+			}
+		}
+	}
 	if err := st.MarkInFlight(ctx, item.ID, isNew, pendingMessage(item, p, now)); errors.Is(err, store.ErrNotFound) {
 		return 0, true // canceled meanwhile
 	} else if err != nil {
@@ -803,6 +826,7 @@ func buildRequest(item store.Outbound, p Payload) (*workerv1.SendRequest, error)
 	}
 	req.Animated, req.MentionAll, req.Unpin, req.PinSeconds = p.Animated, p.MentionAll, p.Unpin, p.PinSeconds
 	req.ForwardKind, req.ForwardRef = p.ForwardKind, p.ForwardRef
+	req.DisappearingSeconds = p.DisappearingSeconds
 	if m := p.Meta; m != nil {
 		req.Mentions, req.Forwarded = m.Mentions, m.Forwarded
 		if l := m.Location; l != nil {
@@ -942,6 +966,7 @@ func (d *dispatcher) sent(item store.Outbound, p Payload, at time.Time) error {
 		return err
 	}
 	d.applyUpdate(item, p, at)
+	d.applyDisappearing(item, p, at)
 	if h := d.q.opt.SendLatency; h != nil && !item.CreatedAt.IsZero() {
 		h.Observe(max(at.Sub(item.CreatedAt).Seconds(), 0))
 	}
@@ -999,6 +1024,45 @@ func (d *dispatcher) applyUpdate(item store.Outbound, p Payload, at time.Time) {
 		}
 		pub.Publish(d.id, typ, u)
 	}
+}
+
+// applyDisappearing records the timer of a sent type disappearing change on its chat and
+// publishes chat.updated.
+func (d *dispatcher) applyDisappearing(item store.Outbound, p Payload, at time.Time) {
+	if p.Type != "disappearing" {
+		return
+	}
+	ctx := context.Background()
+	if _, err := d.q.store.SetChatDisappearing(ctx, d.id, item.ChatJID, p.DisappearingSeconds, at, false); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			d.log().Error("queue: apply disappearing", "err", err)
+		}
+		return
+	}
+	c, err := d.q.store.GetChat(ctx, d.id, item.ChatJID)
+	if err != nil || d.q.opt.Events == nil {
+		return
+	}
+	d.q.opt.Events.Publish(d.id, events.TypeChatUpdated, ChatUpdatedEvent(c, []string{"disappearing"}, "api", at))
+}
+
+// ChatUpdatedEvent is the chat.updated data of a chat of the log after a change.
+func ChatUpdatedEvent(c store.Chat, changed []string, source string, now time.Time) events.ChatUpdated {
+	ev := events.ChatUpdated{Chat: c.JID, IsGroup: c.IsGroup, Changed: changed, Archived: c.Archived,
+		Pinned: c.Pinned, Unread: c.MarkedUnread, Source: source, Timestamp: now.UTC(),
+		Deleted: !c.DeletedAt.IsZero() && !c.DeletedAt.Before(c.LastMessageAt)}
+	if c.Muted(now) {
+		ev.Muted = true
+		if !c.MutedUntil.Equal(store.MutedForever) {
+			t := c.MutedUntil
+			ev.MutedUntil = &t
+		}
+	}
+	if !c.DisappearingAt.IsZero() {
+		s := c.DisappearingSeconds
+		ev.Disappearing, ev.DisappearingSeconds = events.DisappearingLabel(s), &s
+	}
+	return ev
 }
 
 // mediaKind is the attachment kind of a send type (gif and ptv are videos).

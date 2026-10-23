@@ -12,6 +12,7 @@ import (
 	"github.com/douglasdf99/litezap/internal/apierr"
 	"github.com/douglasdf99/litezap/internal/events"
 	"github.com/douglasdf99/litezap/internal/instance"
+	"github.com/douglasdf99/litezap/internal/queue"
 	"github.com/douglasdf99/litezap/internal/store"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -30,6 +31,8 @@ type Account struct {
 	Sending *Sending
 	// Events receives chat.updated (nil: not published).
 	Events events.Publisher
+	// Groups changes a group's disappearing messages timer (nil: only direct chats).
+	Groups *Groups
 
 	lookupQuota slidingQuota // contact pictures and profiles, per instance
 	pictures    pictureCache
@@ -154,6 +157,20 @@ type ChatView struct {
 	// Unread: marked as unread by hand (unread_count counts received messages).
 	Unread    bool       `json:"unread"`
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// Disappearing is the disappearing messages timer when known (off | 24h | 7d | 90d),
+	// with DisappearingSeconds; both absent when LiteZap has not learned it yet.
+	Disappearing        string  `json:"disappearing,omitempty"`
+	DisappearingSeconds *uint32 `json:"disappearing_seconds,omitempty"`
+	// DisappearingQueued is set by PATCH when the change to a direct chat is still in the
+	// send queue (it is a message to the contact): the timer changes once it is sent.
+	DisappearingQueued *QueuedChange `json:"disappearing_queued,omitempty"`
+}
+
+// QueuedChange is a chat change that waits in the send queue.
+type QueuedChange struct {
+	MessageID    string `json:"message_id"` // follow it with GET /messages/{id}
+	Status       string `json:"status"`
+	Disappearing string `json:"disappearing"`
 }
 
 func chatView(c store.Chat) ChatView {
@@ -170,14 +187,15 @@ func chatView(c store.Chat) ChatView {
 		t := c.DeletedAt
 		v.DeletedAt = &t
 	}
+	if !c.DisappearingAt.IsZero() {
+		s := c.DisappearingSeconds
+		v.Disappearing, v.DisappearingSeconds = events.DisappearingLabel(s), &s
+	}
 	return v
 }
 
-func (a *Account) chatUpdated(instanceID string, c store.Chat, changed []string, source string) events.ChatUpdated {
-	v := chatView(c)
-	return events.ChatUpdated{Chat: c.JID, IsGroup: c.IsGroup, Changed: changed, Archived: v.Archived,
-		Pinned: v.Pinned, Muted: v.Muted, MutedUntil: v.MutedUntil, Unread: v.Unread,
-		Deleted: !c.DeletedAt.IsZero() && !c.DeletedAt.Before(c.LastMessageAt), Source: source, Timestamp: time.Now().UTC()}
+func (a *Account) chatUpdated(_ string, c store.Chat, changed []string, source string) events.ChatUpdated {
+	return queue.ChatUpdatedEvent(c, changed, source, time.Now())
 }
 
 func (a *Account) publish(instanceID string, ev events.ChatUpdated) {
@@ -269,6 +287,10 @@ type ChatPatch struct {
 	MuteSeconds *int `json:"mute_seconds,omitempty"`
 	// Unread marks the chat as unread (true) or reads it (false: also sends read receipts).
 	Unread *bool `json:"unread,omitempty"`
+	// Disappearing sets the disappearing messages timer: off | 24h | 7d | 90d. In a direct
+	// chat it is a message to the contact (it goes through the send queue); in a group it
+	// changes the group setting (admins only when the group is locked).
+	Disappearing *string `json:"disappearing,omitempty"`
 }
 
 func lastRef(m store.Message) *workerv1.MessageRef {
@@ -279,8 +301,16 @@ func lastRef(m store.Message) *workerv1.MessageRef {
 // and in the log. Fields apply in the order unread, archived, pinned, muted; a failure
 // stops there (earlier fields stay applied).
 func (a *Account) UpdateChat(ctx context.Context, instanceID, raw string, p ChatPatch) (ChatView, error) {
-	if p.Archived == nil && p.Pinned == nil && p.Muted == nil && p.Unread == nil {
-		return ChatView{}, apierr.Validation("nothing to change: set archived, pinned, muted or unread")
+	if p.Archived == nil && p.Pinned == nil && p.Muted == nil && p.Unread == nil && p.Disappearing == nil {
+		return ChatView{}, apierr.Validation("nothing to change: set archived, pinned, muted, unread or disappearing")
+	}
+	var disappearing uint32
+	if p.Disappearing != nil {
+		s, ok := events.DisappearingSeconds(*p.Disappearing)
+		if !ok {
+			return ChatView{}, apierr.Validation(`disappearing must be "off", "24h", "7d" or "90d"`)
+		}
+		disappearing = s
 	}
 	if p.MuteSeconds != nil {
 		switch {
@@ -385,7 +415,50 @@ func (a *Account) UpdateChat(ctx context.Context, instanceID, raw string, p Chat
 			return ChatView{}, err
 		}
 	}
+	if p.Disappearing != nil {
+		return a.setDisappearing(ctx, instanceID, c, disappearing)
+	}
 	return chatView(c), nil
+}
+
+// disappearingWait bounds how long PATCH waits for the queued timer change of a direct chat.
+const disappearingWait = 30 * time.Second
+
+// setDisappearing changes a chat's disappearing messages timer: through the group
+// settings for a group, through the send queue (a protocol message to the contact, with
+// the queue's pacing) for a direct chat.
+func (a *Account) setDisappearing(ctx context.Context, instanceID string, c store.Chat, seconds uint32) (ChatView, error) {
+	if c.IsGroup || strings.HasSuffix(c.JID, "@g.us") {
+		if a.Groups == nil {
+			return ChatView{}, apierr.New(http.StatusNotImplemented, "not_implemented", "group settings are not available", false)
+		}
+		s := seconds
+		if _, err := a.Groups.Update(ctx, instanceID, c.JID, UpdateGroupInput{GroupSettingsInput: GroupSettingsInput{EphemeralSeconds: &s}}); err != nil {
+			return ChatView{}, err
+		}
+		if changed, err := a.st().SetChatDisappearing(ctx, instanceID, c.JID, seconds, time.Now(), false); err != nil {
+			return ChatView{}, err
+		} else if next, err := a.st().GetChat(ctx, instanceID, c.JID); err == nil {
+			c = next
+			if changed {
+				a.publish(instanceID, a.chatUpdated(instanceID, c, []string{"disappearing"}, "api"))
+			}
+		}
+		return chatView(c), nil
+	}
+	s := seconds
+	v, err := a.Messaging.send(ctx, instanceID, SendInput{Type: "disappearing", disappearing: &s}, c.JID, disappearingWait)
+	if err != nil {
+		return ChatView{}, err
+	}
+	if next, err := a.st().GetChat(ctx, instanceID, c.JID); err == nil {
+		c = next
+	}
+	out := chatView(c)
+	if v.Status != store.OutSent {
+		out.DisappearingQueued = &QueuedChange{MessageID: v.ID, Status: v.Status, Disappearing: events.DisappearingLabel(seconds)}
+	}
+	return out, nil
 }
 
 // DeleteChat deletes a chat on WhatsApp (all devices). The log keeps its messages; the
@@ -581,6 +654,24 @@ func (a *Account) WorkerEvent(instanceID string, ev *workerv1.Event) {
 	switch u.Field {
 	case "starred":
 		_ = a.applyStar(ctx, instanceID, u.Chat, u.MessageId, u.Value, source)
+		return
+	case "disappearing":
+		// The contact (or another device of the account) changed the timer of a direct chat.
+		at := time.Now()
+		if u.TimestampMs > 0 {
+			at = time.UnixMilli(u.TimestampMs)
+		}
+		changed, err := a.st().SetChatDisappearing(ctx, instanceID, u.Chat, u.DisappearingSeconds, at, true)
+		if err != nil || !changed {
+			return
+		}
+		src := "contact"
+		if u.FromMe {
+			src = "device"
+		}
+		if c, err := a.st().GetChat(ctx, instanceID, u.Chat); err == nil {
+			a.publish(instanceID, a.chatUpdated(instanceID, c, []string{"disappearing"}, src))
+		}
 		return
 	case "cleared":
 		// Cleared on the phone: reported, the log keeps the messages (only POST

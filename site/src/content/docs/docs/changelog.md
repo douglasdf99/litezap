@@ -19,6 +19,17 @@ validação num aparelho real**.
   a ferramenta MCP `clear_chat` é marcada como destrutiva e só deve ser usada a pedido do usuário. Botão
   **Limpar…** na aba Conversas do painel. Uma limpeza feita no celular continua só gerando o evento (o log
   mantém as mensagens).
+- **Mensagens temporárias por chat** (CHT-9): `PATCH /chats/{jid}` aceita `disappearing` (`off`, `24h`, `7d`,
+  `90d`). Num chat individual a mudança é uma mensagem ao contato e passa pela fila de envio (a resposta espera
+  até 30s e traz `disappearing_queued` se ainda não saiu); num grupo muda a configuração do grupo. As mensagens
+  enviadas depois levam o prazo do chat em `ContextInfo.expiration` (o whatsmeow não faz isso sozinho), então
+  somem também no celular do contato. `GET /chats` e `GET /chats/{jid}` mostram `disappearing` e
+  `disappearing_seconds` quando o LiteZap já sabe o prazo (mudança pela API, pelo contato ou por outro
+  aparelho, configuração do grupo ou o prazo que as mensagens recebidas trazem). `chat.updated` ganha
+  `changed: ["disappearing"]`, o campo `disappearing` e `source: "contact"` quando foi o contato. O padrão
+  para conversas novas continua em `PATCH /privacy` (`default_disappearing_seconds`). A ferramenta MCP
+  `update_chat` aceita `disappearing` e o painel tem o botão **Temporárias…**. Migração nova
+  `0019_chat_disappearing.sql`.
 
 ## Cardápio removido
 

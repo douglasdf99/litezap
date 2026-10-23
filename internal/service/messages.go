@@ -220,6 +220,8 @@ type SendInput struct {
 	// contact's status (quoted from status@broadcast).
 	statusStyle *queue.StatusStyle
 	statusQuote *queue.QuoteTarget
+	// disappearing is the new timer of a type disappearing send (set by Account only).
+	disappearing *uint32
 }
 
 // requestHash fingerprints a send request (without its client id) to detect a
@@ -520,6 +522,11 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 		err = s.composeMedia(ctx, instanceID, id, in, &p)
 	case "product":
 		err = s.composeProduct(ctx, instanceID, id, in, &p)
+	case "disappearing":
+		if in.disappearing == nil {
+			return p, apierr.Validation("use PATCH /chats/{jid} with disappearing to change a chat's disappearing messages")
+		}
+		p.DisappearingSeconds = *in.disappearing
 	default:
 		return p, apierr.Validation("type must be text, image, video, gif, ptv, audio, document, sticker, location, contact, poll, reaction, edit, revoke, pin, forward or product")
 	}

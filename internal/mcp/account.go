@@ -176,6 +176,8 @@ type updateChatInput struct {
 	Pinned     *bool  `json:"pinned,omitempty" jsonschema:"Pin (true) or unpin (false). WhatsApp allows 3 pinned chats."`
 	Muted      *bool  `json:"muted,omitempty" jsonschema:"Mute (true) or unmute (false) notifications on the user's phone."`
 	MuteHours  int    `json:"mute_hours,omitempty" jsonschema:"With muted=true: hours until the mute ends (0: until unmuted)."`
+	// CHT-9
+	Disappearing string `json:"disappearing,omitempty" jsonschema:"Disappearing messages timer: off, 24h, 7d or 90d. The contact (or every group member) sees the change and later messages disappear for everyone."`
 }
 
 // registerAccount adds the marco 9 tools when the backend supports them.
@@ -269,11 +271,13 @@ func (t *tools) registerAccount(s *sdk.Server) {
 
 	add(t, s, &sdk.Tool{
 		Name:  "update_chat",
-		Title: "Archive, pin or mute a chat",
+		Title: "Archive, pin, mute a chat or set its disappearing messages",
 		Description: "Archives/unarchives, pins/unpins or mutes/unmutes a chat. The change syncs to the user's phone and other devices (nothing is sent to the contact). " +
-			"Only change chats the user asked about. Answers app_state_not_synced right after pairing until the phone shares its chat keys.",
+			"disappearing (off, 24h, 7d, 90d) is different: it changes the chat's disappearing messages timer, which the contact or every group member sees; in a direct chat it is a message to the contact that goes through the send queue (disappearing_queued when not sent yet: do not repeat it). " +
+			"Only change chats the user asked about, and the timer only when the user explicitly asks. Answers app_state_not_synced right after pairing until the phone shares its chat keys.",
 		InputSchema: schema[updateChatInput](map[string]func(*jsonschema.Schema){
 			"instance_id": instID, "mute_hours": intRange(0, 0, 8784),
+			"disappearing": func(p *jsonschema.Schema) { p.Enum = []any{"off", "24h", "7d", "90d"} },
 		}),
 		Annotations: &sdk.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(false), OpenWorldHint: ptr(true)},
 	}, func(ctx context.Context, in updateChatInput) (*sdk.CallToolResult, service.ChatView, error) {
@@ -282,6 +286,9 @@ func (t *tools) registerAccount(s *sdk.Server) {
 			return nil, service.ChatView{}, err
 		}
 		p := service.ChatPatch{Archived: in.Archived, Pinned: in.Pinned, Muted: in.Muted}
+		if in.Disappearing != "" {
+			p.Disappearing = &in.Disappearing
+		}
 		if in.MuteHours > 0 {
 			p.MuteSeconds = ptr(in.MuteHours * 3600)
 		}

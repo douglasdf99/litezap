@@ -57,6 +57,9 @@ func invalid(msg string) error { return grpcErr(codes.InvalidArgument, "validati
 // build turns a SendRequest into the WhatsApp message to send (uploading media when needed).
 func (w *Whatsmeow) build(ctx context.Context, to types.JID, req *workerv1.SendRequest) (*waE2E.Message, error) {
 	var ci *waE2E.ContextInfo
+	if req.Type == "disappearing" {
+		return buildDisappearing(to, req)
+	}
 	if req.Type != "edit" && req.Type != "revoke" && req.Type != "pin" {
 		var renames map[string]string
 		var err error

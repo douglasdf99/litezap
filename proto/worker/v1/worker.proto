@@ -208,6 +208,10 @@ message Message {
   ButtonReply button_reply = 21; // type button_reply
   Product product = 22; // type product: a catalog product card
   Order order = 23;     // type order: an order placed from the catalog (token included)
+  // The chat's disappearing messages timer the message carries (ContextInfo.expiration,
+  // seconds; 0: none) and when that timer was set (unix seconds; 0 unknown).
+  uint32 ephemeral_seconds = 24;
+  int64 ephemeral_setting_ts = 25;
 }
 
 // Product is a catalog product as sent in a ProductMessage (prices in thousandths).
@@ -314,7 +318,7 @@ message SendRequest {
   string to = 1;         // chat JID
   string message_id = 2; // WhatsApp message id chosen by the supervisor (same on every retry)
   // text | image | video | gif | ptv | audio | document | sticker | location | contact |
-  // poll | reaction | edit | revoke | pin | forward | product
+  // poll | reaction | edit | revoke | pin | forward | product | disappearing
   string type = 3;
   // body, caption, reaction emoji ("" removes a reaction), poll name or new text of an edit
   string text = 4;
@@ -348,6 +352,13 @@ message SendRequest {
   // type product (marco 12): the catalog product; media_path is its first image, uploaded
   // as a normal encrypted image (with thumbnail as its JPEG thumbnail).
   Product product = 29;
+  // type disappearing (direct chats): the new disappearing messages timer of the chat, sent
+  // to the contact as a protocol message (0: off).
+  uint32 disappearing_seconds = 30;
+  // The chat's current timer, set as ContextInfo.expiration on the message so it
+  // disappears like the others of the chat (0: the chat has no timer), and when it was set.
+  uint32 ephemeral_expiration = 31;
+  int64 ephemeral_setting_ts = 32;
 }
 message SendResponse {
   string message_id = 1;
@@ -425,7 +436,7 @@ message SubscribePresenceResponse {}
 
 // ChatUpdate is a chat state change from the app state (made on any device of the
 // account, including this one through ChatAction). field: archived | pinned | muted |
-// unread | deleted | cleared | starred. value is the new state (muted: muted or not,
+// unread | deleted | cleared | starred | disappearing. value is the new state (muted: muted or not,
 // with muted_until_ms; unread: marked as unread; deleted/cleared: always true).
 message ChatUpdate {
   string chat = 1; // phone-number JID when known
@@ -437,6 +448,9 @@ message ChatUpdate {
   // starred: the message (WhatsApp id) and whether it is ours
   string message_id = 7;
   bool from_me = 8;
+  // disappearing: the chat's new timer (seconds, 0 off), changed by the contact or by
+  // another device of the account (from_me); timestamp_ms is when it was set.
+  uint32 disappearing_seconds = 9;
 }
 
 // MessageRef identifies a message of the chat (the last one for archive/read/delete,

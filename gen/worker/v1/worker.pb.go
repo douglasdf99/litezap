@@ -1218,12 +1218,16 @@ type Message struct {
 	PollHashes [][]byte       `protobuf:"bytes,18,rep,name=poll_hashes,json=pollHashes,proto3" json:"poll_hashes,omitempty"` // poll_vote: SHA-256 of each selected option name
 	Forwarded  bool           `protobuf:"varint,19,opt,name=forwarded,proto3" json:"forwarded,omitempty"`
 	// revoke: WhatsApp marked it as an admin deleting another member's message (groups)
-	AdminRevoke   bool         `protobuf:"varint,20,opt,name=admin_revoke,json=adminRevoke,proto3" json:"admin_revoke,omitempty"`
-	ButtonReply   *ButtonReply `protobuf:"bytes,21,opt,name=button_reply,json=buttonReply,proto3" json:"button_reply,omitempty"` // type button_reply
-	Product       *Product     `protobuf:"bytes,22,opt,name=product,proto3" json:"product,omitempty"`                            // type product: a catalog product card
-	Order         *Order       `protobuf:"bytes,23,opt,name=order,proto3" json:"order,omitempty"`                                // type order: an order placed from the catalog (token included)
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	AdminRevoke bool         `protobuf:"varint,20,opt,name=admin_revoke,json=adminRevoke,proto3" json:"admin_revoke,omitempty"`
+	ButtonReply *ButtonReply `protobuf:"bytes,21,opt,name=button_reply,json=buttonReply,proto3" json:"button_reply,omitempty"` // type button_reply
+	Product     *Product     `protobuf:"bytes,22,opt,name=product,proto3" json:"product,omitempty"`                            // type product: a catalog product card
+	Order       *Order       `protobuf:"bytes,23,opt,name=order,proto3" json:"order,omitempty"`                                // type order: an order placed from the catalog (token included)
+	// The chat's disappearing messages timer the message carries (ContextInfo.expiration,
+	// seconds; 0: none) and when that timer was set (unix seconds; 0 unknown).
+	EphemeralSeconds   uint32 `protobuf:"varint,24,opt,name=ephemeral_seconds,json=ephemeralSeconds,proto3" json:"ephemeral_seconds,omitempty"`
+	EphemeralSettingTs int64  `protobuf:"varint,25,opt,name=ephemeral_setting_ts,json=ephemeralSettingTs,proto3" json:"ephemeral_setting_ts,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *Message) Reset() {
@@ -1415,6 +1419,20 @@ func (x *Message) GetOrder() *Order {
 		return x.Order
 	}
 	return nil
+}
+
+func (x *Message) GetEphemeralSeconds() uint32 {
+	if x != nil {
+		return x.EphemeralSeconds
+	}
+	return 0
+}
+
+func (x *Message) GetEphemeralSettingTs() int64 {
+	if x != nil {
+		return x.EphemeralSettingTs
+	}
+	return 0
 }
 
 // Product is a catalog product as sent in a ProductMessage (prices in thousandths).
@@ -2312,7 +2330,7 @@ type SendRequest struct {
 	To        string                 `protobuf:"bytes,1,opt,name=to,proto3" json:"to,omitempty"`                                // chat JID
 	MessageId string                 `protobuf:"bytes,2,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"` // WhatsApp message id chosen by the supervisor (same on every retry)
 	// text | image | video | gif | ptv | audio | document | sticker | location | contact |
-	// poll | reaction | edit | revoke | pin | forward | product
+	// poll | reaction | edit | revoke | pin | forward | product | disappearing
 	Type string `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
 	// body, caption, reaction emoji ("" removes a reaction), poll name or new text of an edit
 	Text              string         `protobuf:"bytes,4,opt,name=text,proto3" json:"text,omitempty"`
@@ -2345,9 +2363,16 @@ type SendRequest struct {
 	StatusStyle *StatusStyle `protobuf:"bytes,28,opt,name=status_style,json=statusStyle,proto3" json:"status_style,omitempty"` // text to status@broadcast
 	// type product (marco 12): the catalog product; media_path is its first image, uploaded
 	// as a normal encrypted image (with thumbnail as its JPEG thumbnail).
-	Product       *Product `protobuf:"bytes,29,opt,name=product,proto3" json:"product,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Product *Product `protobuf:"bytes,29,opt,name=product,proto3" json:"product,omitempty"`
+	// type disappearing (direct chats): the new disappearing messages timer of the chat, sent
+	// to the contact as a protocol message (0: off).
+	DisappearingSeconds uint32 `protobuf:"varint,30,opt,name=disappearing_seconds,json=disappearingSeconds,proto3" json:"disappearing_seconds,omitempty"`
+	// The chat's current timer, set as ContextInfo.expiration on the message so it
+	// disappears like the others of the chat (0: the chat has no timer), and when it was set.
+	EphemeralExpiration uint32 `protobuf:"varint,31,opt,name=ephemeral_expiration,json=ephemeralExpiration,proto3" json:"ephemeral_expiration,omitempty"`
+	EphemeralSettingTs  int64  `protobuf:"varint,32,opt,name=ephemeral_setting_ts,json=ephemeralSettingTs,proto3" json:"ephemeral_setting_ts,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *SendRequest) Reset() {
@@ -2581,6 +2606,27 @@ func (x *SendRequest) GetProduct() *Product {
 		return x.Product
 	}
 	return nil
+}
+
+func (x *SendRequest) GetDisappearingSeconds() uint32 {
+	if x != nil {
+		return x.DisappearingSeconds
+	}
+	return 0
+}
+
+func (x *SendRequest) GetEphemeralExpiration() uint32 {
+	if x != nil {
+		return x.EphemeralExpiration
+	}
+	return 0
+}
+
+func (x *SendRequest) GetEphemeralSettingTs() int64 {
+	if x != nil {
+		return x.EphemeralSettingTs
+	}
+	return 0
 }
 
 type SendResponse struct {
@@ -3557,7 +3603,7 @@ func (*SubscribePresenceResponse) Descriptor() ([]byte, []int) {
 
 // ChatUpdate is a chat state change from the app state (made on any device of the
 // account, including this one through ChatAction). field: archived | pinned | muted |
-// unread | deleted | cleared | starred. value is the new state (muted: muted or not,
+// unread | deleted | cleared | starred | disappearing. value is the new state (muted: muted or not,
 // with muted_until_ms; unread: marked as unread; deleted/cleared: always true).
 type ChatUpdate struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
@@ -3568,10 +3614,13 @@ type ChatUpdate struct {
 	TimestampMs  int64                  `protobuf:"varint,5,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
 	FullSync     bool                   `protobuf:"varint,6,opt,name=full_sync,json=fullSync,proto3" json:"full_sync,omitempty"`
 	// starred: the message (WhatsApp id) and whether it is ours
-	MessageId     string `protobuf:"bytes,7,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
-	FromMe        bool   `protobuf:"varint,8,opt,name=from_me,json=fromMe,proto3" json:"from_me,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	MessageId string `protobuf:"bytes,7,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	FromMe    bool   `protobuf:"varint,8,opt,name=from_me,json=fromMe,proto3" json:"from_me,omitempty"`
+	// disappearing: the chat's new timer (seconds, 0 off), changed by the contact or by
+	// another device of the account (from_me); timestamp_ms is when it was set.
+	DisappearingSeconds uint32 `protobuf:"varint,9,opt,name=disappearing_seconds,json=disappearingSeconds,proto3" json:"disappearing_seconds,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ChatUpdate) Reset() {
@@ -3658,6 +3707,13 @@ func (x *ChatUpdate) GetFromMe() bool {
 		return x.FromMe
 	}
 	return false
+}
+
+func (x *ChatUpdate) GetDisappearingSeconds() uint32 {
+	if x != nil {
+		return x.DisappearingSeconds
+	}
+	return 0
 }
 
 // MessageRef identifies a message of the chat (the last one for archive/read/delete,
@@ -5009,7 +5065,7 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x02QR\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x1d\n" +
 	"\n" +
-	"timeout_ms\x18\x02 \x01(\x03R\ttimeoutMs\"\xfd\x05\n" +
+	"timeout_ms\x18\x02 \x01(\x03R\ttimeoutMs\"\xdc\x06\n" +
 	"\aMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04chat\x18\x02 \x01(\tR\x04chat\x12\x16\n" +
@@ -5036,7 +5092,9 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\fadmin_revoke\x18\x14 \x01(\bR\vadminRevoke\x129\n" +
 	"\fbutton_reply\x18\x15 \x01(\v2\x16.worker.v1.ButtonReplyR\vbuttonReply\x12,\n" +
 	"\aproduct\x18\x16 \x01(\v2\x12.worker.v1.ProductR\aproduct\x12&\n" +
-	"\x05order\x18\x17 \x01(\v2\x10.worker.v1.OrderR\x05order\"\xa9\x03\n" +
+	"\x05order\x18\x17 \x01(\v2\x10.worker.v1.OrderR\x05order\x12+\n" +
+	"\x11ephemeral_seconds\x18\x18 \x01(\rR\x10ephemeralSeconds\x120\n" +
+	"\x14ephemeral_setting_ts\x18\x19 \x01(\x03R\x12ephemeralSettingTs\"\xa9\x03\n" +
 	"\aProduct\x12\x1d\n" +
 	"\n" +
 	"product_id\x18\x01 \x01(\tR\tproductId\x12\x14\n" +
@@ -5119,7 +5177,7 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x04chat\x18\x01 \x01(\tR\x04chat\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x19\n" +
 	"\bis_group\x18\x03 \x01(\bR\aisGroup\x12.\n" +
-	"\bmessages\x18\x04 \x03(\v2\x12.worker.v1.MessageR\bmessages\"\xf9\a\n" +
+	"\bmessages\x18\x04 \x03(\v2\x12.worker.v1.MessageR\bmessages\"\x91\t\n" +
 	"\vSendRequest\x12\x0e\n" +
 	"\x02to\x18\x01 \x01(\tR\x02to\x12\x1d\n" +
 	"\n" +
@@ -5155,7 +5213,10 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"forwardRef\x12\x1c\n" +
 	"\tforwarded\x18\x1b \x01(\bR\tforwarded\x129\n" +
 	"\fstatus_style\x18\x1c \x01(\v2\x16.worker.v1.StatusStyleR\vstatusStyle\x12,\n" +
-	"\aproduct\x18\x1d \x01(\v2\x12.worker.v1.ProductR\aproduct\"P\n" +
+	"\aproduct\x18\x1d \x01(\v2\x12.worker.v1.ProductR\aproduct\x121\n" +
+	"\x14disappearing_seconds\x18\x1e \x01(\rR\x13disappearingSeconds\x121\n" +
+	"\x14ephemeral_expiration\x18\x1f \x01(\rR\x13ephemeralExpiration\x120\n" +
+	"\x14ephemeral_setting_ts\x18  \x01(\x03R\x12ephemeralSettingTs\"P\n" +
 	"\fSendResponse\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x01 \x01(\tR\tmessageId\x12!\n" +
@@ -5205,7 +5266,7 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x13SetPresenceResponse\",\n" +
 	"\x18SubscribePresenceRequest\x12\x10\n" +
 	"\x03jid\x18\x01 \x01(\tR\x03jid\"\x1b\n" +
-	"\x19SubscribePresenceResponse\"\xea\x01\n" +
+	"\x19SubscribePresenceResponse\"\x9d\x02\n" +
 	"\n" +
 	"ChatUpdate\x12\x12\n" +
 	"\x04chat\x18\x01 \x01(\tR\x04chat\x12\x14\n" +
@@ -5216,7 +5277,8 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\tfull_sync\x18\x06 \x01(\bR\bfullSync\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\a \x01(\tR\tmessageId\x12\x17\n" +
-	"\afrom_me\x18\b \x01(\bR\x06fromMe\"p\n" +
+	"\afrom_me\x18\b \x01(\bR\x06fromMe\x121\n" +
+	"\x14disappearing_seconds\x18\t \x01(\rR\x13disappearingSeconds\"p\n" +
 	"\n" +
 	"MessageRef\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +

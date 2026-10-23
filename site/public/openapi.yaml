@@ -1136,7 +1136,7 @@ paths:
       tags: [Chats]
       operationId: updateChat
       x-litezap-milestone: M9
-      x-zapi: "Arquivar chat / Fixar chat / Silenciar chat / Ler chats"
+      x-zapi: "Arquivar chat / Fixar chat / Silenciar chat / Ler chats / Expiração do chat"
       summary: Arquivar, fixar, silenciar ou marcar como (não) lido
       x-litezap-scope: instancia
       x-litezap-events: [chat.updated]
@@ -1145,7 +1145,10 @@ paths:
         ao contato). Os campos são aplicados na ordem `unread`, `archived`, `pinned`, `muted`; uma falha
         para ali. `unread: false` também manda os recibos de leitura. Só chats que estão no log. O WhatsApp
         permite 3 chats fixados (`409 pin_limit`); arquivar desafixa. Logo depois de parear, até o celular
-        mandar as chaves, responde `409 app_state_not_synced`.
+        mandar as chaves, responde `409 app_state_not_synced`. `disappearing` (`off`, `24h`, `7d`, `90d`)
+        muda as mensagens temporárias e, diferente dos outros campos, é visto pelo contato (ou pelo grupo);
+        é aplicado por último. O padrão para conversas novas é `default_disappearing_seconds` em
+        `PATCH /privacy`.
       requestBody:
         required: true
         content:
@@ -4906,6 +4909,15 @@ components:
         muted_until: { type: string, format: date-time, description: "Fim do silêncio; ausente com `muted: true` = até reativar." }
         unread: { type: boolean, description: "Marcado como não lido à mão (`unread_count` conta as recebidas)." }
         deleted_at: { type: string, format: date-time, description: Quando foi apagado (o chat volta à lista com uma mensagem nova). }
+        disappearing: { type: string, enum: ["off", 24h, 7d, 90d], description: "Mensagens temporárias, quando o LiteZap já sabe (mudança pela API, pelo contato ou por outro aparelho, configuração do grupo ou o prazo que as mensagens recebidas trazem); ausente = ainda desconhecido. v0.1.1." }
+        disappearing_seconds: { type: integer, description: "O mesmo prazo em segundos (0 = desativadas)." }
+        disappearing_queued:
+          type: object
+          description: "Só na resposta do `PATCH`: a mudança de um chat individual ainda está na fila de envio (é uma mensagem ao contato). Acompanhe por `GET /messages/{message_id}`; não repita."
+          properties:
+            message_id: { type: string }
+            status: { type: string }
+            disappearing: { type: string }
     ChatPatch:
       type: object
       description: Campos ausentes não mudam; pelo menos um é obrigatório.
@@ -4915,6 +4927,14 @@ components:
         muted: { type: boolean }
         mute_seconds: { type: integer, minimum: 0, maximum: 31622400, description: "Com `muted: true`: duração; 0 ou ausente = até reativar." }
         unread: { type: boolean, description: "true marca como não lido; false lê (e manda os recibos)." }
+        disappearing:
+          type: string
+          enum: ["off", 24h, 7d, 90d]
+          description: |
+            Mensagens temporárias do chat (v0.1.1). Num chat individual é uma mensagem ao contato (ele vê a
+            mudança) e passa pela fila de envio: a resposta espera até 30s; se ainda não saiu, traz
+            `disappearing_queued`. Num grupo muda a configuração do grupo (em grupo restrito só admins). As
+            mensagens enviadas depois levam o prazo do chat (`ContextInfo.expiration`).
     Picture:
       type: object
       properties:
@@ -4984,7 +5004,7 @@ components:
       properties:
         chat: { type: string }
         is_group: { type: boolean }
-        changed: { type: array, items: { type: string, enum: [archived, pinned, muted, unread, deleted, cleared, starred] } }
+        changed: { type: array, items: { type: string, enum: [archived, pinned, muted, unread, deleted, cleared, starred, disappearing] } }
         archived: { type: boolean }
         pinned: { type: boolean }
         muted: { type: boolean }
@@ -4995,7 +5015,9 @@ components:
         message_id: { type: string }
         wa_message_id: { type: string }
         starred: { type: boolean }
-        source: { type: string, enum: [api, device] }
+        disappearing: { type: string, description: "off, 24h, 7d ou 90d (quando conhecido)." }
+        disappearing_seconds: { type: integer }
+        source: { type: string, enum: [api, device, contact] }
         timestamp: { type: string, format: date-time }
     ChatPage:
       type: object
@@ -5996,7 +6018,8 @@ webhooks:
         - [wa_message_id, string, "Id no WhatsApp."]
         - [chat, string, "JID do chat."]
         - [from_me, boolean, "Sempre true."]
-        - [source, string, "api ou device."]
+        - [disappearing, string, "Mensagens temporárias quando conhecidas: off, 24h, 7d ou 90d (opcional)."]
+        - [source, string, "api, device ou contact (o contato mudou as mensagens temporárias)."]
         - [type, string, "Tipo da mensagem."]
         - [text, string, "Texto ou legenda."]
         - [timestamp, string, "Hora do envio."]
@@ -6350,7 +6373,7 @@ webhooks:
         duplica. `changed` diz o que mudou; os demais campos são o estado do chat depois da mudança.
       x-fields:
         - [chat, string, "JID do chat."]
-        - [changed, array, "archived, pinned, muted, unread, deleted, cleared ou starred."]
+        - [changed, array, "archived, pinned, muted, unread, deleted, cleared, starred ou disappearing."]
         - [archived, boolean, "Arquivado."]
         - [pinned, boolean, "Fixado."]
         - [muted, boolean, "Silenciado."]

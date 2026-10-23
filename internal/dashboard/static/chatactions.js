@@ -10,10 +10,12 @@ export function chatMarks(c) {
     c.archived ? h('span', { class: 'tag', title: 'Arquivada' }, 'arquivada') : null,
     c.muted ? h('span', { class: 'tag', title: c.muted_until ? `Silenciada até ${new Date(c.muted_until).toLocaleString('pt-BR')}` : 'Silenciada' }, 'silenciada') : null,
     c.unread ? h('span', { class: 'tag', title: 'Marcada como não lida' }, 'não lida') : null,
+    c.disappearing && c.disappearing !== 'off' ? h('span', { class: 'tag', title: 'Mensagens temporárias' }, `temporárias ${c.disappearing}`) : null,
   ];
 }
 
 const MUTE_OPTIONS = [['8 horas', 8 * 3600], ['1 semana', 7 * 86400], ['Sempre', 0]];
+const DISAPPEARING_OPTIONS = [['Desativadas', 'off'], ['24 horas', '24h'], ['7 dias', '7d'], ['90 dias', '90d']];
 
 // chatActions returns the action bar of an open chat. onChange(chatView) is called after
 // a change; onDeleted() after the chat was deleted.
@@ -94,6 +96,28 @@ export function chatActions(ctx, jid, { onChange, onDeleted, onCleared }) {
     } catch (e) { toast(e, 'error'); }
   };
 
+  const disappearingMenu = () => {
+    const sel = h('select', { 'aria-label': 'Mensagens temporárias' },
+      DISAPPEARING_OPTIONS.map(([l, v]) => h('option', { value: v, selected: (chat.disappearing || 'off') === v }, l)));
+    modal('Mensagens temporárias', h('div', null,
+      h('p', { class: 'small muted' }, isGroup
+        ? 'Muda a configuração do grupo: todos os participantes veem a mudança (em grupo restrito, só admins podem mudar).'
+        : 'O contato vê a mudança (é uma mensagem para ele, que passa pela fila de envio). As próximas mensagens somem para os dois depois do prazo.'),
+      sel), [
+      { label: 'Cancelar' },
+      {
+        label: 'Salvar', primary: true, onclick: async () => {
+          try {
+            chat = await api.patch(path, { disappearing: sel.value });
+            toast(chat.disappearing_queued ? 'Mudança na fila de envio' : 'Mensagens temporárias atualizadas');
+            render();
+            if (onChange) onChange(chat);
+          } catch (e) { toast(e, 'error'); }
+        },
+      },
+    ]);
+  };
+
   const clear = async () => {
     const keep = h('input', { type: 'checkbox', checked: true });
     modal('Limpar conversa', h('div', null,
@@ -124,6 +148,7 @@ export function chatActions(ctx, jid, { onChange, onDeleted, onCleared }) {
       btn(isGroup ? 'Foto do grupo' : 'Perfil', contactInfo, 'btn small ghost'),
       isGroup ? null : btn('Bloquear', () => block(true), 'btn small ghost danger'),
       isGroup ? null : btn('Desbloquear', () => block(false), 'btn small ghost'),
+      btn(chat.disappearing && chat.disappearing !== 'off' ? `Temporárias: ${chat.disappearing}` : 'Temporárias…', disappearingMenu, 'btn small ghost'),
       btn('Limpar…', clear, 'btn small ghost danger'),
       btn('Apagar', remove, 'btn small danger'));
   }

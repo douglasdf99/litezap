@@ -87,7 +87,7 @@ fora do escopo** de propósito.
 | Arquivar, fixar, silenciar, ler/não lido | [`PATCH /chats/{jid}`](/docs/api/chats/arquivar-fixar-silenciar-ou-marcar-como-nao-lido/) e [`chat.updated`](/docs/eventos/chat-updated/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Deletar chat | [`DELETE /chats/{jid}`](/docs/api/chats/apagar-chat/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Limpar chat | [`POST /chats/{jid}/clear`](/docs/api/chats/limpar-conversa/) (destrutivo; `keep_starred`) | <span class="lz-badge lz-badge--ok">Disponível</span> |
-| Expiração do chat | — | <span class="lz-badge lz-badge--soon">Ainda não</span> |
+| Expiração do chat | [`PATCH /chats/{jid}`](/docs/api/chats/arquivar-fixar-silenciar-ou-marcar-como-nao-lido/) com `disappearing` (`off`, `24h`, `7d`, `90d`); padrão da conta em [`PATCH /privacy`](/docs/api/perfil-e-privacidade/mudar-a-privacidade/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Pegar contatos / Metadata do contato | [`GET /contacts`](/docs/api/contatos/listar-contatos/), [`GET /contacts/{jid}`](/docs/api/contatos/consultar-contato/), [recado e perfil comercial](/docs/api/contatos/recado-e-perfil-comercial-do-contato/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Pegar imagem do contato | [`GET /contacts/{jid}/picture`](/docs/api/contatos/foto-de-perfil-do-contato/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Bloquear contato | [`POST /contacts/{jid}/block`](/docs/api/contatos/bloquear-contato/), `unblock` e [`GET /blocklist`](/docs/api/contatos/listar-bloqueados/) | <span class="lz-badge lz-badge--ok">Disponível</span> |

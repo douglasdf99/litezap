@@ -18,6 +18,10 @@ type ChatState struct {
 	MutedUntil   time.Time // zero: not muted; MutedForever: no end
 	MarkedUnread bool      // marked as unread by hand
 	DeletedAt    time.Time // deleted (hidden from lists until a newer message)
+	// Disappearing messages timer (seconds, 0 off) and when it was set; a zero
+	// DisappearingAt means the timer is unknown. Not part of the app state.
+	DisappearingSeconds uint32
+	DisappearingAt      time.Time
 }
 
 // Muted reports whether the chat is muted at now.
@@ -31,20 +35,22 @@ func (s ChatState) equal(o ChatState) bool {
 		fmtTS(s.MutedUntil) == fmtTS(o.MutedUntil) && fmtTS(s.DeletedAt) == fmtTS(o.DeletedAt)
 }
 
-const chatStateCols = `archived, pinned, muted_until, marked_unread, deleted_at`
+const chatStateCols = `archived, pinned, muted_until, marked_unread, deleted_at, disappearing_seconds, disappearing_at`
 
 type chatStateScan struct {
-	archived, pinned, unread bool
-	muted, deleted           string
+	archived, pinned, unread       bool
+	muted, deleted, disappearingAt string
+	disappearing                   uint32
 }
 
 func (c *chatStateScan) dest() []any {
-	return []any{&c.archived, &c.pinned, &c.muted, &c.unread, &c.deleted}
+	return []any{&c.archived, &c.pinned, &c.muted, &c.unread, &c.deleted, &c.disappearing, &c.disappearingAt}
 }
 
 func (c *chatStateScan) state() ChatState {
 	return ChatState{Archived: c.archived, Pinned: c.pinned, MutedUntil: parseTS(c.muted),
-		MarkedUnread: c.unread, DeletedAt: parseTS(c.deleted)}
+		MarkedUnread: c.unread, DeletedAt: parseTS(c.deleted),
+		DisappearingSeconds: c.disappearing, DisappearingAt: parseTS(c.disappearingAt)}
 }
 
 type querier interface {
@@ -171,6 +177,35 @@ func (s *Store) SetStarred(ctx context.Context, instanceID, chatJID, waID string
 		return false, ErrNotFound
 	}
 	return false, err
+}
+
+// SetChatDisappearing records a chat's disappearing messages timer set at at and reports
+// whether it changed. With onlyNewer (a timer read from a message), an older or equal
+// setting time changes nothing. ErrNotFound when the chat is not in the log.
+func (s *Store) SetChatDisappearing(ctx context.Context, instanceID, jid string, seconds uint32, at time.Time, onlyNewer bool) (bool, error) {
+	if at.IsZero() {
+		at = time.Now()
+	}
+	q := `UPDATE chats SET disappearing_seconds = ?, disappearing_at = ? WHERE instance_id = ? AND jid = ?
+		AND (disappearing_seconds <> ? OR disappearing_at = '')`
+	if onlyNewer {
+		q += ` AND (disappearing_at = '' OR disappearing_at < ?)`
+	}
+	args := []any{seconds, fmtTS(at), instanceID, jid, seconds}
+	if onlyNewer {
+		args = append(args, fmtTS(at))
+	}
+	res, err := s.db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return true, nil
+	}
+	if _, err := s.GetChat(ctx, instanceID, jid); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // ClearChatMessages deletes a chat's messages up to upTo (the newest message cleared, on

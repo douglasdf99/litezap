@@ -121,6 +121,10 @@ func (o *GroupEvents) onUpdate(instanceID string, u *workerv1.GroupUpdate) {
 	if u.PhotoChanged || u.PhotoRemoved {
 		emit(events.GroupPhoto, func(e *events.GroupUpdate) { e.Removed = u.PhotoRemoved })
 	}
+	if u.EphemeralSeconds != nil && o.Store != nil {
+		// The chat's disappearing timer follows the group's (CHT-9).
+		_, _ = o.Store.SetChatDisappearing(context.Background(), instanceID, u.Group, u.GetEphemeralSeconds(), time.Now(), false)
+	}
 	if u.Announce != nil || u.Locked != nil || u.EphemeralSeconds != nil {
 		emit(events.GroupSettings, func(e *events.GroupUpdate) {
 			e.Settings = &events.GroupSettingsChange{Announce: u.Announce, Locked: u.Locked, EphemeralSeconds: u.EphemeralSeconds}
