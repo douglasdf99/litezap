@@ -48,6 +48,9 @@ func (r *REST) SearchMessages(ctx context.Context, id string, p service.SearchPa
 	if p.Limit > 0 {
 		q.Set("limit", strconv.Itoa(p.Limit))
 	}
+	if p.IncludeDeleted {
+		q.Set("include_deleted", "true")
+	}
 	var page service.SearchPage
 	err := r.call(ctx, restTimeout, "GET", instPath(id, "messages", "search"), q, nil, &page)
 	return page, err
@@ -62,6 +65,8 @@ type searchMessagesInput struct {
 	Before     string `json:"before,omitempty" jsonschema:"Only messages before this time (RFC 3339)."`
 	Limit      int    `json:"limit,omitempty" jsonschema:"Results per page (default 20, max 100), newest first."`
 	Cursor     string `json:"cursor,omitempty" jsonschema:"next_cursor from the previous page."`
+	// Chats the user deleted are left out unless asked.
+	IncludeDeleted bool `json:"include_deleted,omitempty" jsonschema:"Also search chats the user deleted (default false). Only when the user asks for them."`
 }
 
 // registerSearch adds search_messages when the backend supports it.
@@ -87,7 +92,8 @@ func (t *tools) registerSearch(s *sdk.Server) {
 			return nil, service.SearchPage{}, err
 		}
 		page, err := sb.SearchMessages(ctx, id, service.SearchParams{Q: in.Query, Chat: in.Chat, From: in.From,
-			After: in.After, Before: in.Before, Limit: clamp(in.Limit, defaultPageLimit, 1, maxPageLimit), Cursor: in.Cursor})
+			After: in.After, Before: in.Before, Limit: clamp(in.Limit, defaultPageLimit, 1, maxPageLimit), Cursor: in.Cursor,
+			IncludeDeleted: in.IncludeDeleted})
 		if page.Messages == nil {
 			page.Messages = []service.SearchHitView{}
 		}

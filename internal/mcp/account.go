@@ -368,7 +368,7 @@ func (t *tools) registerAccount(s *sdk.Server) {
 		Title: "Clear a chat's messages",
 		Description: "Clears every message of a chat on the user's WhatsApp number (phone and linked devices) and deletes them from LiteZap's history; the chat itself stays. " +
 			"The contact keeps their copy. This is destructive and cannot be undone: only clear when the user explicitly asks, for the chat they named (confirm it first). " +
-			"keep_starred keeps the starred messages. Messages still waiting in the send queue are not affected.",
+			"keep_starred keeps the starred messages. Messages still waiting in the send queue are not affected. Limited to 10 clears per minute (rate_limited: stop, do not retry).",
 		InputSchema: schema[clearChatInput](map[string]func(*jsonschema.Schema){"instance_id": instID}),
 		Annotations: &sdk.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
 	}, func(ctx context.Context, in clearChatInput) (*sdk.CallToolResult, service.ClearResult, error) {

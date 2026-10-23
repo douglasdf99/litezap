@@ -199,6 +199,9 @@ func (f *FakeWA) ContactAction(_ context.Context, req *workerv1.ContactActionReq
 		found.Name = req.FullName
 		kept = append(kept, found)
 	case "remove":
+		if found.Name == "" { // like the worker: never remove an entry the address book lacks
+			return nil, status.Error(codes.NotFound, "not_found: contato não está na agenda deste aparelho")
+		}
 		if found.PushName != "" || found.BusinessName != "" { // still known by its push name
 			found.Name = ""
 			kept = append(kept, found)

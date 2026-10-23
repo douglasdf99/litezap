@@ -105,6 +105,10 @@ func encodeAppStateMutation(ctx context.Context, dev *store.Device, name appstat
 	if err != nil {
 		return nil, state, fmt.Errorf("failed to get value MAC of previous SET operation: %w", err)
 	}
+	if prev == nil && op == waServerSync.SyncdMutation_REMOVE {
+		// Removing an entry this device never saw would corrupt the LT-hash on every device.
+		return nil, state, errAppStateEntryMissing
+	}
 	var removed, added [][]byte
 	if prev != nil {
 		removed = [][]byte{prev}
@@ -125,6 +129,30 @@ func encodeAppStateMutation(ctx context.Context, dev *store.Device, name appstat
 	patch.PatchMAC = hmacOf(sha256.New, keys.patchMAC, snapshotMAC, valueMAC, uint64Bytes(next.Version), []byte(name))
 	out, err := proto.Marshal(patch)
 	return out, next, err
+}
+
+// errAppStateEntryMissing is a REMOVE of an entry the local app state does not have.
+var errAppStateEntryMissing = errors.New("app state entry not found locally")
+
+// appStateHas reports whether the local app state has an entry at index (its value MAC
+// is known), with the index MAC of the latest sync key, as encodeAppStateMutation uses.
+func appStateHas(ctx context.Context, dev *store.Device, name appstate.WAPatchName, index []string) (bool, error) {
+	keyID, err := dev.AppStateKeys.GetLatestAppStateSyncKeyID(ctx)
+	if err != nil {
+		return false, err
+	} else if keyID == nil {
+		return false, errors.New("no app state keys found, creating app state keys is not yet supported")
+	}
+	keyData, err := dev.AppStateKeys.GetAppStateSyncKey(ctx, keyID)
+	if err != nil || keyData == nil {
+		return false, fmt.Errorf("failed to get app state key %x: %w", keyID, errors.Join(err, appstate.ErrKeyNotFound))
+	}
+	indexBytes, err := json.Marshal(index)
+	if err != nil {
+		return false, err
+	}
+	mac, err := dev.AppState.GetAppStateMutationMAC(ctx, string(name), hmacOf(sha256.New, expandAppStateKeys(keyData.Data).index, indexBytes))
+	return mac != nil, err
 }
 
 // errAppStateConflict is WhatsApp refusing a patch built on an outdated state (409).

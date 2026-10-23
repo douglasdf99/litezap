@@ -36,6 +36,7 @@ type Account struct {
 
 	lookupQuota  slidingQuota // contact pictures and profiles, per instance
 	contactQuota slidingQuota // address book changes (CON-2), per instance
+	clearQuota   slidingQuota // chat clears (CHT-7), per instance
 	pictures     pictureCache
 	actionMu     sync.Mutex
 	actionLocks  map[string]*sync.Mutex // per instance and chat: API actions applied in order
@@ -70,6 +71,8 @@ const (
 	lookupsPerMinute = 30
 	lookupsPerDay    = 1000
 	maxPinnedChats   = 3
+	clearsPerMinute  = 10
+	clearsPerDay     = 100
 	maxMuteSeconds   = 366 * 24 * 3600
 )
 
@@ -519,6 +522,11 @@ func (a *Account) ClearChat(ctx context.Context, instanceID, raw string, in Clea
 	if err != nil {
 		return ClearResult{}, err
 	}
+	// Destructive and synced to every device: a runaway client (or agent) is stopped early.
+	if !a.clearQuota.take(instanceID, time.Now(), clearsPerMinute, clearsPerDay) {
+		return ClearResult{}, apierr.New(http.StatusTooManyRequests, "rate_limited",
+			"too many chat clears for this instance (10 per minute, 100 per day)", true)
+	}
 	mu := a.chatLock(instanceID, c.JID)
 	mu.Lock()
 	defer mu.Unlock()
@@ -535,6 +543,10 @@ func (a *Account) ClearChat(ctx context.Context, instanceID, raw string, in Clea
 		req.Message = lastRef(m)
 		upTo = m.Timestamp
 	}
+	// Order: WhatsApp first, then the log. If the app state patch fails nothing is lost
+	// locally; if it succeeds the log follows, up to the same newest message (upTo) the
+	// patch named, so messages arriving meanwhile survive on both sides. Messages still in
+	// the queue are kept (they are sent after the clear).
 	rctx, cancel := context.WithTimeout(ctx, rpcTimeout)
 	defer cancel()
 	if _, err := cli.ChatAction(rctx, req); err != nil {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Full-text search over the message log (CHT-11): the FTS5 table messages_fts (migration
@@ -66,19 +67,35 @@ func (s *Store) BackfillSearchBatch(ctx context.Context, batch int64) (bool, err
 	return lo > 0, tx.Commit()
 }
 
+// maxBackfillBackoff bounds the wait between retries of a failed backfill batch.
+const maxBackfillBackoff = time.Minute
+
 // BackfillSearchIndex indexes the rows older than the search index in small batches
 // with a pause between them, so startup and the other writers (one shared connection)
-// are never held up. It returns when done or when ctx ends.
-func (s *Store) BackfillSearchIndex(ctx context.Context, batch int64, pause time.Duration) error {
+// are never held up. A failed batch is retried with a growing wait (pause doubled each
+// time, up to a minute); onErr, when set, sees each failure. It returns when done or when
+// ctx ends.
+func (s *Store) BackfillSearchIndex(ctx context.Context, batch int64, pause time.Duration, onErr func(error)) {
+	wait := pause
 	for {
 		more, err := s.BackfillSearchBatch(ctx, batch)
-		if err != nil || !more {
-			return err
+		switch {
+		case err != nil && ctx.Err() != nil:
+			return
+		case err != nil:
+			if onErr != nil {
+				onErr(err)
+			}
+			wait = min(max(wait*2, pause), maxBackfillBackoff)
+		case !more:
+			return
+		default:
+			wait = pause
 		}
 		select {
 		case <-ctx.Done():
-			return nil
-		case <-time.After(pause):
+			return
+		case <-time.After(wait):
 		}
 	}
 }
@@ -94,6 +111,9 @@ type SearchQuery struct {
 	Before time.Time // strictly before
 	Limit  int
 	Cursor *MessageCursor // continue after this row (newest-first order)
+	// IncludeDeleted also searches messages of chats the user deleted (by default the
+	// messages up to a chat's deletion are left out, as GET /chats hides the chat).
+	IncludeDeleted bool
 }
 
 // SearchHit is a message matching a search, with a short snippet around the match.
@@ -102,17 +122,25 @@ type SearchHit struct {
 	Snippet string
 }
 
-// MatchExpr turns free text into a safe FTS5 expression: every word must appear (as a
-// prefix, accents and case ignored); operators and quotes typed by the user are taken
-// literally. Empty when the text has no word.
+// MatchExpr turns free text into a safe FTS5 expression: every word must appear (accents
+// and case ignored); words of 2 or more characters match as a prefix, a single character
+// only as a whole word (a one-letter prefix would match most of the log). Operators and
+// quotes typed by the user are taken literally; combining marks (decomposed accents) stay
+// inside their word. Empty when the text has no word.
 func MatchExpr(text string) string {
-	words := strings.FieldsFunc(text, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	words := strings.FieldsFunc(text, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r)
+	})
 	if len(words) > 16 {
 		words = words[:16]
 	}
 	parts := make([]string, 0, len(words))
 	for _, w := range words {
-		parts = append(parts, `"`+w+`"*`)
+		p := `"` + w + `"`
+		if utf8.RuneCountInString(strings.TrimFunc(w, unicode.IsMark)) >= 2 {
+			p += "*"
+		}
+		parts = append(parts, p)
 	}
 	return strings.Join(parts, " ")
 }
@@ -129,6 +157,10 @@ func (s *Store) SearchMessages(ctx context.Context, instanceID string, q SearchQ
 		FROM messages_fts JOIN messages m ON m.seq = messages_fts.rowid
 		WHERE messages_fts MATCH ? AND m.instance_id = ? AND m.revoked_at = '' AND m.type <> 'reaction'`
 	args := []any{expr, instanceID}
+	if !q.IncludeDeleted {
+		sqlq += ` AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.instance_id = m.instance_id AND c.jid = m.chat_jid
+			AND c.deleted_at <> '' AND m.timestamp <= c.deleted_at)`
+	}
 	if q.Chat != "" {
 		sqlq += ` AND m.chat_jid = ?`
 		args = append(args, q.Chat)

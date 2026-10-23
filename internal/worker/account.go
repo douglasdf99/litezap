@@ -171,6 +171,7 @@ type accountHooks struct {
 
 	sendAppState    func(context.Context, appstate.PatchInfo) error
 	removeAppState  func(context.Context, appstate.WAPatchName, appstate.MutationInfo) error
+	appStateHas     func(context.Context, appstate.WAPatchName, []string) (bool, error)
 	chatSettings    func(context.Context, types.JID) (types.LocalChatSettings, error)
 	pictureInfo     func(context.Context, types.JID, *whatsmeow.GetProfilePictureParams) (*types.ProfilePictureInfo, error)
 	userInfo        func(context.Context, []types.JID) (map[types.JID]types.UserInfo, error)
@@ -194,6 +195,11 @@ func (w *Whatsmeow) hooks() accountHooks {
 	}
 	if h.removeAppState == nil {
 		h.removeAppState = w.removeAppState
+	}
+	if h.appStateHas == nil {
+		h.appStateHas = func(ctx context.Context, name appstate.WAPatchName, index []string) (bool, error) {
+			return appStateHas(ctx, w.cli.Store, name, index)
+		}
 	}
 	if h.chatSettings == nil {
 		h.chatSettings = func(ctx context.Context, jid types.JID) (types.LocalChatSettings, error) {

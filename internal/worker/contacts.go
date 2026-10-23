@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
@@ -31,8 +32,9 @@ func (s *Server) ContactAction(ctx context.Context, req *workerv1.ContactActionR
 	return a.ContactAction(ctx, req)
 }
 
-// contactMutation is the app state entry of a contact; value is nil for a removal.
-func contactMutation(pn, lid types.JID, req *workerv1.ContactActionRequest) appstate.MutationInfo {
+// contactMutation is the app state entry of a contact, indexed by entry (its phone
+// number or, on accounts that address contacts by LID, its LID).
+func contactMutation(entry, pn, lid types.JID, req *workerv1.ContactActionRequest) appstate.MutationInfo {
 	act := &waSyncAction.ContactAction{}
 	if req.Action == "save" {
 		act.FirstName = proto.String(req.FirstName)
@@ -44,7 +46,7 @@ func contactMutation(pn, lid types.JID, req *workerv1.ContactActionRequest) apps
 		}
 	}
 	return appstate.MutationInfo{
-		Index:   []string{appstate.IndexContact, pn.String()},
+		Index:   []string{appstate.IndexContact, entry.String()},
 		Version: contactMutationVersion,
 		Value:   &waSyncAction.SyncActionValue{ContactAction: act},
 	}
@@ -63,18 +65,48 @@ func (w *Whatsmeow) ContactAction(ctx context.Context, req *workerv1.ContactActi
 	}
 	lid := w.lidOf(ctx, pn)
 	h := w.hooks()
+	// The entry may exist under the phone number or under the LID (accounts migrated to
+	// LIDs). An existing entry keeps its addressing; a new one uses the phone number (the
+	// account's addressing of other contacts cannot be read without scanning the store).
+	has := func(j types.JID) (bool, error) {
+		if j.IsEmpty() {
+			return false, nil
+		}
+		return h.appStateHas(ctx, appstate.WAPatchCriticalUnblockLow, []string{appstate.IndexContact, j.String()})
+	}
+	hasPN, err := has(pn)
+	if err != nil {
+		return nil, accountErr(err)
+	}
+	hasLID := false
+	if !hasPN {
+		if hasLID, err = has(lid); err != nil {
+			return nil, accountErr(err)
+		}
+	}
+	entry := pn
+	if hasLID {
+		entry = lid
+	}
 	switch req.Action {
 	case "save":
 		req.FirstName, req.FullName = strings.TrimSpace(req.FirstName), strings.TrimSpace(req.FullName)
 		if req.FullName == "" || len(req.FullName) > maxContactName || len(req.FirstName) > maxContactName {
 			return nil, grpcErr(codes.InvalidArgument, "validation_failed", "a contact needs a name of up to 128 bytes")
 		}
-		m := contactMutation(pn, lid, req)
+		m := contactMutation(entry, pn, lid, req)
 		err = h.sendAppState(ctx, appstate.PatchInfo{Type: appstate.WAPatchCriticalUnblockLow, Mutations: []appstate.MutationInfo{m}})
 	case "remove":
-		err = h.removeAppState(ctx, appstate.WAPatchCriticalUnblockLow, contactMutation(pn, lid, req))
+		if !hasPN && !hasLID {
+			// Never send a REMOVE for an entry this device does not have.
+			return nil, grpcErr(codes.NotFound, "not_found", "contato não está na agenda deste aparelho")
+		}
+		err = h.removeAppState(ctx, appstate.WAPatchCriticalUnblockLow, contactMutation(entry, pn, lid, req))
 	default:
 		return nil, grpcErr(codes.InvalidArgument, "validation_failed", "unknown contact action")
+	}
+	if errors.Is(err, errAppStateEntryMissing) {
+		return nil, grpcErr(codes.NotFound, "not_found", "contato não está na agenda deste aparelho")
 	}
 	if err != nil {
 		return nil, accountErr(err)

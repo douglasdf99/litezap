@@ -3,6 +3,7 @@ package worker
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -72,7 +73,7 @@ func TestRemovePatchDecodesWithWhatsmeow(t *testing.T) {
 	name := appstate.WAPatchCriticalUnblockLow
 	pn := types.NewJID("5511999990000", types.DefaultUserServer)
 	save := &workerv1.ContactActionRequest{Action: "save", FirstName: "Ana", FullName: "Ana Teste", SaveOnPhone: true}
-	m := contactMutation(pn, types.EmptyJID, save)
+	m := contactMutation(pn, pn, types.EmptyJID, save)
 
 	decode := func(raw []byte, state appstate.HashState) ([]appstate.Mutation, appstate.HashState) {
 		t.Helper()
@@ -108,7 +109,10 @@ func TestRemovePatchDecodesWithWhatsmeow(t *testing.T) {
 	_ = mem.PutAppStateMutationMACs(ctx, string(name), state.Version, []store.AppStateMutationMAC{{IndexMAC: muts[0].IndexMAC, ValueMAC: muts[0].ValueMAC}})
 
 	// ...and the REMOVE decodes, removes the same index and brings the hash back to empty.
-	rm := contactMutation(pn, types.EmptyJID, &workerv1.ContactActionRequest{Action: "remove"})
+	rm := contactMutation(pn, pn, types.EmptyJID, &workerv1.ContactActionRequest{Action: "remove"})
+	if ok, err := appStateHas(ctx, dev, name, rm.Index); err != nil || !ok {
+		t.Fatalf("saved entry not found locally = %v %v", ok, err)
+	}
 	rmRaw, rmState, err := encodeAppStateMutation(ctx, dev, name, waServerSync.SyncdMutation_REMOVE, rm, state, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -119,6 +123,18 @@ func TestRemovePatchDecodesWithWhatsmeow(t *testing.T) {
 	}
 	if after.Hash != rmState.Hash || after.Hash != ([128]byte{}) || after.Version != 2 {
 		t.Fatalf("state after remove = v%d (hash empty: %v)", after.Version, after.Hash == [128]byte{})
+	}
+	if ok, err := appStateHas(ctx, dev, name, rm.Index); err != nil || ok {
+		t.Fatalf("entry still known after the removal was applied = %v %v", ok, err)
+	}
+
+	// An entry this device does not have is never removed (it would break the LT-hash).
+	other := contactMutation(types.NewJID("5511999990001", types.DefaultUserServer), pn, types.EmptyJID, &workerv1.ContactActionRequest{Action: "remove"})
+	if ok, _ := appStateHas(ctx, dev, name, other.Index); ok {
+		t.Fatal("unknown entry reported as present")
+	}
+	if _, _, err := encodeAppStateMutation(ctx, dev, name, waServerSync.SyncdMutation_REMOVE, other, state, time.Now()); !errors.Is(err, errAppStateEntryMissing) {
+		t.Fatalf("remove of an unknown entry = %v", err)
 	}
 }
 
@@ -136,6 +152,16 @@ func TestContactAction(t *testing.T) {
 	}
 	ctx := context.Background()
 	pn := "5511999990000@s.whatsapp.net"
+	lid := types.NewJID("123456", types.HiddenUserServer)
+	w.lidFor = func(context.Context, types.JID) (types.JID, error) { return lid, nil }
+	entries := map[string]bool{}
+	w.acct.appStateHas = func(_ context.Context, _ appstate.WAPatchName, idx []string) (bool, error) {
+		return entries[idx[1]], nil
+	}
+	// Nothing in the local address book: no REMOVE is sent.
+	if c, code := codeOf2(w.ContactAction(ctx, &workerv1.ContactActionRequest{Jid: pn, Action: "remove"})); c != codes.NotFound || code != "not_found" || len(removed) != 0 {
+		t.Fatalf("remove of unknown contact = %v %s (%d sent)", c, code, len(removed))
+	}
 	out, err := w.ContactAction(ctx, &workerv1.ContactActionRequest{Jid: pn, Action: "save", FirstName: " Ana ", FullName: "Ana Teste"})
 	if err != nil || out.Jid != pn {
 		t.Fatalf("save = %v %v", out, err)
@@ -144,9 +170,30 @@ func TestContactAction(t *testing.T) {
 		p.Mutations[0].Value.GetContactAction().GetFirstName() != "Ana" || p.Mutations[0].Index[1] != pn {
 		t.Fatalf("patch = %+v", p)
 	}
+	if p := sent[0].Mutations[0].Value.GetContactAction(); p.GetLidJID() != lid.String() || p.GetPnJID() != pn {
+		t.Fatalf("contact action = %+v", p)
+	}
+	entries[pn] = true
 	if _, err := w.ContactAction(ctx, &workerv1.ContactActionRequest{Jid: pn, Action: "remove"}); err != nil || len(removed) != 1 ||
-		removed[0].Index[0] != appstate.IndexContact {
+		removed[0].Index[0] != appstate.IndexContact || removed[0].Index[1] != pn {
 		t.Fatalf("remove = %v %+v", err, removed)
+	}
+	// An entry kept under the LID is updated and removed under the LID.
+	delete(entries, pn)
+	entries[lid.String()] = true
+	if _, err := w.ContactAction(ctx, &workerv1.ContactActionRequest{Jid: pn, Action: "save", FullName: "Ana"}); err != nil ||
+		sent[len(sent)-1].Mutations[0].Index[1] != lid.String() {
+		t.Fatalf("save under LID = %v %v", err, sent[len(sent)-1].Mutations[0].Index)
+	}
+	if _, err := w.ContactAction(ctx, &workerv1.ContactActionRequest{Jid: pn, Action: "remove"}); err != nil || removed[1].Index[1] != lid.String() {
+		t.Fatalf("remove under LID = %v %+v", err, removed)
+	}
+	// A removal the encoder refuses (entry vanished meanwhile) is not_found too.
+	w.acct.removeAppState = func(context.Context, appstate.WAPatchName, appstate.MutationInfo) error {
+		return errAppStateEntryMissing
+	}
+	if c, _ := codeOf2(w.ContactAction(ctx, &workerv1.ContactActionRequest{Jid: pn, Action: "remove"})); c != codes.NotFound {
+		t.Fatalf("vanished entry = %v", c)
 	}
 	for _, bad := range []*workerv1.ContactActionRequest{
 		{Jid: pn, Action: "save"},

@@ -292,8 +292,11 @@ func (in *Ingestor) eventResponse(ctx context.Context, instanceID string, m *wor
 		return nil
 	}
 	at := time.UnixMilli(m.TimestampMs).UTC()
+	// Responders are keyed by phone-number JID (the worker maps LIDs when it knows them)
+	// and the account's own answers, from any device or the API, by "me": one person
+	// counts once.
 	who := m.Sender
-	if m.FromMe && who == "" {
+	if m.FromMe {
 		who = "me"
 	}
 	v := events.EventResponse{EventWAMessageID: m.TargetId, Chat: m.Chat, Responder: who, PushName: m.PushName,

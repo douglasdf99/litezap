@@ -167,7 +167,19 @@ func TestEventResponseReceived(t *testing.T) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	u := r.evs[len(r.evs)-1].GetMessage()
-	if u.GetType() != "event_response" || u.GetTargetId() != "EV3" || u.GetEventResponse() != "maybe" || u.GetSender() != dm.String() {
+	if u.GetType() != "event_response" || u.GetTargetId() != "EV3" || u.GetEventResponse() != "maybe" || u.GetSender() != dm.String() || u.GetFromMe() {
 		t.Fatalf("update = %v", u)
+	}
+	// Our own answer from another device, addressed by our LID in a group: from_me.
+	ownLID := types.NewJID("999", types.HiddenUserServer)
+	w.cli.Store.LID = ownLID
+	group := types.NewJID("120363000000000001", types.GroupServer)
+	r.mu.Unlock()
+	w.handle(&events.Message{Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: group, Sender: ownLID, IsGroup: true},
+		ID: "R3", Timestamp: time.Now()}, Message: &waE2E.Message{EncEventResponseMessage: &waE2E.EncEventResponseMessage{
+		EventCreationMessageKey: eventKey(group, "EV4", true, ownLID)}}})
+	r.mu.Lock()
+	if u := r.evs[len(r.evs)-1].GetMessage(); u.GetTargetId() != "EV4" || !u.GetFromMe() {
+		t.Fatalf("own answer = %v", u)
 	}
 }

@@ -110,6 +110,63 @@ func TestSearchMessages(t *testing.T) {
 	}
 }
 
+func TestMatchExpr(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"orçamento a", `"orçamento"* "a"`},
+		{"e-mail", `"e" "mail"*`},
+		{"orçamento", "\"orçamento\"*"}, // a decomposed ç stays in its word
+		{"é ok", "\"é\" \"ok\"*"},       // one letter plus its accent: no prefix
+		{"  ¿? ", ""},
+	}
+	for _, c := range cases {
+		if got := MatchExpr(c.in); got != c.want {
+			t.Errorf("MatchExpr(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// The search leaves out chats the user deleted, unless asked.
+func TestSearchSkipsDeletedChats(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	seedInstance(t, s, "i1")
+	chat := "5511999990000@s.whatsapp.net"
+	for i, id := range []string{"old", "new"} {
+		if _, err := s.InsertMessage(ctx, "i1", Message{ID: id, WAMessageID: "W" + id, ChatJID: chat, Source: "contact", Type: "text",
+			Text: "boleto " + id, Status: "received", Timestamp: t0.Add(time.Duration(i) * time.Hour)}, ChatUpdate{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := s.ApplyChatChange(ctx, "i1", chat, ChatChange{Field: "deleted", Value: true, At: t0.Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(searchIDs(t, s, SearchQuery{Text: "boleto"})); got != "[new]" {
+		t.Fatalf("default = %s", got)
+	}
+	if got := fmt.Sprint(searchIDs(t, s, SearchQuery{Text: "boleto", IncludeDeleted: true})); got != "[new old]" {
+		t.Fatalf("include_deleted = %s", got)
+	}
+}
+
+// A failing backfill batch is retried with backoff until ctx ends (not abandoned).
+func TestSearchBackfillRetries(t *testing.T) {
+	s := openTest(t)
+	if err := s.SetKV(context.Background(), ftsBackfillKey, "10"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`DROP TABLE messages_fts`); err != nil { // every batch now fails
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	fails := 0
+	start := time.Now()
+	s.BackfillSearchIndex(ctx, 10, time.Millisecond, func(error) { fails++ })
+	if fails < 2 || time.Since(start) < 140*time.Millisecond {
+		t.Fatalf("failures = %d after %v", fails, time.Since(start))
+	}
+}
+
 // Messages logged before the index existed are indexed in the background, newest first.
 func TestSearchBackfill(t *testing.T) {
 	ctx := context.Background()
@@ -150,9 +207,7 @@ func TestSearchBackfill(t *testing.T) {
 	if got := len(searchIDs(t, s, SearchQuery{Text: "pedido"})); got != 11 {
 		t.Fatalf("after batch 1 = %d (newest 10 + edited)", got)
 	}
-	if err := s.BackfillSearchIndex(ctx, 10, time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
+	s.BackfillSearchIndex(ctx, 10, time.Millisecond, func(err error) { t.Errorf("backfill: %v", err) })
 	if got := len(searchIDs(t, s, SearchQuery{Text: "pedido"})); got != 25 {
 		t.Fatalf("after backfill = %d", got)
 	}

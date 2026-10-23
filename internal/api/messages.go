@@ -207,7 +207,7 @@ func (s *server) searchMessages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, err := s.msg.SearchMessages(r.Context(), chi.URLParam(r, "id"), service.SearchParams{
 		Q: q.Get("q"), Chat: q.Get("chat"), From: q.Get("from"), Before: q.Get("before"), After: q.Get("after"),
-		Limit: limitParam(r), Cursor: q.Get("cursor"),
+		Limit: limitParam(r), Cursor: q.Get("cursor"), IncludeDeleted: q.Get("include_deleted") == "true",
 	})
 	if err != nil {
 		s.writeErr(w, err)

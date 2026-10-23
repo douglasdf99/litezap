@@ -731,7 +731,17 @@ func (w *Whatsmeow) toUpdate(e *events.Message) *workerv1.Message {
 	chat, sender := w.addressing(e.Info, nil)
 	u.Id, u.Chat, u.Sender, u.FromMe, u.IsGroup = string(e.Info.ID), chat.String(), sender.String(), e.Info.IsFromMe, e.Info.IsGroup
 	u.TimestampMs, u.PushName = e.Info.Timestamp.UnixMilli(), e.Info.PushName
+	if u.Type == "event_response" && w.isOwn(sender) {
+		// Our answer from another device (by phone number or LID): one person, counted once.
+		u.FromMe = true
+	}
 	return u
+}
+
+// isOwn reports whether j is the account itself (phone-number or LID user).
+func (w *Whatsmeow) isOwn(j types.JID) bool {
+	pn, lid := w.ownJIDs()
+	return !j.IsEmpty() && ((!pn.IsEmpty() && j.User == pn.User) || (!lid.IsEmpty() && j.User == lid.User))
 }
 
 func receiptType(t types.ReceiptType) (string, bool) {

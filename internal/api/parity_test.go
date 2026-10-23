@@ -207,8 +207,15 @@ func TestEvents(t *testing.T) {
 	if resp := got["event"].(map[string]any)["responses"].(map[string]any)[contact].(map[string]any); resp["response"] != "maybe" {
 		t.Fatalf("responses = %v", got["event"])
 	}
+	// Our answer changed on the phone (from_me, our own JID as sender): still one "me".
+	f.EmitMessage(&workerv1.Message{Id: "R10", Chat: contact, Sender: "5511999999999@s.whatsapp.net", FromMe: true, Type: "event_response",
+		TargetId: "EV2", EventResponse: "not_going", TimestampMs: time.Now().Add(time.Second).UnixMilli()})
+	if r := sse.next(events.TypeMessageEventResponse); !strings.Contains(r.data, `"responder":"me"`) {
+		t.Fatalf("own answer from the phone = %s", r.data)
+	}
 	_, got = e.do("GET", base+"/"+msg.ID, tok, "")
-	if resp := got["event"].(map[string]any)["responses"].(map[string]any)["me"].(map[string]any); resp["response"] != "going" {
+	responses := got["event"].(map[string]any)["responses"].(map[string]any)
+	if resp := responses["me"].(map[string]any); resp["response"] != "not_going" || len(responses) != 1 {
 		t.Fatalf("our response = %v", got["event"])
 	}
 
@@ -306,6 +313,10 @@ func TestAddressBook(t *testing.T) {
 			t.Errorf("%s = %d %v", body, code, v)
 		}
 	}
+	// Not in the address book (already removed): 404, nothing sent.
+	if code, v := e.do("DELETE", base+"/5511999990000", tok, ""); code != 404 || errCode(v) != "not_found" {
+		t.Fatalf("remove twice = %d %v", code, v)
+	}
 	if code, v := e.do("DELETE", base+"/120363000000000001@g.us", tok, ""); code != 400 {
 		t.Fatalf("remove group = %d %v", code, v)
 	}
@@ -351,6 +362,22 @@ func TestSearchMessagesRoute(t *testing.T) {
 		if code, v := e.do("GET", base+q, tok, ""); code != 400 || errCode(v) != "validation_failed" {
 			t.Errorf("%q = %d %v", q, code, v)
 		}
+	}
+}
+
+// CHT-7: clears are limited per instance (10 per minute).
+func TestClearChatRateLimit(t *testing.T) {
+	e := newEnv(t)
+	id, tok := e.connected("LimpaLimite")
+	e.inbound(id, "W1", contact)
+	path := "/v1/instances/" + id + "/chats/" + contact + "/clear"
+	for i := 0; i < 10; i++ {
+		if code, v := e.do("POST", path, tok, ""); code != 200 {
+			t.Fatalf("clear %d = %d %v", i+1, code, v)
+		}
+	}
+	if code, v := e.do("POST", path, tok, ""); code != 429 || errCode(v) != "rate_limited" {
+		t.Fatalf("11th clear = %d %v", code, v)
 	}
 }
 

@@ -19,6 +19,8 @@ type SearchParams struct {
 	After  string `json:"after,omitempty"`  // RFC 3339: only newer messages
 	Limit  int    `json:"limit,omitempty"`  // default 50, max 200
 	Cursor string `json:"cursor,omitempty"`
+	// IncludeDeleted also searches chats the user deleted (left out by default).
+	IncludeDeleted bool `json:"include_deleted,omitempty"`
 }
 
 // SearchHitView is a message that matches a search, with a short excerpt around the
@@ -66,7 +68,7 @@ func (s *Messaging) SearchMessages(ctx context.Context, instanceID string, p Sea
 	case store.MatchExpr(q) == "":
 		return SearchPage{}, apierr.Validation("q needs at least one word (letters or digits)")
 	}
-	sq := store.SearchQuery{Text: q, Limit: pageLimit(p.Limit)}
+	sq := store.SearchQuery{Text: q, Limit: pageLimit(p.Limit), IncludeDeleted: p.IncludeDeleted}
 	var err error
 	if p.Chat != "" {
 		if sq.Chat, err = ChatJID(p.Chat); err != nil {

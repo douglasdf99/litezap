@@ -104,9 +104,9 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	backfilled := make(chan struct{})
 	go func() {
 		defer close(backfilled)
-		if err := st.BackfillSearchIndex(bctx, 1000, 200*time.Millisecond); err != nil && bctx.Err() == nil {
-			log.Warn("search index backfill", "err", err)
-		}
+		st.BackfillSearchIndex(bctx, 1000, 200*time.Millisecond, func(err error) {
+			log.Warn("search index backfill (retrying)", "err", err)
+		})
 	}()
 	defer func() { bcancel(); <-backfilled }() // before st.Close
 
