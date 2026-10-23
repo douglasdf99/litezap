@@ -295,3 +295,21 @@ func TestDashboardURL(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerEnvPassesWALogLevel(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.CreateInstance(ctx, store.Instance{ID: "i", Name: "i", State: instance.Created, TokenHash: "i", SettingsJSON: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.WALogLevel = "debug"
+	got, err := workerEnv(st, cfg)(ctx, "i")
+	if err != nil || got[len(got)-1] != "LITEZAP_WA_LOG_LEVEL=debug" {
+		t.Fatalf("env = %v, %v", got, err)
+	}
+}

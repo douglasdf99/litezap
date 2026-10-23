@@ -58,6 +58,9 @@ type Config struct {
 	ZombieTimeout time.Duration `yaml:"zombie_timeout"`
 	// ShutdownTimeout bounds the whole graceful shutdown (0: the default phase timeouts).
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
+	// WALogLevel is the level of whatsmeow's logs in the workers (debug | info | warn |
+	// error; "": warn). At debug the lines keep JIDs (phone numbers): troubleshooting only.
+	WALogLevel string `yaml:"wa_log_level"`
 
 	// Platform and partners (marco 11): IP allowlists and the hosted pairing page.
 	Platform `yaml:",inline"`
@@ -142,6 +145,15 @@ func LoadWith(path string, base Config) (Config, error) {
 			return cfg, fmt.Errorf("LITEZAP_DISABLE_DASHBOARD: %w", err)
 		}
 		cfg.DisableDashboard = b
+	}
+	if v := os.Getenv("LITEZAP_WA_LOG_LEVEL"); v != "" {
+		cfg.WALogLevel = v
+	}
+	cfg.WALogLevel = strings.ToLower(strings.TrimSpace(cfg.WALogLevel))
+	switch cfg.WALogLevel {
+	case "", "debug", "info", "warn", "error":
+	default:
+		return cfg, fmt.Errorf("wa_log_level must be debug, info, warn or error, not %q", cfg.WALogLevel)
 	}
 	if err := applyCloudEnv(&cfg); err != nil {
 		return cfg, err

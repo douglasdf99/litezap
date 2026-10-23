@@ -69,13 +69,14 @@ func main() {
 		os.Exit(1)
 	}
 	logPath := filepath.Join(dir, "litezap.log")
-	logFile, err := openLog(logPath)
+	logFile, err := desktop.OpenLog(logPath, maxLogBytes)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "litezap-app: log:", err)
 		os.Exit(1)
 	}
 	defer logFile.Close()
-	log := slog.New(slog.NewTextHandler(io.MultiWriter(os.Stderr, logFile), nil))
+	logOut := io.MultiWriter(os.Stderr, logFile)
+	log := slog.New(slog.NewTextHandler(logOut, nil))
 	log.Info("litezap-app starting", "version", version, "app_dir", dir)
 
 	// One app per folder: launching it again shows the running one.
@@ -90,7 +91,7 @@ func main() {
 		defer inst.Close()
 	}
 
-	a := &app{dir: dir, logPath: logPath, log: log, openOnStart: !*noBrowser, window: appwindow.Supported,
+	a := &app{dir: dir, logPath: logPath, log: log, logOut: logOut, openOnStart: !*noBrowser, window: appwindow.Supported,
 		codes: dashboard.NewLaunchCodes(), stopped: make(chan struct{}), infoc: make(chan serve.Info, 1),
 		aiChanged: make(chan struct{}, 1), quitc: make(chan struct{}, 1), menuc: make(chan int, 8),
 		reloginc: make(chan struct{}, 1)}
@@ -155,14 +156,6 @@ func signalOnce(c chan struct{}) {
 	}
 }
 
-// openLog appends to the log, starting over (keeping one old copy) past maxLogBytes.
-func openLog(p string) (*os.File, error) {
-	if fi, err := os.Stat(p); err == nil && fi.Size() > maxLogBytes {
-		_ = os.Rename(p, p+".1")
-	}
-	return os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-}
-
 // newConnector points AI client entries at this executable; when the app folder was
 // moved with LITEZAP_APP_DIR, the entry carries it so `mcp` finds the same folder.
 func newConnector(dir string) (*desktop.Connector, error) {
@@ -225,7 +218,8 @@ func runWorker(args []string) int {
 	sock := fs.String("socket", "", "unix socket path")
 	dataDir := fs.String("data-dir", "", "data directory")
 	fs.Parse(args)
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// stderr goes to the app's log through the supervisor (prefixed with the instance).
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: worker.ProcessLogLevel()}))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err := worker.Run(ctx, worker.Options{
@@ -243,6 +237,7 @@ func runWorker(args []string) int {
 type app struct {
 	dir, logPath string
 	log          *slog.Logger
+	logOut       io.Writer // the log's writer (stderr and litezap.log); workers' lines too
 	openOnStart  bool
 	codes        *dashboard.LaunchCodes
 	stopped      chan struct{} // closed when the engine returned; err holds its error
@@ -317,6 +312,8 @@ func (a *app) onReady() {
 			LaunchCodes: a.codes,
 			AIClients:   aiClients,
 			OnListening: func(i serve.Info) { a.infoc <- i },
+			// Worker warnings (whatsmeow's "failed to decrypt", ours) into litezap.log.
+			WorkerOutput: a.logOut,
 		}, a.log)
 	}()
 

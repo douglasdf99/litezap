@@ -2,6 +2,7 @@ package spawner
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -53,6 +54,10 @@ func TestMain(m *testing.M) {
 		}
 		g.Stop()
 		os.Exit(0)
+	case "chatty": // prints to both streams and exits
+		fmt.Fprintln(os.Stdout, "to stdout")
+		fmt.Fprintln(os.Stderr, "to stderr")
+		os.Exit(1)
 	case "exit":
 		os.Exit(1)
 	case "idle": // lives until its stdin closes

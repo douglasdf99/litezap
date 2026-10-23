@@ -26,6 +26,7 @@ variáveis `LITEZAP_*`, que **têm precedência** sobre o arquivo. Arquivo ausen
 | `message_retention_days` | `LITEZAP_MESSAGE_RETENTION_DAYS` | `0` | Apaga de hora em hora mensagens mais velhas que N dias, a mídia delas e os envios concluídos. `0`: guarda para sempre. |
 | `media_retention_days` | `LITEZAP_MEDIA_RETENTION_DAYS` | `0` | Apaga a cópia local de um anexo N dias depois de baixada. `0`: nunca. |
 | `zombie_timeout` | `LITEZAP_ZOMBIE_TIMEOUT` | `0` | Watchdog de conexão (ex.: `5m`, mínimo `30s`). Veja [Observabilidade](/docs/self-hosted/observabilidade/#watchdog-de-conexão). `0`: desligado. |
+| `wa_log_level` | `LITEZAP_WA_LOG_LEVEL` | `warn` | Nível dos logs do WhatsApp (whatsmeow) nos workers: `debug`, `info`, `warn` ou `error`. Em `debug` as linhas mostram JIDs (números): só para diagnóstico. Veja [Observabilidade](/docs/self-hosted/observabilidade/). |
 | `shutdown_timeout` | `LITEZAP_SHUTDOWN_TIMEOUT` | `0` | Prazo total do desligamento gracioso (ex.: `25s` para caber num `docker stop -t 30`). `0`: fases padrão, até ~40s. |
 | `ops_listen_addr` | `LITEZAP_OPS_LISTEN_ADDR` | vazio | Endereço privado com `/healthz`, `/readyz` e `/metrics` sem token. Nunca exponha à internet. |
 | `trusted_proxies` | `LITEZAP_TRUSTED_PROXIES` | vazio | IPs/CIDRs dos proxies reversos cujo `X-Forwarded-For` vale para as allowlists de IP (lista separada por vírgula na variável). Vazio: o cabeçalho é ignorado. |

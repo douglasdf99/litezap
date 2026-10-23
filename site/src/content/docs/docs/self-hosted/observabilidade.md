@@ -8,6 +8,14 @@ description: Logs, healthz, readyz, eventos de estado e métricas.
 O LiteZap escreve logs estruturados (`log/slog`, formato texto) no stderr, com `instance_id` em toda linha de
 instância. `LITEZAP_LOG_FORMAT=json` troca os logs (supervisor e workers) para JSON por linha. Com systemd, use `journalctl -u litezap -f`; com Docker, `docker compose logs -f litezap`.
 
+A saída de cada worker passa pelo supervisor: cada linha ganha o prefixo `worker[<instance_id>]` (no formato
+JSON, o campo `instance_id`), é cortada em 4 KB e limitada a 20 linhas por segundo por worker (rajadas de até
+200); o que passar disso é descartado e contado numa linha `N lines of worker output dropped (rate limit)`.
+`LITEZAP_LOG_LEVEL` (`debug`, `info`, `warn`, `error`; padrão `info`) muda o nível dos logs do LiteZap e
+`wa_log_level` / `LITEZAP_WA_LOG_LEVEL` (padrão `warn`) o da biblioteca do WhatsApp nos workers, onde aparecem
+avisos como `failed to decrypt`. Números longos nessas linhas (JIDs, telefones) saem como `[redacted]`, exceto
+com `wa_log_level: debug`, que é só para diagnóstico.
+
 Linhas que valem alerta:
 
 | Mensagem | Significado |

@@ -58,6 +58,15 @@ validação num aparelho real**.
   `sticker`) com `media` (`url` ou `base64`) e `caption` no GIF; a resposta vai em particular ao autor, citando
   o status, pela fila. Ferramenta MCP `reply_status` (só a pedido do usuário).
 
+**Mudou**
+
+- **Logs dos workers no log do supervisor**: a saída de cada worker (avisos do WhatsApp como `failed to decrypt`
+  e os do LiteZap) passa pelo supervisor com o prefixo `worker[<instance_id>]`, cortada em 4 KB por linha e
+  limitada por worker. No app de desktop ela agora chega ao `litezap.log` mesmo aberto pelo Finder, e o
+  `litezap.log` recomeça também com o app aberto, passando de 10 MB. Os logs do whatsmeow passam pelo logger do
+  LiteZap em texto também (antes só em JSON), com números redigidos; `wa_log_level` / `LITEZAP_WA_LOG_LEVEL`
+  (padrão `warn`) e `LITEZAP_LOG_LEVEL` (padrão `info`) mudam os níveis.
+
 ## Cardápio removido
 
 O LiteZap é uma API de WhatsApp: o catálogo próprio (Cardápio) saiu do produto. O catálogo nativo do WhatsApp

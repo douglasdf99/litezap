@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -53,6 +54,10 @@ type Options struct {
 	AIClients dashboard.AIConnector
 	// OnListening is called once the HTTP server accepts connections.
 	OnListening func(Info)
+	// WorkerOutput receives the workers' output lines, prefixed with their instance id
+	// (nil: stderr). The tray app passes its log writer, so worker warnings reach
+	// litezap.log even when the app was opened from Finder (stderr discarded).
+	WorkerOutput io.Writer
 }
 
 // Info describes a running server.
@@ -117,7 +122,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 
 	spawner.CleanupOrphans(cfg.DataDir, log)
 	sp := &spawner.Process{DataDir: cfg.DataDir, MemoryLimitMB: cfg.WorkerMemoryMB, Log: log,
-		Env: workerEnv(st, cfg)}
+		Env: workerEnv(st, cfg), Output: opt.WorkerOutput}
 	// shutdown_timeout shrinks every shutdown phase proportionally (E12).
 	scale := shutdownScale(cfg.ShutdownTimeout)
 	mopt := manager.DefaultOptions()
@@ -399,6 +404,9 @@ func workerEnv(st *store.Store, cfg config.Config) func(context.Context, string)
 		env := []string{"LITEZAP_WORKER_PROXY_URL=" + set.ProxyURL}
 		if cfg.ZombieTimeout > 0 {
 			env = append(env, "LITEZAP_WORKER_ZOMBIE_TIMEOUT="+cfg.ZombieTimeout.String())
+		}
+		if cfg.WALogLevel != "" {
+			env = append(env, "LITEZAP_WA_LOG_LEVEL="+cfg.WALogLevel)
 		}
 		return env, nil
 	}

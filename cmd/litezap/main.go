@@ -26,7 +26,7 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
-	log := newLogger(os.Stderr, os.Getenv("LITEZAP_LOG_FORMAT"))
+	log := newLogger(os.Stderr, os.Getenv("LITEZAP_LOG_FORMAT"), os.Args[1] == "worker")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {

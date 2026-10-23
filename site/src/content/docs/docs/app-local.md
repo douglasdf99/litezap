@@ -79,6 +79,10 @@ Um executável que sobe o motor no próprio processo e mostra o painel já logad
 Dentro dela: `data/` (sessões, banco, `admin_token`), `litezap.log` e, se quiser, um `litezap.yaml` com as mesmas
 chaves do servidor (variáveis `LITEZAP_*` continuam valendo). `LITEZAP_APP_DIR` troca a pasta.
 
+O `litezap.log` reúne o app e os workers de cada número (linhas `worker[<instance_id>]`, com os avisos do
+WhatsApp, como `failed to decrypt`), também quando o app é aberto pelo Finder. Passando de 10 MB ele recomeça,
+guardando a cópia anterior em `litezap.log.1`.
+
 ### Baixar
 
 Cada versão publica o app pronto: [`LiteZap-macos.dmg`](https://github.com/douglasdf99/litezap/releases/latest/download/LiteZap-macos.dmg)

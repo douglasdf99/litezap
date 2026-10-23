@@ -35,6 +35,27 @@ type Process struct {
 	Log           *slog.Logger
 	// Env, when set, adds per-instance variables to the worker environment (e.g. its proxy).
 	Env func(ctx context.Context, instanceID string) ([]string, error)
+	// Output receives the workers' stdout and stderr, one prefixed, capped and
+	// rate-limited line at a time (nil: os.Stderr). Use the supervisor's log writer, so
+	// worker warnings land in the same log (the desktop app's litezap.log).
+	Output io.Writer
+
+	outOnce sync.Once
+	out     io.Writer
+}
+
+func (p *Process) output() io.Writer {
+	p.outOnce.Do(func() {
+		w := p.Output
+		if w == nil {
+			w = os.Stderr
+		}
+		if _, ok := w.(*SyncWriter); !ok {
+			w = NewSyncWriter(w)
+		}
+		p.out = w
+	})
+	return p.out
 }
 
 func (p *Process) pidFile(id string) string { return filepath.Join(p.DataDir, "run", id+".pid") }
@@ -111,23 +132,46 @@ func (p *Process) Start(ctx context.Context, id string) (WorkerHandle, error) {
 		return nil, fmt.Errorf("worker env: %w", err)
 	}
 	cmd.Env = env
-	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	// One pipe for stdout and stderr: the worker's lines (whatsmeow's warnings included)
+	// reach the supervisor's log even when nobody reads our stderr (app opened from Finder).
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("worker output: %w", err)
+	}
+	cmd.Stdout, cmd.Stderr = outW, outW
 	detach(cmd) // own process group: Ctrl+C on the supervisor must not hit workers directly
 	// Parent-liveness pipe: the worker reads its stdin and exits on EOF, which happens
 	// when this handle closes the writer or the supervisor dies.
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		outR.Close()
+		outW.Close()
 		return nil, fmt.Errorf("worker stdin: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
+		outR.Close()
+		outW.Close()
 		return nil, fmt.Errorf("start worker: %w", err)
 	}
+	outW.Close() // the worker holds its copy; EOF once it exits
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		defer outR.Close()
+		newOutputPipe(id, p.output(), nil).run(outR)
+	}()
 	h := &procHandle{cmd: cmd, done: make(chan struct{}), pidFile: p.pidFile(id), stdin: stdin}
 	if err := os.WriteFile(h.pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil && p.Log != nil {
 		p.Log.Warn("cannot write worker pid file", "instance", id, "path", h.pidFile, "err", err)
 	}
 	go func() {
 		_ = cmd.Wait()
+		// The last lines (a fatal error) go out before the exit is reported; bounded,
+		// since a stray process could still hold the pipe.
+		select {
+		case <-drained:
+		case <-time.After(outputDrainMax):
+		}
 		_ = os.Remove(h.pidFile)
 		h.closeConn() // a crashed worker must not leak its ClientConn
 		close(h.done)

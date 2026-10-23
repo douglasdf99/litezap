@@ -204,3 +204,22 @@ func TestLoadWithBaseAndDashboardToggle(t *testing.T) {
 		t.Fatal("bad bool accepted")
 	}
 }
+
+func TestWALogLevel(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "litezap.yaml")
+	if err := os.WriteFile(p, []byte("wa_log_level: INFO\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LITEZAP_WA_LOG_LEVEL", "")
+	if cfg, err := Load(p); err != nil || cfg.WALogLevel != "info" {
+		t.Fatalf("file: %q, %v", cfg.WALogLevel, err)
+	}
+	t.Setenv("LITEZAP_WA_LOG_LEVEL", "debug")
+	if cfg, err := Load(p); err != nil || cfg.WALogLevel != "debug" {
+		t.Fatalf("env: %q, %v", cfg.WALogLevel, err)
+	}
+	t.Setenv("LITEZAP_WA_LOG_LEVEL", "loud")
+	if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "wa_log_level") {
+		t.Fatalf("invalid level: %v", err)
+	}
+}
