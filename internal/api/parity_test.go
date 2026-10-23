@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -69,6 +70,56 @@ func TestClearChat(t *testing.T) {
 	}
 	if code, _ := e.do("POST", "/v1/instances/"+id+"/chats/5511999990000@s.whatsapp.net/clear", tok, ""); code != 404 {
 		t.Fatalf("unknown chat = %d", code)
+	}
+}
+
+// STA-4: a status is answered privately to its author, quoting it, with a text, a GIF or
+// a sticker, through the queue.
+func TestStatusReplyMedia(t *testing.T) {
+	e := newEnv(t)
+	id, tok := e.connected("Status")
+	f := e.sp.Last(id)
+	base := "/v1/instances/" + id
+	author := "5511999990000@s.whatsapp.net"
+	f.EmitStatus(&workerv1.Message{Id: "ST1", Chat: "status@broadcast", Sender: author, Type: "image", Text: "praia",
+		TimestampMs: time.Now().UnixMilli()})
+	var st string
+	e.eventually("status logged", func() bool {
+		m, err := e.st.MessageByWAID(context.Background(), id, "status@broadcast", "ST1")
+		st = m.ID
+		return err == nil
+	})
+	webp := base64.StdEncoding.EncodeToString([]byte("RIFF\x00\x00\x00\x00WEBPVP8 \x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
+	mp4 := base64.StdEncoding.EncodeToString([]byte("\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"))
+	for _, c := range []struct{ body, typ, text string }{
+		{`{"text":"Que lindo!"}`, "text", "Que lindo!"},
+		{`{"type":"gif","caption":"kkk","media":{"base64":"` + mp4 + `"}}`, "gif", "kkk"},
+		{`{"type":"sticker","media":{"base64":"` + webp + `"}}`, "sticker", ""},
+	} {
+		code, v := e.do("POST", base+"/status/"+st+"/reply?wait=true&timeout=2s", tok, c.body)
+		if code != 200 || v["chat"] != author || v["type"] != c.typ {
+			t.Fatalf("%s = %d %v", c.typ, code, v)
+		}
+		sent := f.WA.Sent()
+		last := sent[len(sent)-1]
+		if last.Type != c.typ || last.To != author || last.Text != c.text || last.Quote.GetMessageId() != "ST1" ||
+			last.Quote.GetRemoteJid() != "status@broadcast" || last.Quote.GetSender() != author || last.Quote.GetText() != "praia" {
+			t.Fatalf("%s sent = %+v", c.typ, last)
+		}
+		if c.typ != "text" && len(f.WA.SentMedia(last.MessageId)) == 0 {
+			t.Fatalf("%s without media", c.typ)
+		}
+	}
+	for _, body := range []string{
+		`{"type":"gif"}`,
+		`{"type":"sticker","text":"x","media":{"base64":"` + webp + `"}}`,
+		`{"type":"sticker","media":{"base64":"` + mp4 + `"}}`,
+		`{"type":"image","media":{"base64":"` + webp + `"}}`,
+		`{"text":"x","media":{"base64":"` + webp + `"}}`,
+	} {
+		if code, v := e.do("POST", base+"/status/"+st+"/reply", tok, body); code != 400 {
+			t.Errorf("%s = %d %v", body, code, v)
+		}
 	}
 }
 

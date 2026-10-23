@@ -338,6 +338,7 @@ curl "$S/status" -H "Authorization: Bearer $TOK"            # status recebidos d
 curl "$S/status/privacy" -H "Authorization: Bearer $TOK"    # {type: contacts|blacklist|whitelist, list}
 curl -X DELETE "$S/status/$MSG_ID" -H "Authorization: Bearer $TOK"   # apaga um status nosso para todos
 curl -X POST "$S/status/$MSG_ID/reply" -H "Authorization: Bearer $TOK" -d '{"text":"Que lindo!"}'  # responde ao autor citando o status
+curl -X POST "$S/status/$MSG_ID/reply" -H "Authorization: Bearer $TOK" -d '{"type":"sticker","media":{"url":"https://exemplo.com/figurinha.webp"}}'  # ou type gif (MP4) com caption
 
 # canais (newsletters)
 curl "$S/channels" -H "Authorization: Bearer $TOK"                                   # seguidos e administrados

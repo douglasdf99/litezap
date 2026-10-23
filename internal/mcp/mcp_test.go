@@ -70,7 +70,8 @@ func newEnv(t *testing.T, tweak func(*settings.Settings)) *env {
 	resolver := &lookup.Resolver{Store: st, Workers: mgr}
 	bus := events.NewBus(nil)
 	q := queue.New(st, mgr, queue.Options{Defaults: defaults, Log: log, Resolver: resolver, Events: bus})
-	mgr.SetObserver(manager.Observers{&ingest.Ingestor{Store: st, Log: log, Events: bus}, q, events.Observer{Bus: bus}})
+	mgr.SetObserver(manager.Observers{&ingest.Ingestor{Store: st, Log: log, Events: bus}, q, events.Observer{Bus: bus},
+		&service.SocialEvents{Store: st, Events: bus}}) // statuses (reply_status)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()

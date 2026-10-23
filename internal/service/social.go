@@ -325,13 +325,18 @@ func (s *Social) DeleteStatus(ctx context.Context, instanceID, msgID string, wai
 	return s.Messaging.send(ctx, instanceID, SendInput{Type: "revoke", MessageID: m.ID}, store.StatusChat, wait)
 }
 
-// StatusReplyInput is the body of POST /status/{msg_id}/reply.
+// StatusReplyInput is the body of POST /status/{msg_id}/reply: a text (default), a GIF
+// (an MP4 played in a loop, with an optional caption) or a sticker (WebP).
 type StatusReplyInput struct {
-	Text            string `json:"text"`
-	ClientMessageID string `json:"client_message_id,omitempty"`
+	Type            string      `json:"type,omitempty"` // text | gif | sticker
+	Text            string      `json:"text,omitempty"`
+	Caption         string      `json:"caption,omitempty"` // gif
+	Media           *MediaInput `json:"media,omitempty"`   // gif | sticker: url or base64
+	ClientMessageID string      `json:"client_message_id,omitempty"`
 }
 
-// ReplyStatus answers a contact's status: a text to its author, quoting the status.
+// ReplyStatus answers a contact's status privately: a text, GIF or sticker sent to its
+// author, quoting the status (as replying from the app does). It goes through the queue.
 func (s *Social) ReplyStatus(ctx context.Context, instanceID, msgID string, in StatusReplyInput, wait time.Duration) (MessageView, error) {
 	if err := s.checkSending(instanceID); err != nil {
 		return MessageView{}, err
@@ -353,7 +358,24 @@ func (s *Social) ReplyStatus(ctx context.Context, instanceID, msgID string, in S
 	if q.Text == "" && m.Type != "text" {
 		q.Text = m.Type
 	}
-	send := SendInput{To: m.SenderJID, Type: "text", Text: in.Text, ClientMessageID: in.ClientMessageID, statusQuote: q}
+	send := SendInput{To: m.SenderJID, ClientMessageID: in.ClientMessageID, statusQuote: q}
+	switch in.Type {
+	case "", "text":
+		if in.Media != nil || in.Caption != "" {
+			return MessageView{}, apierr.Validation("a text reply has no media or caption (use type gif or sticker)")
+		}
+		send.Type, send.Text = "text", in.Text
+	case "gif", "sticker":
+		if in.Text != "" {
+			return MessageView{}, apierr.Validation("use caption (gif) instead of text for a " + in.Type + " reply")
+		}
+		if in.Media == nil {
+			return MessageView{}, apierr.Validation("media (url or base64) is required for a " + in.Type + " reply")
+		}
+		send.Type, send.Media, send.Caption = in.Type, in.Media, in.Caption
+	default:
+		return MessageView{}, apierr.Validation("type must be text, gif or sticker")
+	}
 	return s.Messaging.send(ctx, instanceID, send, "", wait)
 }
 

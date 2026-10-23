@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -48,6 +50,44 @@ func TestEventTools(t *testing.T) {
 				t.Fatalf("respond_event = %+v", out)
 			}
 			fails(t, cs, "respond_event", map[string]any{"message_id": evID, "response": "going", "extra_guests": 2}, "extra_guests")
+		})
+	}
+}
+
+// STA-4: reply_status answers a contact's status privately, quoting it.
+func TestReplyStatusTool(t *testing.T) {
+	webp := []byte("RIFF\x00\x00\x00\x00WEBPVP8 \x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/webp")
+		_, _ = w.Write(webp)
+	}))
+	defer srv.Close()
+	for _, m := range allModes {
+		t.Run(string(m), func(t *testing.T) {
+			e := newEnv(t, nil)
+			id, tok := e.connected("Status")
+			f := e.sp.Last(id)
+			cs := e.client(m, tok)
+			author := "5511999990000@s.whatsapp.net"
+			f.EmitStatus(&workerv1.Message{Id: "ST1", Chat: "status@broadcast", Sender: author, Type: "text", Text: "bom dia",
+				TimestampMs: time.Now().UnixMilli()})
+			var stID string
+			eventually(t, "status logged", func() bool {
+				msg, err := e.msg.Store.MessageByWAID(context.Background(), id, "status@broadcast", "ST1")
+				stID = msg.ID
+				return err == nil
+			})
+			var out sendOutput
+			ok(t, cs, "reply_status", map[string]any{"status_id": stID, "text": "Bom dia!"}, &out)
+			sent := f.WA.Sent()
+			if last := sent[len(sent)-1]; !out.Sent || last.To != author || last.Quote.GetRemoteJid() != "status@broadcast" || last.Text != "Bom dia!" {
+				t.Fatalf("text reply = %+v / %+v", out, last)
+			}
+			ok(t, cs, "reply_status", map[string]any{"status_id": stID, "type": "sticker", "media_url": srv.URL + "/s.webp"}, &out)
+			if sent = f.WA.Sent(); !out.Sent || sent[len(sent)-1].Type != "sticker" || sent[len(sent)-1].Quote.GetMessageId() != "ST1" {
+				t.Fatalf("sticker reply = %+v", out)
+			}
+			fails(t, cs, "reply_status", map[string]any{"status_id": stID, "type": "gif"}, "media")
 		})
 	}
 }

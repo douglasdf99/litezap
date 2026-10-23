@@ -556,13 +556,14 @@ func (t *tools) register(s *sdk.Server) {
 		Annotations: readOnly,
 	}, t.waitForEvents)
 
-	t.registerGroups(s)    // marco 8 (groups.go)
-	t.registerAccount(s)   // marco 9 (account.go)
-	t.registerSocial(s)    // marco 10 (social.go)
-	t.registerSearch(s)    // v0.1.1 full-text search (search.go)
-	t.registerEvents(s)    // v0.1.1 WhatsApp events (events.go)
-	t.registerCatalog(s)   // marco 12 (catalog.go)
-	t.registerAttendant(s) // built-in attendant, read-only (attendant.go)
+	t.registerGroups(s)      // marco 8 (groups.go)
+	t.registerAccount(s)     // marco 9 (account.go)
+	t.registerSocial(s)      // marco 10 (social.go)
+	t.registerSearch(s)      // v0.1.1 full-text search (search.go)
+	t.registerEvents(s)      // v0.1.1 WhatsApp events (events.go)
+	t.registerStatusReply(s) // v0.1.1 status replies (statusreply.go)
+	t.registerCatalog(s)     // marco 12 (catalog.go)
+	t.registerAttendant(s)   // built-in attendant, read-only (attendant.go)
 }
 
 // ---- handlers ----

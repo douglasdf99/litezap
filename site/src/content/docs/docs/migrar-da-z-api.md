@@ -121,7 +121,7 @@ fora do escopo** de propósito.
 | Z-API | LiteZap | |
 |---|---|---|
 | Status (texto, imagem, vídeo) | [Status](/docs/api/status/) (`POST /status`) e [`status.received`](/docs/eventos/status-received/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
-| Responder status | [`POST /status/{msg_id}/reply`](/docs/api/status/responder-status/), só texto | <span class="lz-badge lz-badge--soon">Parcial</span> |
+| Responder status (texto, GIF, figurinha) | [`POST /status/{msg_id}/reply`](/docs/api/status/responder-status/) com `type` `text`, `gif` ou `sticker` | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Canais (criar, seguir, silenciar, metadados, publicar) | [Canais](/docs/api/canais/) e [`channel.message`](/docs/eventos/channel-message/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Reagir e ler publicações de canal | reagir e listar publicações; marcar como visto não | <span class="lz-badge lz-badge--soon">Parcial</span> |
 | Administração avançada de canais (editar, apagar, assinantes, admins) | — | <span class="lz-badge lz-badge--no">Avaliar</span> |

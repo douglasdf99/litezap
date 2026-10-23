@@ -4127,22 +4127,31 @@ paths:
       tags: [Status]
       operationId: replyStatus
       x-litezap-milestone: M10
-      x-zapi: "Responder status com texto"
+      x-zapi: "Responder status com texto / com GIF / com figurinha"
       x-litezap-events: [message.sent]
       summary: Responder status
       x-litezap-scope: instancia
-      description: Manda um texto ao autor de um status recebido, citando o status (como responder pelo app). Vai pela fila; aceita `?wait=true`.
+      description: |
+        Responde em particular o autor de um status recebido, citando o status (como responder pelo app): texto
+        (padrão), GIF (`type: gif`, MP4 em loop, com `caption` opcional) ou figurinha (`type: sticker`, WebP até
+        1MB). A mídia vem por `media.url` ou `media.base64`, com as mesmas regras de `POST /messages`. Vai pela
+        fila; aceita `?wait=true`. GIF e figurinha: v0.1.1.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [text]
               properties:
-                text: { type: string }
+                type: { type: string, enum: [text, gif, sticker], default: text }
+                text: { type: string, description: "Obrigatório em `text`." }
+                caption: { type: string, description: "Legenda do GIF (opcional)." }
+                media: { $ref: "#/components/schemas/MediaInput" }
                 client_message_id: { type: string }
-            example: { text: "Que lindo!" }
+            examples:
+              text: { value: { text: "Que lindo!" } }
+              gif: { value: { type: gif, caption: "kkkk", media: { url: "https://exemplo.com/risada.mp4" } } }
+              sticker: { value: { type: sticker, media: { url: "https://exemplo.com/figurinha.webp" } } }
       responses:
         "200": { description: Enviada., content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } } }
         "202": { description: Na fila., content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } } }

@@ -161,6 +161,7 @@ WhatsApp vêm marcadas como destrutivas ou com aviso de risco, para o cliente pe
 | `update_chat` | Arquivar, fixar ou silenciar um chat; `disappearing` muda as mensagens temporárias (visto pelo contato ou pelo grupo; num chat individual passa pela fila) | [Chats](/docs/api/chats/) |
 | `clear_chat` | Limpa as mensagens de um chat no WhatsApp da conta e no histórico do LiteZap (a conversa fica). **Destrutiva**: só quando o usuário pedir, para o chat que ele indicar | [Limpar conversa](/docs/api/chats/limpar-conversa/) |
 | `list_status_updates` | Status recebidos dos contatos e os nossos (publicar não é ferramenta) | [Status](/docs/api/status/) |
+| `reply_status` | Responde em particular o status de um contato (texto, GIF ou figurinha), citando o status, pela fila. Só a pedido do usuário | [Responder status](/docs/api/status/responder-status/) |
 | `list_channels` · `get_channel` · `get_channel_messages` | Canais seguidos, um canal, publicações recentes | [Canais](/docs/api/canais/) |
 | `follow_channel` | Segue ou deixa de seguir um canal | [Canais](/docs/api/canais/) |
 | `list_labels` · `label_chat` · `get_business_profile` | Etiquetas e suas conversas; etiquetar um chat; perfil comercial | [Etiquetas e Business](/docs/api/business/) |
