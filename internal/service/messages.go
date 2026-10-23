@@ -226,6 +226,8 @@ type SendInput struct {
 	disappearing *uint32
 	// eventResponse answers the MessageID event (set by RespondEvent only).
 	eventResponse *EventResponseInput
+	// pollVote votes on the MessageID poll (set by VotePoll only).
+	pollVote *PollVoteInput
 }
 
 // requestHash fingerprints a send request (without its client id) to detect a
@@ -535,7 +537,7 @@ func (s *Messaging) payload(ctx context.Context, instanceID, id, chat string, in
 		err = s.composeProduct(ctx, instanceID, id, in, &p)
 	case "event":
 		err = composeEvent(in, &p)
-	case "event_response":
+	case "event_response", "poll_vote":
 		err = s.composeTarget(ctx, instanceID, chat, in, &p)
 	case "disappearing":
 		if in.disappearing == nil {

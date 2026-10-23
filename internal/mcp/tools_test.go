@@ -42,7 +42,7 @@ func TestToolList(t *testing.T) {
 		"get_product", "get_profile_picture", "get_qr", "label_chat", "list_blocked", "list_channels", "list_chats", "list_contacts", "list_groups",
 		"list_instances", "list_labels", "list_status_updates",
 		"manage_group_participants", "mark_read", "remove_contact", "reply_status", "respond_event", "save_contact", "search_messages", "send_contact", "send_event", "send_location", "send_media", "send_message", "send_product", "send_reaction",
-		"unblock_contact", "update_business_profile", "update_chat", "update_event", "update_group", "wait_for_events"}
+		"unblock_contact", "update_business_profile", "update_chat", "update_event", "update_group", "vote_poll", "wait_for_events"}
 	slices.Sort(names)
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v", names)

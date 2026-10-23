@@ -64,7 +64,7 @@ type ForwardInput struct {
 var pinDurations = map[string]uint32{"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
 
 func validTarget(t string) bool {
-	return t == "edit" || t == "revoke" || t == "pin" || t == "event_response"
+	return t == "edit" || t == "revoke" || t == "pin" || t == "event_response" || t == "poll_vote"
 }
 
 // findInChat finds a logged message of chat by LiteZap id or WhatsApp id.
@@ -329,6 +329,17 @@ func (s *Messaging) composeTarget(ctx context.Context, instanceID, chat string, 
 			return apierr.Validation("the author of the event is unknown")
 		}
 		p.EventResponse, p.ExtraGuests = in.eventResponse.Response, in.eventResponse.ExtraGuests
+	case "poll_vote":
+		if in.pollVote == nil {
+			return apierr.Validation("use POST /messages/{id}/poll-vote to vote on a poll")
+		}
+		if t.Type != "poll" {
+			return apierr.Validation("the message is not a poll")
+		}
+		if strings.HasSuffix(chat, "@g.us") && !t.FromMe && t.SenderJID == "" {
+			return apierr.Validation("the author of the poll is unknown")
+		}
+		p.PollVote = in.pollVote.Options
 	case "pin":
 		pin := in.Pin
 		if pin == nil {

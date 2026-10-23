@@ -202,6 +202,22 @@ func (s *server) respondEvent(w http.ResponseWriter, r *http.Request) {
 	s.writeQueued(w, v, err)
 }
 
+// votePoll votes on a poll (MSG-23); it goes through the queue.
+func (s *server) votePoll(w http.ResponseWriter, r *http.Request) {
+	wait, err := waitParam(r)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	var in service.PollVoteInput
+	if err := decodeStrict(w, r, &in); err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	v, err := s.msg.VotePoll(r.Context(), chi.URLParam(r, "id"), chi.URLParam(r, "msg_id"), in, wait)
+	s.writeQueued(w, v, err)
+}
+
 // searchMessages is the full-text search over the message log (CHT-11).
 func (s *server) searchMessages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()

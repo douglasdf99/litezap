@@ -97,6 +97,37 @@ type Poll struct {
 	Options []string `json:"options"`
 	// Selectable is how many options a voter may pick (0: any number).
 	Selectable int `json:"selectable"`
+	// Votes maps each voter (phone-number JID when known; "me" for this account, from any
+	// device or the API) to their latest vote (MSG-23). An empty list: the vote was removed.
+	Votes map[string]PollVote `json:"votes,omitempty"`
+	// Results counts the current votes per option (every option, once someone voted).
+	Results map[string]int `json:"results,omitempty"`
+}
+
+// PollVote is one voter's latest choice in a poll.
+type PollVote struct {
+	Options []string  `json:"options"`
+	At      time.Time `json:"at"`
+}
+
+// tally recounts Results from Votes.
+func (p *Poll) tally() {
+	if len(p.Votes) == 0 {
+		p.Results = nil
+		return
+	}
+	r := make(map[string]int, len(p.Options))
+	for _, o := range p.Options {
+		r[o] = 0
+	}
+	for _, v := range p.Votes {
+		for _, o := range v.Options {
+			if _, ok := r[o]; ok {
+				r[o]++
+			}
+		}
+	}
+	p.Results = r
 }
 
 // LinkPreview is the preview card attached to a text (the thumbnail is not kept).
@@ -185,6 +216,35 @@ func (s *Store) SetEventResponse(ctx context.Context, instanceID, chatJID, waID,
 		return nil, true
 	})
 	if err == nil && notEvent {
+		return m, ErrNotFound
+	}
+	return m, err
+}
+
+// SetPollVote records someone's vote on a logged poll (the latest one wins; options are
+// the names of the chosen options, empty when the vote was removed) and returns the poll
+// with its recounted results. ErrNotFound when the poll is not in the log.
+func (s *Store) SetPollVote(ctx context.Context, instanceID, chatJID, waID, who string, v PollVote) (Message, error) {
+	notPoll := false
+	m, err := s.updateMeta(ctx, instanceID, chatJID, waID, func(m *Message, meta *MessageMeta) (*string, bool) {
+		if meta.Poll == nil {
+			notPoll = true
+			return nil, false
+		}
+		if old, ok := meta.Poll.Votes[who]; ok && old.At.After(v.At) {
+			return nil, false
+		}
+		if meta.Poll.Votes == nil {
+			meta.Poll.Votes = map[string]PollVote{}
+		}
+		if v.Options == nil {
+			v.Options = []string{}
+		}
+		meta.Poll.Votes[who] = v
+		meta.Poll.tally()
+		return nil, true
+	})
+	if err == nil && notPoll {
 		return m, ErrNotFound
 	}
 	return m, err

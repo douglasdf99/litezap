@@ -91,7 +91,7 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 | MSG-20 | Marcar como lidas | Ler mensagens | Sim — `MarkRead` (receipt.go) | Pronto — `POST /chats/{jid}/read` | — | | M2 |
 | MSG-21 | Fixar / desafixar mensagem | Fixar mensagens | Manual — `PinInChatMessage` via `SendMessage` | Pronto — `type:pin` (`24h`, `7d`, `30d`; `unpin`) (M6) | S | Duração e regras de grupo (incerto) | M6 |
 | MSG-22 | Enquete | Enviar enquete | Sim — `BuildPollCreation` (msgsecret.go) | Pronto — `type:poll` (2 a 12 opções, `max_selections`) (M6) | S | | M6 |
-| MSG-23 | Votar em enquete e receber votos | Enviar voto | Sim — `BuildPollVote`, `DecryptPollVote` (msgsecret.go) | Parcial — votos recebidos e decifrados em `message.poll_vote` (M6; desde 2026-10-23 sob todas as identidades PN/LID, como as respostas de evento); votar pela API não | M | Votos chegam cifrados; precisa do segredo da enquete (o whatsmeow guarda no store) e de evento `message.poll_vote` | M6 |
+| MSG-23 | Votar em enquete e receber votos | Enviar voto | Sim — `BuildPollVote`, `DecryptPollVote` (msgsecret.go) | Pronto, aguardando validação no aparelho — votos recebidos e decifrados em `message.poll_vote` (M6; desde 2026-10-23 sob todas as identidades PN/LID, como as respostas de evento) e guardados na enquete (`poll.votes`, o último de cada pessoa, LID→PN quando conhecido e os nossos como `me`; `poll.results` por opção); `POST /messages/{id}/poll-vote` vota pela fila (`PollUpdateMessage` cifrado como o `BuildPollVote`, sob as identidades PN/LID do autor); MCP `vote_poll` (v0.1.1) | M | Votos chegam cifrados; precisa do segredo da enquete (o whatsmeow guarda no store) e de evento `message.poll_vote` | M6 |
 | MSG-24 | Eventos (criar, editar, responder) | Enviar / editar / responder evento | Manual — `EventMessage`, `EncEventResponseMessage` (waE2E); o whatsmeow decifra `EVENT_EDIT` mas não cifra edições nem trata respostas | Pronto, aguardando validação no aparelho — `type: "event"` em `POST /messages` (com segredo da mensagem), `PATCH /messages/{id}` (edição/cancelamento como `SecretEncryptedMessage` `EVENT_EDIT`), `POST /messages/{id}/event-response` (`EncEventResponseMessage`, chave derivada como voto de enquete), tudo pela fila; recebidos no log (`event`, `event.responses`), `message.edited` e `message.event_response`; MCP `send_event`/`update_event`/`respond_event` (v0.1.1) | M | Cifra testada contra a decifragem do whatsmeow. 2026-10-23: no aparelho, resposta em grupo LID não decifrava (chave derivada só com as identidades LID); agora a decifragem tenta PN e LID do autor e de quem responde. Incerto: tipo `text` no stanza (o whatsmeow não marca eventos) e eventos em conversa individual em contas comuns | v0.1.1 |
 | MSG-25 | Botões de ação, lista de botões, com imagem, com vídeo | 4 páginas | Manual — `ButtonsMessage`/`TemplateMessage`; o whatsmeow já anexa o nó `biz` (send.go, `getButtonTypeFromMessage`) | Falta | M | **Instável**: a própria Z-API mantém uma página sobre a instabilidade, exige aceite de termos e, na versão de 27/08/2024, o resumo diz que só lista de opções em chat individual é confiável (a tabela da mesma página diz que tudo funciona — contraditório). Pode quebrar a cada versão do WhatsApp | Exp |
 | MSG-26 | Lista de opções | Enviar lista de opções | Manual — `ListMessage` (nó `biz` com `v=2` e tipo, send.go `getButtonAttributes`) | Falta | M | Mesma instabilidade; é o tipo interativo menos instável | Exp |
@@ -276,12 +276,12 @@ A Z-API registra um número como aparelho **principal** (sem celular): disponibi
 
 | ID | Recurso | Z-API | whatsmeow | LiteZap hoje | Esf. | Risco / notas | Marco |
 |---|---|---|---|---|---|---|---|
-| AI-1 | Servidor MCP | MCP Server (introdução, como conectar) | N/A | Pronto — `/mcp` (streamable HTTP) e `litezap mcp` (stdio), 53 ferramentas (M4, ampliado do M6 à v0.1.1) | M | LiteZap terá HTTP e stdio | M4 |
+| AI-1 | Servidor MCP | MCP Server (introdução, como conectar) | N/A | Pronto — `/mcp` (streamable HTTP) e `litezap mcp` (stdio), 54 ferramentas (M4, ampliado do M6 à v0.1.1) | M | LiteZap terá HTTP e stdio | M4 |
 | AI-2 | Agente que responde mensagens (hook) | (não há) | N/A | Pronto — hook de agente com pausa por humano (M5) e atendente embutido com perfis, provedores Anthropic/OpenAI-compatível e multimodal (M5b) | M | Vantagem LiteZap planejada | M5 |
 
 ## 3. Contagens
 
-Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-API; as ~250 páginas de referência viram 159 linhas). Atualizada em 2026-10-19 com o código do `main` (marcos 1 a 11 e atendente IA). As linhas LiteZap foram recontadas em 2026-10-21 com o script do Anexo A, depois do M12 (MSG-30, MSG-31, BUS-1…3 e BUS-7), e de novo em 2026-10-23 para a v0.1.1 (CHT-7, CHT-9, CHT-11, CON-2, MSG-24 e STA-4, todos "Pronto, aguardando validação no aparelho").
+Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-API; as ~250 páginas de referência viram 159 linhas). Atualizada em 2026-10-19 com o código do `main` (marcos 1 a 11 e atendente IA). As linhas LiteZap foram recontadas em 2026-10-21 com o script do Anexo A, depois do M12 (MSG-30, MSG-31, BUS-1…3 e BUS-7), e de novo em 2026-10-23 para a v0.1.1 (CHT-7, CHT-9, CHT-11, CON-2, MSG-23, MSG-24 e STA-4, todos "Pronto, aguardando validação no aparelho").
 
 | | Linhas |
 |---|---|
@@ -292,8 +292,8 @@ Contagem por linha da matriz (cada linha agrupa as páginas equivalentes da Z-AP
 | — whatsmeow `Parcial` | 10 |
 | — whatsmeow `Não` | 21 |
 | Recursos só da camada LiteZap (`N/A`) | 27 |
-| **LiteZap `Pronto`** (inclui "Pronto, aguardando validação") | **123** |
-| LiteZap `Parcial` | 5 |
+| **LiteZap `Pronto`** (inclui "Pronto, aguardando validação") | **124** |
+| LiteZap `Parcial` | 4 |
 | LiteZap `Falta` | 17 |
 | LiteZap `Fora` | 14 |
 

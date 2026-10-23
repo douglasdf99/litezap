@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"strings"
@@ -462,5 +463,79 @@ func TestDisappearingMessages(t *testing.T) {
 	code, v = e.do("PATCH", "/v1/instances/"+id+"/chats/"+group, tok, `{"disappearing":"24h"}`)
 	if code != 200 || v["disappearing"] != "24h" || len(f.WA.Sent()) != before || f.WA.Group(group).GetEphemeralSeconds() != 86400 {
 		t.Fatalf("group = %d %v", code, v)
+	}
+}
+
+// MSG-23: votes received and cast through the API are kept on the poll (GET shows
+// poll.votes and poll.results); ours count once, as "me".
+func TestPollVotes(t *testing.T) {
+	e := newEnv(t)
+	id, tok := e.connected("Enquetes")
+	f := e.sp.Last(id)
+	e.inbound(id, "W1", contact)
+	sse, _ := e.sse("/v1/instances/"+id+"/events?types=message.*", tok)
+	base := "/v1/instances/" + id + "/messages"
+	hash := func(o string) []byte { h := sha256.Sum256([]byte(o)); return h[:] }
+
+	// The contact's poll; the contact votes, then we vote through the API.
+	f.EmitMessage(&workerv1.Message{Id: "PL1", Chat: contact, Sender: contact, Type: "poll", Text: "Sabor?", TimestampMs: time.Now().UnixMilli(),
+		Poll: &workerv1.Poll{Name: "Sabor?", Options: []string{"uva", "maçã", "pera"}, Selectable: 2}})
+	sse.next(events.TypeMessageReceived)
+	poll, err := e.st.MessageByWAID(context.Background(), id, contact, "PL1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.EmitMessage(&workerv1.Message{Id: "V1", Chat: contact, Sender: contact, Type: "poll_vote", TargetId: "PL1",
+		PollHashes: [][]byte{hash("uva")}, TimestampMs: time.Now().UnixMilli()})
+	if v := sse.next(events.TypeMessagePollVote); !strings.Contains(v.data, `"selected_options":["uva"]`) {
+		t.Fatalf("contact vote = %s", v.data)
+	}
+	code, v := e.do("POST", base+"/"+poll.ID+"/poll-vote?wait=true&timeout=2s", tok, `{"options":["uva","pera"]}`)
+	if code != 200 {
+		t.Fatalf("vote = %d %v", code, v)
+	}
+	sent := f.WA.Sent()
+	if last := sent[len(sent)-1]; last.Type != "poll_vote" || last.TargetId != "PL1" || last.TargetFromMe ||
+		strings.Join(last.Poll.GetOptions(), ",") != "uva,pera" {
+		t.Fatalf("vote sent = %+v", last)
+	}
+	if v := sse.next(events.TypeMessagePollVote); !strings.Contains(v.data, `"voter":"me"`) || !strings.Contains(v.data, `"poll_id":"`+poll.ID+`"`) {
+		t.Fatalf("our vote event = %s", v.data)
+	}
+	// We change the vote on the phone: still one "me".
+	f.EmitMessage(&workerv1.Message{Id: "V2", Chat: contact, Sender: "5500000000009@s.whatsapp.net", FromMe: true, Type: "poll_vote",
+		TargetId: "PL1", PollHashes: [][]byte{hash("maçã")}, TimestampMs: time.Now().UnixMilli()})
+	sse.next(events.TypeMessagePollVote)
+	_, got := e.do("GET", base+"/"+poll.ID, tok, "")
+	p := got["poll"].(map[string]any)
+	votes, results := p["votes"].(map[string]any), p["results"].(map[string]any)
+	if len(votes) != 2 || votes["me"].(map[string]any)["options"].([]any)[0] != "maçã" || votes[contact] == nil {
+		t.Fatalf("votes = %v", p)
+	}
+	if results["uva"] != 1.0 || results["maçã"] != 1.0 || results["pera"] != 0.0 {
+		t.Fatalf("results = %v", results)
+	}
+	// Removing our vote.
+	if code, v := e.do("POST", base+"/"+poll.ID+"/poll-vote?wait=true&timeout=2s", tok, `{"options":[]}`); code != 200 {
+		t.Fatalf("remove = %d %v", code, v)
+	}
+	_, got = e.do("GET", base+"/"+poll.ID, tok, "")
+	if r := got["poll"].(map[string]any)["results"].(map[string]any); r["maçã"] != 0.0 || r["uva"] != 1.0 {
+		t.Fatalf("after removal = %v", got["poll"])
+	}
+
+	for path, body := range map[string]string{
+		base + "/W1/poll-vote":                 `{"options":["uva"]}`, // not a LiteZap id of a poll
+		base + "/" + poll.ID + "/poll-vote":    `{"options":["kiwi"]}`,
+		base + "/" + poll.ID + "/poll-vote?x=": `{"options":["uva","uva"]}`,
+		base + "/" + poll.ID + "/poll-vote?y=": `{"options":["uva","pera","maçã"]}`, // at most 2
+		base + "/" + poll.ID + "/poll-vote?z=": `{}`,
+	} {
+		if code, v := e.do("POST", path, tok, body); code < 400 {
+			t.Errorf("%s %s = %d %v", path, body, code, v)
+		}
+	}
+	if code, v := e.do("POST", base, tok, `{"to":"`+contact+`","type":"poll_vote","message_id":"`+poll.ID+`"}`); code != 400 {
+		t.Errorf("poll_vote through POST /messages = %d %v", code, v)
 	}
 }

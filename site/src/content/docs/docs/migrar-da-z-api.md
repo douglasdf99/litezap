@@ -28,8 +28,8 @@ Legenda: <span class="lz-badge lz-badge--ok">Disponível</span> já funciona; <s
 <span class="lz-badge lz-badge--exp">Exp</span> experimental, fora da trilha principal; <span class="lz-badge lz-badge--no">Avaliar</span> depende de engenharia reversa ou tem valor baixo;
 <span class="lz-badge lz-badge--no">Fora</span> não planejado.
 
-Na matriz completa (159 recursos da Z-API, revisada com o código atual), o LiteZap tem **123 prontos** (os da
-v0.1.1 ainda aguardando validação num aparelho real), **5 parciais**, **17 faltando** (a maioria administração
+Na matriz completa (159 recursos da Z-API, revisada com o código atual), o LiteZap tem **124 prontos** (os da
+v0.1.1 ainda aguardando validação num aparelho real), **4 parciais**, **17 faltando** (a maioria administração
 avançada de canais, catálogo e mensagens interativas) e **14 fora do escopo** de propósito.
 
 ### Instância e conexão
@@ -62,7 +62,7 @@ avançada de canais, catálogo e mensagens interativas) e **14 fora do escopo** 
 | Responder citando, menções | `reply_to`, `mentions` (inclusive `["all"]` em grupos) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Editar, apagar, fixar, encaminhar | `type: edit` / `revoke` / `pin` / `forward`, com [`message.edited`](/docs/eventos/message-edited/) e [`message.revoked`](/docs/eventos/message-revoked/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Link com prévia | `link_preview` (`auto` ou cartão pronto) | <span class="lz-badge lz-badge--ok">Disponível</span> |
-| Enquete e votos | `type: poll` e [`message.poll_vote`](/docs/eventos/message-poll-vote/); votar pela API não | <span class="lz-badge lz-badge--soon">Parcial</span> |
+| Enquete e votos | `type: poll`, `POST /messages/{id}/poll-vote` e [`message.poll_vote`](/docs/eventos/message-poll-vote/); votos e contagem em `poll.votes` e `poll.results` | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Eventos (criar, editar, responder) | `type: "event"` em [`POST /messages`](/docs/api/mensagens/tipos/), [`PATCH /messages/{id}`](/docs/api/mensagens/editar-ou-cancelar-evento/), [`POST /messages/{id}/event-response`](/docs/api/mensagens/responder-evento/) e [`message.event_response`](/docs/eventos/message-event-response/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Enviar produto do catálogo | `type: product` ([tipos](/docs/api/mensagens/tipos/)); catálogo inteiro pelo `catalog_link` | <span class="lz-badge lz-badge--soon">Disponível</span> (aguardando validação num número Business real) |
 | Pedidos | [`order.received`](/docs/eventos/order-received/) e [`GET /orders/{order_id}`](/docs/api/catalogo/detalhes-de-um-pedido/) (só leitura) | <span class="lz-badge lz-badge--soon">Parcial</span> |
@@ -155,7 +155,7 @@ avançada de canais, catálogo e mensagens interativas) e **14 fora do escopo** 
 | Componente de conexão embutível / token do SDK | [Link de pareamento hospedado](/docs/api/plataforma/gerar-link-de-pareamento/) + `<litezap-pair>` e evento [`instance.paired`](/docs/eventos/instance-paired/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Apagar instâncias em lote | [`POST /v1/instances/bulk`](/docs/api/plataforma/operacao-em-lote/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | Restrição de chamadas por IP | `ip_allowlist` na instância e nas chaves; `admin_allowed_ips` e `trusted_proxies` no servidor | <span class="lz-badge lz-badge--ok">Disponível</span> |
-| MCP Server | [`/mcp` e `litezap mcp`](/docs/mcp/), 53 ferramentas | <span class="lz-badge lz-badge--ok">Disponível</span> |
+| MCP Server | [`/mcp` e `litezap mcp`](/docs/mcp/), 54 ferramentas | <span class="lz-badge lz-badge--ok">Disponível</span> |
 | (atendente que responde sozinho) | [Atendente IA](/docs/guias/atendimento-ia/) embutido ou [hook de agente](/docs/mcp/hook-de-agente/) | <span class="lz-badge lz-badge--ok">Disponível</span> |
 
 ## Roteiro de migração

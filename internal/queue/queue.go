@@ -67,6 +67,9 @@ type Payload struct {
 	// (MSG-24). A new event or an event edit carries the event in Meta.Event.
 	EventResponse string `json:"event_response,omitempty"`
 	ExtraGuests   int    `json:"extra_guests,omitempty"`
+	// PollVote is the choice of a type poll_vote send on the Target poll (MSG-23): option
+	// names, empty to remove the vote.
+	PollVote []string `json:"poll_vote,omitempty"`
 }
 
 // eventInfo is the worker form of an event card.
@@ -144,7 +147,8 @@ const (
 // Updates reports whether a type changes another message instead of sending a new one
 // (not logged as a message of its own).
 func Updates(typ string) bool {
-	return typ == "edit" || typ == "revoke" || typ == "pin" || typ == "disappearing" || typ == "event_response"
+	return typ == "edit" || typ == "revoke" || typ == "pin" || typ == "disappearing" || typ == "event_response" ||
+		typ == "poll_vote"
 }
 
 // carriesExpiration reports whether a send of this type to chat is marked with the chat's
@@ -845,6 +849,9 @@ func buildRequest(item store.Outbound, p Payload) (*workerv1.SendRequest, error)
 	req.ForwardKind, req.ForwardRef = p.ForwardKind, p.ForwardRef
 	req.DisappearingSeconds = p.DisappearingSeconds
 	req.EventResponse, req.ExtraGuests = p.EventResponse, int32(p.ExtraGuests)
+	if p.Type == "poll_vote" {
+		req.Poll = &workerv1.Poll{Options: p.PollVote}
+	}
 	if m := p.Meta; m != nil {
 		req.Mentions, req.Forwarded = m.Mentions, m.Forwarded
 		if l := m.Location; l != nil {
@@ -1025,6 +1032,10 @@ func (d *dispatcher) applyUpdate(item store.Outbound, p Payload, at time.Time) {
 		d.applyEventResponse(item, p, at)
 		return
 	}
+	if p.Type == "poll_vote" && p.Target != nil {
+		d.applyPollVote(item, p, at)
+		return
+	}
 	if p.Target == nil || (p.Type != "edit" && p.Type != "revoke") {
 		return
 	}
@@ -1074,6 +1085,29 @@ func (d *dispatcher) applyEventResponse(item store.Outbound, p Payload, at time.
 	}
 	if pub := d.q.opt.Events; pub != nil {
 		pub.Publish(d.id, events.TypeMessageEventResponse, v)
+	}
+}
+
+// applyPollVote records our sent vote on the poll ("me": the same voter as our votes from
+// other devices) and publishes message.poll_vote.
+func (d *dispatcher) applyPollVote(item store.Outbound, p Payload, at time.Time) {
+	ctx := context.Background()
+	opts := p.PollVote
+	if opts == nil {
+		opts = []string{}
+	}
+	v := events.PollVote{PollWAMessageID: p.Target.WAMessageID, Chat: item.ChatJID, Voter: "me", FromMe: true,
+		SelectedOptions: opts, Timestamp: at.UTC()}
+	m, err := d.q.store.SetPollVote(ctx, d.id, item.ChatJID, p.Target.WAMessageID, "me",
+		store.PollVote{Options: opts, At: at.UTC()})
+	switch {
+	case err == nil:
+		v.PollID = m.ID
+	case !errors.Is(err, store.ErrNotFound):
+		d.log().Error("queue: apply poll vote", "err", err)
+	}
+	if pub := d.q.opt.Events; pub != nil {
+		pub.Publish(d.id, events.TypeMessagePollVote, v)
 	}
 }
 

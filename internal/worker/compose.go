@@ -63,6 +63,9 @@ func (w *Whatsmeow) build(ctx context.Context, to types.JID, req *workerv1.SendR
 	if req.Type == "event_response" {
 		return w.buildEventResponse(ctx, to, req)
 	}
+	if req.Type == "poll_vote" {
+		return w.buildPollVote(ctx, to, req)
+	}
 	if req.Type == "edit" && req.Event != nil {
 		return w.buildEventEdit(ctx, to, req)
 	}

@@ -733,8 +733,9 @@ func (w *Whatsmeow) toUpdate(e *events.Message) *workerv1.Message {
 	chat, sender := w.addressing(e.Info, nil)
 	u.Id, u.Chat, u.Sender, u.FromMe, u.IsGroup = string(e.Info.ID), chat.String(), sender.String(), e.Info.IsFromMe, e.Info.IsGroup
 	u.TimestampMs, u.PushName = e.Info.Timestamp.UnixMilli(), e.Info.PushName
-	if u.Type == "event_response" && w.isOwn(sender) {
-		// Our answer from another device (by phone number or LID): one person, counted once.
+	if (u.Type == "event_response" || u.Type == "poll_vote") && w.isOwn(sender) {
+		// Our answer or vote from another device (by phone number or LID): one person,
+		// counted once.
 		u.FromMe = true
 	}
 	return u

@@ -321,13 +321,20 @@ func mayChange(m *workerv1.Message, target store.Message) bool {
 	return sameAuthor || (m.Type == "revoke" && m.IsGroup && m.AdminRevoke)
 }
 
-// pollVote publishes message.poll_vote with the options matched by their SHA-256 against
-// the poll in the log. Votes are not logged as messages.
+// pollVote records a vote in the poll's meta (the latest of each voter, with recounted
+// results) and publishes message.poll_vote with the options matched by their SHA-256
+// against the poll in the log. Votes are not logged as messages.
 func (in *Ingestor) pollVote(ctx context.Context, instanceID string, m *workerv1.Message) error {
-	if m.TargetId == "" || in.Events == nil {
+	if m.TargetId == "" {
 		return nil
 	}
-	v := events.PollVote{PollWAMessageID: m.TargetId, Chat: m.Chat, Voter: m.Sender, PushName: m.PushName,
+	// Voters are keyed by phone-number JID (the worker maps LIDs when it knows them) and
+	// the account's own votes, from any device or the API, by "me": one person counts once.
+	who := m.Sender
+	if m.FromMe {
+		who = "me"
+	}
+	v := events.PollVote{PollWAMessageID: m.TargetId, Chat: m.Chat, Voter: who, PushName: m.PushName,
 		FromMe: m.FromMe, SelectedOptions: []string{}, Timestamp: time.UnixMilli(m.TimestampMs).UTC()}
 	byHash := map[[32]byte]string{}
 	if poll, err := in.Store.MessageByWAID(ctx, instanceID, m.Chat, m.TargetId); err == nil {
@@ -351,7 +358,16 @@ func (in *Ingestor) pollVote(ctx context.Context, instanceID string, m *workerv1
 		}
 		v.UnknownOptions++
 	}
-	in.Events.Publish(instanceID, events.TypeMessagePollVote, v)
+	if v.PollID != "" {
+		_, err := in.Store.SetPollVote(ctx, instanceID, m.Chat, m.TargetId, who,
+			store.PollVote{Options: v.SelectedOptions, At: v.Timestamp})
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
+	if in.Events != nil {
+		in.Events.Publish(instanceID, events.TypeMessagePollVote, v)
+	}
 	return nil
 }
 

@@ -1451,6 +1451,43 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { description: "`event_canceled`: o evento foi cancelado." }
+  /v1/instances/{id}/messages/{msg_id}/poll-vote:
+    parameters:
+      - $ref: "#/components/parameters/InstanceID"
+      - { name: msg_id, in: path, required: true, schema: { type: string }, description: "Id LiteZap da enquete (`GET /chats/{jid}/messages`)." }
+    post:
+      tags: [Mensagens]
+      operationId: votePoll
+      x-litezap-milestone: v0.1.1
+      x-zapi: "Votar em enquete"
+      x-litezap-events: [message.poll_vote]
+      summary: Votar em enquete
+      x-litezap-scope: instancia
+      description: |
+        Vota numa enquete do chat (nossa ou de um contato), trocando o voto anterior deste número; `options`
+        são os nomes das opções escolhidas (até o `selectable` da enquete) e uma lista vazia retira o voto.
+        O voto é cifrado com a chave da enquete: enquetes recebidas antes do pareamento não podem ser votadas
+        (`poll_secret_missing`). Fica em `poll.votes` como `me` (o mesmo voto feito pelo celular conta uma
+        vez) e entra em `poll.results`. Vai pela fila; aceita `?wait=true`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [options]
+              additionalProperties: false
+              properties:
+                options: { type: array, items: { type: string } }
+                client_message_id: { type: string }
+            example: { options: ["12h"] }
+      responses:
+        "200": { description: Enviado., content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } } }
+        "202": { description: Na fila., content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/instances/{id}/messages/{msg_id}/star:
     parameters:
       - $ref: "#/components/parameters/InstanceID"
@@ -5119,6 +5156,25 @@ components:
               response: { type: string, enum: [going, not_going, maybe] }
               extra_guests: { type: integer }
               at: { type: string, format: date-time }
+    PollCard:
+      type: object
+      description: "A enquete como está no log, com o último voto de cada pessoa e a contagem (v0.1.1)."
+      properties:
+        name: { type: string }
+        options: { type: array, items: { type: string } }
+        selectable: { type: integer, description: "Quantas opções cada pessoa pode marcar (0 = qualquer número)." }
+        votes:
+          type: object
+          description: "JID de quem votou (`me` = este número, de qualquer aparelho ou pela API) → `{options, at}`; `options` vazia = voto retirado."
+          additionalProperties:
+            type: object
+            properties:
+              options: { type: array, items: { type: string } }
+              at: { type: string, format: date-time }
+        results:
+          type: object
+          description: "Opção → votos atuais (todas as opções, depois do primeiro voto)."
+          additionalProperties: { type: integer }
     MediaInfo:
       type: object
       properties:
@@ -5152,6 +5208,7 @@ components:
         error: { type: string, description: "Último erro (`codigo: detalhe`) de item não enviado." }
         timestamp: { type: string, format: date-time }
         event: { $ref: "#/components/schemas/EventCard" }
+        poll: { $ref: "#/components/schemas/PollCard" }
     Chat:
       type: object
       properties:
@@ -6404,16 +6461,17 @@ webhooks:
       x-litezap-milestone: M6
       x-zapi: Ao receber (voto de enquete)
       description: |
-        Alguém votou numa enquete. `selected_options` é o voto atual da pessoa (lista vazia = voto
-        retirado), com as opções já decifradas pelo texto da enquete no log. Votos não ficam no log, só
-        neste evento. Votos em enquetes criadas antes do pareamento não são decifrados (contam em
-        `unknown_options`).
+        Alguém votou numa enquete, ou este número votou (pelo celular ou pela API). `selected_options` é o
+        voto atual da pessoa (lista vazia = voto retirado), com as opções já decifradas pelo texto da enquete
+        no log. Votos não viram mensagens do log: o último de cada pessoa fica em `poll.votes` da enquete,
+        com a contagem em `poll.results` (v0.1.1). Votos em enquetes criadas antes do pareamento não são
+        decifrados (não geram o evento).
       x-related: [message.received]
       x-fields:
         - [poll_id, string, "Id LiteZap da enquete (opcional)."]
         - [poll_wa_message_id, string, "Id no WhatsApp da enquete."]
         - [chat, string, "JID do chat."]
-        - [voter, string, "Quem votou."]
+        - [voter, string, "Quem votou (`me` = este número)."]
         - [push_name, string, "Nome de perfil de quem votou (opcional)."]
         - [from_me, boolean, "Voto deste número."]
         - [selected_options, array, "Opções escolhidas; vazia quando o voto foi retirado."]

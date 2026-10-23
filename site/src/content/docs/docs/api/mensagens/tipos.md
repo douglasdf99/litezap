@@ -93,7 +93,11 @@ vídeo redondo, sem legenda. Todos usam `media` como os outros anexos.
 ```
 
 2 a 12 opções distintas; `max_selections` padrão 1 (`0` = qualquer número). Os votos chegam no evento
-[`message.poll_vote`](/docs/eventos/message-poll-vote/), já decifrados.
+[`message.poll_vote`](/docs/eventos/message-poll-vote/), já decifrados, e o último de cada pessoa fica na
+enquete: `GET /messages/{id}` mostra `poll.votes` (`me` = este número) e `poll.results` (votos por opção).
+`POST /messages/{id}/poll-vote` com `{"options": ["12h"]}` vota (troca o voto anterior; `[]` retira), pela
+fila. Enquetes recebidas antes do pareamento não podem ser votadas (a chave delas não existe na sessão).
+Votar ainda aguarda validação num aparelho real.
 
 ### Evento <span class="lz-badge lz-badge--soon">v0.1.1</span>
 

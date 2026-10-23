@@ -18,12 +18,15 @@ import (
 type EventBackend interface {
 	EditEvent(ctx context.Context, id, msgID string, p service.EventPatch, wait time.Duration) (service.MessageView, error)
 	RespondEvent(ctx context.Context, id, msgID string, in service.EventResponseInput, wait time.Duration) (service.MessageView, error)
+	// VotePoll votes on a poll (MSG-23), encrypted with the poll's key like an answer.
+	VotePoll(ctx context.Context, id, msgID string, in service.PollVoteInput, wait time.Duration) (service.MessageView, error)
 }
 
 // EventService is the subset of service.Messaging used by Local for events.
 type EventService interface {
 	EditEvent(ctx context.Context, instanceID, id string, p service.EventPatch, wait time.Duration) (service.MessageView, error)
 	RespondEvent(ctx context.Context, instanceID, id string, in service.EventResponseInput, wait time.Duration) (service.MessageView, error)
+	VotePoll(ctx context.Context, instanceID, id string, in service.PollVoteInput, wait time.Duration) (service.MessageView, error)
 }
 
 var (
@@ -76,6 +79,28 @@ func (r *REST) RespondEvent(ctx context.Context, id, msgID string, in service.Ev
 	var v service.MessageView
 	err := r.call(ctx, restTimeout+wait, "POST", instPath(id, "messages", url.PathEscape(msgID), "event-response"), waitQuery(wait), in, &v)
 	return v, err
+}
+
+func (l *Local) VotePoll(ctx context.Context, id, msgID string, in service.PollVoteInput, wait time.Duration) (service.MessageView, error) {
+	s, err := l.events(id)
+	if err != nil {
+		return service.MessageView{}, err
+	}
+	return s.VotePoll(ctx, id, msgID, in, wait)
+}
+
+func (r *REST) VotePoll(ctx context.Context, id, msgID string, in service.PollVoteInput, wait time.Duration) (service.MessageView, error) {
+	var v service.MessageView
+	err := r.call(ctx, restTimeout+wait, "POST", instPath(id, "messages", url.PathEscape(msgID), "poll-vote"), waitQuery(wait), in, &v)
+	return v, err
+}
+
+type votePollInput struct {
+	InstanceID     string   `json:"instance_id,omitempty" jsonschema:"Instance of the poll"`
+	MessageID      string   `json:"message_id" jsonschema:"LiteZap id (msg_…) of the poll, from get_messages."`
+	Options        []string `json:"options" jsonschema:"Names of the chosen options, exactly as in poll.options; an empty list removes the vote."`
+	Wait           *bool    `json:"wait,omitempty" jsonschema:"Wait for the outcome before returning (default true)."`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty" jsonschema:"How long to wait, in seconds (default 30, max 55)."`
 }
 
 type eventLocationInput struct {
@@ -192,6 +217,23 @@ func (t *tools) registerEvents(s *sdk.Server) {
 		}
 		v, err := eb.RespondEvent(ctx, id, in.MessageID, service.EventResponseInput{Response: in.Response, ExtraGuests: in.ExtraGuests},
 			waitOf(in.Wait, in.TimeoutSeconds))
+		return nil, queuedOutput(v), err
+	})
+	add(t, s, &sdk.Tool{
+		Name:  "vote_poll",
+		Title: "Vote on a WhatsApp poll",
+		Description: "Votes on a poll of a chat as the user's number (replacing their previous vote; an empty options list removes it); everyone in the chat sees the vote. " +
+			"Only vote when the user tells you their choice. get_messages shows each poll's options, poll.votes and poll.results. Polls received before this number was paired cannot be voted on (poll_secret_missing).",
+		InputSchema: schema[votePollInput](map[string]func(*jsonschema.Schema){
+			"instance_id": instID, "wait": boolDefault(true), "timeout_seconds": intRange(30, 1, maxWaitSeconds),
+		}),
+		Annotations: &sdk.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(false), OpenWorldHint: ptr(true)},
+	}, func(ctx context.Context, in votePollInput) (*sdk.CallToolResult, sendOutput, error) {
+		id, err := t.instance(ctx, in.InstanceID)
+		if err != nil {
+			return nil, sendOutput{}, err
+		}
+		v, err := eb.VotePoll(ctx, id, in.MessageID, service.PollVoteInput{Options: in.Options}, waitOf(in.Wait, in.TimeoutSeconds))
 		return nil, queuedOutput(v), err
 	})
 }

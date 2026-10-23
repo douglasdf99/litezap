@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -140,6 +141,46 @@ func TestSearchMessagesTool(t *testing.T) {
 				t.Fatalf("from me = %+v", page)
 			}
 			fails(t, cs, "search_messages", map[string]any{"query": "  "}, "q is required")
+		})
+	}
+}
+
+// MSG-23: vote_poll votes; get_messages shows the poll's votes and results.
+func TestPollVoteTools(t *testing.T) {
+	for _, m := range allModes {
+		t.Run(string(m), func(t *testing.T) {
+			e := newEnv(t, nil)
+			id, tok := e.connected("Enquetes")
+			f := e.sp.Last(id)
+			cs := e.client(m, tok)
+			contact := "5500000000003@s.whatsapp.net"
+			f.EmitMessage(&workerv1.Message{Id: "PL1", Chat: contact, Sender: contact, Type: "poll", Text: "Hora?", TimestampMs: time.Now().UnixMilli(),
+				Poll: &workerv1.Poll{Name: "Hora?", Options: []string{"9h", "10h"}, Selectable: 1}})
+			var pollID string
+			eventually(t, "poll logged", func() bool {
+				msg, err := e.msg.Store.MessageByWAID(context.Background(), id, contact, "PL1")
+				pollID = msg.ID
+				return err == nil
+			})
+			h := sha256.Sum256([]byte("9h"))
+			f.EmitMessage(&workerv1.Message{Id: "V1", Chat: contact, Sender: contact, Type: "poll_vote", TargetId: "PL1",
+				PollHashes: [][]byte{h[:]}, TimestampMs: time.Now().UnixMilli()})
+			var out sendOutput
+			ok(t, cs, "vote_poll", map[string]any{"message_id": pollID, "options": []string{"10h"}}, &out)
+			if sent := f.WA.Sent(); !out.Sent || sent[len(sent)-1].Type != "poll_vote" || sent[len(sent)-1].Poll.GetOptions()[0] != "10h" {
+				t.Fatalf("vote_poll = %+v", out)
+			}
+			fails(t, cs, "vote_poll", map[string]any{"message_id": pollID, "options": []string{"9h", "10h"}}, "at most 1")
+			var page service.MessagePage
+			eventually(t, "votes on the poll", func() bool {
+				ok(t, cs, "get_messages", map[string]any{"chat": contact}, &page)
+				for _, msg := range page.Messages {
+					if msg.Poll != nil && msg.Poll.Results["9h"] == 1 && msg.Poll.Results["10h"] == 1 && len(msg.Poll.Votes) == 2 {
+						return true
+					}
+				}
+				return false
+			})
 		})
 	}
 }

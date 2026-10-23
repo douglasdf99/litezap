@@ -84,7 +84,7 @@ type PollVote struct {
 	PollID          string   `json:"poll_id,omitempty"` // LiteZap id of the poll (empty if not in the log)
 	PollWAMessageID string   `json:"poll_wa_message_id"`
 	Chat            string   `json:"chat"`
-	Voter           string   `json:"voter"`
+	Voter           string   `json:"voter"` // phone-number JID when known; "me" for this account
 	PushName        string   `json:"push_name,omitempty"`
 	FromMe          bool     `json:"from_me"`
 	SelectedOptions []string `json:"selected_options"`

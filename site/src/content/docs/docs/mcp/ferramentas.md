@@ -1,6 +1,6 @@
 ---
 title: Ferramentas MCP
-description: Referência das 53 ferramentas do servidor MCP do LiteZap, com parâmetros e retornos.
+description: Referência das 54 ferramentas do servidor MCP do LiteZap, com parâmetros e retornos.
 ---
 
 <span class="lz-badge lz-badge--ok">Disponível · M4</span>
@@ -157,6 +157,7 @@ WhatsApp vêm marcadas como destrutivas ou com aviso de risco, para o cliente pe
 | `list_blocked` · `block_contact` · `unblock_contact` | Bloqueados; bloquear e desbloquear | [Contatos](/docs/api/contatos/) |
 | `save_contact` · `remove_contact` | Salva ou remove um contato da agenda do WhatsApp (sincroniza com o celular e, por padrão, com a agenda do aparelho). Só a pedido do usuário, com os nomes que ele deu | [Salvar contato na agenda](/docs/api/contatos/salvar-contato-na-agenda/) |
 | `send_event` · `update_event` · `respond_event` | Envia um evento (convite com data e local), edita ou cancela um evento seu e responde um evento (vou, não vou, talvez). Só a pedido do usuário; todos do chat veem | [Tipos de mensagem](/docs/api/mensagens/tipos/) |
+| `vote_poll` | Vota numa enquete (troca o voto anterior; lista vazia retira). Só com a escolha do usuário; todos do chat veem. `get_messages` mostra `poll.votes` e `poll.results` | [Tipos de mensagem](/docs/api/mensagens/tipos/) |
 | `search_messages` | Busca full-text no histórico guardado (texto, legendas, nomes de arquivo), com filtros de chat, remetente e data; só leitura | [Buscar mensagens](/docs/api/mensagens/buscar-mensagens/) |
 | `update_chat` | Arquivar, fixar ou silenciar um chat; `disappearing` muda as mensagens temporárias (visto pelo contato ou pelo grupo; num chat individual passa pela fila) | [Chats](/docs/api/chats/) |
 | `clear_chat` | Limpa as mensagens de um chat no WhatsApp da conta e no histórico do LiteZap (a conversa fica). **Destrutiva**: só quando o usuário pedir, para o chat que ele indicar | [Limpar conversa](/docs/api/chats/limpar-conversa/) |

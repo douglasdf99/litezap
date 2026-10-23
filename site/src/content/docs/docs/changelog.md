@@ -54,6 +54,12 @@ validação num aparelho real**.
   chave do evento, como votos de enquete) saem no evento novo `message.event_response` e a última de cada pessoa
   fica em `event.responses`. Ferramentas MCP `send_event`, `update_event` e `respond_event`; o painel mostra
   os eventos na conversa.
+- **Votos de enquete** (MSG-23): o último voto de cada pessoa fica na enquete, com a contagem:
+  `GET /messages/{id}` (e `get_messages` no MCP) mostra `poll.votes` (`{jid: {options, at}}`; LIDs viram o
+  número quando conhecido, e os votos deste número, de qualquer aparelho ou pela API, ficam em `me`) e
+  `poll.results` (`{opção: votos}`). `POST /messages/{id}/poll-vote` (`{"options": [...]}`; `[]` retira o voto)
+  vota pela fila, cifrado com a chave da enquete; ferramenta MCP `vote_poll`. `message.poll_vote` passa a
+  trazer `voter: "me"` nos votos deste número.
 - **Responder status com GIF e figurinha** (STA-4): `POST /status/{msg_id}/reply` aceita `type` (`text`, `gif`,
   `sticker`) com `media` (`url` ou `base64`) e `caption` no GIF; a resposta vai em particular ao autor, citando
   o status, pela fila. Ferramenta MCP `reply_status` (só a pedido do usuário).
