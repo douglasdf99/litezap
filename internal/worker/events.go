@@ -3,7 +3,9 @@ package worker
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 const (
 	secretEventResponse = "Event Response"
 	secretEventEdit     = "Event Edit"
+	secretPollVote      = "Poll Vote"
 )
 
 // msgSecretKey derives the key (and the additional data) of a message secret use case:
@@ -38,7 +41,7 @@ func msgSecretKey(useCase string, modSender types.JID, origID string, origSender
 	info := make([]byte, 0, len(origID)+len(o)+len(m)+len(useCase))
 	info = append(append(append(append(info, origID...), o...), m...), useCase...)
 	key = hkdfutil.SHA256(secret, nil, info, 32)
-	if useCase == secretEventResponse {
+	if useCase == secretEventResponse || useCase == secretPollVote {
 		ad = fmt.Appendf(nil, "%s\x00%s", origID, m)
 	}
 	return key, ad
@@ -92,22 +95,79 @@ func buildEvent(req *workerv1.SendRequest) (*waE2E.Message, error) {
 	return &waE2E.Message{EventMessage: em, MessageContextInfo: &waE2E.MessageContextInfo{MessageSecret: secret}}, nil
 }
 
+// identities are the JIDs (non-AD) a user may be named by: j, alt, and its other
+// addressing (phone number <-> LID) when known. In LID-addressed groups the key of the
+// original message, the sender of an update and the identities the other phone feeds
+// into the key derivation do not always agree (phone number on one side, LID on the
+// other), so secrets are looked up and keys derived under every identity.
+func (w *Whatsmeow) identities(ctx context.Context, j, alt types.JID) []types.JID {
+	var out []types.JID
+	add := func(x types.JID) {
+		if x.User == "" {
+			return
+		}
+		if x = x.ToNonAD(); !slices.Contains(out, x) {
+			out = append(out, x)
+		}
+	}
+	add(j)
+	add(alt)
+	if w.isOwn(j) {
+		pn, lid := w.ownJIDs()
+		add(pn)
+		add(lid)
+		return out
+	}
+	if len(out) > 1 || w.cli == nil || w.cli.Store == nil || w.cli.Store.LIDs == nil {
+		return out
+	}
+	switch j.Server {
+	case types.HiddenUserServer:
+		if pn, err := w.cli.Store.LIDs.GetPNForLID(ctx, j.ToNonAD()); err == nil {
+			add(pn)
+		}
+	case types.DefaultUserServer:
+		if lid, err := w.cli.Store.LIDs.GetLIDForPN(ctx, j.ToNonAD()); err == nil {
+			add(lid)
+		}
+	}
+	return out
+}
+
+// lookupSecret finds the message secret of id stored under any of authors (nil: not
+// stored) and the sender it was stored with.
+func (w *Whatsmeow) lookupSecret(ctx context.Context, chat types.JID, authors []types.JID, id string) ([]byte, types.JID, error) {
+	if w.cli == nil || w.cli.Store == nil || w.cli.Store.MsgSecrets == nil {
+		return nil, types.EmptyJID, errors.New("message secret store unavailable")
+	}
+	for _, a := range authors {
+		secret, stored, err := w.cli.Store.MsgSecrets.GetMessageSecret(ctx, chat, a, types.MessageID(id))
+		if err != nil {
+			return nil, types.EmptyJID, err
+		}
+		if secret != nil {
+			if stored.IsEmpty() {
+				stored = a
+			}
+			return secret, stored, nil
+		}
+	}
+	return nil, types.EmptyJID, nil
+}
+
 // eventSecret finds the secret of an event (ours or a contact's) and the sender it was
 // stored with. author is the event's sender as the log knows it.
 func (w *Whatsmeow) eventSecret(ctx context.Context, chat, author types.JID, id string) ([]byte, types.JID, error) {
 	if w.cli == nil || w.cli.Store == nil || w.cli.Store.MsgSecrets == nil {
 		return nil, types.EmptyJID, grpcErr(codes.Unknown, "worker_error", "message secret store unavailable")
 	}
-	secret, stored, err := w.cli.Store.MsgSecrets.GetMessageSecret(ctx, chat, author, types.MessageID(id))
+	secret, stored, err := w.lookupSecret(ctx, chat, w.identities(ctx, author, types.EmptyJID), id)
 	if err != nil {
 		return nil, types.EmptyJID, grpcErr(codes.Unknown, "worker_error", "cannot read the event's key")
 	}
 	if secret == nil {
 		return nil, types.EmptyJID, grpcErr(codes.FailedPrecondition, "event_secret_missing",
 			"the event's key is not known to this session (events received before pairing cannot be answered or edited)")
-	}
-	if stored.IsEmpty() {
-		stored = author
 	}
 	return secret, stored, nil
 }
@@ -254,31 +314,89 @@ func origSenderOf(info types.MessageInfo, key *waCommon.MessageKey) (types.JID, 
 	}
 }
 
+// Why a secret-encrypted update (event response, poll vote) could not be opened. These
+// errors never carry JIDs or content: they end up in the logs.
+var (
+	errSecretMissing = errors.New("secret_missing: the original message's secret is not stored (sent before pairing?)")
+	errNoKeyMatched  = errors.New("no_key_matched: no sender identity opens the payload")
+	errBadKey        = errors.New("bad_key: the update does not name its original message")
+)
+
+// secretFailure is the short reason logged for a decryption error.
+func secretFailure(err error) string {
+	for _, e := range []error{errSecretMissing, errNoKeyMatched, errBadKey} {
+		if errors.Is(err, e) {
+			r, _, _ := strings.Cut(e.Error(), ":")
+			return r
+		}
+	}
+	return "error"
+}
+
+// openSecret decrypts the payload of an update (useCase) that refers to the message key.
+// Unlike whatsmeow's decryptMsgSecret (the update's sender as is, two original senders),
+// it tries every identity of the original sender and of the update's sender: in
+// LID-addressed groups the responder's phone may derive the key with phone numbers while
+// the update reaches us addressed by LID, or the other way round. AES-GCM authenticates
+// the result, so a wrong combination never yields a plaintext.
+func (w *Whatsmeow) openSecret(ctx context.Context, e *events.Message, useCase string, key *waCommon.MessageKey, iv, payload []byte) ([]byte, error) {
+	if key.GetID() == "" {
+		return nil, errBadKey
+	}
+	orig, err := origSenderOf(e.Info, key)
+	if err != nil || orig.User == "" {
+		return nil, errBadKey
+	}
+	origs := w.identities(ctx, orig, types.EmptyJID)
+	secret, stored, err := w.lookupSecret(ctx, e.Info.Chat, origs, key.GetID())
+	if err != nil {
+		return nil, fmt.Errorf("cannot read the message secret: %w", err)
+	}
+	if secret == nil {
+		return nil, errSecretMissing
+	}
+	for _, s := range w.identities(ctx, stored, types.EmptyJID) {
+		if !slices.Contains(origs, s) {
+			origs = append(origs, s)
+		}
+	}
+	mods := w.identities(ctx, e.Info.Sender, e.Info.SenderAlt)
+	for _, o := range origs {
+		for _, m := range mods {
+			k, ad := msgSecretKey(useCase, m, key.GetID(), o, secret)
+			if plain, err := gcmutil.Decrypt(k, iv, payload, ad); err == nil {
+				return plain, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("%w (%d combinations)", errNoKeyMatched, len(origs)*len(mods))
+}
+
 // decryptEventResponse opens a received EncEventResponseMessage.
 func (w *Whatsmeow) decryptEventResponse(ctx context.Context, e *events.Message) (*waE2E.EventResponseMessage, error) {
 	enc := e.Message.GetEncEventResponseMessage()
-	key := enc.GetEventCreationMessageKey()
-	orig, err := origSenderOf(e.Info, key)
+	plain, err := w.openSecret(ctx, e, secretEventResponse, enc.GetEventCreationMessageKey(), enc.GetEncIV(), enc.GetEncPayload())
 	if err != nil {
 		return nil, err
-	}
-	secret, stored, err := w.eventSecret(ctx, e.Info.Chat, orig, key.GetID())
-	if err != nil {
-		return nil, err
-	}
-	var plain []byte
-	for _, author := range []types.JID{orig, stored} {
-		k, ad := msgSecretKey(secretEventResponse, e.Info.Sender, key.GetID(), author, secret)
-		if plain, err = gcmutil.Decrypt(k, enc.GetEncIV(), enc.GetEncPayload(), ad); err == nil {
-			break
-		}
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt event response: %w", err)
 	}
 	var r waE2E.EventResponseMessage
 	if err := proto.Unmarshal(plain, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// decryptPollVote opens a received PollUpdateMessage, like whatsmeow's DecryptPollVote
+// but under every sender identity (see openSecret).
+func (w *Whatsmeow) decryptPollVote(ctx context.Context, e *events.Message) (*waE2E.PollVoteMessage, error) {
+	pu := e.Message.GetPollUpdateMessage()
+	plain, err := w.openSecret(ctx, e, secretPollVote, pu.GetPollCreationMessageKey(), pu.GetVote().GetEncIV(), pu.GetVote().GetEncPayload())
+	if err != nil {
+		return nil, err
+	}
+	var v waE2E.PollVoteMessage
+	if err := proto.Unmarshal(plain, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
 }

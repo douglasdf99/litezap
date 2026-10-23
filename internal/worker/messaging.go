@@ -704,7 +704,8 @@ func (w *Whatsmeow) toUpdate(e *events.Message) *workerv1.Message {
 		r, err := decrypt(ctx, e)
 		if err != nil {
 			// Responses to events created before pairing cannot be decrypted (no secret).
-			w.log.Warn("cannot decrypt event response", "id", e.Info.ID, "err", err)
+			w.log.Warn("cannot decrypt event response", "id", e.Info.ID, "group", e.Info.IsGroup,
+				"reason", secretFailure(err), "err", err)
 			return nil
 		}
 		u.Type, u.TargetId = "event_response", m.GetEncEventResponseMessage().GetEventCreationMessageKey().GetID()
@@ -712,12 +713,13 @@ func (w *Whatsmeow) toUpdate(e *events.Message) *workerv1.Message {
 	case m.GetPollUpdateMessage() != nil:
 		decrypt := w.decryptPoll
 		if decrypt == nil {
-			decrypt = w.cli.DecryptPollVote
+			decrypt = w.decryptPollVote
 		}
 		vote, err := decrypt(ctx, e)
 		if err != nil {
 			// Votes on polls created before pairing cannot be decrypted (no secret).
-			w.log.Warn("cannot decrypt poll vote", "id", e.Info.ID, "err", err)
+			w.log.Warn("cannot decrypt poll vote", "id", e.Info.ID, "group", e.Info.IsGroup,
+				"reason", secretFailure(err), "err", err)
 			return nil
 		}
 		u.Type, u.TargetId = "poll_vote", m.GetPollUpdateMessage().GetPollCreationMessageKey().GetID()
