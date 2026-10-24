@@ -7,8 +7,8 @@ import (
 	"github.com/douglasdf99/litezap/internal/service"
 )
 
-// v0.1.1 repair: clearing a chat and removing a contact are off unless
-// experimental_app_state_writes; saving a contact (whatsmeow's encoder) stays on.
+// v0.1.1 repair: clearing a chat and saving or removing a contact (every app state write)
+// are off unless experimental_app_state_writes.
 func TestAppStateWritesGate(t *testing.T) {
 	e := newEnvWith(t, func(o *Options) { o.Account.(*service.Account).ExperimentalAppStateWrites = false })
 	id, tok := e.connected("Gate")
@@ -20,7 +20,7 @@ func TestAppStateWritesGate(t *testing.T) {
 		t.Fatalf("clear = %d %v", code, v)
 	}
 	code, v = e.do("POST", "/v1/instances/"+id+"/contacts", tok, `{"phone":"5511999990000@s.whatsapp.net","first_name":"Ana"}`)
-	if code != 200 {
+	if code != 403 || errCode(v) != "feature_disabled" {
 		t.Fatalf("save = %d %v", code, v)
 	}
 	code, v = e.do("DELETE", "/v1/instances/"+id+"/contacts/5511999990000@s.whatsapp.net", tok, "")
@@ -32,8 +32,8 @@ func TestAppStateWritesGate(t *testing.T) {
 			t.Fatal("clear reached the worker")
 		}
 	}
-	if acts := f.WA.ContactActions(); len(acts) != 1 || acts[0].Action != "save" {
-		t.Fatalf("contact actions = %+v", acts)
+	if acts := f.WA.ContactActions(); len(acts) != 0 {
+		t.Fatalf("contact actions reached the worker = %+v", acts)
 	}
 }
 

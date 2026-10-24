@@ -330,6 +330,12 @@ func (t *tools) registerAccount(s *sdk.Server) {
 		return nil, v, err
 	})
 
+	// Saving or removing a contact and clearing a chat write the account's app state, off
+	// until revalidated on a real device (experimental_app_state_writes): hidden when the
+	// backend knows they are off (in process); over REST they answer feature_disabled.
+	if appStateWritesOff(t.b) {
+		return
+	}
 	add(t, s, &sdk.Tool{
 		Name:  "save_contact",
 		Title: "Save a contact in the address book",
@@ -345,12 +351,6 @@ func (t *tools) registerAccount(s *sdk.Server) {
 		v, err := ab.SaveContact(ctx, id, service.AddressBookInput{Phone: in.Phone, FirstName: in.FirstName, LastName: in.LastName, SaveOnPhone: in.SaveOnPhone})
 		return nil, v, err
 	})
-	// Removing a contact and clearing a chat are app state changes LiteZap builds by hand,
-	// off until revalidated on a real device (experimental_app_state_writes): hidden when
-	// the backend knows they are off (in process); over REST they answer feature_disabled.
-	if appStateWritesOff(t.b) {
-		return
-	}
 	add(t, s, &sdk.Tool{
 		Name:  "remove_contact",
 		Title: "Remove a contact from the address book",

@@ -81,6 +81,11 @@ func (a *Account) contactJID(ctx context.Context, instanceID, phone string) (str
 
 // SaveContact saves (or renames) a contact in the account's address book.
 func (a *Account) SaveContact(ctx context.Context, instanceID string, in AddressBookInput) (SavedContact, error) {
+	// Gated too since the 2026-10-23 real-device divergence: any app state write made on a
+	// diverged local state can store a patch other devices fail to verify.
+	if err := a.requireAppStateWrites("saving a contact"); err != nil {
+		return SavedContact{}, err
+	}
 	if _, err := a.st().GetInstance(ctx, instanceID); err != nil {
 		return SavedContact{}, mapErr(err)
 	}

@@ -32,10 +32,11 @@ validação num aparelho real**.
     LiteZap sincroniza sob a trava e tenta de novo uma vez. As mutações montadas à mão (contato, `REMOVE` e
     limpar conversa) foram verificadas num simulador de dois aparelhos com o decodificador do whatsmeow e não
     divergem; o que o celular faz com elas continua sem validação.
-  - **Limpar conversa e remover contato desligados por padrão**: respondem `403 feature_disabled` (e o MCP
-    esconde `clear_chat` e `remove_contact`) até a revalidação num aparelho. Para ligar:
-    `experimental_app_state_writes: true` ou `LITEZAP_EXPERIMENTAL_APP_STATE_WRITES=true`. Salvar contato
-    continua ligado (usa o codificador do whatsmeow sem mudanças).
+  - **Limpar conversa, salvar contato e remover contato desligados por padrão**: respondem `403 feature_disabled`
+    (e o MCP esconde `clear_chat`, `save_contact` e `remove_contact`) até a revalidação num número de teste. Para ligar:
+    `experimental_app_state_writes: true` ou `LITEZAP_EXPERIMENTAL_APP_STATE_WRITES=true`. Num aparelho real, depois
+    desses testes, duas coleções do app state deixaram de verificar até no snapshot completo do servidor; mensagens não
+    são afetadas.
 
 **Novo**
 
