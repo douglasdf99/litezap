@@ -218,7 +218,8 @@ func (f *FakeWA) ContactAction(_ context.Context, req *workerv1.ContactActionReq
 var _ worker.AppStateResyncer = (*FakeWA)(nil)
 
 // ResyncAppState answers a full resync of each collection (all five when empty), each
-// one going from version 7 to 9; unknown names answer InvalidArgument like the worker.
+// one going from version 7 to 9 (regular_high leniently, skipping v8); unknown names
+// answer InvalidArgument like the worker.
 func (f *FakeWA) ResyncAppState(_ context.Context, names []string) ([]*workerv1.AppStateCollectionResult, error) {
 	f.msgMu.Lock()
 	defer f.msgMu.Unlock()
@@ -238,7 +239,11 @@ func (f *FakeWA) ResyncAppState(_ context.Context, names []string) ([]*workerv1.
 		if !known {
 			return nil, status.Error(codes.InvalidArgument, "validation_failed: unknown app state collection")
 		}
-		out = append(out, &workerv1.AppStateCollectionResult{Name: n, Ok: true, VersionBefore: 7, VersionAfter: 9})
+		r := &workerv1.AppStateCollectionResult{Name: n, Ok: true, VersionBefore: 7, VersionAfter: 9}
+		if n == "regular_high" {
+			r.Lenient, r.SkippedPatchVersions = true, []uint64{8}
+		}
+		out = append(out, r)
 	}
 	f.acct.resyncs = append(f.acct.resyncs, names...)
 	return out, nil

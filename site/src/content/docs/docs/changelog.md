@@ -38,6 +38,30 @@ validação num aparelho real**.
     desses testes, duas coleções do app state deixaram de verificar até no snapshot completo do servidor; mensagens não
     são afetadas.
 
+- **Coleções que nem um aparelho novo sincronizava** (2026-10-24): depois de desconectar e parear de novo, o
+  aparelho novo (chaves novas, app state vazio) falhou logo na primeira sincronização como antes
+  (`critical_unblock_low`: `failed to verify patch v49: mismatching LTHash`; `regular_high`: `failed to verify
+  snapshot: failed to verify patch v41: mismatching LTHash`), enquanto o WhatsApp Web oficial sincronizava. O
+  servidor guarda patches antigos cujo MAC de snapshot não bate com o LT-hash das mutações (enviados de uma cópia
+  divergente, provavelmente pelo LiteZap na corrida do `409`); o whatsmeow recusa esse histórico para sempre.
+  Mudanças:
+  - **Decodificação tolerante do histórico, só na ressincronização** (automática e manual): se a busca estrita
+    falha no LT-hash, a coleção é baixada de novo do zero e o patch (ou snapshot) que só falha nessa conferência
+    é aceito, desde que os MACs de conteúdo e de índice de cada mutação e o MAC do patch confiram; no máximo 16
+    por coleção. O estado gravado é o LT-hash calculado das mutações, então os patches seguintes dos outros
+    aparelhos conferem; uma sincronização estrita logo depois confirma, e as sincronizações do dia a dia
+    continuam estritas. Log `WARN` `app state: accepted unverifiable historical patch` (coleção e versão). A
+    resposta do resync ganha `lenient` e `skipped_patch_versions` (campos novos no `AppStateCollectionResult` do
+    worker). Só lê do servidor; nada é enviado, e as escritas de app state continuam desligadas por padrão.
+  - **Resync começa do zero**: a ressincronização apaga explicitamente versão, hash e MACs da coleção (e confere
+    que voltou à versão 0) antes de buscar. O `version_before 48 → version_after 48` visto no aparelho novo era a
+    busca parando de novo no v49, não falta de reset; `version_before` é a versão em que a sincronização
+    anterior parou.
+  - Testado num simulador com o decodificador do whatsmeow e o store SQL real: um patch com MAC de snapshot
+    errado e mutações válidas, depois um patch válido. A busca estrita falha como no aparelho; a tolerante
+    aceita só aquela versão, o patch seguinte confere com todas as verificações, e o LiteZap termina com o mesmo
+    hash e o mesmo estado de conversas e contatos do cliente oficial. **Aguarda validação no aparelho real.**
+
 **Novo**
 
 - **Limpar conversa** (CHT-7, **desligado por padrão**, veja *Corrigido*): `POST /chats/{jid}/clear` (corpo opcional `{keep_starred, delete_media}`) limpa

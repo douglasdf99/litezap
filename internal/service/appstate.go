@@ -42,6 +42,11 @@ type AppStateCollectionResult struct {
 	VersionBefore uint64 `json:"version_before"`
 	VersionAfter  uint64 `json:"version_after"`
 	Error         string `json:"error,omitempty"`
+	// Lenient: the strict resync failed on a historical patch of the server whose LT-hash
+	// does not verify, and the collection was accepted with that check skipped for the
+	// versions in SkippedPatchVersions (their mutations verified).
+	Lenient              bool     `json:"lenient"`
+	SkippedPatchVersions []uint64 `json:"skipped_patch_versions,omitempty"`
 }
 
 // AppStateResyncResult answers the resync; OK is set when every collection resynced.
@@ -74,7 +79,8 @@ func (a *Account) ResyncAppState(ctx context.Context, instanceID string, in AppS
 	for _, c := range resp.Collections {
 		out.OK = out.OK && c.Ok
 		out.Collections = append(out.Collections, AppStateCollectionResult{Name: c.Name, OK: c.Ok,
-			VersionBefore: c.VersionBefore, VersionAfter: c.VersionAfter, Error: c.Error})
+			VersionBefore: c.VersionBefore, VersionAfter: c.VersionAfter, Error: c.Error,
+			Lenient: c.Lenient, SkippedPatchVersions: c.SkippedPatchVersions})
 	}
 	return out, nil
 }

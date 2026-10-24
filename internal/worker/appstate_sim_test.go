@@ -3,12 +3,17 @@ package worker
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	workerv1 "github.com/douglasdf99/litezap/gen/worker/v1"
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waServerSync"
@@ -126,6 +131,55 @@ func (m *simStore) GetAppStateMutationMAC(_ context.Context, name string, idx []
 // built on an older version is refused (409) and nothing is verified.
 type simServer struct {
 	patches map[appstate.WAPatchName][]*waServerSync.SyncdPatch
+	// snapshotAt, when set for a collection, makes a full sync start from a snapshot of
+	// that version (its records, with the snapshot MAC the patch of that version wrote).
+	snapshotAt map[appstate.WAPatchName]uint64
+	pageSize   int // patches per response (has_more_patches); 0: all
+}
+
+// fetch answers a sync query like WhatsApp's server: the patches after from, or a
+// snapshot (when configured) and the patches after it.
+func (s *simServer) fetch(name appstate.WAPatchName, from uint64, snapshot bool) *appstate.PatchList {
+	list := &appstate.PatchList{Name: name}
+	if k := s.snapshotAt[name]; snapshot && k > 0 {
+		list.Snapshot, from = s.snapshot(name, k), k
+	}
+	rest := s.patches[name][from:]
+	if s.pageSize > 0 && len(rest) > s.pageSize {
+		rest, list.HasMorePatches = rest[:s.pageSize], true
+	}
+	list.Patches = append([]*waServerSync.SyncdPatch(nil), rest...)
+	return list
+}
+
+// snapshot is the collection at version k: the live records after patches 1..k, with
+// the snapshot MAC and key of patch k (what its sender computed).
+func (s *simServer) snapshot(name appstate.WAPatchName, k uint64) *waServerSync.SyncdSnapshot {
+	recs := map[string]*waServerSync.SyncdRecord{}
+	var order []string
+	for _, p := range s.patches[name][:k] {
+		for _, m := range p.GetMutations() {
+			key := string(m.GetRecord().GetIndex().GetBlob())
+			if m.GetOperation() == waServerSync.SyncdMutation_REMOVE {
+				delete(recs, key)
+				continue
+			}
+			if _, ok := recs[key]; !ok {
+				order = append(order, key)
+			}
+			recs[key] = m.GetRecord()
+		}
+	}
+	last := s.patches[name][k-1]
+	ss := &waServerSync.SyncdSnapshot{Version: &waServerSync.SyncdVersion{Version: proto.Uint64(k)}, Mac: last.GetSnapshotMAC(), KeyID: last.GetKeyID()}
+	seen := map[string]bool{}
+	for _, key := range order {
+		if r, ok := recs[key]; ok && !seen[key] {
+			seen[key] = true
+			ss.Records = append(ss.Records, r)
+		}
+	}
+	return ss
 }
 
 func (s *simServer) push(t *testing.T, name appstate.WAPatchName, base uint64, raw []byte) error {
@@ -149,29 +203,63 @@ func (s *simServer) since(name appstate.WAPatchName, v uint64) *appstate.PatchLi
 // simDevice is one device of the account (the phone or LiteZap).
 type simDevice struct {
 	name string
-	mem  *simStore
+	mem  *simStore // nil on a device backed by whatsmeow's SQL store
 	dev  *store.Device
 	proc *appstate.Processor
+	// tolerant devices skip the LT-hash and patch MAC checks (the official clients that
+	// sync a history whatsmeow refuses).
+	tolerant bool
+	view     map[string]string // the app state entries: index -> value (chat/contact state)
 }
 
+var (
+	simKeyID   = []byte("sync-key-1")
+	simKeyData = bytes.Repeat([]byte{9}, 32)
+)
+
 func newSimDevice(name string) *simDevice {
-	mem := newSimStore([]byte("sync-key-1"), bytes.Repeat([]byte{9}, 32))
+	mem := newSimStore(simKeyID, simKeyData)
 	dev := &store.Device{AppState: mem, AppStateKeys: mem}
-	return &simDevice{name: name, mem: mem, dev: dev, proc: appstate.NewProcessor(dev, waLog.Noop)}
+	return &simDevice{name: name, mem: mem, dev: dev, proc: appstate.NewProcessor(dev, waLog.Noop), view: map[string]string{}}
+}
+
+// newSQLSimDevice is a device on whatsmeow's real SQL store (foreign keys on, as run.go
+// opens it), with the account's sync key.
+func newSQLSimDevice(t *testing.T, name string) *simDevice {
+	t.Helper()
+	dev := sqlDevice(t, selfPN, selfLID)
+	if err := dev.AppStateKeys.PutAppStateSyncKey(context.Background(), simKeyID, store.AppStateSyncKey{Data: simKeyData, Fingerprint: []byte{1}, Timestamp: 1}); err != nil {
+		t.Fatal(err)
+	}
+	return &simDevice{name: name, dev: dev, proc: appstate.NewProcessor(dev, waLog.Noop), view: map[string]string{}}
 }
 
 func (d *simDevice) state(name appstate.WAPatchName) appstate.HashState {
-	v, h, _ := d.mem.GetAppStateVersion(context.Background(), string(name))
+	v, h, _ := d.dev.AppState.GetAppStateVersion(context.Background(), string(name))
 	return appstate.HashState{Version: v, Hash: h}
+}
+
+// applyView records decoded mutations in the device's view of the entries.
+func (d *simDevice) applyView(muts []appstate.Mutation) {
+	for _, m := range muts {
+		key := strings.Join(m.Index, "|")
+		if m.Operation == waServerSync.SyncdMutation_REMOVE {
+			delete(d.view, key)
+			continue
+		}
+		b, _ := proto.MarshalOptions{Deterministic: true}.Marshal(m.Action)
+		d.view[key] = string(b)
+	}
 }
 
 // sync applies the server's patches after the device's version, as fetchAppState does.
 func (d *simDevice) sync(srv *simServer, name appstate.WAPatchName) error {
 	st := d.state(name)
-	_, next, err := d.proc.DecodePatches(context.Background(), srv.since(name, st.Version), st, true)
+	muts, next, err := d.proc.DecodePatches(context.Background(), srv.since(name, st.Version), st, !d.tolerant)
 	if err != nil {
 		return fmt.Errorf("%s: %w", d.name, err)
 	}
+	d.applyView(muts)
 	if next.Version != uint64(len(srv.patches[name])) {
 		return fmt.Errorf("%s: at v%d after sync, server at v%d", d.name, next.Version, len(srv.patches[name]))
 	}
@@ -182,7 +270,7 @@ func (d *simDevice) sync(srv *simServer, name appstate.WAPatchName) error {
 func (d *simDevice) send(t *testing.T, srv *simServer, info appstate.PatchInfo) {
 	t.Helper()
 	st := d.state(info.Type)
-	raw, err := d.proc.EncodePatch(context.Background(), d.mem.keyID, st, info)
+	raw, err := d.proc.EncodePatch(context.Background(), simKeyID, st, info)
 	if err != nil {
 		t.Fatalf("%s: encode: %v", d.name, err)
 	}
@@ -356,4 +444,257 @@ func TestWhatsmeowConflictApplyRaceCorruptsState(t *testing.T) {
 	// simulated snapshot is the replay of every patch.
 	_ = lz.mem.DeleteAppStateVersion(ctx, string(name))
 	syncAll(t, srv, name, phone, lz)
+}
+
+// strictFullSync is whatsmeow's full sync (fetchAppState with fullSync): the local copy
+// dropped, then the snapshot and patches decoded with every MAC checked.
+func (d *simDevice) strictFullSync(srv *simServer, name appstate.WAPatchName) error {
+	ctx := context.Background()
+	if err := d.dev.AppState.DeleteAppStateVersion(ctx, string(name)); err != nil {
+		return err
+	}
+	var state appstate.HashState
+	want := true
+	for more := true; more; {
+		list := srv.fetch(name, state.Version, want)
+		want, more = false, list.HasMorePatches
+		muts, next, err := d.proc.DecodePatches(ctx, list, state, true)
+		if err != nil {
+			return fmt.Errorf("failed to decode app state %s patches: %w", name, err)
+		}
+		d.applyView(muts)
+		state = next
+	}
+	return nil
+}
+
+// lenientResync runs LiteZap's lenient full sync (appstate_lenient.go) on the device,
+// applying the mutations through whatsmeow's own handler (DispatchAppState on a client
+// over the device's store), as the worker does.
+func (d *simDevice) lenientResync(t *testing.T, srv *simServer, name appstate.WAPatchName, logs io.Writer) (lenientResult, error) {
+	t.Helper()
+	cli := whatsmeow.NewClient(d.dev, nil)
+	d.view = map[string]string{} // the reset drops the local copy
+	return lenientFullSync(context.Background(), lenientSync{
+		name: name, dev: d.dev, proc: d.proc, log: slog.New(slog.NewTextHandler(logs, nil)),
+		fetch: func(_ context.Context, from uint64, snapshot bool) (*appstate.PatchList, error) {
+			return srv.fetch(name, from, snapshot), nil
+		},
+		apply: func(ctx context.Context, muts []appstate.Mutation) error {
+			for _, m := range muts {
+				cli.DangerousInternals().DispatchAppState(ctx, name, m, true)
+			}
+			d.applyView(muts)
+			return nil
+		},
+	})
+}
+
+// sendDiverged pushes a patch from a device whose local LT-hash is wrong (the old
+// LiteZap after the 409 race): valid mutations, content/index/patch MACs, but a
+// snapshot MAC computed from the wrong hash.
+func sendDiverged(t *testing.T, srv *simServer, name appstate.WAPatchName, info appstate.PatchInfo) {
+	t.Helper()
+	old := newSimDevice("old-litezap")
+	old.tolerant = true
+	if err := old.sync(srv, name); err != nil {
+		t.Fatal(err)
+	}
+	old.mem.mu.Lock()
+	v := old.mem.versions[string(name)]
+	v.hash[0] ^= 0xff
+	old.mem.versions[string(name)] = v
+	old.mem.mu.Unlock()
+	old.send(t, srv, info)
+}
+
+func sameView(t *testing.T, name appstate.WAPatchName, a, b *simDevice) {
+	t.Helper()
+	if as, bs := a.state(name), b.state(name); as != bs {
+		t.Fatalf("%s: %s v%d and %s v%d disagree (hashes equal: %v)", name, a.name, as.Version, b.name, bs.Version, as.Hash == bs.Hash)
+	}
+	if len(a.view) != len(b.view) {
+		t.Fatalf("%s: %s has %d entries, %s has %d", name, a.name, len(a.view), b.name, len(b.view))
+	}
+	for k, v := range a.view {
+		if b.view[k] != v {
+			t.Fatalf("%s: entry %q differs between %s and %s", name, k, a.name, b.name)
+		}
+	}
+}
+
+// The real-device finding of 2026-10-24: the server's history of two collections holds
+// a patch whose snapshot MAC does not match the LT-hash of its (valid) mutations, sent
+// from a diverged copy. A brand-new device fails whatsmeow's strict full sync exactly
+// like the device (on a patch, and on the snapshot), the official client (tolerant)
+// syncs it. LiteZap's lenient resync accepts that one version, ends with the same
+// LT-hash and the same chat/contact state as the official client, and the next patch of
+// the phone (its snapshot MAC built on the true LT-hash, including the bad patch's
+// mutations) verifies strictly.
+func TestAppStateSimLenientResyncAcceptsDivergedHistoricalPatch(t *testing.T) {
+	chatA := types.NewJID("5511900000001", types.DefaultUserServer)
+	chatB := types.NewJID("5511900000002", types.DefaultUserServer)
+	cases := []struct {
+		name       appstate.WAPatchName
+		snapshotAt uint64
+		wantStrict string
+		history    func(srv *simServer, phone *simDevice) // v1..v4, v3 from the diverged sender
+		next       appstate.PatchInfo                     // the phone's patch after the resync
+		check      func(t *testing.T, dev *store.Device)
+	}{{
+		name: appstate.WAPatchCriticalUnblockLow, snapshotAt: 2,
+		wantStrict: "failed to verify patch v3: mismatching LTHash",
+		history: func(srv *simServer, phone *simDevice) {
+			phone.send(t, srv, appstate.PatchInfo{Type: appstate.WAPatchCriticalUnblockLow, Mutations: []appstate.MutationInfo{
+				simContact("5511900000001", "save"), simContact("5511900000002", "save")}})
+			syncAll(t, srv, appstate.WAPatchCriticalUnblockLow, phone)
+			phone.send(t, srv, appstate.PatchInfo{Type: appstate.WAPatchCriticalUnblockLow, Mutations: []appstate.MutationInfo{simContact("5511900000003", "save")}})
+			syncAll(t, srv, appstate.WAPatchCriticalUnblockLow, phone)
+			sendDiverged(t, srv, appstate.WAPatchCriticalUnblockLow, appstate.PatchInfo{Type: appstate.WAPatchCriticalUnblockLow, Mutations: []appstate.MutationInfo{
+				simContact("5511900000004", "save"), simContact("5511900000001", "save")}})
+			syncAll(t, srv, appstate.WAPatchCriticalUnblockLow, phone)
+			phone.sendRemove(t, srv, appstate.WAPatchCriticalUnblockLow, simContact("5511900000002", "remove"))
+			syncAll(t, srv, appstate.WAPatchCriticalUnblockLow, phone)
+		},
+		next: appstate.PatchInfo{Type: appstate.WAPatchCriticalUnblockLow, Mutations: []appstate.MutationInfo{
+			simContact("5511900000004", "save"), simContact("5511900000005", "save")}},
+		check: func(t *testing.T, dev *store.Device) {
+			c, err := dev.Contacts.GetContact(context.Background(), types.NewJID("5511900000004", types.DefaultUserServer))
+			if err != nil || c.FullName != "Ana Teste 5511900000004" {
+				t.Fatalf("contact of the lenient patch not in the store: %+v %v", c, err)
+			}
+		},
+	}, {
+		name: appstate.WAPatchRegularHigh, snapshotAt: 3,
+		wantStrict: "failed to verify snapshot: failed to verify patch v3: mismatching LTHash",
+		history: func(srv *simServer, phone *simDevice) {
+			phone.send(t, srv, appstate.BuildMuteAbs(chatA, true, nil))
+			syncAll(t, srv, appstate.WAPatchRegularHigh, phone)
+			phone.send(t, srv, appstate.BuildStar(chatA, chatA, "3EB0AAAA", false, true))
+			syncAll(t, srv, appstate.WAPatchRegularHigh, phone)
+			sendDiverged(t, srv, appstate.WAPatchRegularHigh, appstate.BuildMuteAbs(chatB, true, nil))
+			syncAll(t, srv, appstate.WAPatchRegularHigh, phone)
+			phone.send(t, srv, appstate.BuildMuteAbs(chatA, false, nil))
+			syncAll(t, srv, appstate.WAPatchRegularHigh, phone)
+		},
+		next: appstate.BuildStar(chatA, chatA, "3EB0BBBB", false, true),
+		check: func(t *testing.T, dev *store.Device) {
+			s, err := dev.ChatSettings.GetChatSettings(context.Background(), chatB)
+			if err != nil || s.MutedUntil.IsZero() {
+				t.Fatalf("mute of the lenient patch not in the store: %+v %v", s, err)
+			}
+		},
+	}}
+	for _, tc := range cases {
+		t.Run(string(tc.name), func(t *testing.T) {
+			srv := &simServer{patches: map[appstate.WAPatchName][]*waServerSync.SyncdPatch{},
+				snapshotAt: map[appstate.WAPatchName]uint64{tc.name: tc.snapshotAt}, pageSize: 1}
+			phone := newSimDevice("whatsapp-web")
+			phone.tolerant = true
+			tc.history(srv, phone)
+
+			// A brand-new LiteZap device: whatsmeow's strict full sync fails like the device.
+			lz := newSQLSimDevice(t, "litezap")
+			err := lz.strictFullSync(srv, tc.name)
+			if !errors.Is(err, appstate.ErrMismatchingLTHash) || !strings.Contains(err.Error(), tc.wantStrict) {
+				t.Fatalf("strict full sync = %v, want %q", err, tc.wantStrict)
+			}
+			// It also fails again from a clean state (a fresh pairing does not help).
+			if err := lz.strictFullSync(srv, tc.name); !errors.Is(err, appstate.ErrMismatchingLTHash) {
+				t.Fatalf("second strict full sync = %v", err)
+			}
+
+			var logs bytes.Buffer
+			res, err := lz.lenientResync(t, srv, tc.name, &logs)
+			if err != nil {
+				t.Fatalf("lenient resync: %v", err)
+			}
+			if fmt.Sprint(res.skipped) != "[3]" || res.state.Version != 4 {
+				t.Fatalf("lenient result: skipped %v, v%d", res.skipped, res.state.Version)
+			}
+			if l := logs.String(); !strings.Contains(l, "level=WARN") || !strings.Contains(l, "accepted unverifiable historical patch") ||
+				!strings.Contains(l, "collection="+string(tc.name)) || !strings.Contains(l, "version=3") {
+				t.Fatalf("log = %s", l)
+			}
+			sameView(t, tc.name, phone, lz)
+			tc.check(t, lz.dev)
+
+			// Back to strict: the phone's next patch verifies on LiteZap with every MAC on.
+			phone.send(t, srv, tc.next)
+			if err := phone.sync(srv, tc.name); err != nil {
+				t.Fatal(err)
+			}
+			if err := lz.sync(srv, tc.name); err != nil {
+				t.Fatalf("strict sync after the lenient resync: %v", err)
+			}
+			sameView(t, tc.name, phone, lz)
+		})
+	}
+}
+
+// The lenient decode relaxes only the LT-hash: a patch whose mutation content MAC or
+// whose patch MAC is wrong is still refused, as is a history with too many bad patches.
+func TestAppStateSimLenientRefusesBadMACs(t *testing.T) {
+	name := appstate.WAPatchRegularHigh
+	chat := types.NewJID("5511900000001", types.DefaultUserServer)
+	build := func() *simServer {
+		srv := &simServer{patches: map[appstate.WAPatchName][]*waServerSync.SyncdPatch{}}
+		phone := newSimDevice("phone")
+		phone.send(t, srv, appstate.BuildMuteAbs(chat, true, nil))
+		sendDiverged(t, srv, name, appstate.BuildMuteAbs(chat, false, nil))
+		return srv
+	}
+	tamper := map[string]func(p *waServerSync.SyncdPatch){
+		"content MAC": func(p *waServerSync.SyncdPatch) { p.Mutations[0].Record.Value.Blob[20] ^= 1 },
+		"index MAC":   func(p *waServerSync.SyncdPatch) { p.Mutations[0].Record.Index.Blob[0] ^= 1 },
+		"patch MAC":   func(p *waServerSync.SyncdPatch) { p.PatchMAC[0] ^= 1 },
+	}
+	want := map[string]error{"content MAC": appstate.ErrMismatchingContentMAC, "index MAC": appstate.ErrMismatchingIndexMAC, "patch MAC": appstate.ErrMismatchingPatchMAC}
+	for what, f := range tamper {
+		srv := build()
+		f(srv.patches[name][1])
+		lz := newSimDevice("litezap")
+		_, err := lz.lenientResync(t, srv, name, io.Discard)
+		if !errors.Is(err, want[what]) || !strings.Contains(err.Error(), "not accepted leniently") {
+			t.Fatalf("%s: lenient = %v", what, err)
+		}
+	}
+
+	// More unverifiable patches than maxLenientPatches: refused.
+	srv := &simServer{patches: map[appstate.WAPatchName][]*waServerSync.SyncdPatch{}}
+	for i := 0; i <= maxLenientPatches; i++ {
+		sendDiverged(t, srv, name, appstate.BuildMuteAbs(chat, i%2 == 0, nil))
+	}
+	if _, err := newSimDevice("litezap").lenientResync(t, srv, name, io.Discard); err == nil || !strings.Contains(err.Error(), "the limit") {
+		t.Fatalf("too many = %v", err)
+	}
+}
+
+// The reset before a full resync drops the version, the hash and the mutation MACs on
+// whatsmeow's SQL store (ON DELETE CASCADE with foreign keys on, as run.go opens it).
+func TestResetAppStateLocalOnSQLStore(t *testing.T) {
+	ctx := context.Background()
+	lz := newSQLSimDevice(t, "litezap")
+	name := appstate.WAPatchCriticalUnblockLow
+	s := lz.dev.AppState
+	idx := bytes.Repeat([]byte{7}, 32)
+	if err := s.PutAppStateVersion(ctx, string(name), 48, [128]byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutAppStateMutationMACs(ctx, string(name), 48, []store.AppStateMutationMAC{{IndexMAC: idx, ValueMAC: bytes.Repeat([]byte{8}, 32)}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := resetAppStateLocal(ctx, s, name); err != nil {
+		t.Fatal(err)
+	}
+	if v, h, _ := s.GetAppStateVersion(ctx, string(name)); v != 0 || h != ([128]byte{}) {
+		t.Fatalf("after reset: v%d", v)
+	}
+	if mac, err := s.GetAppStateMutationMAC(ctx, string(name), idx); err != nil || mac != nil {
+		t.Fatalf("mutation MAC survived the reset: %x %v", mac, err)
+	}
+	// Resetting an empty collection is fine.
+	if err := resetAppStateLocal(ctx, s, appstate.WAPatchRegular); err != nil {
+		t.Fatal(err)
+	}
 }

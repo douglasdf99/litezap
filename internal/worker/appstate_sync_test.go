@@ -28,6 +28,8 @@ type fakeAppState struct {
 	versions map[appstate.WAPatchName]uint64
 	sendErrs []error // returned in order by send
 	fullErr  map[appstate.WAPatchName]error
+	lenient  map[appstate.WAPatchName]error // lenientResync result (nil: ok, skipping v49)
+	fetchErr error
 	timers   []func()
 	delays   []time.Duration
 	now      time.Time
@@ -49,8 +51,26 @@ func newAppStateAdapter(t *testing.T) (*Whatsmeow, *fakeAppState) {
 	t.Helper()
 	own := types.NewJID("5511900000000", types.DefaultUserServer)
 	w := NewWhatsmeow(whatsmeow.NewClient(&store.Device{ID: &own}, nil), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	f := &fakeAppState{versions: map[appstate.WAPatchName]uint64{}, fullErr: map[appstate.WAPatchName]error{}, now: time.Unix(1_800_000_000, 0)}
+	f := &fakeAppState{versions: map[appstate.WAPatchName]uint64{}, fullErr: map[appstate.WAPatchName]error{},
+		lenient: map[appstate.WAPatchName]error{}, now: time.Unix(1_800_000_000, 0)}
 	w.ash = appStateHooks{
+		reset: func(_ context.Context, n appstate.WAPatchName) error {
+			f.record("reset:" + string(n))
+			f.mu.Lock()
+			f.versions[n] = 0
+			f.mu.Unlock()
+			return nil
+		},
+		lenientResync: func(_ context.Context, n appstate.WAPatchName) (lenientResult, error) {
+			f.record("lenient:" + string(n))
+			if err := f.lenient[n]; err != nil {
+				return lenientResult{}, err
+			}
+			f.mu.Lock()
+			f.versions[n] = 52
+			f.mu.Unlock()
+			return lenientResult{state: appstate.HashState{Version: 52}, skipped: []uint64{49}}, nil
+		},
 		fullResync: func(_ context.Context, n appstate.WAPatchName) error {
 			f.record("full:" + string(n))
 			if err := f.fullErr[n]; err != nil {
@@ -61,7 +81,12 @@ func newAppStateAdapter(t *testing.T) (*Whatsmeow, *fakeAppState) {
 			f.mu.Unlock()
 			return nil
 		},
-		fetch: func(_ context.Context, n appstate.WAPatchName) error { f.record("fetch:" + string(n)); return nil },
+		fetch: func(_ context.Context, n appstate.WAPatchName) error {
+			f.record("fetch:" + string(n))
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			return f.fetchErr
+		},
 		send: func(_ context.Context, p appstate.PatchInfo) error {
 			f.record("send:" + string(p.Type))
 			f.mu.Lock()
@@ -134,7 +159,7 @@ func TestAppStateVerifyErrorSchedulesResyncWithLimit(t *testing.T) {
 		t.Fatal("collection not marked as failed")
 	}
 	f.timers[0]()
-	if got := f.Calls(); got != "full:critical_unblock_low" || w.appStateFailed(name) != "" {
+	if got := f.Calls(); got != "reset:critical_unblock_low,full:critical_unblock_low" || w.appStateFailed(name) != "" {
 		t.Fatalf("after the timer: calls %s, failed %q", got, w.appStateFailed(name))
 	}
 
@@ -179,13 +204,14 @@ func TestAppStateWriteResyncsDivergedCollectionFirst(t *testing.T) {
 	if err := w.sendAppStateSafe(context.Background(), clear); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.Calls(); got != "full:regular_high,send:regular_high" {
+	if got := f.Calls(); got != "reset:regular_high,full:regular_high,send:regular_high" {
 		t.Fatalf("calls = %s", got)
 	}
 
 	// The resync fails: nothing is sent.
 	f.calls = nil
 	f.fullErr[name] = lthashErr(35)
+	f.lenient[name] = fmt.Errorf("mutation #1: %w", appstate.ErrMismatchingContentMAC)
 	w.noteAppStateErr(name, lthashErr(36))
 	err := w.sendAppStateSafe(context.Background(), clear)
 	if st, _ := status.FromError(err); st.Code() != codes.FailedPrecondition || !strings.HasPrefix(st.Message(), "app_state_out_of_sync:") {
@@ -227,7 +253,7 @@ func TestResyncAppStateReportsEachCollection(t *testing.T) {
 	for _, r := range res {
 		byName[r.Name] = r
 	}
-	if r := byName["critical_unblock_low"]; !r.Ok || r.VersionBefore != 48 || r.VersionAfter != 58 || r.Error != "" {
+	if r := byName["critical_unblock_low"]; !r.Ok || r.VersionBefore != 48 || r.VersionAfter != 10 || r.Error != "" || r.Lenient {
 		t.Fatalf("critical_unblock_low = %+v", r)
 	}
 	if r := byName["regular_high"]; r.Ok || r.Error != "boom" {
@@ -242,7 +268,7 @@ func TestResyncAppStateReportsEachCollection(t *testing.T) {
 	if _, err := w.ResyncAppState(context.Background(), []string{"regular", "regular", "critical_block"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.Calls(); got != "full:regular,full:critical_block" {
+	if got := f.Calls(); got != "reset:regular,full:regular,reset:critical_block,full:critical_block" {
 		t.Fatalf("calls = %s", got)
 	}
 	if _, err := w.ResyncAppState(context.Background(), []string{"contacts"}); status.Code(err) != codes.InvalidArgument {
@@ -251,5 +277,61 @@ func TestResyncAppStateReportsEachCollection(t *testing.T) {
 	w.ash.connected = func() bool { return false }
 	if _, err := w.ResyncAppState(context.Background(), nil); status.Code(err) != codes.Unavailable {
 		t.Fatalf("disconnected = %v", err)
+	}
+}
+
+// A full resync starts from v0: the local copy is reset before the fetch, so a resync
+// that fails part way reports where the fetch stopped, not the version it started from.
+// When the strict fetch fails on the LT-hash of the server's history (and only then),
+// the lenient decode runs, then a strict incremental sync confirms it; the result says
+// lenient with the skipped versions.
+func TestResyncFallsBackToLenientOnlyOnLTHash(t *testing.T) {
+	w, f := newAppStateAdapter(t)
+	cul, rh, reg := appstate.WAPatchCriticalUnblockLow, appstate.WAPatchRegularHigh, appstate.WAPatchRegular
+	f.versions[cul], f.versions[rh] = 48, 40
+	f.fullErr[cul] = lthashErr(49)
+	f.fullErr[rh] = fmt.Errorf("failed to decode app state regular_high patches: %w", fmt.Errorf("failed to verify snapshot: %w",
+		fmt.Errorf("failed to verify patch v41: %w", appstate.ErrMismatchingLTHash)))
+	f.fullErr[reg] = fmt.Errorf("failed to verify patch v3: %w", appstate.ErrMismatchingPatchMAC)
+
+	res, err := w.ResyncAppState(context.Background(), []string{"critical_unblock_low", "regular_high", "regular"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Calls(); got != "reset:critical_unblock_low,full:critical_unblock_low,lenient:critical_unblock_low,fetch:critical_unblock_low,"+
+		"reset:regular_high,full:regular_high,lenient:regular_high,fetch:regular_high,reset:regular,full:regular" {
+		t.Fatalf("calls = %s", got)
+	}
+	for _, r := range res[:2] {
+		if !r.Ok || !r.Lenient || fmt.Sprint(r.SkippedPatchVersions) != "[49]" || r.VersionAfter != 52 || r.Error != "" {
+			t.Fatalf("%s = %+v", r.Name, r)
+		}
+	}
+	if r := res[0]; r.VersionBefore != 48 {
+		t.Fatalf("version_before = %d", r.VersionBefore)
+	}
+	// A patch MAC mismatch is not the diverged-sender case: no leniency.
+	if r := res[2]; r.Ok || r.Lenient || !strings.Contains(r.Error, "mismatching patch MAC") {
+		t.Fatalf("regular = %+v", r)
+	}
+	if w.appStateFailed(cul) != "" || w.appStateFailed(rh) != "" {
+		t.Fatal("lenient resync did not mark the collections healthy")
+	}
+
+	// The strict sync after the lenient decode fails: the resync fails, lenient reported.
+	f.calls, f.fetchErr = nil, lthashErr(53)
+	res, _ = w.ResyncAppState(context.Background(), []string{"critical_unblock_low"})
+	if r := res[0]; r.Ok || !r.Lenient || !strings.Contains(r.Error, "strict sync after the lenient resync") {
+		t.Fatalf("after confirm failure = %+v", r)
+	}
+	if w.appStateFailed(cul) == "" {
+		t.Fatal("collection not marked failed")
+	}
+	// The lenient decode refuses (bad mutation MAC): the resync fails.
+	f.calls, f.fetchErr = nil, nil
+	f.lenient[cul] = fmt.Errorf("mutation #1: %w", appstate.ErrMismatchingIndexMAC)
+	res, _ = w.ResyncAppState(context.Background(), []string{"critical_unblock_low"})
+	if r := res[0]; r.Ok || !r.Lenient || !strings.Contains(r.Error, "lenient resync") || strings.Contains(f.Calls(), "fetch:") {
+		t.Fatalf("lenient refused = %+v (calls %s)", r, f.Calls())
 	}
 }

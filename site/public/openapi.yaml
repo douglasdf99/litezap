@@ -541,7 +541,11 @@ paths:
                         version_before: { type: integer }
                         version_after: { type: integer }
                         error: { type: string }
-              example: { ok: true, collections: [{ name: critical_unblock_low, ok: true, version_before: 48, version_after: 52 }] }
+                        lenient:
+                          type: boolean
+                          description: A ressincronização estrita falhou num patch antigo do servidor cujo LT-hash não confere e a coleção foi aceita sem essa verificação nas versões de `skipped_patch_versions` (as mutações delas foram verificadas). As sincronizações seguintes voltam a ser estritas.
+                        skipped_patch_versions: { type: array, items: { type: integer } }
+              example: { ok: true, collections: [{ name: critical_unblock_low, ok: true, version_before: 48, version_after: 52, lenient: true, skipped_patch_versions: [49] }] }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }

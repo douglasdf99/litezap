@@ -4358,8 +4358,12 @@ type AppStateCollectionResult struct {
 	VersionBefore uint64                 `protobuf:"varint,3,opt,name=version_before,json=versionBefore,proto3" json:"version_before,omitempty"`
 	VersionAfter  uint64                 `protobuf:"varint,4,opt,name=version_after,json=versionAfter,proto3" json:"version_after,omitempty"`
 	Error         string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// lenient: the strict resync failed on a historical patch whose LT-hash does not
+	// verify and the collection was accepted with that check skipped (resync only).
+	Lenient              bool     `protobuf:"varint,6,opt,name=lenient,proto3" json:"lenient,omitempty"`
+	SkippedPatchVersions []uint64 `protobuf:"varint,7,rep,packed,name=skipped_patch_versions,json=skippedPatchVersions,proto3" json:"skipped_patch_versions,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *AppStateCollectionResult) Reset() {
@@ -4425,6 +4429,20 @@ func (x *AppStateCollectionResult) GetError() string {
 		return x.Error
 	}
 	return ""
+}
+
+func (x *AppStateCollectionResult) GetLenient() bool {
+	if x != nil {
+		return x.Lenient
+	}
+	return false
+}
+
+func (x *AppStateCollectionResult) GetSkippedPatchVersions() []uint64 {
+	if x != nil {
+		return x.SkippedPatchVersions
+	}
+	return nil
 }
 
 type ResyncAppStateResponse struct {
@@ -5779,13 +5797,15 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x03jid\x18\x01 \x01(\tR\x03jid\x12\x10\n" +
 	"\x03lid\x18\x02 \x01(\tR\x03lid\"9\n" +
 	"\x15ResyncAppStateRequest\x12 \n" +
-	"\vcollections\x18\x01 \x03(\tR\vcollections\"\xa0\x01\n" +
+	"\vcollections\x18\x01 \x03(\tR\vcollections\"\xf0\x01\n" +
 	"\x18AppStateCollectionResult\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x0e\n" +
 	"\x02ok\x18\x02 \x01(\bR\x02ok\x12%\n" +
 	"\x0eversion_before\x18\x03 \x01(\x04R\rversionBefore\x12#\n" +
 	"\rversion_after\x18\x04 \x01(\x04R\fversionAfter\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error\"_\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\x12\x18\n" +
+	"\alenient\x18\x06 \x01(\bR\alenient\x124\n" +
+	"\x16skipped_patch_versions\x18\a \x03(\x04R\x14skippedPatchVersions\"_\n" +
 	"\x16ResyncAppStateResponse\x12E\n" +
 	"\vcollections\x18\x01 \x03(\v2#.worker.v1.AppStateCollectionResultR\vcollections\"F\n" +
 	"\x18GetProfilePictureRequest\x12\x10\n" +

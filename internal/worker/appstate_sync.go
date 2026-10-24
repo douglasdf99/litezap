@@ -31,7 +31,9 @@ import (
 //   - schedules a full resync, with backoff and at most maxAutoResyncsPerHour per
 //     collection, when a sync fails to verify; and runs one before a write on a
 //     collection whose last sync failed;
-//   - serves the manual resync (ResyncAppState).
+//   - serves the manual resync (ResyncAppState);
+//   - in a resync only, falls back to the lenient decode of appstate_lenient.go when the
+//     server's history holds a patch whose LT-hash does not verify.
 
 // appStateCollections are the five collections, in the order WhatsApp syncs them.
 var appStateCollections = []appstate.WAPatchName{
@@ -60,17 +62,29 @@ type appStateGuard struct {
 
 // appStateHooks are the whatsmeow calls of this file; nil fields default to the client.
 type appStateHooks struct {
+	reset      func(context.Context, appstate.WAPatchName) error
 	fullResync func(context.Context, appstate.WAPatchName) error
-	fetch      func(context.Context, appstate.WAPatchName) error
-	send       func(context.Context, appstate.PatchInfo) error // no whatsmeow retry
-	version    func(context.Context, appstate.WAPatchName) (uint64, error)
-	connected  func() bool
-	afterFunc  func(time.Duration, func())
-	now        func() time.Time
+	// lenientResync is the full resync that accepts historical patches whose only
+	// failure is the LT-hash check (appstate_lenient.go); resyncs only.
+	lenientResync func(context.Context, appstate.WAPatchName) (lenientResult, error)
+	fetch         func(context.Context, appstate.WAPatchName) error
+	send          func(context.Context, appstate.PatchInfo) error // no whatsmeow retry
+	version       func(context.Context, appstate.WAPatchName) (uint64, error)
+	connected     func() bool
+	afterFunc     func(time.Duration, func())
+	now           func() time.Time
 }
 
 func (w *Whatsmeow) appStateHooks() appStateHooks {
 	h := w.ash
+	if h.reset == nil {
+		h.reset = func(ctx context.Context, name appstate.WAPatchName) error {
+			return resetAppStateLocal(ctx, w.cli.Store.AppState, name)
+		}
+	}
+	if h.lenientResync == nil {
+		h.lenientResync = w.lenientResync
+	}
 	if h.fullResync == nil {
 		h.fullResync = func(ctx context.Context, name appstate.WAPatchName) error {
 			return w.cli.FetchAppState(ctx, name, true, false)
@@ -242,23 +256,56 @@ func (w *Whatsmeow) autoResync(name appstate.WAPatchName) {
 	defer cancel()
 	g.writeMu.Lock()
 	defer g.writeMu.Unlock()
-	_, _, _ = w.resyncLocked(ctx, name, "auto")
+	_, _ = w.resyncLocked(ctx, name, "auto")
 }
 
-// resyncLocked runs a full resync of one collection; the caller holds asg.writeMu.
-func (w *Whatsmeow) resyncLocked(ctx context.Context, name appstate.WAPatchName, why string) (before, after uint64, err error) {
+// resyncOutcome is the result of the full resync of one collection.
+type resyncOutcome struct {
+	before, after uint64
+	lenient       bool
+	skipped       []uint64 // versions accepted without the LT-hash check
+}
+
+// resyncLocked runs a full resync of one collection; the caller holds asg.writeMu. The
+// local copy is reset to v0 first (version, hash and MACs). When the strict fetch fails
+// on the LT-hash of the server's history, the collection is fetched again with the
+// lenient decode, and then once more incrementally (strict) to confirm.
+func (w *Whatsmeow) resyncLocked(ctx context.Context, name appstate.WAPatchName, why string) (out resyncOutcome, err error) {
 	h := w.appStateHooks()
-	before, _ = h.version(ctx, name)
-	err = h.fullResync(ctx, name)
-	after, _ = h.version(ctx, name)
-	if err != nil {
-		w.log.Error("app state full resync failed", "collection", string(name), "trigger", why, "version_before", before, "error", err)
-		w.noteAppStateErr(name, err)
-		return before, after, err
+	out.before, _ = h.version(ctx, name)
+	defer func() {
+		out.after, _ = h.version(ctx, name)
+		if err != nil {
+			w.log.Error("app state full resync failed", "collection", string(name), "trigger", why,
+				"version_before", out.before, "version_after", out.after, "lenient", out.lenient, "error", err)
+			w.noteAppStateErr(name, err)
+			return
+		}
+		w.log.Info("app state full resync done", "collection", string(name), "trigger", why,
+			"version_before", out.before, "version_after", out.after, "lenient", out.lenient, "skipped_patch_versions", out.skipped)
+		w.markAppStateHealthy(name)
+	}()
+	if err = h.reset(ctx, name); err != nil {
+		return out, err
 	}
-	w.log.Info("app state full resync done", "collection", string(name), "trigger", why, "version_before", before, "version_after", after)
-	w.markAppStateHealthy(name)
-	return before, after, nil
+	err = h.fullResync(ctx, name)
+	if err == nil || !errors.Is(err, appstate.ErrMismatchingLTHash) {
+		return out, err
+	}
+	w.log.Warn("app state strict resync failed on the LT-hash of the server's history; retrying with the lenient decode",
+		"collection", string(name), "trigger", why, "error", err)
+	out.lenient = true
+	res, err := h.lenientResync(ctx, name)
+	out.skipped = res.skipped
+	if err != nil {
+		return out, fmt.Errorf("lenient resync: %w", err)
+	}
+	// Incremental syncs are whatsmeow's own and strict: one now confirms the state the
+	// lenient decode left verifies the patches after it (and fetches any newer ones).
+	if err = h.fetch(ctx, name); err != nil {
+		return out, fmt.Errorf("strict sync after the lenient resync: %w", err)
+	}
+	return out, nil
 }
 
 // ensureAppStateSyncedLocked resyncs a collection whose last sync failed before a write
@@ -273,7 +320,7 @@ func (w *Whatsmeow) ensureAppStateSyncedLocked(ctx context.Context, name appstat
 		return grpcErr(codes.FailedPrecondition, "app_state_out_of_sync", fmt.Sprintf(
 			"the local copy of the app state %s is out of sync and the automatic resyncs of the hour were spent; run POST /v1/instances/{id}/app-state/resync", name))
 	}
-	if _, _, err := w.resyncLocked(ctx, name, "before_write"); err != nil {
+	if _, err := w.resyncLocked(ctx, name, "before_write"); err != nil {
 		return grpcErr(codes.FailedPrecondition, "app_state_out_of_sync", fmt.Sprintf(
 			"the local copy of the app state %s is out of sync and a full resync failed (%v); run POST /v1/instances/{id}/app-state/resync", name, err))
 	}
@@ -337,9 +384,10 @@ func (w *Whatsmeow) ResyncAppState(ctx context.Context, names []string) ([]*work
 			continue
 		}
 		w.asg.writeMu.Lock()
-		before, after, err := w.resyncLocked(ctx, name, "manual")
+		o, err := w.resyncLocked(ctx, name, "manual")
 		w.asg.writeMu.Unlock()
-		r.VersionBefore, r.VersionAfter, r.Ok = before, after, err == nil
+		r.VersionBefore, r.VersionAfter, r.Ok = o.before, o.after, err == nil
+		r.Lenient, r.SkippedPatchVersions = o.lenient, o.skipped
 		if err != nil {
 			r.Error = err.Error()
 		}

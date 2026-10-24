@@ -103,8 +103,34 @@ traz, por coleção, `ok`, `version_before`, `version_after` e `error`:
   { "name": "regular_high", "ok": true, "version_before": 34, "version_after": 37 } ] }
 ```
 
-A ressincronização apaga só a cópia local (versão, hash e MACs) e baixa a coleção de novo do WhatsApp. O estado
-que volta é gravado sem disparar um `chat.updated` por conversa.
+A ressincronização apaga só a cópia local (versão, hash e MACs, voltando à versão 0) e baixa a coleção de novo do
+WhatsApp. O estado que volta é gravado sem disparar um `chat.updated` por conversa. `version_before` é a versão
+local antes do reparo: num aparelho recém-pareado ela já pode ser alta (a primeira sincronização parou no patch
+que não conferiu, por exemplo 48 com erro no v49).
+
+**Histórico do servidor que não confere (`lenient`).** Às vezes o problema não está na cópia local: o servidor
+guarda um patch antigo cujo MAC de snapshot não bate com o LT-hash das próprias mutações, porque foi enviado por um
+aparelho que estava com a cópia divergente (provavelmente uma versão anterior do LiteZap, na corrida do `409`). O
+sinal é que **até um aparelho recém-pareado** falha logo na primeira sincronização, sempre na mesma versão
+(`failed to verify patch v49: mismatching LTHash`, ou `failed to verify snapshot: failed to verify patch v41:
+mismatching LTHash`), enquanto o WhatsApp Web oficial e o celular sincronizam normalmente. O whatsmeow recusa esse
+histórico para sempre.
+
+Só na ressincronização (automática ou manual), quando a busca estrita falha nesse LT-hash, o LiteZap baixa a
+coleção de novo e aceita o patch (ou snapshot) que só falha nessa conferência, desde que as mutações dele confiram
+(MAC do conteúdo e do índice) e o MAC do patch também. O estado gravado é o hash calculado das mutações, o mesmo dos
+outros aparelhos, então os patches seguintes voltam a conferir normalmente: logo depois o LiteZap faz uma
+sincronização estrita para confirmar, e as sincronizações do dia a dia continuam estritas. O log mostra um `WARN`
+`app state: accepted unverifiable historical patch` com `collection` e `version`, e a resposta do resync traz
+`"lenient": true` e `"skipped_patch_versions"`:
+
+```json
+{ "name": "critical_unblock_low", "ok": true, "version_before": 48, "version_after": 52,
+  "lenient": true, "skipped_patch_versions": [49] }
+```
+
+Isso só lê do servidor e atualiza a cópia local; nada é enviado. Um patch com MAC de mutação ou de patch errado
+continua recusado, assim como mais de 16 patches sem conferência numa coleção.
 
 **Conferir.** Faça uma ação simples, por exemplo fixar e desafixar uma conversa
 (`PATCH /chats/{jid}` com `{"pinned": true}` e depois `{"pinned": false}`), e confira no log que não aparecem

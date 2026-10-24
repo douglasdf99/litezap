@@ -543,6 +543,10 @@ message AppStateCollectionResult {
   uint64 version_before = 3;
   uint64 version_after = 4;
   string error = 5;
+  // lenient: the strict resync failed on a historical patch whose LT-hash does not
+  // verify and the collection was accepted with that check skipped (resync only).
+  bool lenient = 6;
+  repeated uint64 skipped_patch_versions = 7;
 }
 message ResyncAppStateResponse {
   repeated AppStateCollectionResult collections = 1;

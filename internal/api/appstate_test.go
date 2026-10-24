@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -53,8 +54,12 @@ func TestAppStateResync(t *testing.T) {
 		t.Fatalf("resync all = %d %v", code, v)
 	}
 	first := cols[0].(map[string]any)
-	if first["name"] != "critical_block" || first["ok"] != true || first["version_before"] != float64(7) || first["version_after"] != float64(9) {
+	if first["name"] != "critical_block" || first["ok"] != true || first["version_before"] != float64(7) || first["version_after"] != float64(9) ||
+		first["lenient"] != false || first["skipped_patch_versions"] != nil {
 		t.Fatalf("first = %v", first)
+	}
+	if rh := cols[3].(map[string]any); rh["name"] != "regular_high" || rh["lenient"] != true || fmt.Sprint(rh["skipped_patch_versions"]) != "[8]" {
+		t.Fatalf("regular_high = %v", rh)
 	}
 	code, v = e.do("POST", path, admin, `{"collections":["critical_unblock_low","regular_high"]}`)
 	if code != 200 || len(v["collections"].([]any)) != 2 {
