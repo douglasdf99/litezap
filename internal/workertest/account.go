@@ -39,6 +39,8 @@ type fakeAccount struct {
 	echo     bool // ChatAction emits the matching ChatUpdate, like whatsmeow's echo
 	// contactActs are the ContactAction requests (CON-2).
 	contactActs []*workerv1.ContactActionRequest
+	// resyncs are the app state collections resynced (ResyncAppState).
+	resyncs []string
 }
 
 // SetAccountErr makes every Account method fail with err (nil restores answers).
@@ -211,6 +213,42 @@ func (f *FakeWA) ContactAction(_ context.Context, req *workerv1.ContactActionReq
 	}
 	f.contacts = kept
 	return &workerv1.ContactActionResponse{Jid: req.Jid}, nil
+}
+
+var _ worker.AppStateResyncer = (*FakeWA)(nil)
+
+// ResyncAppState answers a full resync of each collection (all five when empty), each
+// one going from version 7 to 9; unknown names answer InvalidArgument like the worker.
+func (f *FakeWA) ResyncAppState(_ context.Context, names []string) ([]*workerv1.AppStateCollectionResult, error) {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	if f.acct.err != nil {
+		return nil, f.acct.err
+	}
+	all := []string{"critical_block", "critical_unblock_low", "regular_low", "regular_high", "regular"}
+	if len(names) == 0 {
+		names = all
+	}
+	var out []*workerv1.AppStateCollectionResult
+	for _, n := range names {
+		known := false
+		for _, a := range all {
+			known = known || a == n
+		}
+		if !known {
+			return nil, status.Error(codes.InvalidArgument, "validation_failed: unknown app state collection")
+		}
+		out = append(out, &workerv1.AppStateCollectionResult{Name: n, Ok: true, VersionBefore: 7, VersionAfter: 9})
+	}
+	f.acct.resyncs = append(f.acct.resyncs, names...)
+	return out, nil
+}
+
+// AppStateResyncs returns the collections resynced so far.
+func (f *FakeWA) AppStateResyncs() []string {
+	f.msgMu.Lock()
+	defer f.msgMu.Unlock()
+	return append([]string(nil), f.acct.resyncs...)
 }
 
 func (f *FakeWA) ChatSettings(_ context.Context, chat string) (*workerv1.GetChatSettingsResponse, error) {

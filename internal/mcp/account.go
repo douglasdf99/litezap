@@ -345,6 +345,12 @@ func (t *tools) registerAccount(s *sdk.Server) {
 		v, err := ab.SaveContact(ctx, id, service.AddressBookInput{Phone: in.Phone, FirstName: in.FirstName, LastName: in.LastName, SaveOnPhone: in.SaveOnPhone})
 		return nil, v, err
 	})
+	// Removing a contact and clearing a chat are app state changes LiteZap builds by hand,
+	// off until revalidated on a real device (experimental_app_state_writes): hidden when
+	// the backend knows they are off (in process); over REST they answer feature_disabled.
+	if appStateWritesOff(t.b) {
+		return
+	}
 	add(t, s, &sdk.Tool{
 		Name:  "remove_contact",
 		Title: "Remove a contact from the address book",
@@ -379,6 +385,21 @@ func (t *tools) registerAccount(s *sdk.Server) {
 		v, err := ab.ClearChat(ctx, id, in.Chat, service.ClearInput{KeepStarred: in.KeepStarred})
 		return nil, v, err
 	})
+}
+
+// appStateWritesGate is implemented by backends (and services) that know whether the
+// hand-built app state writes are enabled.
+type appStateWritesGate interface{ AppStateWritesEnabled() bool }
+
+func appStateWritesOff(b any) bool {
+	g, ok := b.(appStateWritesGate)
+	return ok && !g.AppStateWritesEnabled()
+}
+
+// AppStateWritesEnabled reports the service's experimental_app_state_writes; true when
+// the service does not say (the API then decides).
+func (l *Local) AppStateWritesEnabled() bool {
+	return !appStateWritesOff(l.Account)
 }
 
 type saveContactInput struct {

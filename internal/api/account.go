@@ -21,6 +21,7 @@ type AccountService interface {
 	ClearChat(ctx context.Context, instanceID, chat string, in service.ClearInput) (service.ClearResult, error)
 	SaveContact(ctx context.Context, instanceID string, in service.AddressBookInput) (service.SavedContact, error)
 	RemoveContact(ctx context.Context, instanceID, jid string) error
+	ResyncAppState(ctx context.Context, instanceID string, in service.AppStateResyncInput) (service.AppStateResyncResult, error)
 	StarMessage(ctx context.Context, instanceID, id string, starred bool) (service.MessageView, error)
 	ContactPicture(ctx context.Context, instanceID, jid string, preview bool) (service.PictureView, error)
 	ContactPictureFile(ctx context.Context, instanceID, jid string, preview bool) (service.MediaFile, error)
@@ -60,6 +61,27 @@ func (s *server) accountRoutes(r chi.Router) {
 	r.Delete("/profile/picture", s.deleteProfilePicture)
 	r.Get("/privacy", s.getPrivacy)
 	r.Patch("/privacy", s.patchPrivacy)
+	// Repair of the local app state copy (v0.1.1): admin only, it re-downloads the chat
+	// state of the whole account.
+	r.With(s.requireAdmin).Post("/app-state/resync", s.resyncAppState)
+}
+
+// resyncAppState runs a full app state resync in the instance's worker. The body is
+// optional ({"collections": [...]}; default all five).
+func (s *server) resyncAppState(w http.ResponseWriter, r *http.Request) {
+	var in service.AppStateResyncInput
+	if r.ContentLength != 0 {
+		if err := decodeStrict(w, r, &in); err != nil {
+			s.writeErr(w, err)
+			return
+		}
+	}
+	v, err := s.opt.Account.ResyncAppState(r.Context(), chi.URLParam(r, "id"), in)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
 }
 
 // decodeStrict decodes a JSON body rejecting unknown fields (typos in a PATCH would

@@ -28,6 +28,8 @@ var hints = map[string]string{
 	"shutting_down":          "The LiteZap server is restarting; try again in a moment.",
 	"server_unreachable":     "Start `litezap serve` (or fix LITEZAP_URL) and try again.",
 	"app_not_running":        "Ask the user to open the LiteZap app on this computer, then try again.",
+	"feature_disabled":       "This action is turned off on this LiteZap server (experimental_app_state_writes). Tell the user; do not retry or work around it.",
+	"app_state_out_of_sync":  "The chat state of this number is being resynced with WhatsApp. Tell the user; an admin can run POST /v1/instances/{id}/app-state/resync. Do not retry in a loop.",
 }
 
 // sendHints replace hints for errors of send_message/send_media: there a timeout or a

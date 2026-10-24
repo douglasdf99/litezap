@@ -64,6 +64,58 @@ Use o `jid` que vem de `GET /chats` ou `check-numbers`. No Brasil, o WhatsApp po
 - `event: error` com `slow_consumer`: o cliente ficou mais de 256 eventos atrasado. Processe mais rápido e reconecte.
 - Atrás de proxy reverso: desligue buffering e aumente o timeout de leitura.
 
+## App state fora de sincronia (`mismatching LTHash`)
+
+O estado das conversas (arquivar, fixar, silenciar, lidas, favoritas, limpar, apagar), a agenda e as etiquetas
+ficam no *app state*: cinco coleções (`critical_block`, `critical_unblock_low`, `regular_low`, `regular_high`,
+`regular`) replicadas em cada aparelho da conta. Cada aparelho confere cada mudança contra um hash (LT-hash) da
+sua cópia. Se a cópia local de uma coleção diverge, toda mudança seguinte dela falha. Sintomas no log do
+`serve`:
+
+- `Failed to sync app state after notification: failed to decode app state critical_unblock_low patches: failed to verify patch v49: mismatching LTHash`
+- numa ação pela API: `server returned error updating app state (regular_high): <error code="409" text="conflict"/>`,
+  ou a resposta `409 app_state_out_of_sync`.
+
+As mensagens continuam funcionando; o que para é a sincronização do estado das conversas nessa coleção. O
+celular não é afetado.
+
+**Recuperação automática.** Quando o WhatsApp acusa essa divergência, o worker agenda uma ressincronização
+completa da coleção (15s, depois 2min, depois 10min; no máximo 3 por coleção por hora). Antes de uma ação pela
+API numa coleção cuja última sincronização falhou, ele ressincroniza primeiro. As linhas do log são
+`app state out of sync; full resync scheduled` e `app state full resync done` (com `version_before` e
+`version_after`). Esgotadas as tentativas da hora, o log mostra `automatic resync limit reached`.
+
+**Recuperação manual** (token de admin):
+
+```bash
+curl -X POST "$LITEZAP/v1/instances/$ID/app-state/resync" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"collections": ["critical_unblock_low", "regular_high"]}'
+```
+
+Sem corpo, ressincroniza as cinco coleções, uma de cada vez (pode levar alguns segundos por coleção). A resposta
+traz, por coleção, `ok`, `version_before`, `version_after` e `error`:
+
+```json
+{ "ok": true, "collections": [
+  { "name": "critical_unblock_low", "ok": true, "version_before": 48, "version_after": 52 },
+  { "name": "regular_high", "ok": true, "version_before": 34, "version_after": 37 } ] }
+```
+
+A ressincronização apaga só a cópia local (versão, hash e MACs) e baixa a coleção de novo do WhatsApp. O estado
+que volta é gravado sem disparar um `chat.updated` por conversa.
+
+**Conferir.** Faça uma ação simples, por exemplo fixar e desafixar uma conversa
+(`PATCH /chats/{jid}` com `{"pinned": true}` e depois `{"pinned": false}`), e confira no log que não aparecem
+mais `mismatching LTHash` nem `409`. Se a própria ressincronização falhar com `mismatching LTHash` (o retrato
+enviado pelo servidor não confere), mantenha o celular online por alguns minutos e tente de novo; se persistir,
+desconecte e pareie o aparelho de novo.
+
+**Limpar conversa e remover contato** mudam o app state com mutações montadas pelo LiteZap e ficam desligados
+(`403 feature_disabled`) até a revalidação num aparelho real. Para ligar por sua conta e risco:
+`experimental_app_state_writes: true` (ou `LITEZAP_EXPERIMENTAL_APP_STATE_WRITES=true`).
+
 ## Número banido ou restrito
 
 Pare os envios para contatos frios, revise o público e o texto, e leia as [boas práticas](/docs/boas-praticas/). Não

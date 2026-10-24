@@ -21,6 +21,8 @@ de telefone nem tokens. `retryable` diz se vale tentar de novo.
 | `conflict` | 409 | não | `client_message_id` reusado com outro conteúdo; URLs assinadas desativadas (fora de loopback sem `public_url`); reenvio de uma entrega de webhook que não está `failed`. |
 | `instance_not_connected` | 409 | depende | Worker da instância não está rodando (`retryable: true`) ou o número está deslogado (`false`). |
 | `instance_banned` | 409 | não | Número banido. Apague a instância. |
+| `app_state_out_of_sync` | 409 | sim | A cópia local do app state (estado das conversas e agenda) divergiu do WhatsApp; uma ressincronização completa foi agendada. Veja [App state fora de sincronia](/docs/guias/solucao-de-problemas/#app-state-fora-de-sincronia-mismatching-lthash). |
+| `feature_disabled` | 403 | não | Recurso desligado na configuração do servidor (hoje: limpar conversa e remover contato, atrás de `experimental_app_state_writes`). |
 | `instance_not_pairing` | 409 | depende | QR ou código pedidos fora de `qr_pending` (ex.: já conectada). |
 | `media_unavailable` | 410 | não | A mídia recebida expirou no WhatsApp. |
 | `message_expired` | 410 | não | A mensagem não foi enviada antes de `expires_after`. |

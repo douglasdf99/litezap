@@ -121,6 +121,9 @@ func (a *Account) SaveContact(ctx context.Context, instanceID string, in Address
 // RemoveContact removes a contact from the account's address book (the chat and its
 // messages stay; WhatsApp then shows the number or the contact's own name).
 func (a *Account) RemoveContact(ctx context.Context, instanceID, raw string) error {
+	if err := a.requireAppStateWrites("removing a contact"); err != nil {
+		return err
+	}
 	if _, err := a.st().GetInstance(ctx, instanceID); err != nil {
 		return mapErr(err)
 	}

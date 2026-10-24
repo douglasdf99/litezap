@@ -63,6 +63,10 @@ func (w *Whatsmeow) ContactAction(ctx context.Context, req *workerv1.ContactActi
 	if pn.Server != types.DefaultUserServer {
 		return nil, grpcErr(codes.InvalidArgument, "validation_failed", "contacts are saved by phone number")
 	}
+	// The entry is looked up in the local app state: repair it first if it diverged.
+	if err := w.ensureAppStateSynced(ctx, appstate.WAPatchCriticalUnblockLow); err != nil {
+		return nil, err
+	}
 	lid := w.lidOf(ctx, pn)
 	h := w.hooks()
 	// The entry may exist under the phone number or under the LID (accounts migrated to

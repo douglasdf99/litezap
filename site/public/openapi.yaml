@@ -494,6 +494,61 @@ paths:
         "409": { $ref: "#/components/responses/InstanceConflict" }
         "502": { $ref: "#/components/responses/WorkerError" }
         "504": { $ref: "#/components/responses/WorkerTimeout" }
+  /v1/instances/{id}/app-state/resync:
+    parameters: [{ $ref: "#/components/parameters/InstanceID" }]
+    post:
+      tags: [Instâncias]
+      operationId: resyncAppState
+      x-litezap-milestone: v0.1.1
+      x-zapi: "(sem equivalente)"
+      summary: Ressincronizar o app state
+      x-litezap-scope: admin
+      description: |
+        Reparo da cópia local do app state (estado das conversas, agenda, etiquetas) quando o log mostra
+        `mismatching LTHash` ou ações pela API respondem `409`: apaga a versão, o hash e os MACs locais de cada
+        coleção e baixa a coleção de novo do WhatsApp, uma de cada vez. Sem corpo, as cinco coleções. O estado que
+        volta é gravado sem `chat.updated`. Veja
+        [App state fora de sincronia](/docs/guias/solucao-de-problemas/#app-state-fora-de-sincronia-mismatching-lthash).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                collections:
+                  type: array
+                  maxItems: 5
+                  items: { type: string, enum: [critical_block, critical_unblock_low, regular_low, regular_high, regular] }
+            example: { collections: [critical_unblock_low, regular_high] }
+      responses:
+        "200":
+          description: Resultado por coleção; `ok` quando todas ressincronizaram.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  collections:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        ok: { type: boolean }
+                        version_before: { type: integer }
+                        version_after: { type: integer }
+                        error: { type: string }
+              example: { ok: true, collections: [{ name: critical_unblock_low, ok: true, version_before: 48, version_after: 52 }] }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "409": { $ref: "#/components/responses/ChatConflict" }
+        "502": { $ref: "#/components/responses/WorkerError" }
+        "504": { $ref: "#/components/responses/WorkerTimeout" }
   /v1/instances/{id}/token/rotate:
     parameters: [{ $ref: "#/components/parameters/InstanceID" }]
     post:
@@ -1259,6 +1314,9 @@ paths:
         Remove o contato da agenda da conta (mutação `REMOVE` do app state, como o WhatsApp Web; o celular e os
         aparelhos vinculados acompanham). A conversa e as mensagens continuam. Aceita número ou JID
         `…@s.whatsapp.net`. Mesmo limite de mudanças de `POST /contacts`.
+
+        **Desligado por padrão** até a revalidação num aparelho real: responde `403 feature_disabled` sem
+        `experimental_app_state_writes: true` na configuração do servidor.
       responses:
         "204": { description: Removido. }
         "400": { $ref: "#/components/responses/ValidationFailed" }
@@ -1382,6 +1440,9 @@ paths:
         apagadas. O corpo é opcional. Uma limpeza feita no celular só gera `chat.updated` com
         `cleared: true` (o log mantém as mensagens). Limite de 10 limpezas por minuto e 100 por dia por instância
         (`429 rate_limited`). Teste antes numa conversa só com mensagens de teste.
+
+        **Desligado por padrão** até a revalidação num aparelho real: responde `403 feature_disabled` sem
+        `experimental_app_state_writes: true` na configuração do servidor.
       requestBody:
         required: false
         content:
@@ -6055,7 +6116,7 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: { code: not_found, message: "message not found", retryable: false } }
     ChatConflict:
-      description: "`app_state_not_synced` (o celular ainda não mandou as chaves do app state; tente de novo), `pin_limit` (já há 3 fixados), `instance_not_connected` ou `instance_banned`."
+      description: "`app_state_not_synced` (o celular ainda não mandou as chaves do app state; tente de novo), `app_state_out_of_sync` (a cópia local do app state divergiu; uma ressincronização foi agendada, ou rode `POST /app-state/resync`), `pin_limit` (já há 3 fixados), `instance_not_connected` ou `instance_banned`."
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }

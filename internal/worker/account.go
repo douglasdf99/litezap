@@ -46,6 +46,26 @@ type Account interface {
 	ContactAction(ctx context.Context, req *workerv1.ContactActionRequest) (*workerv1.ContactActionResponse, error)
 }
 
+// AppStateResyncer repairs the local app state (appstate_sync.go). Separate from Account
+// so other clients keep compiling; without it ResyncAppState answers Unimplemented.
+type AppStateResyncer interface {
+	ResyncAppState(ctx context.Context, collections []string) ([]*workerv1.AppStateCollectionResult, error)
+}
+
+var _ AppStateResyncer = (*Whatsmeow)(nil)
+
+func (s *Server) ResyncAppState(ctx context.Context, req *workerv1.ResyncAppStateRequest) (*workerv1.ResyncAppStateResponse, error) {
+	r, ok := s.wa.(AppStateResyncer)
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "app state resync not supported by this worker")
+	}
+	cols, err := r.ResyncAppState(ctx, req.Collections)
+	if err != nil {
+		return nil, err
+	}
+	return &workerv1.ResyncAppStateResponse{Collections: cols}, nil
+}
+
 var _ Account = (*Whatsmeow)(nil)
 
 func (s *Server) account() (Account, error) {
@@ -191,7 +211,7 @@ type accountHooks struct {
 func (w *Whatsmeow) hooks() accountHooks {
 	h := w.acct
 	if h.sendAppState == nil {
-		h.sendAppState = w.cli.SendAppState
+		h.sendAppState = w.sendAppStateSafe
 	}
 	if h.removeAppState == nil {
 		h.removeAppState = w.removeAppState
@@ -265,6 +285,9 @@ func (w *Whatsmeow) hooks() accountHooks {
 
 // accountErr maps whatsmeow failures of the account calls onto worker.proto codes.
 func accountErr(err error) error {
+	if _, ok := status.FromError(err); ok && err != nil {
+		return err // already mapped (app_state_out_of_sync before a write)
+	}
 	switch {
 	case errors.Is(err, whatsmeow.ErrProfilePictureNotSet):
 		return grpcErr(codes.NotFound, "not_found", "no profile picture")
@@ -274,6 +297,9 @@ func accountErr(err error) error {
 		return grpcErr(codes.InvalidArgument, "validation_failed", "WhatsApp rejected the image (use a JPEG)")
 	case errors.Is(err, whatsmeow.ErrIQNotAuthorized), errors.Is(err, whatsmeow.ErrIQForbidden):
 		return grpcErr(codes.PermissionDenied, "forbidden", "WhatsApp refused the request")
+	case isAppStateVerifyErr(err):
+		return grpcErr(codes.FailedPrecondition, "app_state_out_of_sync",
+			"the local copy of the app state is out of sync with WhatsApp; a full resync was scheduled (or run POST /v1/instances/{id}/app-state/resync)")
 	case err != nil && strings.Contains(err.Error(), "no app state keys found"):
 		return grpcErr(codes.FailedPrecondition, "app_state_not_synced",
 			"chat state keys not synced from the phone yet; keep the phone online and try again shortly")

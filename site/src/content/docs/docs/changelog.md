@@ -10,9 +10,36 @@ As versões seguem os marcos do motor. Mudanças que quebram compatibilidade sã
 Recursos de paridade com a Z-API. Todos estão prontos e testados com o worker simulado, mas ainda **aguardam
 validação num aparelho real**.
 
+**Corrigido**
+
+- **App state fora de sincronia** (`mismatching LTHash`): no teste num aparelho real (2026-10-23), depois de
+  salvar e remover um contato e de outras ações de app state, a cópia local das coleções
+  `critical_unblock_low` e `regular_high` divergiu (`failed to verify patch vN: mismatching LTHash`) e a
+  limpeza de conversa recebeu `409 conflict`. O celular não foi afetado. Mudanças:
+  - **Reparo manual**: `POST /v1/instances/{id}/app-state/resync` (só admin; corpo opcional
+    `{"collections": [...]}`, padrão as cinco) apaga a cópia local de cada coleção e baixa de novo do WhatsApp,
+    respondendo por coleção `ok`, `version_before`, `version_after` e `error`. RPC nova `ResyncAppState` no
+    worker.
+  - **Reparo automático**: quando o WhatsApp acusa a divergência numa sincronização, o worker agenda uma
+    ressincronização completa da coleção (15s, 2min, 10min; no máximo 3 por coleção por hora), com log. Antes
+    de uma ação pela API numa coleção cuja última sincronização falhou, ressincroniza primeiro; sem tentativas
+    sobrando, a ação responde `409 app_state_out_of_sync` em vez de escrever sobre uma cópia divergente.
+  - **Causa provável corrigida**: no `409`, o `SendAppState` do whatsmeow aplica as mudanças da resposta fora
+    da trava de sincronização, ao mesmo tempo em que a notificação do servidor sincroniza as mesmas mudanças;
+    uma ordem dessas duas escritas deixa a versão local para trás com os MACs à frente, e toda sincronização
+    seguinte falha (reproduzido em teste com o decodificador do whatsmeow). As escritas de app state do LiteZap
+    passam a ir uma de cada vez, com o codificador do whatsmeow sem a nova tentativa interna dele; num `409` o
+    LiteZap sincroniza sob a trava e tenta de novo uma vez. As mutações montadas à mão (contato, `REMOVE` e
+    limpar conversa) foram verificadas num simulador de dois aparelhos com o decodificador do whatsmeow e não
+    divergem; o que o celular faz com elas continua sem validação.
+  - **Limpar conversa e remover contato desligados por padrão**: respondem `403 feature_disabled` (e o MCP
+    esconde `clear_chat` e `remove_contact`) até a revalidação num aparelho. Para ligar:
+    `experimental_app_state_writes: true` ou `LITEZAP_EXPERIMENTAL_APP_STATE_WRITES=true`. Salvar contato
+    continua ligado (usa o codificador do whatsmeow sem mudanças).
+
 **Novo**
 
-- **Limpar conversa** (CHT-7): `POST /chats/{jid}/clear` (corpo opcional `{keep_starred, delete_media}`) limpa
+- **Limpar conversa** (CHT-7, **desligado por padrão**, veja *Corrigido*): `POST /chats/{jid}/clear` (corpo opcional `{keep_starred, delete_media}`) limpa
   as mensagens da conversa no WhatsApp desta conta pelo app state (celular e aparelhos vinculados; a conversa
   fica, o contato não é afetado) e apaga essas mensagens do log do LiteZap, com as mídias baixadas. Responde a
   conversa e `deleted_messages`; publica `chat.updated` com `cleared: true` e `source: "api"`. É destrutivo:
@@ -39,7 +66,7 @@ validação num aparelho real**.
   inicialização (`index_complete: false` enquanto isso). Ferramenta MCP `search_messages` (só leitura; não
   entra nos grupos de ferramentas dos agentes, que ficam presos ao chat da conversa) e campo **Buscar nas
   mensagens** na aba Conversas do painel. Chaves de API com escopo `read` podem buscar.
-- **Contatos na agenda** (CON-2): `POST /contacts` (`phone`, `first_name`, `last_name`, `save_on_phone`) salva
+- **Contatos na agenda** (CON-2; a remoção fica **desligada por padrão**, veja *Corrigido*): `POST /contacts` (`phone`, `first_name`, `last_name`, `save_on_phone`) salva
   ou renomeia um contato e `DELETE /contacts/{jid}` o remove, pelo app state (a mutação `contact`, montada
   como o WhatsApp Web; a remoção usa uma mutação `REMOVE`, que o whatsmeow não codifica e o LiteZap monta
   com as mesmas chaves e MACs). **Atenção:** a mudança aparece no celular e nos aparelhos vinculados e, com

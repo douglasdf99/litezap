@@ -45,6 +45,7 @@ const (
 	Worker_GetPrivacy_FullMethodName             = "/worker.v1.Worker/GetPrivacy"
 	Worker_SetPrivacy_FullMethodName             = "/worker.v1.Worker/SetPrivacy"
 	Worker_ContactAction_FullMethodName          = "/worker.v1.Worker/ContactAction"
+	Worker_ResyncAppState_FullMethodName         = "/worker.v1.Worker/ResyncAppState"
 )
 
 // WorkerClient is the client API for Worker service.
@@ -101,6 +102,11 @@ type WorkerClient interface {
 	// ContactAction saves or removes a contact of the account's address book through the
 	// app state (v0.1.1, CON-2): the phone and the other devices follow.
 	ContactAction(ctx context.Context, in *ContactActionRequest, opts ...grpc.CallOption) (*ContactActionResponse, error)
+	// ResyncAppState drops the local copy of app state collections (version, LT-hash and
+	// value MACs) and fetches them again from a snapshot (v0.1.1 repair): the fix for
+	// "mismatching LTHash" sync errors. Collections are processed one at a time and each
+	// reports its own result; Unavailable when the instance is not connected.
+	ResyncAppState(ctx context.Context, in *ResyncAppStateRequest, opts ...grpc.CallOption) (*ResyncAppStateResponse, error)
 }
 
 type workerClient struct {
@@ -380,6 +386,16 @@ func (c *workerClient) ContactAction(ctx context.Context, in *ContactActionReque
 	return out, nil
 }
 
+func (c *workerClient) ResyncAppState(ctx context.Context, in *ResyncAppStateRequest, opts ...grpc.CallOption) (*ResyncAppStateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResyncAppStateResponse)
+	err := c.cc.Invoke(ctx, Worker_ResyncAppState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkerServer is the server API for Worker service.
 // All implementations must embed UnimplementedWorkerServer
 // for forward compatibility.
@@ -434,6 +450,11 @@ type WorkerServer interface {
 	// ContactAction saves or removes a contact of the account's address book through the
 	// app state (v0.1.1, CON-2): the phone and the other devices follow.
 	ContactAction(context.Context, *ContactActionRequest) (*ContactActionResponse, error)
+	// ResyncAppState drops the local copy of app state collections (version, LT-hash and
+	// value MACs) and fetches them again from a snapshot (v0.1.1 repair): the fix for
+	// "mismatching LTHash" sync errors. Collections are processed one at a time and each
+	// reports its own result; Unavailable when the instance is not connected.
+	ResyncAppState(context.Context, *ResyncAppStateRequest) (*ResyncAppStateResponse, error)
 	mustEmbedUnimplementedWorkerServer()
 }
 
@@ -521,6 +542,9 @@ func (UnimplementedWorkerServer) SetPrivacy(context.Context, *SetPrivacyRequest)
 }
 func (UnimplementedWorkerServer) ContactAction(context.Context, *ContactActionRequest) (*ContactActionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ContactAction not implemented")
+}
+func (UnimplementedWorkerServer) ResyncAppState(context.Context, *ResyncAppStateRequest) (*ResyncAppStateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResyncAppState not implemented")
 }
 func (UnimplementedWorkerServer) mustEmbedUnimplementedWorkerServer() {}
 func (UnimplementedWorkerServer) testEmbeddedByValue()                {}
@@ -1004,6 +1028,24 @@ func _Worker_ContactAction_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Worker_ResyncAppState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResyncAppStateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServer).ResyncAppState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Worker_ResyncAppState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServer).ResyncAppState(ctx, req.(*ResyncAppStateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Worker_ServiceDesc is the grpc.ServiceDesc for Worker service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1110,6 +1152,10 @@ var Worker_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ContactAction",
 			Handler:    _Worker_ContactAction_Handler,
+		},
+		{
+			MethodName: "ResyncAppState",
+			Handler:    _Worker_ResyncAppState_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

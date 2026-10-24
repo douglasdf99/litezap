@@ -60,6 +60,12 @@ service Worker {
   // ContactAction saves or removes a contact of the account's address book through the
   // app state (v0.1.1, CON-2): the phone and the other devices follow.
   rpc ContactAction(ContactActionRequest) returns (ContactActionResponse);
+
+  // ResyncAppState drops the local copy of app state collections (version, LT-hash and
+  // value MACs) and fetches them again from a snapshot (v0.1.1 repair): the fix for
+  // "mismatching LTHash" sync errors. Collections are processed one at a time and each
+  // reports its own result; Unavailable when the instance is not connected.
+  rpc ResyncAppState(ResyncAppStateRequest) returns (ResyncAppStateResponse);
 }
 
 message PingRequest {}
@@ -524,6 +530,22 @@ message ContactActionRequest {
 message ContactActionResponse {
   string jid = 1;
   string lid = 2; // the contact's LID when known
+}
+
+message ResyncAppStateRequest {
+  // critical_block | critical_unblock_low | regular_low | regular_high | regular;
+  // empty: all five.
+  repeated string collections = 1;
+}
+message AppStateCollectionResult {
+  string name = 1;
+  bool ok = 2;
+  uint64 version_before = 3;
+  uint64 version_after = 4;
+  string error = 5;
+}
+message ResyncAppStateResponse {
+  repeated AppStateCollectionResult collections = 1;
 }
 
 message GetProfilePictureRequest {

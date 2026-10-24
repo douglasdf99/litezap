@@ -66,6 +66,9 @@ type Whatsmeow struct {
 	gapi groupAPI
 	// Chats, contacts, profile and privacy (account.go, marco 9).
 	acct accountHooks
+	// App state health and repair (appstate_sync.go, v0.1.1); ash defaults to the client.
+	asg appStateGuard
+	ash appStateHooks
 	// Status, channels, labels and the business profile (social.go, marco 10).
 	social socialHooks
 	// orderDetails reads an order (catalog.go, marco 12); nil means the client.
@@ -422,7 +425,7 @@ func (w *Whatsmeow) reportTerminal(state, reason, jid string) {
 }
 
 func (w *Whatsmeow) handle(evt any) {
-	if w.onSocial(evt) || w.onData(evt) || w.onRealtime(evt) || w.onGroup(evt) || w.onAccount(evt) {
+	if w.onAppStateSync(evt) || w.onSocial(evt) || w.onData(evt) || w.onRealtime(evt) || w.onGroup(evt) || w.onAccount(evt) {
 		return
 	}
 	loggedIn := w.cli.Store.ID != nil

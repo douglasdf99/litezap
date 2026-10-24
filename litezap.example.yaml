@@ -30,6 +30,9 @@ shutdown_timeout: 0s
 # Nível dos logs do WhatsApp (whatsmeow) nos workers: debug, info, warn (padrão) ou error.
 # Em debug as linhas mostram JIDs (números): só para diagnóstico. LITEZAP_LOG_LEVEL muda o dos logs do LiteZap.
 # wa_log_level: warn
+# Limpar conversa (CHT-7) e remover contato da agenda (CON-2) mudam o app state com mutações
+# montadas pelo LiteZap. Ficam desligados (403 feature_disabled) até a revalidação num aparelho real.
+# experimental_app_state_writes: false
 
 # Hospedagem gerenciada (deixe desligado no self-host; veja o README).
 # ops_listen_addr: "[::]:9090"     # /healthz, /readyz e /metrics sem token (rede privada)

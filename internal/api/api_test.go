@@ -86,9 +86,9 @@ func newEnvWith(t *testing.T, tweak func(*Options)) *env {
 		Settings: func(ctx context.Context, id string) (settings.Settings, error) { return msg.Settings(ctx, id) }}
 	rt.SetSender(msg)
 	msg.OnSettingsChanged = rt.SettingsChanged
-	groups := &service.Groups{Store: st, Workers: mgr, Resolver: resolver, Defaults: defaults}            // marco 8
-	acct := &service.Account{Messaging: msg, Events: bus, Groups: groups}                                 // marco 9
-	social := &service.Social{Store: st, Workers: mgr, Messaging: msg, Fetcher: msg.Fetcher, Events: bus} // marco 10
+	groups := &service.Groups{Store: st, Workers: mgr, Resolver: resolver, Defaults: defaults}              // marco 8
+	acct := &service.Account{Messaging: msg, Events: bus, Groups: groups, ExperimentalAppStateWrites: true} // marco 9
+	social := &service.Social{Store: st, Workers: mgr, Messaging: msg, Fetcher: msg.Fetcher, Events: bus}   // marco 10
 	mgr.SetObserver(manager.Observers{&ingest.Ingestor{Store: st, Log: log, Events: bus}, q, events.Observer{Bus: bus}, rt,
 		&service.GroupEvents{Store: st, Workers: mgr, Events: bus}, acct, &service.SocialEvents{Store: st, Events: bus}})
 	if err := disp.Start(context.Background()); err != nil {

@@ -173,6 +173,8 @@ const FRIENDLY = {
   upload_failed: 'Falha ao enviar o arquivo para o WhatsApp. Tente de novo.',
   invalid_number: 'Número inválido ou sem WhatsApp. Use DDI + DDD + número, ex.: 5511988887777.',
   app_state_not_synced: 'O WhatsApp ainda está sincronizando as conversas. Tente de novo em alguns minutos.',
+  app_state_out_of_sync: 'O estado das conversas está sendo ressincronizado com o WhatsApp. Tente de novo em alguns minutos.',
+  feature_disabled: 'Este recurso está desligado neste LiteZap (experimental_app_state_writes).',
   revoke_window_expired: 'Passou do prazo para apagar esta mensagem para todos.',
   edit_window_expired: 'Passou do prazo de 15 minutos para editar esta mensagem.',
   message_expired: 'A mensagem expirou na fila sem ser enviada.',

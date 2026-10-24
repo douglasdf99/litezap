@@ -162,8 +162,14 @@ var errAppStateConflict = errors.New("app state conflict")
 // it encodes on the local state, sends it, and then fetches the collection so the local
 // state (version, hash, MACs) and the other events follow. On a conflict the local state
 // is refreshed and the removal is retried once.
-func (w *Whatsmeow) removeAppState(ctx context.Context, name appstate.WAPatchName, m appstate.MutationInfo) error {
-	err := w.removeAppStateOnce(ctx, name, m)
+func (w *Whatsmeow) removeAppState(ctx context.Context, name appstate.WAPatchName, m appstate.MutationInfo) (err error) {
+	w.asg.writeMu.Lock()
+	defer w.asg.writeMu.Unlock()
+	if err := w.ensureAppStateSyncedLocked(ctx, name); err != nil {
+		return err
+	}
+	defer func() { w.noteAppStateErr(name, err) }()
+	err = w.removeAppStateOnce(ctx, name, m)
 	if errors.Is(err, errAppStateConflict) {
 		if ferr := w.cli.FetchAppState(ctx, name, false, false); ferr != nil {
 			return fmt.Errorf("%w (also, refreshing failed: %w)", err, ferr)

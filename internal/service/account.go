@@ -33,6 +33,11 @@ type Account struct {
 	Events events.Publisher
 	// Groups changes a group's disappearing messages timer (nil: only direct chats).
 	Groups *Groups
+	// ExperimentalAppStateWrites enables the app state writes that LiteZap builds by hand
+	// and that are still being revalidated on a real device after the 2026-10-23 LT-hash
+	// divergence: clearing a chat (CHT-7) and removing a contact (CON-2). Off by default
+	// (config experimental_app_state_writes): they answer 403 feature_disabled.
+	ExperimentalAppStateWrites bool
 
 	lookupQuota  slidingQuota // contact pictures and profiles, per instance
 	contactQuota slidingQuota // address book changes (CON-2), per instance
@@ -137,6 +142,8 @@ func accountErr(err error) error {
 			return apierr.New(http.StatusNotFound, "not_found", redact(detail), false)
 		case st.Code() == codes.FailedPrecondition && code == "app_state_not_synced":
 			return apierr.New(http.StatusConflict, "app_state_not_synced", detail, true)
+		case st.Code() == codes.FailedPrecondition && code == "app_state_out_of_sync":
+			return apierr.New(http.StatusConflict, "app_state_out_of_sync", detail, true)
 		case st.Code() == codes.PermissionDenied:
 			return apierr.New(http.StatusForbidden, "forbidden", redact(detail), false)
 		case st.Code() == codes.Unimplemented:
@@ -518,6 +525,9 @@ type ClearResult struct {
 // devices; the contact keeps theirs) and deletes them from the log, keeping the chat. It
 // is destructive and cannot be undone. Messages still in the send queue are kept.
 func (a *Account) ClearChat(ctx context.Context, instanceID, raw string, in ClearInput) (ClearResult, error) {
+	if err := a.requireAppStateWrites("clearing a chat"); err != nil {
+		return ClearResult{}, err
+	}
 	c, err := a.loadChat(ctx, instanceID, raw)
 	if err != nil {
 		return ClearResult{}, err

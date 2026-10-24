@@ -223,3 +223,26 @@ func TestWALogLevel(t *testing.T) {
 		t.Fatalf("invalid level: %v", err)
 	}
 }
+
+// experimental_app_state_writes is off by default; the file and the env turn it on.
+func TestExperimentalAppStateWrites(t *testing.T) {
+	t.Setenv("LITEZAP_EXPERIMENTAL_APP_STATE_WRITES", "")
+	if cfg, err := Load(""); err != nil || cfg.ExperimentalAppStateWrites {
+		t.Fatalf("default: %v, %v", cfg.ExperimentalAppStateWrites, err)
+	}
+	p := filepath.Join(t.TempDir(), "litezap.yaml")
+	if err := os.WriteFile(p, []byte("experimental_app_state_writes: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err := Load(p); err != nil || !cfg.ExperimentalAppStateWrites {
+		t.Fatalf("file: %v, %v", cfg.ExperimentalAppStateWrites, err)
+	}
+	t.Setenv("LITEZAP_EXPERIMENTAL_APP_STATE_WRITES", "false")
+	if cfg, err := Load(p); err != nil || cfg.ExperimentalAppStateWrites {
+		t.Fatalf("env off: %v, %v", cfg.ExperimentalAppStateWrites, err)
+	}
+	t.Setenv("LITEZAP_EXPERIMENTAL_APP_STATE_WRITES", "maybe")
+	if _, err := Load(p); err == nil {
+		t.Fatal("bad bool accepted")
+	}
+}

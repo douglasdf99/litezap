@@ -62,6 +62,12 @@ type Config struct {
 	// error; "": warn). At debug the lines keep JIDs (phone numbers): troubleshooting only.
 	WALogLevel string `yaml:"wa_log_level"`
 
+	// ExperimentalAppStateWrites enables clearing chats (CHT-7) and removing contacts
+	// (CON-2), app state changes LiteZap builds by hand. Off by default until they are
+	// revalidated on a real device (v0.1.1): the API answers 403 feature_disabled and the
+	// MCP server hides the tools.
+	ExperimentalAppStateWrites bool `yaml:"experimental_app_state_writes"`
+
 	// Platform and partners (marco 11): IP allowlists and the hosted pairing page.
 	Platform `yaml:",inline"`
 
@@ -145,6 +151,13 @@ func LoadWith(path string, base Config) (Config, error) {
 			return cfg, fmt.Errorf("LITEZAP_DISABLE_DASHBOARD: %w", err)
 		}
 		cfg.DisableDashboard = b
+	}
+	if v := os.Getenv("LITEZAP_EXPERIMENTAL_APP_STATE_WRITES"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return cfg, fmt.Errorf("LITEZAP_EXPERIMENTAL_APP_STATE_WRITES: %w", err)
+		}
+		cfg.ExperimentalAppStateWrites = b
 	}
 	if v := os.Getenv("LITEZAP_WA_LOG_LEVEL"); v != "" {
 		cfg.WALogLevel = v

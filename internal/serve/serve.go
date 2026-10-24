@@ -178,7 +178,7 @@ func RunWith(ctx context.Context, opt Options, log *slog.Logger) error {
 	// Groups (marco 8): group.updated and group chat names.
 	groupEvents := &service.GroupEvents{Store: st, Workers: mgr, Events: bus, Log: log}
 	// Marco 9: chat state from the app state, and auto-read; their services are set below.
-	acct := &service.Account{Store: st, Events: bus, Sending: cl.sending}
+	acct := &service.Account{Store: st, Events: bus, Sending: cl.sending, ExperimentalAppStateWrites: cfg.ExperimentalAppStateWrites}
 	reader := &autoread.Reader{Workers: mgr, Unread: st, Log: log, Settings: rt.Settings}
 	// Marco 10: status posts, channel posts and label changes.
 	socialEvents := &service.SocialEvents{Store: st, Events: bus, Log: log}
